@@ -73,6 +73,7 @@ from pydantic_clai2.plugins.process_plugins import LiveRuntime, handling
 from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
+from pydantic_clai2.runtime.git_actions import git_commands
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session import (
@@ -253,6 +254,7 @@ def create_shell(
         tasks=process.tasks.owner,
     )
     commands = Commands(workspace=lambda: Path(session.workspace))
+    commands.register_many(git_commands(workspace=lambda: Path(session.workspace), model=session.resolved_model))
     commands.register(
         Command(
             name='effort',
@@ -428,7 +430,12 @@ def create_shell(
             handler=lambda args: shell.update(args),
             complete=lambda args: ('now',) if len(args) <= 1 else (),
             menu=lambda: update_menu(
-                context, updates, run=lambda text: shell.send_input(text), refusal=lambda: shell.restart_refusal()
+                context,
+                updates,
+                run=lambda text: shell.send_input(text),
+                refusal=lambda: shell.restart_refusal(),
+                # Every `host.command_menu('update')` caller is a remote UI; the terminal builds its own menu.
+                raise_refusal=True,
             ),
         )
     )
@@ -463,6 +470,8 @@ def create_shell(
         running=lambda: shell.turning,
         default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
         default_model_name=partial(_default_model_name, store=store, fallback=agent.model),
+        resolve_model=models.resolve,
+        model_settings=context.model_settings,
         inputs=lambda: shell,
         forks=lambda: shell.forks.listing(),
     )

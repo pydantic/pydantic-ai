@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="645" viewBox="0 0 880 645" role="img" aria-labelledby="t d">
+<title id="t">Spend: budgets that outlast one run</title>
+<desc id="d">SpendLimits checks budgets around each model request. Before a request, before_model_request reads every budget window from the spend store and lets the request through while all are under their ceilings. After the response, wrap_model_request prices it and adds the cost to each window. When a later request finds the day window spent, SpendLimitExceeded is raised and the request is not sent. The store can be in memory, Redis or PostgreSQL, so several workers can share one counter.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="644" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Spend: budgets that outlast one run</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">SpendLimits adds the price of every response to each budget window it counts against, and refuses the next request</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">once a window is spent. Windows can span a run, a day, a month or a tenant.</text>
+<rect x="32" y="130" width="580" height="117" rx="10" fill="#092224"/>
+<text x="46" y="154" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#77FFD8">SpendLimits</tspan><tspan fill="#FBFFEA">(budgets=[</tspan></text>
+<text x="46" y="173" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">    Budget(usd=Decimal(</tspan><tspan fill="#FFD4E5">&#x27;5&#x27;</tspan><tspan fill="#FBFFEA">), window=</tspan><tspan fill="#FFD4E5">&#x27;run&#x27;</tspan><tspan fill="#FBFFEA">),</tspan></text>
+<text x="46" y="192" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">    Budget(usd=Decimal(</tspan><tspan fill="#FFD4E5">&#x27;100&#x27;</tspan><tspan fill="#FBFFEA">), window=</tspan><tspan fill="#FFD4E5">&#x27;day&#x27;</tspan><tspan fill="#FBFFEA">),</tspan></text>
+<text x="46" y="211" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">    Budget(usd=Decimal(</tspan><tspan fill="#FFD4E5">&#x27;10&#x27;</tspan><tspan fill="#FBFFEA">), window=</tspan><tspan fill="#FFD4E5">&#x27;day&#x27;</tspan><tspan fill="#FBFFEA">, scope=tenant, name=</tspan><tspan fill="#FFD4E5">&#x27;tenant&#x27;</tspan><tspan fill="#FBFFEA">),</tspan></text>
+<text x="46" y="230" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">], store=</tspan><tspan fill="#77FFD8">RedisSpendStore</tspan><tspan fill="#FBFFEA">(redis))</tspan></text>
+<text letter-spacing="1.3" x="634" y="144" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">SETUP</text>
+<text x="634" y="168" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">A new day is a new store key, so</text>
+<text x="634" y="185.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">nothing resets at midnight. A scope</text>
+<text x="634" y="203.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">gives each tenant its own counter.</text>
+<rect x="32" y="281" width="170" height="246" rx="14" fill="none" stroke="#8FA8A3" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="46" y="273" width="95.2" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="53" y="285" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">AGENT RUN</text>
+<rect x="238" y="281" width="318" height="246" rx="14" fill="none" stroke="#B417B7" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="252" y="273" width="165.4" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="259" y="285" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">SPENDLIMITS HOOKS</text>
+<rect x="600" y="281" width="248" height="246" rx="14" fill="none" stroke="#7B57E8" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="614" y="273" width="114.2" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="621" y="285" font-size="11" fill="#7B57E8" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">SPEND STORE</text>
+<rect x="44" y="314" width="146" height="40" rx="20" fill="#092224"/>
+<text x="117" y="339" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">request 1</text>
+<rect x="44" y="381" width="146" height="54" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="117" y="402.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">response</text>
+<text x="117" y="421.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">billed by the provider</text>
+<rect x="44" y="462" width="146" height="40" rx="20" fill="#092224"/>
+<text x="117" y="487" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">request 2</text>
+<line x1="117" y1="354" x2="117" y2="379" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="117" y1="437" x2="117" y2="460" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="250" y="307" width="294" height="54" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="397" y="328.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">before_model_request</text>
+<text x="397" y="347.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">reads each window: all under ceiling</text>
+<rect x="250" y="381" width="294" height="54" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="397" y="402.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">wrap_model_request</text>
+<text x="397" y="421.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">prices the response, adds it to each window</text>
+<rect x="250" y="455" width="294" height="54" rx="10" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.4"/>
+<text x="397" y="476.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">before_model_request</text>
+<text x="397" y="495.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">day spent: raises SpendLimitExceeded</text>
+<line x1="192" y1="334" x2="248" y2="334" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="192" y1="408" x2="248" y2="408" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="192" y1="482" x2="248" y2="482" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="546" y1="334" x2="598" y2="334" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="546" y1="408" x2="598" y2="408" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="546" y1="482" x2="598" y2="482" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<text x="616" y="315" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">run</text>
+<text x="832" y="315" font-size="12" fill="#55726A" text-anchor="end" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">$0.80 of $5</text>
+<rect x="616" y="322" width="216" height="9" rx="4" fill="#FFFFFF" stroke="#7B57E8" stroke-width="1"/>
+<rect x="616" y="322" width="34.6" height="9" rx="4" fill="#7B57E8"/>
+<text x="616" y="359" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">day</text>
+<text x="832" y="359" font-size="12" fill="#55726A" text-anchor="end" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">$100.30 of $100</text>
+<rect x="616" y="366" width="216" height="9" rx="4" fill="#FFFFFF" stroke="#7B57E8" stroke-width="1"/>
+<rect x="616" y="366" width="216" height="9" rx="4" fill="#E5533D"/>
+<text x="616" y="403" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tenant, day</text>
+<text x="832" y="403" font-size="12" fill="#55726A" text-anchor="end" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">$4.10 of $10</text>
+<rect x="616" y="410" width="216" height="9" rx="4" fill="#FFFFFF" stroke="#7B57E8" stroke-width="1"/>
+<rect x="616" y="410" width="88.6" height="9" rx="4" fill="#7B57E8"/>
+<text x="616" y="453" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">InMemorySpendStore by default;</text>
+<text x="616" y="470" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">RedisSpendStore or</text>
+<text x="616" y="487.1" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">PostgresSpendStore to share one</text>
+<text x="616" y="504.1" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">counter across workers.</text>
+<text x="32" y="557" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">A brake on a runaway loop, not a ledger: the request that crosses a ceiling still completes, and concurrent runs can each pass the check</text>
+<text x="32" y="574.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">before any of them records its cost.</text>
+<rect x="32" y="597.5" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="608.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model request</text>
+<rect x="153.4" y="597.5" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="173.4" y="608.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your run</text>
+<rect x="244.4" y="597.5" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="264.4" y="608.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by SpendLimits</text>
+<rect x="407.8" y="597.5" width="14" height="14" rx="4" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="427.8" y="608.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">spend store</text>
+<rect x="515.4" y="597.5" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="535.4" y="608.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">refused</text>
+</svg>

@@ -24,6 +24,7 @@ from .utils import render_table
 with try_import() as imports_successful:
     from rich.table import Table
 
+    from pydantic_ai.models.test import TestModel
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
@@ -36,7 +37,16 @@ with try_import() as imports_successful:
         LLMJudge,
     )
     from pydantic_evals.evaluators.context import EvaluatorContext
+    from pydantic_evals.generation import generate_dataset
     from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter, ReportCaseFailure
+
+    BareNoneDatasetCase = tuple[
+        type[Dataset[str | None, str | None, str | None]],
+        type[Dataset[str | None, str | None, str | None]],
+        str | None,
+        str | None,
+        str | None,
+    ]
 
     @dataclass
     class MockEvaluator(Evaluator[object, object, object]):
@@ -1091,6 +1101,51 @@ def test_serialization_errors(tmp_path: Path):
     )
 
 
+@pytest.fixture(
+    params=[
+        pytest.param((Dataset[None, str, str], Dataset[type(None), str, str], None, 'out', 'meta'), id='inputs'),
+        pytest.param((Dataset[str, None, str], Dataset[str, type(None), str], 'in', None, 'meta'), id='output'),
+        pytest.param((Dataset[str, str, None], Dataset[str, str, type(None)], 'in', 'out', None), id='metadata'),
+    ]
+    if imports_successful()
+    else [],
+)
+def bare_none_dataset_case(request: pytest.FixtureRequest) -> BareNoneDatasetCase:
+    return request.param
+
+
+def test_to_file_roundtrip_bare_none_type_argument(
+    tmp_path: Path,
+    bare_none_dataset_case: BareNoneDatasetCase,
+):
+    """A dataset parametrized with a bare `None` type argument serializes exactly like the `NoneType` spelling."""
+    dataset_type, none_type_dataset_type, inputs, expected_output, metadata = bare_none_dataset_case
+    bare_none = dataset_type(
+        name='test_cases',
+        cases=[Case(name='case1', inputs=inputs, expected_output=expected_output, metadata=metadata)],
+    )
+    none_type_spelling = none_type_dataset_type(
+        name='test_cases',
+        cases=[Case(name='case1', inputs=inputs, expected_output=expected_output, metadata=metadata)],
+    )
+
+    bare_dir, none_type_dir = tmp_path / 'bare', tmp_path / 'none_type'
+    bare_dir.mkdir()
+    none_type_dir.mkdir()
+    bare_none.to_file(bare_dir / 'test_cases.yaml')
+    none_type_spelling.to_file(none_type_dir / 'test_cases.yaml')
+
+    # The dataset file and its generated schema file must be byte-identical to the `NoneType` spelling's output.
+    assert (bare_dir / 'test_cases.yaml').read_bytes() == (none_type_dir / 'test_cases.yaml').read_bytes()
+    assert (bare_dir / 'test_cases_schema.json').read_bytes() == (none_type_dir / 'test_cases_schema.json').read_bytes()
+
+    loaded = dataset_type.from_file(bare_dir / 'test_cases.yaml')
+    assert loaded.cases[0].name == 'case1'
+    assert loaded.cases[0].inputs == inputs
+    assert loaded.cases[0].expected_output == expected_output
+    assert loaded.cases[0].metadata == metadata
+
+
 def test_from_file_schema_mismatch(tmp_path: Path):
     path = tmp_path / 'test_cases.yaml'
     path.write_text('cases: not-a-list\n')
@@ -1806,6 +1861,26 @@ def test_import_generate_dataset():
     assert generate_dataset
 
 
+async def test_generate_dataset_bare_none_type_argument_completes(
+    bare_none_dataset_case: BareNoneDatasetCase,
+):
+    """`generate_dataset` completes for a dataset type parametrized with a bare `None` type argument."""
+    dataset_type, _, inputs, expected_output, metadata = bare_none_dataset_case
+    dataset = await generate_dataset(
+        dataset_type=dataset_type,
+        model=TestModel(
+            custom_output_text=json.dumps(
+                {'cases': [{'inputs': inputs, 'expected_output': expected_output, 'metadata': metadata}]}
+            )
+        ),
+        n_examples=1,
+    )
+    assert len(dataset.cases) == 1
+    assert dataset.cases[0].inputs == inputs
+    assert dataset.cases[0].expected_output == expected_output
+    assert dataset.cases[0].metadata == metadata
+
+
 @needs_logfire
 def test_evaluate_non_serializable_inputs():
     @dataclass
@@ -1895,6 +1970,7 @@ async def test_evaluate_async_logfire(
                             'n_cases': {},
                             'name': {},
                             'metadata': {'type': 'object'},
+                            'test.suite.name': {},
                             'logfire.experiment.metadata': {
                                 'type': 'object',
                                 'properties': {
@@ -1911,6 +1987,7 @@ async def test_evaluate_async_logfire(
                     },
                     'logfire.msg': 'evaluate mock_async_task',
                     'metadata': {'key': 'value'},
+                    'test.suite.name': 'example',
                     'logfire.msg_template': 'evaluate {name}',
                     'logfire.span_type': 'span',
                     'n_cases': 2,
@@ -1942,6 +2019,7 @@ async def test_evaluate_async_logfire(
                     'logfire.msg_template': 'case: {case_name}',
                     'logfire.msg': 'case: case1',
                     'logfire.span_type': 'span',
+                    'test.case.name': 'case1',
                     'output': {'answer': '4', 'confidence': 1.0},
                     'task_duration': _any_duration,
                     'metrics': {},
@@ -1981,6 +2059,7 @@ async def test_evaluate_async_logfire(
                                 'title': 'TaskOutput',
                                 'x-python-datatype': 'PydanticModel',
                             },
+                            'test.case.name': {},
                             'output': {'type': 'object', 'title': 'TaskOutput', 'x-python-datatype': 'PydanticModel'},
                             'task_duration': {},
                             'metrics': {'type': 'object'},
@@ -2013,6 +2092,7 @@ async def test_evaluate_async_logfire(
                     'logfire.msg_template': 'case: {case_name}',
                     'logfire.msg': 'case: case2',
                     'logfire.span_type': 'span',
+                    'test.case.name': 'case2',
                     'output': {'answer': 'Paris', 'confidence': 1.0},
                     'task_duration': _any_duration,
                     'metrics': {},
@@ -2052,6 +2132,7 @@ async def test_evaluate_async_logfire(
                                 'title': 'TaskOutput',
                                 'x-python-datatype': 'PydanticModel',
                             },
+                            'test.case.name': {},
                             'output': {'type': 'object', 'title': 'TaskOutput', 'x-python-datatype': 'PydanticModel'},
                             'task_duration': {},
                             'metrics': {'type': 'object'},

@@ -36,7 +36,6 @@ from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, Sel
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler
 from pydantic_ai.direct import model_request, model_request_batch, model_request_stream
 from pydantic_ai.exceptions import (
-    AgentRunError,
     ModelAPIError,
     ModelConnectionError,
     ModelContextWindowExceededError,
@@ -1279,8 +1278,6 @@ _ENDED_WITH: dict[EndPendingRun, object] = {
 _STREAM_BLOCK_ENDED_WITH: dict[EndPendingRun, object] = {
     # The block gets the stream's output, while `after_run` replaces the run's once the block has exited.
     'after_run_replaces': PendingModelResponse,
-    # The block can't get the output `on_run_error` recovers the run with, as the run had none when it failed.
-    'on_run_error_recovers': AgentRunError('Agent run finished without producing a final result'),
 }
 """Where the `run_stream()` block ends differently from `agent.run()`."""
 

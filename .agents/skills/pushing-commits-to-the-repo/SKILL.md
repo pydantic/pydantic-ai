@@ -48,14 +48,26 @@ Address every douwebot comment, including non-blocking comments.
 After addressing comments, obtain a clean approval on the resulting head.
 Resolve every review thread.
 
-Douwebot posts as `github-actions[bot]` from the `review` job in [`.github/workflows/bots.yml`](../../../.github/workflows/bots.yml).
-Distinguish douwebot from `CI Review`, which can use the same bot account.
-Douwebot posts `No blocking findings.` or `Blocking findings are recorded inline.` with its verdict.
-`CI Review` starts its body with `Reviewed at <sha>`.
-For protected agent-config changes, a clean approval from a maintainer-authorized `douwebot:review-agent-config` run satisfies the same bar.
+Douwebot posts as `github-actions[bot]` through the trusted [PR Bots publisher](../../../.github/workflows/bots.yml).
+Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> -->` receipt.
+`CI Review` can use the same bot account but carries a separate gh-aw receipt; it cannot satisfy this bar.
+Associate inline comments with their parent review's commit because GitHub can move a comment's `commit_id` after a push.
+A clean, maintainer-authorized `douwebot:review-agent-config` approval satisfies the same requirement for protected paths.
 A human approval does not substitute for douwebot.
 
+Count the latest non-dismissed approval from a `User` other than the author with current write/admin permission.
+A later change request supersedes approval; a comment does not. The approval may precede the head,
+with GitHub's stale-approval dismissal enforcing freshness when the diff changes.
+`PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
+Size S remains a manual judgment; review enforcement skips merge groups after admission.
+
 ## When you open the PR
+
+### Carry maintainer ownership onto the PR
+
+For [immediate maintainer work](../file-followup-issue/SKILL.md#maintainer-routing-mechanics), assign the PR to the same human maintainer.
+Use `gh pr create --assignee <maintainer-login>` or `gh pr edit <number> --add-assignee <maintainer-login>`.
+Recover the owner from existing context or the linked issue's maintainer assignee and `pydanty:skip` label.
 
 ### Write the title and body
 
@@ -107,6 +119,7 @@ end of the body, before the checklist. Skip the section entirely when the log is
 ```
 
 Do not copy the decisions template's instructions into the PR body.
+The section is public. Leave out confidential or privileged reasoning. Keep session ids: a later agent uses them to find the session that made the decision.
 
 ### Keep labels current with the title and body
 
@@ -395,11 +408,13 @@ if the head changes, capture the new SHA and restart the loop.
    - **Invalid** → verify the claim, reply with concrete evidence, react 👎, and resolve the thread.
      A repro you could not run — no credentials, no worker, no cassette — is not a refutation. Say
      what you tried and ask the user driving you; do not react 👎 on an untested claim.
-     Refuting a `CI Review` finding does not clear its `REQUEST_CHANGES`, and no push clears it
-     either. Resolving the threads is not enough: the review itself has to be dismissed by someone
-     with that permission. Do not dismiss it on your own judgment, even where you hold the
-     permission; discarding a reviewer's verdict is the author's call. Say so when you hand the PR
-     back, name the review, and say what changed since the reviewed SHA.
+   - **Close the bot verdict after its findings.** Verify every blocking finding against the current head.
+     Include findings in the review body and earlier rounds, not only unresolved inline threads.
+     Each finding must be fixed and checked, or conclusively refuted with recorded evidence.
+     A new commit, an outdated thread, or zero unresolved threads alone is insufficient.
+     Leave the verdict active while a finding or decision remains open.
+     Dismiss the fully addressed bot `REQUEST_CHANGES` with the tracked helper below.
+     Dismissal is not approval and never satisfies a required fresh review.
    - A human `REQUEST_CHANGES` remains blocking until that human re-reviews or a maintainer
      dismisses it. Do not dismiss a human request.
    - Minimize issue-level review dumps when handled. Never silently ignore feedback or close it
@@ -435,6 +450,23 @@ if the head changes, capture the new SHA and restart the loop.
 
    Resolving is not the same as agreeing: resolve a thread you answered with evidence too. Leave
    one open only while a person still owes a response.
+
+   After verifying every blocker in a bot verdict, prepare a dismissal reason file.
+   Use the attribution required by your active repository or harness instructions for the first line.
+   Explain each fix or refutation and link the commits or evidence.
+   Pass the explicit review ID and full verified head to the [tracked helper](dismiss-addressed-bot-review):
+
+   ```bash
+   bash .agents/skills/pushing-commits-to-the-repo/dismiss-addressed-bot-review \
+     pydantic/pydantic-ai "$PR_NUMBER" "$REVIEW_ID" "$VERIFIED_HEAD" "$REASON_FILE" \
+     --all-blockers-addressed
+   ```
+
+   The final flag attests that you assessed every blocker, including review-body findings.
+   The helper rejects human verdicts, unresolved threads involving that bot, and changed or closed heads.
+   Multiple workflows share a bot account; identify the review by its body and originating run.
+   Read the resulting PR review state; another active request may still block review eligibility.
+   If dismissal fails, report the actual error and leave that close-out item pending.
 5. **Escalate real trade-offs, don't guess.** If a comment needs a maintainer decision (a design
    choice, an API trade-off, a behavioral default), leave a comment containing: the background,
    your reasoning, the decision that needs making, the trade-offs (pros/cons of each option), and

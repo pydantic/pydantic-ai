@@ -14,6 +14,8 @@ tasks to the Exa Agent API as deferred tool calls.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls tools added by ExaSearch. web_search calls Exa search and returns the top five hits with title, URL and excerpts; get_page calls Exa get_contents for one URL, capped at 10,000 characters; the opt-in deep_search calls Exa search with type deep and returns one cited answer. The separate ExaAgent capability adds exa_agent, which creates an Exa Agent run and defers until it completes. Every tool returns a ToolReturn: the text goes to the model and the sources entry of its metadata holds ExaSource records for your app.](../img/harness/exa-search.svg)
+
 ## The problem
 
 Search tools that return only titles and snippets force a second round of

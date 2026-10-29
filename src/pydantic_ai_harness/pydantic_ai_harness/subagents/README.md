@@ -4,6 +4,8 @@ Let an agent delegate self-contained tasks to named child agents.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/subagents/)
 
+![The parent model calls delegate_task with an agent name and a self-contained task. SubAgents checks that the name is in the roster, that the delegate has calls left in its max_calls budget and that the tree is not deeper than max_depth, then runs that agent, such as researcher, writer or self, in its own run with its own message history and the parent's deps, usage and workspace. The child's output comes back as the tool result; a timeout or an exhausted budget comes back as a steering message, and a child error as a retry.](https://pydantic.dev/docs/ai/img/harness/subagents.svg)
+
 ## The problem
 
 A single agent that does everything accumulates a large tool set and a long context. Splitting the work across specialized sub-agents keeps each context focused, but wiring up delegation by hand means writing a tool per agent, forwarding deps, threading usage limits, and telling the model what it can delegate to.
@@ -44,7 +46,8 @@ A delegate's name -- how the parent model refers to it, and how it is listed in 
 ## Deps, usage, tools, and capabilities
 
 - **Deps are forwarded.** The parent run's `deps` are passed to each sub-agent, so sub-agents share the parent's `AgentDepsT` (enforced by the type signature -- every sub-agent is an `AbstractAgent[AgentDepsT, Any]`).
-- Delegated agents run in the parent's workspace, including wrappers such as `ReadOnlyWorkspace`.
+- Delegated agents inherit the parent's workspace unless `workspace_resolver` selects another directory.
+  Parent read-only restrictions still apply.
 - **Usage is shared by default.** The parent's `usage` is passed to each sub-agent run, so token usage aggregates and a parent `usage_limits` applies across the whole agent tree. Set `forward_usage=False` to give each sub-agent run its own accounting.
 - **The parent's tools are not passed on.** A sub-agent runs with its own tools. To delegate to an agent that has all of the parent's tools and capabilities, use `include_self=True` (see "Delegating to the agent itself" below).
 - **Capabilities can be shared.** `shared_capabilities` are applied to every sub-agent run -- e.g. give all sub-agents a common guardrail, memory, or planning capability without rebuilding each `Agent`.
@@ -70,7 +73,7 @@ agent = Agent(
 - **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
 - **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()` (a delegate run that ends with [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) or [`PendingModelResponse`](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits) returns a steering message instead, as described under failure handling).
 - The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
-- **On Temporal, delegate to `self` only.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `SubAgents(include_self=True, agent_folders=None)`; see [delegation on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
+- **On Temporal, `agent_folders` is not supported.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `agent_folders=None`. When `self` is the only delegate, it runs in the workflow, so register a `Model` instance from `models` with `TemporalDurability(models=...)`. Otherwise delegations run in an activity, which has no access to the parent run's model, so a delegate needs a model of its own or a `models` option; see [delegation on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
 
 ## Per-delegate run controls
 
@@ -144,6 +147,49 @@ orchestrator = Agent(
 - **Resolution order.** The key the parent passed, else the delegate's first allowed key (see below), else the delegate's own model, else the parent run's model.
 - **A delegate can be restricted.** `SubAgent(linter, models=['fast'])` pins that delegate to `fast`: the first listed key is what it runs on when the parent passes no `model`, and the others are refused with a `ModelRetry`. The restriction is rendered in the prompt listing (`- linter: Runs the linter (models: fast)`). Restricting to a key the menu does not define is a `ValueError` at construction.
 - **A rejected key costs nothing.** An unknown or unavailable key comes back as a `ModelRetry` listing the valid options, before the delegate's `max_calls` budget is charged.
+
+## Per-delegation working directory
+
+Set `workspace_resolver` to offer `delegate_task(working_directory=...)`. The async callback receives
+the parent `RunContext` and a `DelegationWorkspaceRequest` with the delegate name and requested
+directory, and returns a `Workspace`. The host
+validates the request and decides which delegates may use another workspace. Without this option,
+the tool omits `working_directory` and children inherit the parent's workspace.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.subagents import DelegationWorkspaceRequest, SubAgent, SubAgents
+
+workspaces: dict[str, Workspace] = {'/repos/policy': Workspace(LocalWorkspaceBackend('/repos/policy'))}
+
+
+async def resolve_workspace(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
+    if request.agent_name != 'reviewer' or request.directory not in workspaces:
+        raise ModelRetry('Choose the reviewer and a configured directory.')
+    return workspaces[request.directory]
+
+
+reviewer = Agent(name='reviewer', deps_type=object, capabilities=[FileSystem(read_only=True)])
+delegation = SubAgents(
+    agents=[SubAgent(reviewer, read_only=True)],
+    workspace_resolver=resolve_workspace,
+)
+```
+
+The child runs with the returned workspace, so its relative file paths and repository instructions
+use that directory. Read-only restrictions from the parent or `SubAgent(read_only=True)` still apply.
+Also limit the delegate to trusted read-only tools: arbitrary Python tools can bypass the workspace
+API. The resolver must preserve any additional backend restrictions the application requires.
+
+The caller owns the returned workspace and keeps its resources alive until background children
+finish. Managed tasks record the resolved directory in `DelegationTask.working_directory`. On resume,
+omitting the argument resolves that saved directory again; changing it is rejected. The resolver must
+therefore accept its own resolved directory spelling. Older tasks without this field inherit the
+parent workspace. Remote and durable delegations reject directory overrides. This option does not
+change where disk agent definitions are discovered: `SubAgents.workspace` controls that separately.
 
 ## Failure handling
 
@@ -464,6 +510,7 @@ SubAgents(
     tool_retries=2,        # extra delegate-tool attempts after a sub-agent error before aborting (None inherits the agent default)
     contain_errors=False,  # default for SubAgent.contain_errors: contain an unexpected crash as a bounded retry
     workspace=None,        # WorkspaceBackend to read agent_folders from instead of the run's workspace
+    workspace_resolver=None,  # async (ctx, request: DelegationWorkspaceRequest) -> Workspace
     include_self=False,    # also list the running agent itself as the delegate `self`
     max_depth=3,           # delegation levels, counting the top-level run
     task_control=None,     # TaskControl -- background tasks, task-control tools, questions, and task events
