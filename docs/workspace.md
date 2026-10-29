@@ -693,7 +693,7 @@ Before shipping a backend, use the suite to check:
   indefinitely delay a finished command.
 - File operations preserve bytes, follow symlinks where appropriate, and report path errors;
   understand containment limits: a working directory is not a jail, and symlinks may cross roots.
-- A display's screenshot is its declared size, a scaled screenshot is the size asked for give or take a pixel, a
+- A display's screenshot is its declared size, a scaled screenshot is at most the size asked for, a
   zoom keeps the region's shape at full resolution, and moving the mouse puts the pointer there, when the display
   reports the pointer position.
 - Supply `attach_backend`, `destroy_environment`, and an independent `destructive_backend` to check

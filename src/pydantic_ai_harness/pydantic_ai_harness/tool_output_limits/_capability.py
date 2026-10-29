@@ -355,10 +355,11 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         bands = self._per_tool.get(call.tool_name, self._bands)
         if media := _media_parts(return_value):
             # Images and files reach the model as they are, like those in `content`.
-            value_unit = _Unit(binary=True, text=None, data=b'', value=return_value, suffix='')
+            value_size = 0
             value_text, value_handle = await self._reduce_content(ctx, call, bands, media)
         else:
             value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
+            value_size = len(value_unit.data)
             value_text, value_handle = await self._reduce(ctx, call, bands, value_unit)
         content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
 
@@ -370,7 +371,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return_value=return_value,
             content=content,
             metadata=metadata,
-            value_unit=value_unit,
+            value_size=value_size,
             value_text=value_text,
             value_handle=value_handle,
             content_text=content_text,
@@ -384,7 +385,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         return_value: ToolReturnContent,
         content: str | Sequence[UserContent] | None,
         metadata: object,
-        value_unit: _Unit,
+        value_size: int,
         value_text: str | None,
         value_handle: str | None,
         content_text: str | None,
@@ -394,7 +395,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if wrapped:
             new_metadata = metadata
             if value_handle is not None or content_handle is not None:
-                new_metadata = _with_handles(metadata, value_handle, len(value_unit.data), content_handle)
+                new_metadata = _with_handles(metadata, value_handle, value_size, content_handle)
             wrapped_out: ToolReturn[object] = ToolReturn(
                 return_value=value_text if value_text is not None else return_value,
                 content=content_text if content_text is not None else content,
@@ -405,7 +406,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         # A plain (non-`ToolReturn`) result has no separate content part.
         if value_handle is not None:
             spilled_out: ToolReturn[object] = ToolReturn(
-                return_value=value_text, metadata=_with_handles(None, value_handle, len(value_unit.data))
+                return_value=value_text, metadata=_with_handles(None, value_handle, value_size)
             )
             return spilled_out
         return value_text

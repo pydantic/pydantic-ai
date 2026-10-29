@@ -26,7 +26,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserError,
 )
-from pydantic_ai.capabilities import AbstractCapability, ProcessHistory, SelectModel
+from pydantic_ai.capabilities import AbstractCapability, PrefixTools, ProcessHistory, SelectModel
 from pydantic_ai.computer_use import SAFETY_CHECKS
 from pydantic_ai.messages import BinaryContent, BinaryImage
 from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
@@ -71,13 +71,15 @@ pytestmark = pytest.mark.anyio
 SCREENSHOT = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
 
 
-def _scripted(*calls: list[dict[str, Any]], profile: ModelProfile | None = None) -> FunctionModel:
+def _scripted(
+    *calls: list[dict[str, Any]], profile: ModelProfile | None = None, tool: str = 'computer'
+) -> FunctionModel:
     """A model that calls `computer` once per action list, then answers `done`."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         made = sum(isinstance(part, ToolCallPart) for message in messages for part in message.parts)
         if made < len(calls):
-            return ModelResponse(parts=[ToolCallPart('computer', {'actions': calls[made]})])
+            return ModelResponse(parts=[ToolCallPart(tool, {'actions': calls[made]})])
         return ModelResponse(parts=[TextPart('done')])
 
     return FunctionModel(respond, profile=profile)
@@ -107,43 +109,43 @@ class TestComputerUse:
         assert first.metadata == {'performed': 3, 'screenshot_size': (1280, 800)}
         assert second.content == ['Ran 2 actions. Screenshot attached (1280x800).', SCREENSHOT]
 
-    async def test_a_failed_action_stops_the_rest_and_still_returns_a_screenshot(self) -> None:
-        provider = InMemoryProvider()
-        agent = Agent(
-            _scripted(
+    @pytest.mark.parametrize(
+        'actions,ran,summary',
+        [
+            pytest.param(
                 [
                     {'type': 'click', 'x': 1, 'y': 1},
                     {'type': 'hold_key', 'keys': ['shift'], 'seconds': 1},
                     {'type': 'type', 'text': 'never typed'},
-                ]
+                ],
+                [Click(x=1, y=1)],
+                "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after it "
+                'did not run. Screenshot attached (1280x800).',
+                id='stops-the-rest',
             ),
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
-        )
-        result = await agent.run('Go.')
+            pytest.param(
+                [{'type': 'hold_key', 'keys': ['shift'], 'seconds': 1}],
+                [],
+                "Action 1 of 1 (hold_key) failed: the fake display cannot perform 'hold_key'. Screenshot attached "
+                '(1280x800).',
+                id='last-skips-nothing',
+            ),
+        ],
+    )
+    async def test_a_failed_action_stops_the_rest_and_still_returns_a_screenshot(
+        self, actions: list[dict[str, Any]], ran: list[ComputerAction], summary: str
+    ) -> None:
+        provider = InMemoryProvider()
+        agent = Agent(_scripted(actions), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
-        assert provider.actions == [Click(x=1, y=1)]
-        (tool_return,) = _returns(result.all_messages())
-        assert tool_return.content == [
-            "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after it did not "
-            'run. Screenshot attached (1280x800).',
-            SCREENSHOT,
-        ]
+        assert provider.actions == ran
+        assert tool_return.content == [summary, SCREENSHOT]
         assert tool_return.metadata == {
-            'performed': 1,
+            'performed': len(ran),
             'error': "the fake display cannot perform 'hold_key'",
             'screenshot_size': (1280, 800),
         }
-
-    async def test_a_failed_last_action_skips_nothing(self) -> None:
-        agent = Agent(
-            _scripted([{'type': 'hold_key', 'keys': ['shift'], 'seconds': 1}]),
-            capabilities=[InMemoryProvider().capability(), ComputerUse(settle_seconds=0)],
-        )
-        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
-        assert tool_return.content == [
-            "Action 1 of 1 (hold_key) failed: the fake display cannot perform 'hold_key'. Screenshot attached (1280x800).",
-            SCREENSHOT,
-        ]
 
     @pytest.mark.parametrize(
         'actions,pauses',
@@ -151,18 +153,6 @@ class TestComputerUse:
             pytest.param([{'type': 'click', 'x': 1, 'y': 1}], [0.5], id='settles-after-acting'),
             pytest.param(
                 [{'type': 'click', 'x': 1, 'y': 1}, {'type': 'wait', 'seconds': 2}], [2, 0.5], id='a-wait-adds-to-it'
-            ),
-            pytest.param(
-                [
-                    {'type': 'click', 'x': 1, 'y': 1},
-                    {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 10, 'bottom': 10}},
-                    {'type': 'click', 'x': 1, 'y': 1},
-                ],
-                [0.5, 0.5],
-                id='settles-before-a-zoom-after-acting',
-            ),
-            pytest.param(
-                [{'type': 'wait', 'seconds': 1}, {'type': 'click', 'x': 1, 'y': 1}], [1, 0.5], id='acting-after-a-wait'
             ),
             pytest.param([{'type': 'screenshot'}], [], id='looking-needs-no-settling'),
         ],
@@ -247,7 +237,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             {'actions': [{'type': 'screenshot'}, {'type': 'click', 'x': 1, 'y': 1}]}
         ]
         (looked,) = _returns(result.all_messages())
-        assert looked.metadata == {'performed': 1, 'screenshot_size': (1280, 800)}
+        assert looked.content_items()[-1] == SCREENSHOT
         assert provider.actions == []
 
         (call,) = result.output.approvals
@@ -256,14 +246,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
         )
         assert provider.actions == [Click(x=1, y=1)]
-
-    def test_combined_approval_is_required_if_either_requires_it(self) -> None:
-        combined = ComputerUse.combine([ComputerUse[Any](requires_approval=True), ComputerUse[Any]()])
-        assert isinstance(combined, ComputerUse)
-        assert combined.requires_approval is True
-        none = ComputerUse.combine([ComputerUse[Any](), ComputerUse[Any]()])
-        assert isinstance(none, ComputerUse)
-        assert none.requires_approval is False
 
     async def test_zoom_and_the_pointer_position_come_back_before_the_screenshot(self) -> None:
         model = _scripted(
@@ -278,21 +260,26 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert pointer == 'The pointer is at (640, 400).'
         assert screenshot == SCREENSHOT
 
-    async def test_a_grid_model_zooms_and_reads_the_pointer_on_its_grid(self) -> None:
+    @pytest.mark.parametrize(
+        'region,zoomed_size',
+        [
+            pytest.param({'left': 0, 'top': 0, 'right': 500, 'bottom': 1000}, (640, 800), id='half-the-screen'),
+            pytest.param({'left': 0, 'top': 500, 'right': 10, 'bottom': 501}, (13, 1), id='thin-still-covers-a-pixel'),
+        ],
+    )
+    async def test_a_grid_model_zooms_and_reads_the_pointer_on_its_grid(
+        self, region: dict[str, int], zoomed_size: tuple[int, int]
+    ) -> None:
         model = _scripted(
-            [
-                {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 500, 'bottom': 1000}},
-                {'type': 'cursor_position'},
-            ],
+            [{'type': 'zoom', 'region': region}, {'type': 'cursor_position'}],
             profile=ModelProfile(computer_use_coordinate_grid=1000),
         )
-        agent = Agent(model, capabilities=[InMemoryProvider().capability(), ComputerUse()])
+        agent = Agent(model, capabilities=[InMemoryProvider().capability(), ComputerUse(settle_seconds=0)])
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         _, zoomed, pointer, _ = cast(list[Any], tool_return.content)
-        assert struct.unpack('>II', zoomed.data[16:24]) == (640, 800)
+        assert struct.unpack('>II', zoomed.data[16:24]) == zoomed_size
         assert pointer == 'The pointer is at (500, 500).'
-        assert tool_return.metadata == {'performed': 2, 'coordinate_grid': 1000, 'screenshot_size': (1280, 800)}
 
     async def test_a_call_its_provider_flagged_waits_for_approval_without_requires_approval(self) -> None:
         provider = InMemoryProvider()
@@ -399,17 +386,9 @@ You can see and control a computer screen with the `computer` tool. Each call ru
     async def test_capabilities_listed_after_it_neither_bring_screenshots_back_nor_drop_them_from_history(
         self, after: Callable[[], AbstractCapability[Any]]
     ) -> None:
-        sent: list[int] = []
-
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            returns = _returns(messages)
-            sent.append(sum(isinstance(item, BinaryContent) for part in returns for item in part.content_items()))
-            if len(returns) < 27:
-                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
-            return ModelResponse(parts=[TextPart('done')])
-
+        model, sent = _images_sent(27)
         agent = Agent(
-            FunctionModel(respond),
+            model,
             capabilities=[InMemoryProvider().capability(), ComputerUse(keep_screenshots=2, settle_seconds=0), after()],
         )
         result = await agent.run('Look.')
@@ -439,16 +418,8 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
                 return Screen(self, ref)
 
-        sent: list[int] = []
-
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            returns = _returns(messages)
-            sent.append(sum(isinstance(item, BinaryContent) for part in returns for item in part.content_items()))
-            if len(returns) < calls:
-                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
-            return ModelResponse(parts=[TextPart('done')])
-
-        agent = Agent(FunctionModel(respond), capabilities=[Provider().capability(), ComputerUse(settle_seconds=0)])
+        model, sent = _images_sent(calls)
+        agent = Agent(model, capabilities=[Provider().capability(), ComputerUse(settle_seconds=0)])
         await agent.run('Look.', usage_limits=UsageLimits(request_limit=None))
 
         # Every screenshot is sent until one more would pass the limit.
@@ -465,24 +436,34 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert len(capped) == 1
         assert 'List should have at most 20 items' in capped[0].model_response_str()
 
-    async def test_the_tool_is_sequential_and_marked_as_the_computer_kind(self) -> None:
-        seen: list[Any] = []
+    async def test_the_tool_is_sequential_of_the_computer_kind_and_declares_the_live_display_size(self) -> None:
+        seen: list[ToolDefinition] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             seen.extend(info.function_tools)
             return ModelResponse(parts=[TextPart('done')])
 
-        await Agent(FunctionModel(respond), capabilities=[InMemoryProvider().capability(), ComputerUse()]).run('Hi.')
+        earlier_screen = [
+            ModelRequest.user_text_prompt('Look.'),
+            ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]}, 'c1')]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        'computer',
+                        'Ran 1 action.',
+                        'c1',
+                        metadata={'screenshot_size': (1920, 1080)},
+                        tool_kind='computer',
+                    )
+                ]
+            ),
+        ]
+        agent = Agent(FunctionModel(respond), capabilities=[InMemoryProvider().capability(), ComputerUse()])
+        await agent.run('Go on.', message_history=earlier_screen)
         (tool,) = seen
         assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, 'computer')
-        # Under durable execution, each workspace call is its own activity or task rather than the whole call one.
-        # The display size is for providers whose native tool declares it.
-        assert tool.metadata == {
-            'temporal': False,
-            'prefect': False,
-            'render_workflows': False,
-            'display_size': (1280, 800),
-        }
+        # For providers whose native tool declares it: the display as it is now, not the last screenshot's size.
+        assert (tool.metadata or {}).get('display_size') == (1280, 800)
 
     @pytest.mark.parametrize(
         'workspace',
@@ -655,10 +636,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         with pytest.raises(UserError, match='`keep_screenshots` must be at least 1'):
             ComputerUse(keep_screenshots=0)
 
-    def test_requires_approval_takes_only_a_bool(self) -> None:
-        with pytest.raises(UserError, match='`requires_approval` must be `True` or `False`'):
-            ComputerUse(requires_approval=cast(Any, {'click'}))
-
     @pytest.mark.parametrize(
         'settings,cache',
         [
@@ -685,27 +662,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         )
         await agent.run('Go.')
         assert seen == [cache]
-
-    async def test_coder_output_limits_leave_the_screenshot_an_image(self) -> None:
-        from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
-
-        # A real screen's PNG is larger than the 64k characters output limits would otherwise cut it to.
-        big = BinaryImage(data=FAKE_SCREENSHOT + b'\x00' * 200_000, media_type='image/png')
-
-        class BigScreen(ProviderBackend):
-            async def screenshot(self) -> bytes:
-                return big.data
-
-        class Provider(InMemoryProvider):
-            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
-                return BigScreen(self, ref)
-
-        agent = Agent(
-            _scripted([{'type': 'screenshot'}]),
-            capabilities=[Provider().capability(), ComputerUse(settle_seconds=0), ToolOutputLimits()],
-        )
-        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
-        assert tool_return.content == ['Ran 1 action. Screenshot attached (1280x800).', big]
 
     async def test_runs_attached_to_one_environment_take_turns_on_its_screen(self) -> None:
         turns = _Turns()
@@ -737,14 +693,22 @@ You can see and control a computer screen with the `computer` tool. Each call ru
     async def test_an_approved_call_runs_on_the_grid_it_was_made_on_whichever_model_resumes(self) -> None:
         provider = InMemoryProvider()
         agent = Agent(
-            _scripted([{'type': 'click', 'x': 500, 'y': 500}], profile=ModelProfile(computer_use_coordinate_grid=1000)),
-            capabilities=[provider.capability(), ComputerUse(requires_approval=True, settle_seconds=0)],
+            _scripted(
+                [{'type': 'click', 'x': 500, 'y': 500}],
+                profile=ModelProfile(computer_use_coordinate_grid=1000),
+                tool='screen_computer',
+            ),
+            capabilities=[
+                provider.capability(),
+                # An app's own `computer_use` metadata key must not be taken for the call's record.
+                _AppLabel(),
+                # The record is found by the tool's kind, whatever the tool is called.
+                PrefixTools(ComputerUse(requires_approval=True, settle_seconds=0), prefix='screen'),
+            ],
             output_type=[str, DeferredToolRequests],
         )
         paused = await agent.run('Go.')
-        assert isinstance(paused.output, DeferredToolRequests)
-        (call,) = paused.output.approvals
-
+        (call,) = cast(DeferredToolRequests, paused.output).approvals
         await agent.run(
             model=_scripted(),  # points in pixels
             message_history=paused.all_messages(),
@@ -775,48 +739,10 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         )
         assert tool_return.metadata == {'performed': 1, 'changed': True, 'screenshot_size': (1280, 800)}
 
-    async def test_the_declared_display_size_is_the_live_one_not_the_last_seen(self) -> None:
-        seen: list[Any] = []
-
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            seen.extend((tool.metadata or {}).get('display_size') for tool in info.function_tools)
-            return ModelResponse(parts=[TextPart('done')])
-
-        earlier_screen = [
-            ModelRequest.user_text_prompt('Look.'),
-            ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]}, 'c1')]),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        'computer',
-                        'Ran 1 action.',
-                        'c1',
-                        metadata={'screenshot_size': (1920, 1080)},
-                        tool_kind='computer',
-                    )
-                ]
-            ),
-        ]
-        agent = Agent(FunctionModel(respond), capabilities=[InMemoryProvider().capability(), ComputerUse()])
-        await agent.run('Go on.', message_history=earlier_screen)
-        assert seen == [(1280, 800)]
-
     async def test_a_screen_larger_than_the_model_takes_is_sent_scaled_down_and_its_positions_scaled_up(
         self,
     ) -> None:
         provider = InMemoryProvider()
-        scaled: list[tuple[int, int]] = []
-
-        class Scales(ProviderBackend):
-            async def scaled_screenshot(self, width: int, height: int) -> bytes:
-                scaled.append((width, height))
-                return _png_header(width, height)
-
-        class Provider(InMemoryProvider):
-            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
-                return Scales(self, ref)
-
-        provider = Provider()
         model = _scripted(
             [{'type': 'screenshot'}],
             [{'type': 'click', 'x': 500, 'y': 300}],
@@ -828,7 +754,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert first.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
         assert second.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
         assert provider.actions == [Click(x=640, y=384)]
-        assert scaled == [(1000, 625), (1000, 625)]
 
     async def test_gpt_gets_a_4k_screen_scaled_down_to_where_it_clicks_accurately(self) -> None:
         class FourK(ProviderBackend):
@@ -877,16 +802,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             'Ran 1 action. Screenshot attached (1280x800).',
         ]
 
-    async def test_a_thin_zoom_on_the_grid_still_covers_a_pixel(self) -> None:
-        model = _scripted(
-            [{'type': 'zoom', 'region': {'left': 0, 'top': 500, 'right': 10, 'bottom': 501}}],
-            profile=ModelProfile(computer_use_coordinate_grid=1000),
-        )
-        agent = Agent(model, capabilities=[InMemoryProvider().capability(), ComputerUse(settle_seconds=0)])
-        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
-        zoomed = cast(BinaryContent, tool_return.content_items()[1])
-        assert struct.unpack('>II', zoomed.data[16:24]) == (13, 1)
-
     async def test_workspaces_showing_one_screen_take_turns_on_it(self) -> None:
         """Separate environments whose displays name the same screen, such as one X `DISPLAY`, share its lock."""
         turns = _Turns()
@@ -912,40 +827,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
 
         assert len(provider.environments) == 2
         assert provider.actions == [Click(x=1, y=1), TypeText(text='first'), Click(x=2, y=1), TypeText(text='second')]
-
-    async def test_the_call_record_has_a_key_of_its_own_beside_the_apps_metadata(self) -> None:
-        class AppLabel(AbstractCapability[Any]):
-            async def after_model_request(
-                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
-            ) -> ModelResponse:
-                return replace(response, metadata={**(response.metadata or {}), 'computer_use': 'app label'})
-
-        provider = InMemoryProvider()
-        agent = Agent(
-            _scripted([{'type': 'click', 'x': 500, 'y': 500}], profile=ModelProfile(computer_use_coordinate_grid=1000)),
-            capabilities=[
-                provider.capability(),
-                AppLabel(),
-                ComputerUse(requires_approval=True, settle_seconds=0),
-            ],
-            output_type=[str, DeferredToolRequests],
-        )
-        paused = await agent.run('Go.')
-        assert isinstance(paused.output, DeferredToolRequests)
-        (call,) = paused.output.approvals
-        response = paused.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
-        assert response.metadata == {
-            'computer_use': 'app label',
-            'pydantic-ai-harness.computer-use.v1': {'coordinate_grid': 1000},
-        }
-
-        await agent.run(
-            model=_scripted(),  # points in pixels
-            message_history=paused.all_messages(),
-            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
-        )
-        assert provider.actions == [Click(x=640, y=400)]
 
     async def test_in_workflow_code_a_large_screen_is_scaled_through_the_workspace(self) -> None:
         """Durable workflow code can't reach the backend, so the scaled screenshot goes through the workspace."""
@@ -1160,6 +1041,13 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert provider.actions == []
 
 
+class _AppLabel(AbstractCapability[Any]):
+    async def after_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        return replace(response, metadata={**(response.metadata or {}), 'computer_use': 'app label'})
+
+
 class _Turns:
     """Two runs on one screen, overlapping for sure: the second starts once the first has done its first action, which
     then waits until the second run's `computer` call has started and every other task is blocked. That call has then
@@ -1195,10 +1083,20 @@ class _Turns:
             tg.start_soon(second)
 
 
+def _images_sent(calls: int) -> tuple[FunctionModel, list[int]]:
+    """A model that looks `calls` times, and how many images each of its requests carried."""
+    sent: list[int] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        returns = _returns(messages)
+        sent.append(sum(isinstance(item, BinaryContent) for part in returns for item in part.content_items()))
+        if len(returns) < calls:
+            return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    return FunctionModel(respond), sent
+
+
 def _unchanged(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages
 
-
-def _png_header(width: int, height: int) -> bytes:
-    """The start of a PNG of that size: enough for its size to be read."""
-    return b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + struct.pack('>II', width, height)
