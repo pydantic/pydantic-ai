@@ -152,6 +152,12 @@ case " $* " in *' NoSuchKey '*) echo "(symbol) No such key name 'NoSuchKey'. Ign
 """Stands in for `xdotool` in a container: reports a 1280x800 display and the pointer at its middle unless
 `no-display` exists, skips the key `NoSuchKey` as xdotool skips a name it doesn't know, and logs each call."""
 
+_FAKE_XWININFO = """#!/bin/sh
+[ ! -e "$(dirname "$0")/no-display" ] || { echo "xwininfo: unable to open display" >&2; exit 1; }
+printf '  Width: 1280\\n  Height: 800\\n'
+"""
+"""Stands in for `xwininfo -root`, so a host's real one never answers for the container's display."""
+
 _FAKE_SCROT = """#!/bin/sh
 for last; do :; done
 cp "$(dirname "$0")/screen.png" "$last"
@@ -274,6 +280,7 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
         ('tint2', _FAKE_FLUXBOX),
         ('setsid', _FAKE_SETSID),
         ('scrot', _FAKE_SCROT),
+        ('xwininfo', _FAKE_XWININFO),
     ]:
         (bin_dir / name).write_text(script)
         (bin_dir / name).chmod(0o755)
