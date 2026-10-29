@@ -495,9 +495,10 @@ _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZ
 def _join_text_content_parts(content: object) -> object:
     """Join a list of content parts into the string the Chat Completions API specifies, keeping only their text.
 
-    Some OpenAI-compatible servers (Mistral models behind a vLLM-style endpoint, for one) return `content` as a
-    list of parts like `[{'type': 'text', 'text': '...'}]`, especially when the answer carries references. Anything
-    that isn't a list is returned unchanged; a list with no text becomes `None`.
+    Some OpenAI-compatible servers (Mistral models served by the Albert API, for one) return `content` as a list of
+    parts like `[{'type': 'text', 'text': '...'}]`, especially when the answer carries references. Parts other than
+    text, like those references, are dropped. Anything that isn't a list is returned unchanged; a list with no text
+    becomes `None`.
     """
     if not isinstance(content, list):
         return content
