@@ -412,12 +412,13 @@ class ProviderBackend(
     SupportsScaledScreenshot,
     SupportsCursorPosition,
 ):
+    starts = 0
+    """How many times the display started, as a display that counts its starts reports it."""
+
     def __init__(self, provider: InMemoryProvider, ref: WorkspaceRef | None) -> None:
         self._provider = provider
         self._ref = ref
         self.attached = False
-        self.starts = 0
-        """How many times the display started, as a display that counts its starts reports it."""
 
     @property
     def ref(self) -> WorkspaceRef | None:
