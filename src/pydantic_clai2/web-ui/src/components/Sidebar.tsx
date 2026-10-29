@@ -452,8 +452,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                 <button
                   disabled={!archivable(session)}
                   title={
-                    session.id === shown
-                      ? 'The open session cannot be archived'
+                    session.id === shown || session.id in live
+                      ? 'A session open in CLAI cannot be archived'
                       : !archivable(session)
                         ? 'A running session cannot be archived'
                         : 'Hide it; nothing is deleted'
