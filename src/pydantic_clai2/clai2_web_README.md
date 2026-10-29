@@ -34,8 +34,8 @@ outside Git is a project of its own. Projects are listed by name and sessions ne
 first, so a row never moves when you select it, a turn ends, a session is renamed, or the list
 refreshes; a new session appears at the top. A session remembers its checkout when it is
 saved, so one from a worktree you have since removed stays with its project; sessions whose folder
-is gone fold into **Removed worktrees** at the bottom, closed until you open it. When two rows share a title, each shows a
-short ID. Click one to switch to it, even while other sessions run turns: the row is selected at
+is gone fold into **Removed worktrees** at the bottom, closed until you open it. When two rows of one project or list share a
+title, each shows a short ID. Click one to switch to it, even while other sessions run turns: the row is selected at
 once, and each session you open stays live and keeps working while you look at another.
 
 Each row has one status mark. A spinner, with how long the turn has run, means a turn runs here
