@@ -18,12 +18,12 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Extensibility | [Visual workflows](https://elevenlabs.io/docs/eleven-agents/customization/workflows), knowledge bases, and client, webhook, code, MCP, and system tools | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Hosted agents configured in the dashboard or by API | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | [Analytics](https://elevenlabs.io/docs/eleven-agents/dashboard) and [OpenTelemetry trace export](https://elevenlabs.io/docs/eleven-agents/customization/opentelemetry-traces) | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
+| Enterprise support | With an [ElevenLabs Enterprise plan](https://elevenlabs.io/enterprise) | [For the framework itself](../enterprise-support.md), no platform required |
 | Durable execution | None documented | [Eight integrations](../durable_execution/overview.md) |
 | Interfaces | [Widget](https://elevenlabs.io/docs/eleven-agents/customization/widget), client SDKs, WebSocket, Twilio, and SIP | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | Hosted cascaded speech pipeline or [Realtime voice mode](https://elevenlabs.io/docs/eleven-agents/customization/realtime-models) | [Speech-to-speech](../realtime/overview.md), five providers |
 | Evals | [Simulation, next-reply, and tool-call tests](https://elevenlabs.io/docs/eleven-agents/customization/agent-testing) | [Pydantic Evals](../evals.md) |
 | Image generation | None documented | [Image Generation](../image-generation.md) |
-| Enterprise support | With an [ElevenLabs Enterprise plan](https://elevenlabs.io/enterprise) | [For the framework itself](../enterprise-support.md), no platform required |
 
 ## Voice agents, side by side
 
