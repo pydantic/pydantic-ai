@@ -279,7 +279,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
         with set_current_run_context(run_ctx):
-            with capability_load_phase('before_run'):
+            with capability_load_phase('before_run', _enqueue.run_queue(run_ctx)):
                 await run_capability.before_run(run_ctx)
             current_ctx = contextvars.copy_context()
         # Capture context vars set by wrap_run/before_run so they can be propagated to the

@@ -2938,7 +2938,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         mirrored_messages = HistoryMirroringMessages(request_context.messages, ctx.state.message_history)
         request_context.messages = mirrored_messages
         try:
-            with capability_load_phase('before_model_request'):
+            with capability_load_phase('before_model_request', _enqueue.run_queue(run_context)):
                 processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
         finally:
             # Only the before-chain keeps the old write-back; wrap and after hooks get a request-only list.

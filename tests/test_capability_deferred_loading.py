@@ -3542,6 +3542,27 @@ async def test_load_capability_before_a_request_takes_effect_on_it(hook: str, mo
     assert _load_records(messages) == [('refunds', None)]
 
 
+async def test_load_capability_in_a_run_nested_in_before_run_follows_its_own_rules() -> None:
+    """A run started from another run's `before_run` hook doesn't inherit that hook's permission to load.
+
+    Its `after_model_request` comes after its final answer, so a load there is refused as in any other run.
+    """
+    inner = Agent(
+        FunctionModel(lambda messages, info: make_text_response('refunds')),
+        capabilities=[_refunds(), _load_refunds_from('after_model_request')],
+    )
+    hooks = Hooks[object]()
+
+    @hooks.on.before_run
+    async def classify(ctx: RunContext[object]) -> None:
+        await inner.run('Which capability applies?')
+
+    outer = Agent(FunctionModel(lambda messages, info: make_text_response('done')), capabilities=[_refunds(), hooks])
+
+    with pytest.raises(UserError, match=r'can only be called where a model request follows'):
+        await outer.run('Was I refunded?')
+
+
 async def test_load_capability_without_tools_before_run() -> None:
     """A capability without tools loaded from `before_run` is recorded with no tool reveal, and its instructions are stated."""
     policy = Capability[object](
