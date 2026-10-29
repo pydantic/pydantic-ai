@@ -1,28 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import httpx
 import pytest
-from nace_sdk import (
-    Choice,
-    ChoiceAnswer,
-    NaceAPIConnectionError,
-    NaceAPIResponseValidationError,
-    NaceAPITimeoutError,
-    NaceError,
-    NaceInsufficientCreditError,
-    NaceOverloadedError,
-    NaceRateLimitError,
-    NaceUnprocessableEntityError,
-    Noul,
-    NoulAnswer,
-    NoulCriteria,
-    RetryPolicy,
-    Score,
-    ScoreAnswer,
-    image_input,
-)
 
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -48,9 +30,35 @@ from pydantic_ai.models.decision import (
     ScoreQuestion,
     _decide_response_attributes,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.models.nace import NaceModel
-from pydantic_ai.providers.nace import NaceProvider
 from pydantic_ai.usage import RequestUsage
+
+from ..conftest import try_import
+
+with try_import() as imports_successful:
+    from nace_sdk import (
+        Choice,
+        ChoiceAnswer,
+        NaceAPIConnectionError,
+        NaceAPIResponseValidationError,
+        NaceAPITimeoutError,
+        NaceError,
+        NaceInsufficientCreditError,
+        NaceOverloadedError,
+        NaceRateLimitError,
+        NaceUnprocessableEntityError,
+        Noul,
+        NoulAnswer,
+        NoulCriteria,
+        RetryPolicy,
+        Score,
+        ScoreAnswer,
+        image_input,
+    )
+
+    from pydantic_ai.models.nace import NaceModel
+    from pydantic_ai.providers.nace import NaceProvider
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='nace-sdk not installed')
 
 _PNG = bytes.fromhex(
     '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489'
@@ -256,13 +264,16 @@ async def test_retry_policy_covers_429_and_529_and_respects_retry_after() -> Non
 
 
 @pytest.mark.parametrize(
-    ('error', 'category'),
+    ('make_error', 'category'),
     [
-        (NaceRateLimitError(429, {'error': 'slow down'}, httpx.Headers()), ModelRateLimitError),
-        (NaceOverloadedError(529, {'error': 'overloaded'}, httpx.Headers()), ModelOverloadedError),
+        (lambda: NaceRateLimitError(429, {'error': 'slow down'}, httpx.Headers()), ModelRateLimitError),
+        (lambda: NaceOverloadedError(529, {'error': 'overloaded'}, httpx.Headers()), ModelOverloadedError),
     ],
 )
-async def test_rate_limit_and_overloaded_map_to_model_http_errors(error: Exception, category: type[Exception]) -> None:
+async def test_rate_limit_and_overloaded_map_to_model_http_errors(
+    make_error: Callable[[], NaceError], category: type[Exception]
+) -> None:
+    error = make_error()
     client = _Client(error=error)
     with pytest.raises(category) as exc_info:
         await _model('drex-v2.0', client).decide(_request(), {})
@@ -372,18 +383,23 @@ async def test_timeout_defaults_to_60_seconds_and_a_set_timeout_is_forwarded() -
 
 
 @pytest.mark.parametrize(
-    ('error', 'category'),
+    ('make_error', 'category'),
     [
-        (NaceAPIResponseValidationError(200, {'answers': 1}, httpx.Headers(), 'answers'), UnexpectedModelBehavior),
-        (NaceAPIConnectionError('connection reset'), ModelConnectionError),
-        (NaceAPITimeoutError(60.0), ModelTimeoutError),
-        (NaceError('no API key'), UserError),
+        (
+            lambda: NaceAPIResponseValidationError(200, {'answers': 1}, httpx.Headers(), 'answers'),
+            UnexpectedModelBehavior,
+        ),
+        (lambda: NaceAPIConnectionError('connection reset'), ModelConnectionError),
+        (lambda: NaceAPITimeoutError(60.0), ModelTimeoutError),
+        (lambda: NaceError('no API key'), UserError),
     ],
 )
-async def test_sdk_errors_map_to_pydantic_ai_errors(error: Exception, category: type[Exception]) -> None:
+async def test_sdk_errors_map_to_pydantic_ai_errors(
+    make_error: Callable[[], NaceError], category: type[Exception]
+) -> None:
     """Unit test: these failures come from the SDK's own checks or the transport, which a recording cannot replay."""
     with pytest.raises(category):
-        await _model('drex-v2.0', _Client(error=error)).decide(_request(), {})
+        await _model('drex-v2.0', _Client(error=make_error())).decide(_request(), {})
 
 
 async def test_a_response_without_a_request_id_has_no_provider_response_id() -> None:

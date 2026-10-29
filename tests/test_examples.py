@@ -605,6 +605,7 @@ def test_docs_examples(
     env.set('GROQ_API_KEY', 'testing')
     env.set('CO_API_KEY', 'testing')
     env.set('TYPESAFE_API_KEY', 'testing')
+    env.set('NACE_API_KEY', 'testing')
     env.set('SYSTEM_ONE_BASE_URL', 'http://localhost:8700')
     env.set('MISTRAL_API_KEY', 'testing')
     env.set('ANTHROPIC_API_KEY', 'testing')
