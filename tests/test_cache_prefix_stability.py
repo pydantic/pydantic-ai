@@ -472,6 +472,12 @@ async def test_anthropic_foreign_thinking_roundtrip_wire_stable(
             ],
             '0.1.11',
             id='retry',
+            marks=pytest.mark.skipif(
+                not ag_ui_reasoning_successful(),
+                # Before 0.1.11 the installed SDK has no `encrypted_value`, so the feedback reloads as plain user
+                # text without the frame ref its fence was sent with (`dump_messages` warns about this).
+                reason='ag-ui-protocol < 0.1.11 (no `encrypted_value` carrier)',
+            ),
         ),
     ],
 )
