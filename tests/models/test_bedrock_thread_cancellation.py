@@ -116,13 +116,13 @@ async def _request(model: BedrockConverseModel, blocks: Blocks, *, request_timeo
                 pass  # pragma: no cover
 
 
-def _assert_ended_while_blocked(client: _BlockingBedrockClient, blocks: Blocks) -> None:
-    """Check the request ended without waiting for the blocked thread to be released by the test."""
-    if blocks == 'stream_read':
-        # Closing the stream on the way out shut its connection down, which woke the read, and closed it.
-        assert client.stream.closed.is_set()
-    else:
-        assert not client.unblocked.is_set()
+def _assert_ended_while_blocked(client: _BlockingBedrockClient) -> None:
+    """Check the request ended without waiting for the blocked call or read to give up on its own.
+
+    Only the test releases a blocked call, after this check, while a blocked read is also released by shutting down
+    the stream's connection, which closing the stream does on the way out.
+    """
+    assert client.release.is_set() or not client.unblocked.is_set()
 
 
 async def _assert_cleaned_up(client: _BlockingBedrockClient, blocks: Blocks) -> None:
@@ -139,7 +139,7 @@ async def test_request_timeout_ends_a_blocked_request(allow_model_requests: None
     model = _model(client)
     with pytest.raises(ModelRequestTimeout):
         await _request(model, blocks, request_timeout=SHORT_TIMEOUT)
-    _assert_ended_while_blocked(client, blocks)
+    _assert_ended_while_blocked(client)
     await _assert_cleaned_up(client, blocks)
 
 
@@ -152,5 +152,5 @@ async def test_cancellation_ends_a_blocked_request(allow_model_requests: None, b
         client.on_blocked = scope.cancel
         await _request(model, blocks)
     assert scope.cancelled_caught
-    _assert_ended_while_blocked(client, blocks)
+    _assert_ended_while_blocked(client)
     await _assert_cleaned_up(client, blocks)
