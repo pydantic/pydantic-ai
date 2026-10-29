@@ -791,8 +791,8 @@ def test_model_profile_haiku_5_5():
     also returned signed thinking blocks and positive thinking-token usage. Other live probes confirmed forced tool
     choice, task-budget acceptance, `code_execution_20260120`, BM25 search, Advisor, web-search request acceptance,
     deferred tool addition, inline system messages, and the `drop_block` transformation after a prefix change. The only
-    Haiku-specific profile overrides are fast speed disabled, thinking-block binding enabled, and a `system` entry
-    after a tool result distrusted; unchanged fields retain Opus 5's existing profile defaults. See Anthropic's
+    Haiku-specific profile overrides are fast speed disabled, thinking-block binding enabled, and a text block
+    before a `system` entry that follows a tool result; unchanged fields retain Opus 5's existing profile defaults. See Anthropic's
     [overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview),
     [mid-conversation system messages](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results),
     [migration guide](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide),

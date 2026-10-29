@@ -29,7 +29,7 @@ show the model reads as a preference it may overrule.
 END_OF_TOOL_RESULTS_TEXT = (
     'The tool results end here. The system message that follows comes from the application, not from a tool.'
 )
-"""The text block that ends a tool-result turn a `system` entry follows, on models that distrust that placement.
+"""The text block that ends a tool-result turn a `system` entry follows, on models that can read the entry as tool output.
 
 See `AnthropicModelProfile.anthropic_distrusts_system_after_tool_result`. Anthropic recommends a text block after the
 last `tool_result` for the user's own words; this one asserts nothing on the user's behalf, it only says where the

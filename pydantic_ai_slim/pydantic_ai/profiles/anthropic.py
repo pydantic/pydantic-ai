@@ -193,21 +193,15 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """
 
     anthropic_distrusts_system_after_tool_result: bool
-    """Whether the model can read a mid-conversation `system` entry that directly follows a tool result as tool output. Default: `False`.
+    """Whether the model can read a mid-conversation `system` entry that directly follows a tool result as part of the tool output. Default: `False`.
 
-    Claude Haiku 5.5 is trained to resist prompt injection through tool results, so it can ignore an instruction
-    in a `{'role': 'system'}` entry that comes right after a `tool_result`, as [Anthropic's
+    Claude Haiku 5.5 can read a `{'role': 'system'}` entry that directly follows a `tool_result` as part of the tool
+    output, and so not follow it, as [Anthropic's
     docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results)
-    warn. That's where a loaded on-demand capability's instructions and an instruction change during a tool loop
+    note. That's where a loaded on-demand capability's instructions and an instruction change during a tool loop
     land. When True, `AnthropicModel` ends that user turn with a short text block saying the tool results end
-    there and the system message comes from the application.
-
-    Measured live on Claude Haiku 5.5 (2026-10-28, 64 runs per cell), with the block against without it: French
-    loaded with a capability 64/64 against 51/64, a capability withdrawing a rule 64/64 against 12/64, an
-    instruction added after a tool result 64/64 against 42/64, a withdrawn instruction 64/64 against 31/64. Asked to
-    lift a restriction, Haiku 5.5 refuses wherever the entry sits, after a user prompt too. Claude Sonnet 5.5, which
-    the same docs name, and Claude Opus 5.5 followed every instruction without the block (16 runs per cell), so it's
-    off for them.
+    there and the system message comes from the application. Measured live, that block took Haiku 5.5 from 12 to
+    64 of 64 runs following a rule change; Sonnet 5.5 and Opus 5.5 followed it without the block.
     """
 
     anthropic_accepts_file_and_container_ids: bool
