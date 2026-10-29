@@ -113,11 +113,6 @@ ModelSpec: TypeAlias = str | OpenAICompatibleModelSpec
 """A model in a spec: a `provider:model` name, or an [`OpenAICompatibleModelSpec`][pydantic_ai.agent.OpenAICompatibleModelSpec]."""
 
 
-def model_from_spec(model: ModelSpec) -> Model | str:
-    """Turn a spec's model into what `Agent` accepts: a model name stays a name, a model spec is built."""
-    return model.build_model() if isinstance(model, OpenAICompatibleModelSpec) else model
-
-
 class AgentSpec(BaseModel):
     """Specification for constructing an Agent from a dict/YAML/JSON."""
 

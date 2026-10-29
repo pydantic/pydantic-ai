@@ -170,7 +170,7 @@ from .abstract import (
     _RealtimeSessionLifecycle,  # pyright: ignore[reportPrivateUsage]
     _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
 )
-from .spec import AgentSpec, ModelSpec, OpenAICompatibleModelSpec, get_capability_registry, model_from_spec
+from .spec import AgentSpec, ModelSpec, OpenAICompatibleModelSpec, get_capability_registry
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
@@ -1123,7 +1123,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if capabilities:
             all_capabilities.extend(capabilities)
 
-        effective_model = model or (model_from_spec(validated_spec.model) if validated_spec.model is not None else None)
+        effective_model = model or (
+            _model_from_spec(validated_spec.model) if validated_spec.model is not None else None
+        )
 
         agent = Agent(
             model=effective_model,
@@ -1685,7 +1687,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None:
             # Model: spec as fallback (override > run param > spec > agent), so it's only built when it's used
             if model is None and self._override_model.get() is None and resolved.model is not None:
-                model = model_from_spec(resolved.model)
+                model = _model_from_spec(resolved.model)
             # Output retries: run param > spec > agent default
             if effective_output_retries is None and resolved.output_retries is not None:
                 effective_output_retries = resolved.output_retries
@@ -2462,7 +2464,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if not _utils.is_set(name) and resolved.name is not None:
                 name = resolved.name
             if not _utils.is_set(model) and resolved.model is not None:
-                model = model_from_spec(resolved.model)
+                model = _model_from_spec(resolved.model)
             if not _utils.is_set(instructions) and resolved.instructions:
                 instructions = resolved.instructions
             if not _utils.is_set(model_settings) and resolved.model_settings is not None:
@@ -5539,6 +5541,11 @@ def _synthetic_capability_id(cls: type[AbstractCapability[Any]], *, taken: Colle
         candidate = f'<{base_id}:{uuid4().hex[:6]}>'
         if candidate not in taken:
             return candidate
+
+
+def _model_from_spec(model: ModelSpec) -> models.Model | str:
+    """Turn a spec's model into what `Agent` accepts: a model name stays a name, a model spec is built."""
+    return model.build_model() if isinstance(model, OpenAICompatibleModelSpec) else model
 
 
 def _validate_spec(

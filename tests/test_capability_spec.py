@@ -788,22 +788,43 @@ def test_agent_spec_openai_compatible_model_validation(fields: dict[str, Any], e
         AgentSpec.model_validate({'model': _openai_compatible_model(**fields)})
 
 
-@pytest.mark.parametrize('fmt', ['yaml', 'json'])
-def test_to_file_roundtrip_openai_compatible_model(tmp_path: Path, fmt: str) -> None:
-    spec = AgentSpec.model_validate({'model': _openai_compatible_model(base_url_env='MY_GATEWAY_BASE_URL')})
-    spec_path = tmp_path / f'agent.{fmt}'
-    spec.to_file(spec_path)
-
-    assert AgentSpec.from_file(spec_path).model == spec.model
-    if fmt == 'yaml':
-        assert spec_path.read_text(encoding='utf-8') == snapshot("""\
+@pytest.mark.parametrize(
+    'fmt, expected',
+    [
+        (
+            'yaml',
+            snapshot("""\
 # yaml-language-server: $schema=agent_schema.json
 model:
   provider: openai-compatible
   provider_name: my-gateway
   model_name: qwen/qwen3
   base_url_env: MY_GATEWAY_BASE_URL
-""")
+"""),
+        ),
+        (
+            'json',
+            snapshot("""\
+{
+  "$schema": "agent_schema.json",
+  "model": {
+    "provider": "openai-compatible",
+    "provider_name": "my-gateway",
+    "model_name": "qwen/qwen3",
+    "base_url_env": "MY_GATEWAY_BASE_URL"
+  }
+}
+"""),
+        ),
+    ],
+)
+def test_to_file_roundtrip_openai_compatible_model(tmp_path: Path, fmt: str, expected: str) -> None:
+    spec = AgentSpec.model_validate({'model': _openai_compatible_model(base_url_env='MY_GATEWAY_BASE_URL')})
+    spec_path = tmp_path / f'agent.{fmt}'
+    spec.to_file(spec_path)
+
+    assert spec_path.read_text(encoding='utf-8') == expected
+    assert AgentSpec.from_file(spec_path).model == spec.model
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
