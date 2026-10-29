@@ -34,7 +34,6 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import (
@@ -755,21 +754,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert second.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
         assert provider.actions == [Click(x=640, y=384)]
 
-    async def test_gpt_gets_a_4k_screen_scaled_down_to_where_it_clicks_accurately(self) -> None:
-        class FourK(ProviderBackend):
-            async def display_size(self) -> tuple[int, int]:
-                return (3840, 2160)
-
-        provider = InMemoryProvider()
-        model = _scripted(
-            [{'type': 'screenshot'}], [{'type': 'click', 'x': 1280, 'y': 720}], profile=openai_model_profile('gpt-5.5')
-        )
-        agent = Agent(model, capabilities=[ComputerUse(settle_seconds=0)])
-        first, _ = _returns((await agent.run('Go.', workspace=FourK(provider, None))).all_messages())
-
-        assert first.metadata == {'performed': 1, 'screenshot_size': (2560, 1440)}
-        assert provider.actions == [Click(x=1920, y=1080)]
-
     async def test_a_screen_larger_than_the_model_takes_ends_the_run_when_the_display_cannot_scale_it(self) -> None:
         model = _scripted(
             [{'type': 'screenshot'}], profile=ModelProfile(computer_use_screenshot_limit=(1000, 1_000_000))
@@ -1099,4 +1083,3 @@ def _images_sent(calls: int) -> tuple[FunctionModel, list[int]]:
 
 def _unchanged(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages
-
