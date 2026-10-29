@@ -3563,6 +3563,184 @@ async def test_load_capability_in_a_run_nested_in_before_run_follows_its_own_rul
         await outer.run('Was I refunded?')
 
 
+def _load_refunds_after_tool_call_responses(results: list[bool]) -> Hooks[object]:
+    """A `Hooks` capability whose `after_model_request` loads `refunds` on every response with tool calls."""
+    hooks = Hooks[object]()
+
+    @hooks.on.after_model_request
+    async def load_refunds(
+        ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        if response.tool_calls:
+            results.append(ctx.load_capability('refunds'))
+        return response
+
+    return hooks
+
+
+@pytest.mark.parametrize('mode', ['run', 'run_stream', 'iter'])
+async def test_load_capability_after_a_response_with_tool_calls_takes_effect_on_the_next_request(mode: str) -> None:
+    """`after_model_request` can load on a response whose tool calls the run executes: another request follows.
+
+    The load is recorded after that response's tool returns, like a load from one of its tools.
+    """
+    requests: list[list[str]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        requests.append([tool.name for tool in info.function_tools])
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('open_case', {}, tool_call_id='open')])
+        return make_text_response('done')
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        response = respond(messages, info)
+        if response.tool_calls:
+            yield {0: DeltaToolCall(name='open_case', json_args='{}', tool_call_id='open')}
+        else:
+            yield 'done'
+
+    results: list[bool] = []
+    agent = Agent(
+        FunctionModel(respond, stream_function=stream_fn),
+        capabilities=[_refunds(), _load_refunds_after_tool_call_responses(results)],
+    )
+
+    @agent.tool_plain
+    def open_case() -> str:
+        return 'Case opened.'
+
+    if mode == 'run':
+        messages = (await agent.run('Was I refunded?')).all_messages()
+    elif mode == 'run_stream':
+        async with agent.run_stream('Was I refunded?') as streamed:
+            await streamed.get_output()
+        messages = streamed.all_messages()
+    else:
+        async with agent.iter('Was I refunded?') as agent_run:
+            async for _ in agent_run:
+                pass
+        assert agent_run.result is not None
+        messages = agent_run.result.all_messages()
+
+    assert results == [True]
+    assert ['refund_status' in tools for tools in requests] == [False, True]
+    assert [type(part).__name__ for part in messages[2].parts] == [
+        'ToolReturnPart',
+        'CapabilityLoadDeltaPart',
+        'ToolAvailabilityDeltaPart',
+        'InstructionDeltaPart',
+    ]
+    assert _load_records(messages) == [('refunds', None)]
+
+
+async def test_load_capability_after_a_response_with_text_and_tool_calls() -> None:
+    """A response with text as well as tool calls isn't final either: the run executes the calls and continues."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Let me check.'), ToolCallPart('open_case', {}, tool_call_id='open')])
+        return make_text_response('done')
+
+    results: list[bool] = []
+    agent = Agent(FunctionModel(model_fn), capabilities=[_refunds(), _load_refunds_after_tool_call_responses(results)])
+
+    @agent.tool_plain
+    def open_case() -> str:
+        return 'Case opened.'
+
+    result = await agent.run('Was I refunded?')
+
+    assert (results, _load_records(result.all_messages())) == ([True], [('refunds', None)])
+
+
+async def test_load_capability_after_an_output_tool_response_raises() -> None:
+    """A response that only calls an output tool ends the run, so `after_model_request` can't load on it."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': 1})])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        output_type=ToolOutput(int),
+        capabilities=[_refunds(), _load_refunds_after_tool_call_responses([])],
+    )
+
+    with pytest.raises(UserError, match=r'can only be called where a model request follows'):
+        await agent.run('hi')
+
+
+async def test_load_capability_after_a_response_whose_step_ends_the_run_is_discarded() -> None:
+    """A tool call that needs approval ends the run after its step, so a load on that response is discarded."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('needs_approval', {})])
+
+    results: list[bool] = []
+    agent = Agent(
+        FunctionModel(model_fn),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[_refunds(), _load_refunds_after_tool_call_responses(results)],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def needs_approval() -> str:
+        return 'Approved.'  # pragma: no cover
+
+    result = await agent.run('hi')
+
+    assert (type(result.output).__name__, results, _load_records(result.all_messages())) == (
+        'DeferredToolRequests',
+        [True],
+        [],
+    )
+
+
+async def test_load_capability_after_a_response_that_loads_it_itself() -> None:
+    """When the response being handled calls `load_capability` for the same capability, the model's call decides."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'refunds'}, tool_call_id='load')]
+            )
+        return make_text_response('done')
+
+    results: list[bool] = []
+    agent = Agent(FunctionModel(model_fn), capabilities=[_refunds(), _load_refunds_after_tool_call_responses(results)])
+
+    result = await agent.run('Was I refunded?')
+
+    assert (results, _load_records(result.all_messages())) == ([False], [('refunds', 'load')])
+
+
+async def test_load_capability_in_a_run_nested_in_after_model_request_follows_its_own_rules() -> None:
+    """A run started from `after_model_request` on a response with tool calls doesn't inherit its permission to load."""
+    inner = Agent(
+        FunctionModel(lambda messages, info: make_text_response('refunds')),
+        capabilities=[_refunds(), _load_refunds_from('after_model_request')],
+    )
+    hooks = Hooks[object]()
+
+    @hooks.on.after_model_request
+    async def classify(
+        ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        await inner.run('Which capability applies?')
+        return response  # pragma: no cover
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('open_case', {}, tool_call_id='open')])
+
+    outer = Agent(FunctionModel(model_fn), capabilities=[_refunds(), hooks])
+
+    @outer.tool_plain
+    def open_case() -> str:
+        return 'Case opened.'  # pragma: no cover
+
+    with pytest.raises(UserError, match=r'can only be called where a model request follows'):
+        await outer.run('Was I refunded?')
+
+
 async def test_load_capability_without_tools_before_run() -> None:
     """A capability without tools loaded from `before_run` is recorded with no tool reveal, and its instructions are stated."""
     policy = Capability[object](

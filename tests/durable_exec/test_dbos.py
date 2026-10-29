@@ -2512,9 +2512,9 @@ def _billing_capability() -> Capability[object]:
     return billing
 
 
-@pytest.mark.parametrize('hook', ['before_run', 'before_model_request'])
-async def test_dbos_durability_load_capability_before_a_request(dbos: DBOS, hook: str) -> None:
-    """`before_run` and `before_model_request` run in the workflow, so a load there takes effect on that request."""
+@pytest.mark.parametrize('hook', ['before_run', 'before_model_request', 'after_model_request'])
+async def test_dbos_durability_load_capability_from_a_capability_hook(dbos: DBOS, hook: str) -> None:
+    """Capability hooks run in the workflow, so a load from one takes effect on the request that follows."""
     hooks = Hooks[object]()
     if hook == 'before_run':
 
@@ -2522,7 +2522,7 @@ async def test_dbos_durability_load_capability_before_a_request(dbos: DBOS, hook
         async def load_before_run(ctx: RunContext[object]) -> None:
             ctx.load_capability('billing')
 
-    else:
+    elif hook == 'before_model_request':
 
         @hooks.on.before_model_request
         async def load_before_request(
@@ -2530,6 +2530,16 @@ async def test_dbos_durability_load_capability_before_a_request(dbos: DBOS, hook
         ) -> ModelRequestContext:
             ctx.load_capability('billing')
             return request_context
+
+    else:
+
+        @hooks.on.after_model_request
+        async def load_after_request(
+            ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if response.tool_calls:
+                ctx.load_capability('billing')
+            return response
 
     agent = Agent(
         FunctionModel(_load_capability_model),
@@ -2541,7 +2551,9 @@ async def test_dbos_durability_load_capability_before_a_request(dbos: DBOS, hook
     async def run_workflow() -> str:
         return (await agent.run('Was my invoice paid?')).output
 
-    # The first request already has `invoice_status`, so the model calls it without opening a case.
+    # From `before_run` or `before_model_request`, the first request already has `invoice_status`. From
+    # `after_model_request`, the model first calls `open_case`, which this agent doesn't have: the run answers with a
+    # retry, so a request follows, and that one has `invoice_status`.
     assert await run_workflow() == 'Invoice paid.'
 
 

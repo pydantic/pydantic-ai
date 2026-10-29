@@ -14,7 +14,7 @@ from pydantic_ai._deferred_capabilities import (
     LoadCapabilityCallPart,
     LoadCapabilityReturn,
 )
-from pydantic_ai._enqueue import CapabilityLoadRecord, PendingMessageQueue
+from pydantic_ai._enqueue import CapabilityLoadRecord, PendingMessage, PendingMessageQueue
 from pydantic_ai._instructions import resolve_sourced_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -157,39 +157,57 @@ async def resolve_loaded_capability_instructions(
     return [replace(part, id=InstructionId(source, name=part.name)) for part in parts]
 
 
-LoadPhase = Literal['before_run', 'before_model_request']
-"""A capability hook that runs before a model request, where a load from code takes effect on that request."""
+LoadPhase = Literal['before_run', 'before_model_request', 'after_model_request']
+"""A capability hook that a model request follows, so a load from code there takes effect on that request.
 
-_load_phase: ContextVar[tuple[LoadPhase, object] | None] = ContextVar('_load_phase', default=None)
-"""The hook running and the queue of the run it runs for: a run nested in the hook has its own queue, so its own rules."""
+`after_model_request` only counts for a response the run makes another request after: see `capability_load_phase`.
+"""
+
+
+@dataclass(frozen=True)
+class _LoadWindow:
+    phase: LoadPhase
+    queue: list[PendingMessage] | None
+    """The `RunContext.pending_messages` of the run the hook runs for: a run nested in the hook has its own."""
+    response: ModelResponse | None
+    """The response an `after_model_request` hook is handling, whose own `load_capability` calls decide a load."""
+
+
+_load_window: ContextVar[_LoadWindow | None] = ContextVar('_load_window', default=None)
 
 
 @contextmanager
-def capability_load_phase(phase: LoadPhase, queue: object) -> Generator[None]:
-    """Mark the `before_run` or `before_model_request` hooks of the run with `queue` as a place `ctx.load_capability()` works.
+def capability_load_phase(
+    phase: LoadPhase, queue: list[PendingMessage] | None, *, response: ModelResponse | None = None
+) -> Generator[None]:
+    """Mark the hooks of the run with `queue` running inside as a place `ctx.load_capability()` works.
 
-    `queue` is the run's `RunContext.pending_messages`, compared by identity: a realtime session's isn't a
-    `PendingMessageQueue`, and loading there raises its own error.
+    `queue` is the run's `RunContext.pending_messages`, compared by identity, so a run nested in the hook follows its
+    own rules; a realtime session's isn't a `PendingMessageQueue`, and loading there raises its own error. For
+    `after_model_request`, the agent graph only opens the window when another request follows `response`.
     """
-    token = _load_phase.set((phase, queue))
+    token = _load_window.set(_LoadWindow(phase, queue, response))
     try:
         yield
     finally:
-        _load_phase.reset(token)
+        _load_window.reset(token)
 
 
 def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
     """Load a deferred capability from code; see [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability]."""
     # Only where a model request follows that the load can ride along with: from `before_run`, ahead of the
-    # first request; from `before_model_request`, on the request being prepared; or while a tool call is handled,
-    # on the next request. After a final model response, it would have to force an extra model turn.
-    current = _load_phase.get()
-    phase = current[0] if current is not None and current[1] is ctx.pending_messages else None
-    in_tool_call = phase is None and ctx.tool_call_id is not None
-    if phase is None and not in_tool_call:
+    # first request; from `before_model_request`, on the request being prepared; from `after_model_request` on a
+    # response whose tool calls the run executes, or while a tool call is handled, on the next request. After a
+    # final model response, it would have to force an extra model turn.
+    window = _load_window.get()
+    if window is not None and window.queue is not ctx.pending_messages:
+        window = None
+    in_tool_call = window is None and ctx.tool_call_id is not None
+    if window is None and not in_tool_call:
         raise UserError(
             '`ctx.load_capability()` can only be called where a model request follows: from a `before_run` or '
-            '`before_model_request` hook, from a tool function, or from a tool hook such as `after_tool_execute`.'
+            '`before_model_request` hook, from `after_model_request` on a response with tool calls the run executes, '
+            'from a tool function, or from a tool hook such as `after_tool_execute`.'
         )
     tool_manager = ctx.tool_manager
     pending_messages = ctx.pending_messages
@@ -224,9 +242,14 @@ def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunCo
     if capability_id not in ctx.capabilities:
         raise UserError(f'No capability with id {capability_id!r} is registered in this run.')
 
-    # The model's calls in the response being executed only count during a tool call: before a request, the
-    # last response's calls have already run.
-    if capability_id in ctx.active_capability_ids or (in_tool_call and _executing_load_calls(ctx, capability_id)):
+    # The model's own calls in the response being handled decide: the one being executed during a tool call, or the
+    # one `after_model_request` is handling. Before a request, the last response's calls have already run.
+    if in_tool_call:
+        model_loads = bool(_executing_load_calls(ctx, capability_id))
+    else:
+        assert window is not None
+        model_loads = window.response is not None and bool(_load_calls_in(window.response, capability_id))
+    if capability_id in ctx.active_capability_ids or model_loads:
         return False
     if ctx.capabilities[capability_id].defer_loading is not True:
         # Inactive without being deferred itself, so it sits inside a deferred capability that isn't loaded yet.
@@ -282,8 +305,16 @@ def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> 
 def _executing_load_calls(ctx: RunContext[Any], capability_id: str) -> list[LoadCapabilityCallPart]:
     """The `load_capability` calls for `capability_id` in the response being executed, the last one in history."""
     response = next((message for message in reversed(ctx.messages) if isinstance(message, ModelResponse)), None)
-    parts = response.parts if response is not None else ()
-    return [part for part in parts if isinstance(part, LoadCapabilityCallPart) and part.capability_id == capability_id]
+    return _load_calls_in(response, capability_id) if response is not None else []
+
+
+def _load_calls_in(response: ModelResponse, capability_id: str) -> list[LoadCapabilityCallPart]:
+    """The `load_capability` calls for `capability_id` in `response`."""
+    return [
+        part
+        for part in response.parts
+        if isinstance(part, LoadCapabilityCallPart) and part.capability_id == capability_id
+    ]
 
 
 def _capability_tool_names(ctx: RunContext[Any], capability_id: str) -> list[str]:

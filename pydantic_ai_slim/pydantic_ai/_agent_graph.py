@@ -15,7 +15,15 @@ from collections.abc import (
     Iterable,
     Sequence,
 )
-from contextlib import AsyncExitStack, aclosing, asynccontextmanager, contextmanager, suppress
+from contextlib import (
+    AbstractContextManager,
+    AsyncExitStack,
+    aclosing,
+    asynccontextmanager,
+    contextmanager,
+    nullcontext,
+    suppress,
+)
 from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
@@ -2088,15 +2096,37 @@ async def _after_streamed_model_request(
 ) -> _messages.ModelResponse:
     """Run `after_model_request` on a streamed response, which can no longer be re-attempted."""
     try:
-        return await root_capability.after_model_request(
-            run_context, request_context=request_context, response=response
-        )
+        with _after_model_request_load_window(run_context, response):
+            return await root_capability.after_model_request(
+                run_context, request_context=request_context, response=response
+            )
     except exceptions.RetryModelRequest as retry:
         raise exceptions.UserError(
             '`RetryModelRequest` cannot be raised from `after_model_request` on a streamed request: '
             'the response has already been streamed to the consumer, so there is nothing to re-attempt. '
             'Raise it from `on_model_request_error` instead, which runs while the stream is still being opened.'
         ) from retry
+
+
+def _after_model_request_load_window(
+    run_context: RunContext[Any], response: _messages.ModelResponse
+) -> AbstractContextManager[None]:
+    """Let `after_model_request` load a capability from code when the run makes another request after `response`.
+
+    That's when the response calls a tool that isn't an output tool, or one the run doesn't know, which it answers
+    with a retry: the run executes the calls and sends their results. The load rides along with that request, after
+    the results, like a load from a tool. If the step ends the run anyway, because a call needs approval or is
+    deferred or an output tool ends it first, the load is discarded, as one from a tool would be. A response without
+    such calls may be final, so the window stays closed and a load there raises.
+    """
+    tool_manager = run_context.tool_manager
+    continues = tool_manager is not None and any(
+        (tool_def := tool_manager.get_tool_def(call.tool_name)) is None or tool_def.kind != 'output'
+        for call in response.tool_calls
+    )
+    if not continues:
+        return nullcontext()
+    return capability_load_phase('after_model_request', run_context.pending_messages, response=response)
 
 
 def _record_carried_attempts(
@@ -2736,9 +2766,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         state.response = response
         capture_model_response_span_context(request_context, response)
         try:
-            return await ctx.deps.root_capability.after_model_request(
-                run_context, request_context=request_context, response=response
-            )
+            with _after_model_request_load_window(run_context, response):
+                return await ctx.deps.root_capability.after_model_request(
+                    run_context, request_context=request_context, response=response
+                )
         except exceptions.RetryModelRequest:
             failed.record(request_context, outcome, start)
             await self._cancel_rejected_job(request_context, outcome, state)
