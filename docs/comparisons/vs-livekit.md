@@ -19,6 +19,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Realtime voice | Speech-to-speech and cascaded STT + LLM + TTS | [Speech-to-speech](../realtime/overview.md), five providers |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
 | Image generation | No | [Image Generation](../image-generation.md) |
+| Enterprise support | With a [LiveKit Cloud plan](https://livekit.com/pricing) | [For the framework itself](../enterprise-support.md), no platform required |
 
 ## Realtime, side by side
 

@@ -21,6 +21,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Realtime voice | Yes | [Realtime](../realtime/overview.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
 | Image generation | No | [Image Generation](../image-generation.md) |
+| Enterprise support | With [Mastra Platform Enterprise](https://mastra.ai/pricing#enterprise-support) | [For the framework itself](../enterprise-support.md), no platform required |
 
 ## Features
 

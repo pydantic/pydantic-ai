@@ -21,6 +21,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
 | Image generation | Yes | [Image Generation](../image-generation.md) |
+| Enterprise support | With an [Agno platform plan](https://www.agno.com/pricing) | [For the framework itself](../enterprise-support.md), no platform required |
 
 ## Features
 
