@@ -554,6 +554,16 @@ with X keysyms such as `KP_Enter` accepted as aliases; a character key presses w
 it. Typed text holds no control characters other than `\n` and `\t`, which press Enter and Tab.
 `LocalWorkspace` has no display.
 
+Under [durable execution](durable_execution/overview.md), each display call made in workflow code is its own
+durable step. A look, such as a screenshot, retries under the engine's retry config. An action runs at most once,
+for up to 180 seconds: if it fails, times out or loses its worker, the call raises a
+[`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] saying the action may or may not have taken effect,
+instead of running it again. Some engines go further than this:
+
+- DBOS, and Prefect when a flow is run again, can repeat the action that was running when the process crashed.
+- DBOS steps have no timeout, so a hung action holds the workflow.
+- DBOS can't replay a workflow in which two agents used a display at the same time.
+
 ### Resolving symlinks
 
 `Workspace.realpath` answers "which file does this path really lead to?". Code that keeps an agent
