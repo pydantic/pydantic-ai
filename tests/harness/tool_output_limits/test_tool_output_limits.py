@@ -1352,12 +1352,21 @@ class TestAgentIntegration:
         assert returns[1].content == 'Order A1: refunded'
 
 
+_LARGE_IMAGE = BinaryContent(data=b'\x89PNG' + b'\x00' * 100_000, media_type='image/png')
+
+
 class TestMediaReturnValues:
-    async def test_an_image_in_the_return_value_reaches_the_model_unchanged(self):
+    @pytest.mark.parametrize(
+        'original',
+        [
+            pytest.param(_LARGE_IMAGE, id='bare'),
+            pytest.param(['Screenshot attached.', _LARGE_IMAGE], id='list'),
+            pytest.param(ToolReturn(return_value=['done', _LARGE_IMAGE]), id='tool-return'),
+        ],
+    )
+    async def test_an_image_in_the_return_value_reaches_the_model_unchanged(self, original: object):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=100, action=Truncate())])
-        image = BinaryContent(data=b'\x89PNG' + b'\x00' * 100_000, media_type='image/png')
-        for original in (image, ['Screenshot attached.', image], ToolReturn(return_value=['done', image])):
-            assert await _run(cap, original) is original
+        assert await _run(cap, original) is original
 
     async def test_large_text_beside_an_image_warns_and_passes_through(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate())])
