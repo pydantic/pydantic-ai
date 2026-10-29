@@ -796,7 +796,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         between steps of an [`iter()`][pydantic_ai.agent.AbstractAgent.iter] loop, or from a key handler. The
         capabilities' [`compact_history`](../capabilities/compaction.md#the-compaction-hook) hooks compact for the
         model that serves the next attempt, and the run records it on
-        [`compactions`][pydantic_ai.agent.AgentRunResult.compactions]. A later call replaces a pending request. To
+        [`compactions`][pydantic_ai.agent.AgentRunResult.compactions]. A call while a request is pending merges into
+        it, keeping the more important reason and every focus, as `RunContext.request_compaction` describes. To
         compact before the run's first request, pass `compact=` to the run method instead.
 
         Args:

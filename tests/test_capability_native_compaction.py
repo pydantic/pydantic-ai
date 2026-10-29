@@ -401,6 +401,27 @@ async def test_run_compact_with_a_function_handler(compact: bool | CompactionOpt
     assert [record.reason for record in result.compactions] == [reason]
 
 
+async def test_run_compact_focus_survives_an_automatic_request():
+    """A `/compact <focus>` passed as `compact=` isn't dropped by a capability's automatic request for the same request."""
+
+    @dataclass
+    class OnCacheExpiry(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.request_compaction(reason='cache_expiry')
+            return request_context
+
+    summarize = Summarize()
+    agent = Agent(CompactingModel('primary', supports=False), capabilities=[OnCacheExpiry(), summarize])
+
+    result = await agent.run('hi', message_history=history(), compact={'focus': 'the name'})
+
+    [request] = summarize.calls
+    assert (request.reason, request.focus) == ('manual', 'the name')
+    assert [record.reason for record in result.compactions] == ['manual']
+
+
 async def test_run_without_compact_does_not_compact():
     summarize = Summarize()
     agent = Agent(CompactingModel('primary', supports=False), capabilities=[summarize])
