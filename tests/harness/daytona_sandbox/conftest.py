@@ -83,3 +83,9 @@ if _HAS_DAYTONA:  # pragma: no branch - the fixture cannot be defined without it
         monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend.daytona', daytona)
         monkeypatch.setattr(daytona, 'AsyncDaytona', fake.client)
         return fake
+
+
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    """`fake_daytona` serves the SDK from local files and processes, synchronously."""
+    return False

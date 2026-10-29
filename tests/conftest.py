@@ -481,6 +481,52 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.TextIOWrapper.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedReader.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedWriter.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    # Prefect's async `LocalFileSystem.aread_path`/`awrite_path` still touch the disk synchronously; the
+    # durable capability operations persist their results through them.
+    ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path')),
+    ('os.mkdir', 'prefect/filesystems.py', 'awrite_path'),
+    # `posixpath.relpath` calls `abspath`, which only reads the current directory for a relative path, and
+    # that read still trips the `os.getcwd` check. The harness relativizes absolute workspace paths with it.
+    ('os.path.abspath', '<frozen posixpath>', 'relpath'),
+    ('os.path.abspath', 'posixpath.py', 'relpath'),
+    # Spawning a Monty worker pool locates the worker binary, once per pool.
+    ('os.stat', 'pydantic_monty/_binary.py', 'find_monty_binary'),
+    # Inside a Temporal workflow, Code Mode reaches Monty through a blocking portal, so opening the pool and each
+    # Monty call wait on the portal thread. There's no other way to reach Monty there.
+    (
+        'threading.Lock.acquire',
+        'pydantic_ai_harness/_monty_exec.py',
+        ('get_session', 'call_monty', '_release_monty', '_release_pool'),
+    ),
+    # Capabilities resolve their executables, and clients their package versions, once when they're built.
+    ('os.stat', 'pydantic_ai_harness/docker_sandbox/_backend.py', 'resolve_executable'),
+    ('os.access', 'pydantic_ai_harness/docker_sandbox/_backend.py', 'resolve_executable'),
+    ('os.path.abspath', 'pydantic_ai_harness/docker_sandbox/_backend.py', 'resolve_executable'),
+    ('os.stat', 'exa_py/utils.py', '_get_package_version'),
+    ('os.path.abspath', 'exa_py/utils.py', '_get_package_version'),
+    ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    # Starting a LocalStack container checks that the Docker socket it mounts exists, once per container.
+    ('os.stat', 'pydantic_ai_harness/localstack/_container.py', '_run_argv'),
+    # MCP clients' `pydantic-settings` read `.env` files when they're constructed, once per connection.
+    ('os.stat', 'pydantic_settings/sources/providers/dotenv.py', '_read_env_files'),
+    # An in-process MCP server reads its package version when a session initializes.
+    ('os.stat', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    ('os.listdir', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    ('io.TextIOWrapper.read', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    # Test doubles that stand in for remote services with synchronous local work.
+    ('sqlite3.Connection.execute', 'tests/harness/_postgres_sqlite.py', ('_transaction', 'fetch', '_regclass')),
+    ('sqlite3.Cursor.fetchall', 'tests/harness/_postgres_sqlite.py', 'fetch'),
+    ('sqlite3.Cursor.fetchone', 'tests/harness/_postgres_sqlite.py', '_regclass'),
+    # Local workspaces that stage log clears by hand, between the commands the Shell capability runs.
+    ('os.stat', 'tests/harness/shell/test_log_limits.py', 'run'),
+    ('os.scandir', 'tests/harness/shell/test_log_limits.py', 'run'),
+    ('io.BufferedWriter.write', 'tests/harness/shell/test_log_limits.py', 'run'),
+    ('io.TextIOWrapper.read', 'tests/harness/shell/test_log_limits.py', 'run'),
+    ('io.TextIOWrapper.write', 'tests/harness/shell/test_log_limits.py', 'run'),
+    # The test blocks the agent loop on purpose, to check a run that never starts.
+    ('threading.Lock.acquire', 'tests/harness/aws_lambda/test_aws_lambda.py', 'block_loop'),
 ]
 
 

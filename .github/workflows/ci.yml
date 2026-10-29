@@ -1511,8 +1511,6 @@ jobs:
     timeout-minutes: 10
     env:
       CI: true
-      # Not yet for the harness suites: https://github.com/pydantic/pydantic-ai/issues/8821
-      BLOCKBUSTER_ENABLED: "false"
       # No other job installs `browser-use`, so the `coverage` job sees `BrowserUse` only from here.
       COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
       COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.harness-browser-use

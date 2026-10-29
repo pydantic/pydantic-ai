@@ -69,3 +69,9 @@ if _HAS_BOXLITE:  # pragma: no branch - the fixture cannot be defined without it
             monkeypatch.setattr(f'{module}.boxlite', control.module)
         yield control
         control.close()
+
+
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    """`fake_boxlite` serves the SDK from local files and processes, synchronously."""
+    return False

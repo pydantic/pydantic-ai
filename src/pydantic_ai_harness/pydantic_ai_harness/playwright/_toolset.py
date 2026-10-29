@@ -103,7 +103,6 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
-import os
 import re
 import socket
 import sys
@@ -1291,7 +1290,7 @@ class PlaywrightBrowserSession:
                 return await pw.chromium.connect_over_cdp(self._cdp_url, timeout=self._launch_timeout_ms)
             except PlaywrightError as exc:
                 raise PlaywrightError(_without_endpoint_credentials(str(exc), self._cdp_url)) from exc
-        if os.path.exists(pw.chromium.executable_path):
+        if await anyio.Path(pw.chromium.executable_path).exists():
             return await pw.chromium.launch(
                 headless=self._headless, chromium_sandbox=self._chromium_sandbox, timeout=self._launch_timeout_ms
             )

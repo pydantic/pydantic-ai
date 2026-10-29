@@ -175,7 +175,7 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 
 #### Blocking-call detection
 - `blockbuster` (autouse) raises `BlockingError` when a scanned library frame blocks inside the event loop.
-- Scanned packages are `pydantic_ai`, `pydantic_graph`, `pydantic_evals`, and `clai`.
+- Scanned packages are `pydantic_ai`, `pydantic_ai_harness`, `pydantic_graph`, `pydantic_evals`, and `clai`.
 - Test-only and third-party stacks are ignored. User callbacks remain covered while a scanned library frame is below them.
 - Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
 - Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.

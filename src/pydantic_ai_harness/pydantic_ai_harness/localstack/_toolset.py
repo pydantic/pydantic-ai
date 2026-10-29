@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from functools import cached_property
+from functools import cached_property, partial
 from pathlib import Path
 from typing import IO, Annotated, Any, Self
 
@@ -418,7 +419,9 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         rather than only at dispatch, so a durable record of the command is
         bounded too.
         """
-        with tempfile.TemporaryDirectory(prefix='harness_aws_') as work_dir:
+        # Creating and removing the directory touches the disk, so both happen off the event loop.
+        work_dir = await anyio.to_thread.run_sync(partial(tempfile.mkdtemp, prefix='harness_aws_'))
+        try:
             with (
                 Path(work_dir, 'stdout').open('w+b') as stdout_file,
                 Path(work_dir, 'stderr').open('w+b') as stderr_file,
@@ -455,6 +458,9 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
                         _read_tail(stderr_file, self._max_output_chars),
                     )
                 )
+        finally:
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(partial(shutil.rmtree, work_dir, ignore_errors=True))
 
         parts: list[str] = []
         if stdout:

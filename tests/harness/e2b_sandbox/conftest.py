@@ -74,3 +74,9 @@ if _HAS_E2B:  # pragma: no branch - the fixture cannot be defined without its SD
         finally:
             # Host-backed SDK fakes can retain background command handles after a timeout.
             control.close()
+
+
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    """`fake_e2b` serves the SDK from local files and processes, synchronously."""
+    return False
