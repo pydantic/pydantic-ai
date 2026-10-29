@@ -52,7 +52,7 @@ print(result.output)
 ## Audio Input
 
 !!! info
-    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input. On OpenAI's Chat Completions API, only the audio models take audio, such as `gpt-audio` and `gpt-4o-audio-preview`: those are the OpenAI models with `audio` in their name. With another OpenAI model, audio in the prompt raises an error, and audio a tool returns is replaced by a note saying the model can't read it.
+    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input. See [OpenAI](models/openai.md#audio-input) for which OpenAI models take audio.
 
 For audio, use [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
