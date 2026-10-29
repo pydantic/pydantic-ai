@@ -22,6 +22,7 @@ from pydantic_ai_harness.ask_user import Answerer
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.builtin_plugins.web.channel import SessionChannel
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
+from pydantic_clai2.builtin_plugins.web.files import WorkspaceFiles
 from pydantic_clai2.builtin_plugins.web.framing import FrameCheck
 from pydantic_clai2.builtin_plugins.web.host_session import HostSessions
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Client, Hub
@@ -87,6 +88,7 @@ from pydantic_clai2.runtime.project_identity import (
 from pydantic_clai2.runtime.session import busy_elsewhere
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 from pydantic_clai2.runtime.task_prompts import is_task_prompt
+from pydantic_clai2.runtime.worktrees import new_worktree
 
 THEME = 'display.theme'
 PluginAction = Literal['enable', 'disable', 'reload']
@@ -118,6 +120,8 @@ class WebService:
         """The orchestrator chat, a separate agent with its own conversation, beside the sessions."""
         self.workspace_locks: defaultdict[str, Lock] = defaultdict(Lock)
         """One per workspace, so the page and the orchestrator opening its session at once start one, not two."""
+        self.files = WorkspaceFiles()
+        """Each session folder's files, for the composer's `@` picker."""
         self.frames = FrameCheck()
         """Which side panel pages this page can frame; each page's headers are read once."""
         self.version = installed().label
@@ -310,6 +314,15 @@ class WebService:
                 default.session.send_input('/new')
             return default.id
         return self.choose(session)
+
+    async def add_worktree(self, repo: str, *, branch: str, base: str) -> str:
+        """Check out a new `branch` from `base` in the repository `repo` is in, as `clai2 --worktree` does; its folder.
+
+        New session then starts a session there, and lists it among the repository's worktrees from then on.
+        """
+        directory = workspace_directory(repo)
+        worktree = await to_thread.run_sync(lambda: new_worktree(repo=directory, branch=branch, base=base))
+        return str(worktree.path)
 
     def choose(self, session: LiveSession) -> str:
         """Make `session` the default the legacy routes follow, and tell the browsers; its conversation ID."""

@@ -1,0 +1,153 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1331"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        stream: false
+        messages:
+        - role: user
+          content: Reply with just OK, without calling any tools.
+        reasoning_effort: none
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: configure
+            description: Configure.
+            parameters:
+              type: object
+              properties:
+                level_9:
+                  type: object
+                  properties:
+                    level_8:
+                      type: object
+                      properties:
+                        level_7:
+                          type: object
+                          properties:
+                            level_6:
+                              type: object
+                              properties:
+                                level_5:
+                                  type: object
+                                  properties:
+                                    level_4:
+                                      type: object
+                                      properties:
+                                        level_3:
+                                          type: object
+                                          properties:
+                                            level_2:
+                                              type: object
+                                              properties:
+                                                level_1:
+                                                  type: object
+                                                  properties:
+                                                    level_0:
+                                                      type: object
+                                                      properties:
+                                                        leaf:
+                                                          type: string
+                                                      required:
+                                                      - leaf
+                                                      additionalProperties: false
+                                                  required:
+                                                  - level_0
+                                                  additionalProperties: false
+                                              required:
+                                              - level_1
+                                              additionalProperties: false
+                                          required:
+                                          - level_2
+                                          additionalProperties: false
+                                      required:
+                                      - level_3
+                                      additionalProperties: false
+                                  required:
+                                  - level_4
+                                  additionalProperties: false
+                              required:
+                              - level_5
+                              additionalProperties: false
+                          required:
+                          - level_6
+                          additionalProperties: false
+                      required:
+                      - level_7
+                      additionalProperties: false
+                  required:
+                  - level_8
+                  additionalProperties: false
+              required:
+              - level_9
+              additionalProperties: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "993"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-EdN5mx3cFODdUkOu0TxweFq4typh3
+        object: chat.completion
+        created: 1793052266
+        model: gpt-6-luna
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: OK
+            refusal: null
+            annotations: []
+          finish_reason: stop
+        usage:
+          prompt_tokens: 189
+          completion_tokens: 4
+          total_tokens: 193
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: null
+  recorded_at: 2026-10-26T22:04:27.364734+00:00

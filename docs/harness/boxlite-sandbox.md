@@ -14,10 +14,10 @@ Run your agent's commands and file edits in a [BoxLite](https://github.com/boxli
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[boxlite,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,boxlite,anthropic]"
 ```
 
-The `boxlite` extra installs [BoxLite's Python SDK](https://github.com/boxlite-ai/boxlite/tree/main/sdks/python), which embeds the BoxLite runtime: there is no daemon to run. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
+The `boxlite` extra installs [BoxLite's Python SDK](https://github.com/boxlite-ai/boxlite/tree/main/sdks/python), which embeds the BoxLite runtime: there is no daemon to run. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
 
 BoxLite ships wheels for macOS 14 or newer on Apple silicon and for Linux on x86_64 and aarch64 (glibc 2.28 or newer), for Python up to 3.14. On Linux, the user running the agent needs read and write access to `/dev/kvm`. See [Platforms](#platforms).
 

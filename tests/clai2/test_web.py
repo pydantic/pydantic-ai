@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
@@ -1098,6 +1099,76 @@ def test_new_session_offers_every_worktree_of_a_known_repository(
     assert shown('q=Main&include_worktrees=true') == [main]
     monkeypatch.setenv('PATH', '')
     assert shown('include_worktrees=true') == [main]
+
+
+def test_new_session_checks_out_a_new_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """`POST /api/worktrees` checks out a new branch in `.worktrees/`, as `clai2 --worktree` does, and New session lists it.
+
+    Without a branch the name is generated as `--worktree` generates it; Git's refusals come back as the error.
+    """
+    web_ = make_web(Agent(TestModel()))
+    repo = tmp_path / 'repo'
+    repository(repo, linked=tmp_path / 'wt' / 'feature', branch='feature')
+    git(
+        '-C',
+        str(repo),
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit',
+        '--allow-empty',
+        '-m',
+        'two',
+    )
+    main = repo.resolve()
+    summary = ConversationSummary(workspace=str(main), title='Main')
+    web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[]))
+
+    def add(body: dict[str, str]) -> tuple[int, str]:
+        response = web_.post('/api/worktrees', body)
+        return response.status_code, response.json()['root' if response.status_code == 200 else 'detail']
+
+    def output(*args: str) -> str:
+        return subprocess.run(['git', *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    status, root = add({'repo': str(repo), 'branch': 'feature-x', 'base': 'main~1'})
+    assert (status, root) == (200, str(main / '.worktrees' / 'feature-x'))
+    assert output('-C', root, 'branch', '--show-current') == 'feature-x'
+    assert output('-C', root, 'rev-parse', 'HEAD') == output('-C', str(repo), 'rev-parse', 'main~1')
+    assert output('-C', str(repo), 'status', '--porcelain') == '', 'the worktrees folder is excluded'
+    [project] = [p for p in web_.get('/api/sessions?include_worktrees=true').json() if p['name'] == 'repo']
+    assert ('feature-x', root) in [(w['label'], w['root']) for w in project['worktrees']]
+
+    # From inside a checkout, by default from its `HEAD`; a branch with a slash gets a flat folder.
+    (main / 'src').mkdir()
+    status, root = add({'repo': str(main / 'src'), 'branch': 'fix/y'})
+    assert (status, root) == (200, str(main / '.worktrees' / 'fix-y'))
+    assert output('-C', root, 'rev-parse', 'HEAD') == output('-C', str(repo), 'rev-parse', 'HEAD')
+    status, root = add({'repo': str(repo)})
+    assert status == 200 and re.fullmatch(r'worktree-[0-9a-f]{8}', Path(root).name)
+    assert output('-C', root, 'branch', '--show-current') == f'clai-{Path(root).name}'
+
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    assert add({'repo': str(repo), 'branch': 'feature'}) == (
+        400,
+        'Cannot create worktree: branch feature already exists. Pick another name.',
+    )
+    assert add({'repo': str(repo), 'branch': 'feature/x'}) == (
+        400,
+        f'Cannot create worktree: {main / ".worktrees" / "feature-x"} already exists. Pick another name.',
+    )
+    assert add({'repo': str(repo), 'branch': 'a..b'}) == (
+        400,
+        "Cannot create worktree: fatal: 'a..b' is not a valid branch name",
+    )
+    assert add({'repo': str(repo), 'branch': 'other', 'base': 'nowhere'}) == (
+        400,
+        f'nowhere is not a branch, tag, or commit in {main}.',
+    )
+    assert add({'repo': str(plain), 'branch': 'other'}) == (400, f'{plain} is not in a Git repository.')
+    assert add({'repo': 'relative'}) == (400, "Choose a directory by its absolute path, not 'relative'.")
 
 
 def test_new_session_completes_a_typed_path_with_its_repository_worktrees(make_web: 'MakeWeb', tmp_path: Path) -> None:

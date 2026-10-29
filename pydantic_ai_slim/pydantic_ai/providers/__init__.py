@@ -10,7 +10,7 @@ import functools
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self
 
 import anyio
 from typing_extensions import TypeVar
@@ -81,6 +81,41 @@ class Provider(ABC, Generic[InterfaceClient]):
         raise NotImplementedError()
 
     @property
+    def canonical_system(self) -> str:
+        """The system whose keys and format verify the stateless signed or encrypted data this provider returns.
+
+        That data is encrypted reasoning, thinking and thought signatures, redacted thinking and OpenAI
+        compaction items. A model sends it back only to a provider whose `canonical_system` matches, or
+        lists it in [`compatible_systems`][pydantic_ai.providers.Provider.compatible_systems]; other
+        providers get the fallback each model uses for foreign data, such as thinking rendered as text.
+        Stateful data, such as response, file and container IDs, is only sent back to a provider with the
+        same [`name`][pydantic_ai.providers.Provider.name].
+
+        Defaults to `name`. Built-in providers return a fixed value, so a subclass that only changes
+        `name` (one that authenticates differently against the same API, say) keeps sharing data with the
+        provider it extends. `OpenAIProvider` is the exception: a subclass with its own `name` is assumed
+        to talk to another service, and gets that name. Override this when your provider returns data
+        another provider's keys verify, like a transparent proxy.
+        """
+        return self.name
+
+    _canonical_system_follows_client: ClassVar[bool] = False
+    """Whether `canonical_system` depends on the client the provider was created with, not only on `name`.
+
+    Responses then always record their canonical system, so one name covering two systems (`google` on the Gemini
+    API or Google Cloud, `openai` on OpenAI or Azure) is never ambiguous in new history.
+    """
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        """Other canonical systems whose stateless signed or encrypted data this provider also verifies.
+
+        One-way: listing a system here sends its data to this provider, not this provider's data to it.
+        See [`canonical_system`][pydantic_ai.providers.Provider.canonical_system]. Empty by default.
+        """
+        return frozenset()
+
+    @property
     def model_id_namespace(self) -> str:
         """The namespace used to fully qualify model IDs routed through this provider."""
         return self._model_id_namespace or self.name
@@ -101,6 +136,13 @@ class Provider(ABC, Generic[InterfaceClient]):
     def model_profile(model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
+
+    def _configured_model_profile(self, model_name: str) -> ModelProfile | None:
+        """The model profile for the named model as this provider instance is configured, which models use.
+
+        `model_profile`, unless a provider takes a profile when it's created, like `OpenAICompatibleProvider`.
+        """
+        return self.model_profile(model_name)
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile | None:
