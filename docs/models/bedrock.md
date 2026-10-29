@@ -493,7 +493,7 @@ For more details on boto3 retry configuration, see the [AWS boto3 documentation]
     Unlike other providers that use httpx for HTTP requests, Bedrock uses boto3's native retry mechanisms. The retry strategies described in [Transport retries](../retries.md#transport-retries) do not apply to Bedrock.
 
 !!! warning "Keep a read timeout on Bedrock"
-    Bedrock calls boto3 from a worker thread that Pydantic AI can't interrupt, so [`request_timeout`](../timeouts.md#model-request-deadlines) and [`first_event_timeout`](../timeouts.md#waiting-for-the-first-event) can only take effect once botocore returns. They can't cut a stalled Bedrock request short, and the request then fails with botocore's own timeout as a [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] rather than `ModelRequestTimeout`. Until this is fixed, keep `aws_read_timeout` on [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] (or `read_timeout` in your botocore `Config`) set to the longest wait you'll accept.
+    Bedrock calls boto3 from a worker thread that Pydantic AI can't interrupt, so [`request_timeout`](../timeouts.md#model-request-deadlines) and [`first_event_timeout`](../timeouts.md#waiting-for-the-first-event) can only take effect once botocore returns. They can't cut a stalled Bedrock request short, and the request then fails with botocore's own timeout as a [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] rather than `ModelRequestTimeout`. Until [#11850](https://github.com/pydantic/pydantic-ai/pull/11850) fixes this, keep `aws_read_timeout` on [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] (or `read_timeout` in your botocore `Config`) set to the longest wait you'll accept.
 
 ## Bedrock Mantle
 
