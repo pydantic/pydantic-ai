@@ -431,6 +431,12 @@
       "fingerprint": "0ebfc0d0d25c2f768c0ec1c2604912ca16fa2cb12507e9c5da73a71953048f14",
       "reason": "False positive: Griffe compares the expression assigned to `Case.evaluators`. `Evaluator` instances are kept unchanged; only plain functions, newly accepted, are wrapped in `FunctionEvaluator`.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10292"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "7c52c60298d3103deb2c4c5a9c9b14e136c9881cb0ebc8478d71eb50f70cc9ac",
+      "reason": "`pydantic_ai.agent.RealtimeEvent` was only imported under `TYPE_CHECKING`, so importing it at runtime always raised `ImportError`; `RealtimeEvent` is still exported from `pydantic_ai.realtime`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10189"
     }
   ],
   "model_name_literals": [
