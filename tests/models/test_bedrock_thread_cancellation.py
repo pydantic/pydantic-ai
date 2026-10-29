@@ -22,6 +22,7 @@ import pytest
 from pydantic_ai import ModelRequest
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import ModelRequestTimeout
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 
 from ..conftest import try_import
@@ -40,7 +41,7 @@ SHORT_TIMEOUT = 0.05
 RELEASE_TIMEOUT = 30
 """How long a blocked call waits to be released before it gives up, so a regression fails rather than hangs."""
 
-Blocks = Literal['converse', 'converse_stream', 'stream_read']
+Blocks = Literal['converse', 'converse_stream', 'stream_read', 'count_tokens']
 
 
 @dataclass
@@ -94,6 +95,11 @@ class _BlockingBedrockClient:
         self.block()
         return {'output': {'message': {'role': 'assistant', 'content': [{'text': 'late'}]}}, 'stopReason': 'end_turn'}
 
+    def count_tokens(self, **_: Any) -> dict[str, Any]:
+        self.called.set()
+        self.block()
+        return {'inputTokens': 1}
+
     def converse_stream(self, **_: Any) -> dict[str, Any]:
         self.called.set()
         if self.blocks == 'converse_stream':
@@ -110,6 +116,8 @@ async def _request(model: BedrockConverseModel, blocks: Blocks, *, request_timeo
     settings = ModelSettings(request_timeout=request_timeout) if request_timeout is not None else None
     if blocks == 'converse':
         await model_request(model, messages, model_settings=settings)
+    elif blocks == 'count_tokens':
+        await model.count_tokens(messages, settings, ModelRequestParameters())
     else:
         async with model_request_stream(model, messages, model_settings=settings) as stream:
             async for _ in stream:
@@ -128,7 +136,7 @@ def _assert_ended_while_blocked(client: _BlockingBedrockClient) -> None:
 async def _assert_cleaned_up(client: _BlockingBedrockClient, blocks: Blocks) -> None:
     """Release the blocked thread, and check that what it got is closed."""
     client.release.set()
-    if blocks != 'converse' and client.called.is_set():
+    if blocks in ('converse_stream', 'stream_read') and client.called.is_set():
         assert await anyio.to_thread.run_sync(client.stream.closed.wait, RELEASE_TIMEOUT)
 
 
@@ -143,7 +151,7 @@ async def test_request_timeout_ends_a_blocked_request(allow_model_requests: None
     await _assert_cleaned_up(client, blocks)
 
 
-@pytest.mark.parametrize('blocks', ['converse', 'converse_stream', 'stream_read'])
+@pytest.mark.parametrize('blocks', ['converse', 'converse_stream', 'stream_read', 'count_tokens'])
 async def test_cancellation_ends_a_blocked_request(allow_model_requests: None, blocks: Blocks):
     """Cancelling a request ends it while the blocked thread is still waiting."""
     client = _BlockingBedrockClient(blocks)
