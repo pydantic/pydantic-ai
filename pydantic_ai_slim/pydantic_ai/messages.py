@@ -3827,6 +3827,39 @@ class FilePart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+SpeechTimestampGranularity = TypeAliasType('SpeechTimestampGranularity', Literal['word', 'segment'])
+"""How much text one [`SpeechTimestamp`][pydantic_ai.messages.SpeechTimestamp] covers: a single `'word'`, or a
+`'segment'` of one or more words, which is as fine as some providers report."""
+
+
+@dataclass(repr=False, kw_only=True)
+class SpeechTimestamp:
+    """When a piece of the model's speech is heard in its audio, as the provider reports it.
+
+    Lets an application line a reply's text up with its playback, for example to reveal words as they are
+    spoken. Turned on with the realtime
+    [`output_speech_timestamps`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps] setting.
+    """
+
+    text: str
+    """The text spoken: a word (punctuation may come as an entry of its own), or a stretch of the transcript."""
+
+    start_ms: int
+    """Where the text starts in the audio of its [`SpeechPart`][pydantic_ai.messages.SpeechPart], in milliseconds.
+
+    Relative to the part's own audio, like
+    [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms], not to the session.
+    """
+
+    duration_ms: int
+    """How long the text takes to speak, in milliseconds."""
+
+    granularity: SpeechTimestampGranularity = 'word'
+    """How much text this timestamp covers: a single `'word'`, or a `'segment'` of one or more words."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False, kw_only=True)
 class SpeechPart:
     """Spoken audio exchanged during a realtime session, paired with its transcript.
@@ -3861,6 +3894,16 @@ class SpeechPart:
     `None` when the part was not interrupted. It may also be `None` for an interrupted turn when
     the provider reported the interruption without an offset. This is relative to this part's audio,
     not wall-clock or session-relative time.
+    """
+
+    timestamps: list[SpeechTimestamp] | None = None
+    """When each piece of the model's speech is heard in the part's audio, if the provider reported it.
+
+    Only recorded when the realtime
+    [`output_speech_timestamps`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps] setting
+    is on, on a model that reports them. On an interrupted part, a timestamp starting at or after
+    [`interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] is dropped: that speech
+    was never heard.
     """
 
     id: str | None = None
@@ -4474,8 +4517,9 @@ class WorkspaceRef:
 class ModelRequestAttempt:
     """An attempt at a model request that did not produce the response it is recorded on.
 
-    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] records one for each model it moved
-    on from, on the response of the model that answered
+    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability records one for each model it moved on
+    from, on the response of the model that answered
     ([`ModelResponse.failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]), or on the
     [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] when every model failed.
     """
@@ -4490,7 +4534,9 @@ class ModelRequestAttempt:
     """How the attempt failed.
 
     - `'error'` — the request raised an exception, described by `error`.
-    - `'rejected'` — the model returned a response, and a `fallback_on` response handler rejected it.
+    - `'rejected'` — the model returned a response, and a `fallback_on` response handler rejected it
+      (or another capability rejected it by raising
+      [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] from `after_model_request`).
     """
 
     error: str | None = None
@@ -4631,8 +4677,9 @@ class ModelResponse:
     failed_attempts: list[ModelRequestAttempt] | None = None
     """Earlier attempts at this request that failed before this response was produced, in order.
 
-    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] records the models it moved on
-    from here. Their usage is not included in `usage`, which is this response's own, but it does
+    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability records the models it moved on from
+    here. Their usage is not included in `usage`, which is this response's own, but it does
     count towards the run's [`RunUsage`][pydantic_ai.usage.RunUsage] and
     [`UsageLimits`][pydantic_ai.usage.UsageLimits] token and cost limits. A rejected response's
     parts are not kept. Not sent to the model.
@@ -6434,6 +6481,14 @@ class SpeechPartDelta:
     [`SpeechPartDelta.apply`][pydantic_ai.messages.SpeechPartDelta.apply]).
     """
 
+    timestamps: list[SpeechTimestamp] | None = None
+    """When the speech this delta covers is heard in the part's audio, if the provider reported it.
+
+    New entries only: [`apply`][pydantic_ai.messages.SpeechPartDelta.apply] adds them to the part's
+    [`timestamps`][pydantic_ai.messages.SpeechPart.timestamps]. They can arrive ahead of the audio they
+    describe, so match them against your playback position rather than showing them as they come.
+    """
+
     part_delta_kind: Literal['speech'] = 'speech'
     """Part delta type identifier, used as a discriminator."""
 
@@ -6446,6 +6501,7 @@ class SpeechPartDelta:
         retained audio data, but only if the part already has `audio` set: a part with `audio=None` is
         not retaining audio, so the chunk is intentionally not stored — it remains available on the
         delta itself for live playback.
+        `timestamps` are added to the part's `timestamps`.
 
         Args:
             part: The existing model response part, which must be a `SpeechPart`.
@@ -6466,7 +6522,10 @@ class SpeechPartDelta:
         audio = part.audio
         if self.audio_chunk and audio is not None:
             audio = replace(audio, data=audio.data + self.audio_chunk)
-        return replace(part, transcript=transcript, audio=audio)
+        timestamps = part.timestamps
+        if self.timestamps:
+            timestamps = [*(timestamps or ()), *self.timestamps]
+        return replace(part, transcript=transcript, audio=audio, timestamps=timestamps)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
