@@ -5,6 +5,8 @@ It works in the run's workspace, on this machine or in a sandbox. It is a regula
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![Coder is a bundle of other capabilities. FileSystem gives the model read_file, write_file, edit_file, list_files and grep; Shell gives it shell; SubAgents gives it delegate_task, which hands a sub-task to a fresh run of the same agent; RepoContext loads AGENTS.md and CLAUDE.md into the instructions. Plumbing the model never calls clears old tool results, caps tool output at 64,000 characters, repairs malformed tool arguments and turns on prompt caching. All of it works in the run's workspace: a LocalWorkspace on this machine or a cloud sandbox.](https://pydantic.dev/docs/ai/img/harness/coder.svg)
+
 ## Usage
 
 Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, and ripgrep (`rg`), which backs the `list_files` and `grep` tools. Without the extra, importing `Coder` raises an `ImportError` naming it:
@@ -172,6 +174,11 @@ to. The delegate starts without this conversation, so the agent passes it everyt
 everything the agent has -- the same model, workspace, instructions, and capabilities, including an approval
 gate, guardrail, or audit hook bound next to `Coder`, so those see the commands a delegate runs too. A
 delegate can delegate in turn, up to three levels counting the top-level run (`SubAgents.max_depth`).
+
+`Coder`'s instructions tell the agent to use `delegate_task` only when the user or applicable `AGENTS.md`
+instructions explicitly ask for sub-agents, delegation, or parallel agent work, the rule Codex gives its models for
+`spawn_agent`. A delegate explores the project again from a fresh context, so delegation the user did not ask for
+multiplies tool calls and cost. To have the agent delegate, ask for it in the prompt, in `AGENTS.md`, or in `instructions=`.
 
 Only what is bound to the `Agent` carries over to a delegate; capabilities, toolsets, instructions, and model
 settings passed to `run()` do not. So bind `Coder` with `Agent(capabilities=[...])`: passing it to `run()`

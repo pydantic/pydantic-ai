@@ -9,6 +9,8 @@ Notice when an agent repeats the same actions without making progress, and inter
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![DetectLoops records each response in after_model_request and checks the run in before_model_request. Here the model called read_file(path='missing.txt') three times and got the same error each time, a repeated_result loop. With action='nudge', the default, a system prompt telling the model to change its approach joins the next request; with action='error', LoopDetectedError ends the run.](../img/harness/detect-loops.svg)
+
 ## Usage
 
 ```bash

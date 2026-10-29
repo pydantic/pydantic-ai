@@ -8,6 +8,8 @@ Let an agent read and change GitHub repositories, issues, pull requests, and oth
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the GitHub capability connects to GitHub's hosted MCP server at api.githubcopilot.com/mcp/ with a bearer token, and the model sees the server's tools under the github_ prefix, such as github_get_me. Your auth function returns the token for each run from its deps. The toolsets, read_only and lockdown options are sent to the server as X-MCP headers, and read_only also drops any tool the server does not mark read-only.](../img/harness/github.svg)
+
 ## Install and connect
 
 ```bash

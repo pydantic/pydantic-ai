@@ -521,6 +521,13 @@ print(agent.run_sync('Set up storage').output)
 ```
 
 - Answerer: any `async (AskUserRequest) -> AskUserResponse`. `request.id` matches replies in a UI.
+- Two required positional parameters receive `(ctx, request)` (`ContextAnswerer[DepsT]`), including lambdas.
+  If both call shapes bind, a first parameter annotated `RunContext[DepsT]` selects the context form; otherwise request-only.
+  Only the first annotation is inspected; unresolved `RunContext` references are recognized.
+  Read the asking run's dependencies and messages through `ctx`, not the request.
+  A delegated question receives the child's context. For durable field access, follow
+  https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#agent-run-context-and-dependencies.
+- Type a stored callback as `AnyAnswerer[DepsT]` when either signature is possible.
 - Decline: return `AskUserResponse(cancelled=True)`; the model gets a "user declined" tool result.
 - Free text: `AskUserAnswer(header=..., custom_answer='...')` with `selected` empty.
 - An answer that does not fit (unknown header/label, several picks on single-select, missing
