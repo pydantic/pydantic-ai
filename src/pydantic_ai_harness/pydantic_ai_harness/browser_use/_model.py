@@ -9,15 +9,18 @@ is active.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import TypeAlias, TypeVar, overload
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
+from dataclasses import dataclass
+from typing import Any, TypeAlias, TypeVar, overload
 
 from pydantic import BaseModel
 from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation, WrapperCapability
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -31,8 +34,9 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import AbstractModel, KnownModelName, Model, infer_model
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 try:
     from browser_use.llm.base import BaseChatModel
@@ -128,7 +132,56 @@ def _map_messages(messages: list[BaseMessage]) -> list[ModelMessage]:
     return mapped
 
 
-def _map_usage(usage: RunUsage) -> ChatInvokeUsage:
+@dataclass
+class _HostBudget:
+    """The host run's usage and limits, shared by every browser model call of one `browse_web` call."""
+
+    usage: RunUsage
+    limits: UsageLimits | None
+    exceeded: UsageLimitExceeded | None = None
+    """The first limit error, kept because browser-use swallows errors from its steps, judge, and extraction."""
+
+    @contextmanager
+    def spend(self) -> Generator[None]:
+        """Refuse a call once the budget is exhausted, and remember the error that exhausts it."""
+        if self.exceeded is not None:
+            raise self.exceeded
+        try:
+            yield
+        except UsageLimitExceeded as error:
+            self.exceeded = error
+            raise
+
+
+_host_budget: ContextVar[_HostBudget | None] = ContextVar('browser_use_host_budget', default=None)
+
+
+@contextmanager
+def host_budget(ctx: RunContext[Any]) -> Generator[_HostBudget]:
+    """Charge the `PydanticAIChatModel` calls made inside this block to the host run.
+
+    A context variable rather than a per-call model, so it reaches every Pydantic AI backed model
+    browser-use calls -- the main, extraction, judge, and fallback models, including ones a custom
+    `BrowserAgentFactory` built -- without rebuilding them per run.
+    """
+    budget = _HostBudget(usage=ctx.usage, limits=ctx.usage_limits)
+    token = _host_budget.set(budget)
+    try:
+        yield budget
+    finally:
+        _host_budget.reset(token)
+
+
+def _call_usage(result: AgentRunResult[Any]) -> RequestUsage:
+    """The tokens of this call alone; the run's own `usage` is the host total when the budget is shared."""
+    usage = RequestUsage()
+    for message in result.new_messages():
+        if isinstance(message, ModelResponse):
+            usage += message.usage
+    return usage
+
+
+def _map_usage(usage: RequestUsage) -> ChatInvokeUsage:
     return ChatInvokeUsage(
         prompt_tokens=usage.input_tokens,
         prompt_cached_tokens=usage.cache_read_tokens or None,
@@ -183,13 +236,24 @@ class PydanticAIChatModel(BaseChatModel):
     async def ainvoke(
         self, messages: list[BaseMessage], output_format: type[T] | None = None, **kwargs: object
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
-        """Run one model turn over the mapped conversation, optionally with structured output."""
+        """Run one model turn over the mapped conversation, optionally with structured output.
+
+        Inside `browse_web`, the turn spends the host run's usage and is bounded by its limits.
+        """
         history = _map_messages(messages)
-        if output_format is None:
-            text_result = await self._agent.run(None, message_history=history)
-            return ChatInvokeCompletion(completion=text_result.output, usage=_map_usage(text_result.usage))
-        result = await self._agent.run(None, output_type=output_format, message_history=history)
-        return ChatInvokeCompletion(completion=result.output, usage=_map_usage(result.usage))
+        budget = _host_budget.get()
+        usage = budget.usage if budget is not None else None
+        usage_limits = budget.limits if budget is not None else None
+        with budget.spend() if budget is not None else nullcontext():
+            if output_format is None:
+                text_result = await self._agent.run(
+                    None, message_history=history, usage=usage, usage_limits=usage_limits
+                )
+                return ChatInvokeCompletion(completion=text_result.output, usage=_map_usage(_call_usage(text_result)))
+            result = await self._agent.run(
+                None, output_type=output_format, message_history=history, usage=usage, usage_limits=usage_limits
+            )
+            return ChatInvokeCompletion(completion=result.output, usage=_map_usage(_call_usage(result)))
 
 
 def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:

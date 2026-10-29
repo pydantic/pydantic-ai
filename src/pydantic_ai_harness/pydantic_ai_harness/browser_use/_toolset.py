@@ -18,7 +18,7 @@ from pydantic import BaseModel, JsonValue, ValidationError
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness.browser_use._model import RunChatModel, resolve_chat_model
+from pydantic_ai_harness.browser_use._model import RunChatModel, host_budget, resolve_chat_model
 from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 
 try:
@@ -762,11 +762,15 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         # Resolved per call rather than cached: the run's model can differ between runs
         # (`agent.run(model=...)`, `agent.override(model=...)`) while the toolset is shared.
         llm = self._llm if self._llm is not None else RunChatModel(ctx)
-        if self._session_scope == 'call':
-            history = await self._run_in_fresh_session(task, llm)
-        else:
-            await self._retry_pending_cleanup()
-            history = await self._run_in_shared_session(task, llm)
+        with host_budget(ctx) as budget:
+            if self._session_scope == 'call':
+                history = await self._run_in_fresh_session(task, llm)
+            else:
+                await self._retry_pending_cleanup()
+                history = await self._run_in_shared_session(task, llm)
+        if budget.exceeded is not None:
+            # browser-use swallows the error and carries on to a result; the host run must stop instead.
+            raise budget.exceeded
         return self._render_result(history)
 
     def _redact_json(self, value: JsonValue) -> JsonValue:

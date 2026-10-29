@@ -18,6 +18,7 @@ from browser_use.llm.messages import (
     SystemMessage,
     UserMessage,
 )
+from browser_use.llm.views import ChatInvokeCompletion
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -25,6 +26,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -33,12 +35,19 @@ from pydantic_ai.messages import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.browser_use import BrowserUse, PydanticAIChatModel, resolve_chat_model
+from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.browser_use import (
+    BrowserAgentSettings,
+    BrowserUse,
+    PydanticAIChatModel,
+    resolve_chat_model,
+)
 from tests.harness.conftest import agent_run_names
 
 if TYPE_CHECKING:
@@ -301,3 +310,83 @@ class TestInheritedInstrumentation:
 
         assert 'browser_use' in agent_run_names(capfire)
         assert 'private page content' in str(capfire.exporter.exported_spans_as_dict())
+
+
+class TestHostUsage:
+    """Browser model calls spend the host run's usage and are bounded by its limits."""
+
+    completions: list[ChatInvokeCompletion[str]]
+
+    @pytest.fixture(autouse=True)
+    def browser_steps(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Run two steps and a judge call, swallowing their errors like browser-use's step loop does."""
+        monkeypatch.setenv('ANONYMIZED_TELEMETRY', 'false')
+        self.completions = []
+        completions = self.completions
+
+        async def run(self: BrowserUseAgent[None, BaseModel], max_steps: int = 500) -> AgentHistoryList[BaseModel]:
+            for llm in (self.llm, self.llm, self.judge_llm):
+                try:
+                    completions.append(await llm.ainvoke([UserMessage(content='page')]))
+                except Exception:
+                    pass
+            return AgentHistoryList[BaseModel](history=[])
+
+        async def kill(self: BrowserSession) -> None:
+            pass
+
+        monkeypatch.setattr(BrowserUseAgent, 'run', run)
+        monkeypatch.setattr(BrowserSession, 'kill', kill)
+
+    @staticmethod
+    def _counting_model(sent: list[int]) -> FunctionModel:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(1)
+            if info.function_tools and len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('browse_web', {'task': 'Browse.'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        return FunctionModel(respond)
+
+    @pytest.mark.parametrize('llm_source', ['inherited', 'explicit', 'judge'])
+    async def test_browser_requests_count_toward_host_usage(
+        self, llm_source: Literal['inherited', 'explicit', 'judge']
+    ) -> None:
+        sent: list[int] = []
+        model = self._counting_model(sent)
+        capability: BrowserUse[None]
+        if llm_source == 'inherited':
+            capability = BrowserUse()
+        elif llm_source == 'explicit':
+            capability = BrowserUse(llm=model)
+        else:
+            capability = BrowserUse(agent_settings=BrowserAgentSettings(judge_llm=model))
+        agent = Agent(model, deps_type=None, capabilities=[capability])
+
+        result = await agent.run('Browse.', usage_limits=UsageLimits(request_limit=5))
+
+        assert len(sent) == 5  # Two host turns, two browser steps, one judge call.
+        assert result.usage.requests == 5
+        assert result.usage.total_tokens == sum(
+            message.usage.total_tokens for message in result.all_messages() if isinstance(message, ModelResponse)
+        ) + sum(completion.usage.total_tokens for completion in self.completions if completion.usage)
+
+    async def test_host_limit_stops_browser_before_an_over_budget_request(self) -> None:
+        sent: list[int] = []
+        agent = Agent(self._counting_model(sent), capabilities=[BrowserUse()])
+
+        with pytest.raises(UsageLimitExceeded, match='request_limit of 2'):
+            await agent.run('Browse.', usage_limits=UsageLimits(request_limit=2))
+
+        # The host turn and one browser step; browser-use's swallowed retries send nothing more.
+        assert len(sent) == 2
+
+    async def test_browser_completion_reports_its_own_usage(self) -> None:
+        agent = Agent(TestModel(), capabilities=[BrowserUse()])
+
+        await agent.run('Browse.')
+
+        first, second, judge = (completion.usage for completion in self.completions)
+        assert first is not None
+        assert first == second == judge
+        assert first.prompt_tokens > 0
