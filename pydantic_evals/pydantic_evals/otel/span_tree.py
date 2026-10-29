@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import cache
@@ -10,14 +10,17 @@ from textwrap import indent
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict
+from typing_extensions import TypeAliasType, TypedDict
 
 if TYPE_CHECKING:  # pragma: no cover
     # Since opentelemetry isn't a required dependency, don't actually import these at runtime
     from opentelemetry.sdk.trace import ReadableSpan
 
-# Should match opentelemetry.util.types.AttributeValue
-AttributeValue = str | bool | int | float | Sequence[str] | Sequence[bool] | Sequence[int] | Sequence[float]
+# Match recursive OTel values while retaining the existing byte-string validation.
+AttributeValue = TypeAliasType(
+    'AttributeValue',
+    str | bool | int | float | Sequence['AttributeValue'] | Mapping[str, 'AttributeValue'] | None,
+)
 
 SpanStatus = Literal['unset', 'ok', 'error']
 """The status of a span, mirroring `opentelemetry.trace.StatusCode`."""
@@ -46,8 +49,8 @@ class SpanQuery(TypedDict, total=False):
     ## Attribute conditions
     has_attributes: dict[str, Any]
     """Attribute values are compared with equality; a dict or list value also matches an attribute stored as its
-    JSON serialization, since OTel attributes cannot hold nested objects and instrumentation libraries like Logfire
-    store them as JSON strings. A list value also matches an attribute stored as a tuple."""
+    JSON serialization, as used by instrumentation libraries like Logfire. A list value also matches an attribute
+    stored as a tuple."""
     has_attribute_keys: list[str]
 
     ## Status conditions
@@ -258,11 +261,12 @@ class SpanNode:
 
     def _attribute_matches(self, key: str, expected: Any) -> bool:
         """Check if a span attribute matches an expected value, handling JSON-serialized dicts and lists."""
-        stored = self.attributes.get(key)
+        if key not in self.attributes:
+            return False
+        stored = self.attributes[key]
         if stored == expected:
             return True
-        # OTel attribute values can only be primitives or sequences thereof, so instrumentation
-        # libraries like Logfire store dict and list values as JSON strings.
+        # Instrumentation libraries like Logfire may store structured values as JSON strings.
         if isinstance(expected, dict | list) and isinstance(stored, str):
             try:
                 return json.loads(stored) == expected

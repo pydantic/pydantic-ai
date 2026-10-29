@@ -9,15 +9,16 @@ from datetime import UTC, datetime, timedelta
 from threading import Barrier
 
 import pytest
+from pydantic_core import PydanticSerializationError
 from pytest_mock import MockerFixture
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
+    from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry.trace import ProxyTracerProvider
+    from opentelemetry.trace import ProxyTracerProvider, SpanContext
 
     from pydantic_evals._task_run import CURRENT_TASK_RUN, run_task
     from pydantic_evals.otel._context_in_memory_span_exporter import (
@@ -29,7 +30,7 @@ with try_import() as imports_successful:
         context_subtree,
     )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
-    from pydantic_evals.otel.span_tree import AttributeValue, SpanNode, SpanQuery, SpanTree
+    from pydantic_evals.otel.span_tree import SPAN_TREE_ADAPTER, AttributeValue, SpanNode, SpanQuery, SpanTree
 
 with try_import() as logfire_import_successful:
     import logfire
@@ -335,6 +336,44 @@ async def test_span_node_matches_native_sequence_attributes():
 
     assert node.matches(SpanQuery(has_attributes={'seq_attr': [1, 2, 3]}))
     assert not node.matches(SpanQuery(has_attributes={'seq_attr': [1, 2]}))
+
+
+@pytest.mark.parametrize(
+    'attribute_value,expected',
+    [
+        pytest.param([1, 2], [1, 2], id='flat-sequence'),
+        pytest.param({'nested': [1, 'value', None]}, {'nested': [1, 'value', None]}, id='nested-mapping'),
+        pytest.param([1, 'value', None], [1, 'value', None], id='mixed-sequence'),
+        pytest.param(None, None, id='null'),
+        pytest.param(b'value', 'value', id='legacy-byte-string'),
+    ],
+)
+def test_span_tree_attribute_json_roundtrip(attribute_value: AttributeValue, expected: AttributeValue):
+    readable_span = ReadableSpan(
+        name='span',
+        context=SpanContext(trace_id=1, span_id=1, is_remote=False),
+        attributes={'value': attribute_value},
+        start_time=1_000_000_000,
+        end_time=2_000_000_000,
+    )
+    span_tree = SpanTree()
+    span_tree.add_readable_spans([readable_span])
+    restored = SPAN_TREE_ADAPTER.validate_json(SPAN_TREE_ADAPTER.dump_json(span_tree))
+    assert restored.roots[0].attributes['value'] == expected
+    assert restored.roots[0].matches(SpanQuery(has_attributes={'value': expected}))
+
+
+def test_span_tree_byte_encoding_is_unchanged(span_tree: SpanTree):
+    span_tree.roots[0].attributes['value'] = b'\xff'
+    with pytest.raises(PydanticSerializationError, match='utf-8'):
+        SPAN_TREE_ADAPTER.dump_json(span_tree)
+
+
+def test_span_node_null_attribute_requires_the_key(span_tree: SpanTree):
+    node = span_tree.roots[0]
+    node.attributes['nullable'] = None
+    assert node.matches(SpanQuery(has_attributes={'nullable': None}))
+    assert not node.matches(SpanQuery(has_attributes={'missing': None}))
 
 
 async def test_span_tree_repr(span_tree: SpanTree):

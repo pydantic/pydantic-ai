@@ -120,6 +120,10 @@ Match spans with specific attributes:
 {'has_attribute_keys': ['user_id', 'request_id']}
 ```
 
+Attribute conditions compare [values](#spannode-properties) natively. A dictionary or list query also matches an
+attribute containing its JSON serialization, as emitted by instrumentation such as Logfire. A query for `None`
+requires the attribute key to be present.
+
 ### Status Conditions
 
 Match spans by their [status][pydantic_evals.otel.SpanStatus]:
@@ -428,6 +432,9 @@ def example_api(span_tree: SpanTree) -> None:
 ```
 
 ### SpanNode Properties
+
+Attributes support strings, booleans, numbers, nested dictionaries, mixed lists, and `None`. JSON-compatible values
+retain their structure across a span-tree JSON round trip. Byte strings use UTF-8 text handling; invalid UTF-8 is rejected.
 
 Each [`SpanNode`][pydantic_evals.otel.SpanNode] has:
 
