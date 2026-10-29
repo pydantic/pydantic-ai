@@ -2860,6 +2860,10 @@ def infer_model(  # noqa: C901
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
+    elif model_kind == 'nace':
+        from .nace import NaceModel
+
+        return NaceModel(model_name, provider=provider)
     elif model_kind == 'typesafe':
         from .typesafe import TypeSafeModel
 

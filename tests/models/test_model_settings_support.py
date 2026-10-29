@@ -153,6 +153,10 @@ with try_import() as mcp_available:
 
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
+with try_import() as nace_available:
+    from pydantic_ai.models.nace import NaceModel
+    from pydantic_ai.providers.nace import NaceProvider
+
 with try_import() as typesafe_available:
     from pydantic_ai.models.typesafe import TypeSafeModel
     from pydantic_ai.providers.typesafe import TypeSafeProvider
@@ -562,6 +566,29 @@ def decision_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
     return probe
 
 
+def legacy_decision_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
+    """`decision_probe` for a decision model whose SDK still takes a legacy `httpx.AsyncClient`."""
+
+    async def probe(settings: ModelSettings) -> ProbeResult:
+        recorder = Recorder()
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            request.read()
+            recorder.record(
+                _request_payload(request.content, request.headers.items(), request.extensions.get('timeout'))
+            )
+            return httpx.Response(400, json={'error': {'message': 'probe', 'type': 'probe'}})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        try:
+            observed = await run_decision_probe_request(build(client), settings)
+        finally:
+            await client.aclose()
+        return ProbeResult(recorder.first, observed)
+
+    return probe
+
+
 async def run_decision_probe_request(model: Model, settings: ModelSettings) -> Observed:
     """Make a decision model's one request, swallowing its inevitable failure like `run_probe_request`."""
     output_tool = ToolDefinition(
@@ -701,6 +728,10 @@ def _google(client: httpx2.AsyncClient) -> Model:
     return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _nace(client: httpx.AsyncClient) -> Model:
+    return NaceModel('drex-v2.0', provider=NaceProvider(api_key=PROBE_KEY, http_client=client))
+
+
 def _typesafe(client: httpx2.AsyncClient) -> Model:
     return TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key=PROBE_KEY, http_client=client))
 
@@ -774,6 +805,13 @@ CASES = [
         ('TypeSafe',),
         decision_probe(_typesafe),
         _needs(typesafe_available, 'typesafe-sdk'),
+        DECISION_HOLDS_WITHOUT_SENDING,
+    ),
+    Case(
+        'NaceModel',
+        ('Nace',),
+        legacy_decision_probe(_nace),
+        _needs(nace_available, 'nace-sdk'),
         DECISION_HOLDS_WITHOUT_SENDING,
     ),
     Case('SystemOneModel', ('System One',), decision_probe(_system_one), (), DECISION_HOLDS_WITHOUT_SENDING),
@@ -1107,6 +1145,15 @@ RETRY_CASES = [
         (3, 1, 2),
         decision=True,
         marks=_needs(typesafe_available, 'typesafe-sdk'),
+    ),
+    RetryCase(
+        'NaceModel',
+        ('Nace',),
+        _nace,
+        (3, 1, 2),
+        legacy_http=True,
+        decision=True,
+        marks=_needs(nace_available, 'nace-sdk'),
     ),
     RetryCase('SystemOneModel', ('System One',), _system_one, (1, 1, 1), decision=True),
 ]

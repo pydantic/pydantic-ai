@@ -1104,6 +1104,9 @@ def _decide_response_attributes(
         'pydantic_ai.decision.usage.input_tokens': response.usage.input_tokens,
         'pydantic_ai.decision.usage.output_tokens': response.usage.output_tokens,
     }
+    image_tokens = response.usage.details.get('image_tokens')
+    if image_tokens is not None:
+        attributes['pydantic_ai.decision.usage.image_tokens'] = image_tokens
     if response.provider_response_id is not None:
         attributes['gen_ai.response.id'] = response.provider_response_id
     offered: frozenset[str] = frozenset()

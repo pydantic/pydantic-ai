@@ -291,6 +291,7 @@ class ModelSettings(TypedDict, total=False):
     * Z.AI
     * Bedrock Mantle
     * TypeSafe
+    * Nace
     * System One
     * OpenAI Decisions
     """
@@ -346,6 +347,7 @@ class ModelSettings(TypedDict, total=False):
     * Z.AI
     * Bedrock Mantle
     * TypeSafe (the request's other `RetryPolicy` options are the SDK defaults)
+    * Nace (the request also retries 429 and 529, honors `retry-after`, and keeps a 180-second budget)
     * OpenAI Decisions
     """
 
@@ -544,6 +546,7 @@ class ModelSettings(TypedDict, total=False):
     * Z.AI
     * Bedrock Mantle
     * TypeSafe
+    * Nace
     * System One
     * OpenAI Decisions
     """
@@ -700,6 +703,7 @@ class ModelSettings(TypedDict, total=False):
     * Z.AI
     * Bedrock Mantle
     * TypeSafe
+    * Nace
     * System One
     * OpenAI Decisions
 

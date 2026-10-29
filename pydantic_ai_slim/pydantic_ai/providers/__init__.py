@@ -372,6 +372,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .snowflake import SnowflakeProvider
 
         return SnowflakeProvider
+    elif provider == 'nace':
+        from .nace import NaceProvider
+
+        return NaceProvider
     elif provider == 'typesafe':
         from .typesafe import TypeSafeProvider
 
