@@ -217,9 +217,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
     def _unchecked_delegation(
         self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> str | None:
-        """The task of a `SubAgents` delegation to `self` that would run without a `Permissions`, else `None`.
+        """The task of a `SubAgents` delegation to `self` that this `Permissions` would not check, else `None`.
 
-        Such a delegate runs only what is bound to the agent, so a `Permissions` passed to the run instead
+        Such a delegate runs only what is bound to the agent, so this capability, passed to the run instead,
         does not reach it.
         """
         owner = ctx.capabilities.get(tool_def.capability_id or '')
@@ -227,7 +227,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
             return None
         bound: list[AbstractCapability[Any]] = []
         ctx.agent.root_capability.apply(bound.append)
-        if any(isinstance(capability, Permissions) for capability in bound):
+        # Only this `Permissions` bound to the agent checks the delegate as it checks this run; another bound
+        # one may be in a laxer mode.
+        if any(capability is self for capability in bound):
             return None
         task = args.get('task')
         return task if isinstance(task, str) else ''

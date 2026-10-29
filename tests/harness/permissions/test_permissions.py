@@ -253,8 +253,8 @@ class TestPermissions:
 
         assert not (tmp_path / 'doomed').exists()
 
-    @pytest.mark.parametrize('bound', [False, True])
-    async def test_a_self_delegation_carries_the_check(self, tmp_path: Path, bound: bool) -> None:
+    @pytest.mark.parametrize('bound', ['none', 'this', 'laxer'])
+    async def test_a_self_delegation_carries_the_check(self, tmp_path: Path, bound: str) -> None:
         """A delegate to `self` runs only what is bound to the agent, so a run-level `Permissions` holds the delegation."""
         (tmp_path / 'doomed').mkdir()
         person = _Person(PermissionDecision(approved=False))
@@ -285,14 +285,14 @@ class TestPermissions:
                 LocalWorkspace(tmp_path),
                 Shell(denied_commands=[]),
                 SubAgents(include_self=True, agent_folders=None),
-                *(gate if bound else []),
+                *(gate if bound == 'this' else [Permissions[None]('full')] if bound == 'laxer' else []),
             ],
         )
 
-        await agent.run('go', capabilities=[] if bound else gate)
+        await agent.run('go', capabilities=[] if bound == 'this' else gate)
 
         assert (tmp_path / 'doomed').is_dir()
-        if bound:
+        if bound == 'this':
             assert [(request.action, request.subject) for request in person.asked] == [('command', 'rm -rf doomed')]
         else:
             [request] = person.asked
