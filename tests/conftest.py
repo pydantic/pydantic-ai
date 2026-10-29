@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import ast
 import asyncio
 import dataclasses
 import gc
@@ -493,7 +494,11 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.stat', 'pydantic_monty/_binary.py', 'find_monty_binary'),
     # Inside a Temporal workflow, Code Mode reaches Monty through a blocking portal, the only way to reach it
     # there, so starting and stopping the portal and each call through it wait on the portal thread.
-    ('threading.Lock.acquire', 'anyio/from_thread.py', ('start_blocking_portal', 'call', '__enter__', '__exit__')),
+    (
+        'threading.Lock.acquire',
+        'pydantic_ai_harness/_monty_exec.py',
+        ('get_session', 'call_monty', '_enter_monty', '_release_monty'),
+    ),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
     *(
         (func, f'pydantic_ai_harness/docker_sandbox/{module}', constructor)
@@ -533,18 +538,33 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.stat', 'mcp/server/lowlevel/server.py', 'pkg_version'),
     ('os.listdir', 'mcp/server/lowlevel/server.py', 'pkg_version'),
     ('io.TextIOWrapper.read', 'mcp/server/lowlevel/server.py', 'pkg_version'),
-    # Test doubles that stand in for remote services with synchronous local work.
-    ('sqlite3.Connection.execute', 'tests/harness/_postgres_sqlite.py', ('_transaction', 'fetch', '_regclass')),
-    ('sqlite3.Cursor.fetchall', 'tests/harness/_postgres_sqlite.py', 'fetch'),
-    ('sqlite3.Cursor.fetchone', 'tests/harness/_postgres_sqlite.py', '_regclass'),
     # The test blocks the agent loop on purpose, to check a run that never starts.
     ('threading.Lock.acquire', 'tests/harness/aws_lambda/test_aws_lambda.py', 'block_loop'),
 ]
 
 
+# Test doubles that serve a remote service from local files, processes or SQLite, synchronously. Any blocking call
+# made in one of their functions is the stand-in's own work; the harness code calling them stays checked.
+BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
+    'tests/harness/_postgres_sqlite.py',
+    'tests/harness/boxd_sandbox/fake_boxd.py',
+    'tests/harness/boxlite_sandbox/fake_boxlite.py',
+    'tests/harness/daytona_sandbox/fake_daytona.py',
+    'tests/harness/e2b_sandbox/fake_e2b.py',
+)
+
+
+def _function_names(path: str) -> tuple[str, ...]:
+    """Every function name a frame running code in `path` can have."""
+    tree = ast.parse((Path(__file__).parent.parent / path).read_text(encoding='utf-8'))
+    defined = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)}
+    return tuple(sorted(defined | {'<lambda>', '<genexpr>'}))
+
+
 def _configure_blockbuster(
     exemptions: Sequence[tuple[str, str, str | tuple[str, ...]]] = BLOCKBUSTER_EXEMPTIONS,
     excluded_modules: tuple[str, ...] = (),
+    test_doubles: Sequence[str] = BLOCKBUSTER_TEST_DOUBLES,
 ) -> BlockBuster:
     # BlockBuster imports ForbiddenFruit, which mutates builtins during import. Disabled CI lanes
     # must remain unaffected by that instrumentation.
@@ -558,6 +578,10 @@ def _configure_blockbuster(
     )
     for func, filename, functions in exemptions:
         bb.functions[func].can_block_in(filename, functions)
+    for path in test_doubles:
+        functions = _function_names(path)
+        for function in bb.functions.values():
+            function.can_block_in(path, functions)
     return bb
 
 

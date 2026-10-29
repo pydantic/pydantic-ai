@@ -91,9 +91,3 @@ if _HAS_BOXD:  # pragma: no branch - the fixture cannot be defined without its S
         """The fake with its machines' commands running in a temporary host directory."""
         fake_boxd.host_root = tmp_path.resolve()
         return fake_boxd
-
-
-@pytest.fixture
-def blockbuster_enabled() -> bool:
-    """`fake_boxd` serves the SDK from local files and processes, synchronously."""
-    return False
