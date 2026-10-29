@@ -26,7 +26,7 @@ For systems already running Pydantic AI in production, with their code or case s
 
 ## An end-to-end service {#end-to-end}
 
-One file with the pieces most production agents need: an HTTP API, a tool that waits for a person to approve it, durable execution on [DBOS](durable_execution/dbos.md), and OpenTelemetry traces. It needs a model provider's API key and nothing else: DBOS keeps its state in a SQLite file here (use Postgres in production), and traces go to [Logfire](logfire.md) when a Logfire token is available, from `LOGFIRE_TOKEN` or the credentials `logfire auth` saved locally, or to any OTel collector named by `OTEL_EXPORTER_OTLP_ENDPOINT`. To stay short, it leaves out what you add before exposing it: authentication and checks that the caller owns the run, deduplication of repeated requests, and [usage limits](#cost).
+One file with the pieces most production agents need: an HTTP API, a tool that waits for a person to approve it, durable execution on [DBOS](durable_execution/dbos.md), and OpenTelemetry traces. It needs a model provider's API key and nothing else: DBOS keeps its state in a SQLite file here (use Postgres in production), and traces go to [Logfire](logfire.md) when a Logfire token is available, from `LOGFIRE_TOKEN` or the credentials the Logfire CLI saved locally, or to any OTel collector named by `OTEL_EXPORTER_OTLP_ENDPOINT`. To stay short, it leaves out what you add before exposing it: authentication and checks that the caller owns the run, deduplication of repeated requests, and [usage limits](#cost).
 
 ```bash
 pip/uv-add "pydantic-ai[dbos]" fastapi uvicorn
@@ -230,7 +230,7 @@ logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 ```
 
-With Logfire, getting there takes `logfire auth` and `logfire projects new` (or `logfire projects use` for an existing project) on your machine and a write token in production; a coding agent can do it for you from [pydantic.dev/ai-setup.md](https://pydantic.dev/ai-setup.md), and the free tier covers getting started. The same SDK instruments [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/) and [the HTTP requests to the provider](logfire.md#monitoring-http-requests), so a run shows up inside the request that started it, with the raw prompt it sent. [Using Logfire](logfire.md#using-logfire) walks through it.
+With Logfire, getting there takes `uvx logfire-cli wizard --task pydantic-ai` on your machine, which also has your coding agent add the instrumentation, and a write token in production; the free tier covers getting started. The same SDK instruments [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/) and [the HTTP requests to the provider](logfire.md#monitoring-http-requests), so a run shows up inside the request that started it, with the raw prompt it sent. [Using Logfire](logfire.md#using-logfire) walks through it.
 
 Without the Logfire SDK, [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] or the [`Instrumentation`](capabilities/instrumentation.md) capability does the same against your own tracer provider; see [OTel without Logfire](logfire.md#otel-without-logfire). Every run carries its [`run_id` and `conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id), and [run metadata](agent.md#run-metadata) such as a tenant or user ID lands on the run span, so you can filter traces by it.
 
