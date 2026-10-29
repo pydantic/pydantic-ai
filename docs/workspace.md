@@ -551,7 +551,8 @@ tool fits a larger screen to it, so report the screen's real size. The display c
 smaller size for a model with a screenshot limit (durable execution journals it like the other display calls), and
 [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]. Key names in actions are a fixed set,
 with X keysyms such as `KP_Enter` accepted as aliases; a character key presses whatever the layout needs to type
-it. Typed text holds no control characters other than `\n` and `\t`, which press Enter and Tab.
+it. A left-hand modifier name, such as `Shift_L` or `ControlLeft`, means the modifier; right-hand names, such as
+`Alt_R`, are refused for now, so they can later name keys of their own, such as AltGr. Typed text holds no control characters other than `\n` and `\t`, which press Enter and Tab.
 `LocalWorkspace` has no display.
 
 Under [durable execution](durable_execution/overview.md), each display call made in workflow code is its own
