@@ -215,7 +215,7 @@ def _move(x: int | None, y: int | None) -> list[str]:
 DISPLAY = ':1'
 """The X display the desktop runs on, as `DISPLAY` names it."""
 
-_ENV = {'DISPLAY': DISPLAY, 'LC_ALL': 'C.UTF-8'}
+_LOCALE = {'LC_ALL': 'C.UTF-8'}
 """`xdotool type` reads its text in the locale's encoding, and stops at the first character outside ASCII under a
 POSIX locale, which is what an environment without one set has."""
 
@@ -277,23 +277,24 @@ def x11_display(
 class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 
-    The X server must already be running on `DISPLAY`. Needs `xdotool`, `xmodmap`, `scrot`, `base64`, and `mktemp` in the
-    environment.
+    The backend's commands must already have the running X server's `DISPLAY`. Needs `xdotool`, `xmodmap`, `scrot`,
+    `base64`, and `mktemp` in the environment.
+
+    Each action first lets go of modifier keys left down; `release_modifiers=False` skips that, for a screen someone
+    is using, whose held keys it would let go of.
     """
 
-    def __init__(self, backend: SupportsCommands):
+    def __init__(self, backend: SupportsCommands, *, release_modifiers: bool = True):
         self._backend = backend
+        self._release_modifiers = _RELEASE_MODIFIERS if release_modifiers else ()
 
     async def _run(self, command: list[str] | str) -> CommandResult:
-        result = await self._backend.run(command, shell=isinstance(command, str), env=_ENV, timeout=_COMMAND_TIMEOUT)
+        result = await self._backend.run(command, shell=isinstance(command, str), env=_LOCALE, timeout=_COMMAND_TIMEOUT)
         if result.exit_code == 127:
-            raise WorkspaceUnavailableError(
-                f'A display command is missing on display {DISPLAY}: {(result.stderr or result.stdout).strip()}'
-            )
+            raise WorkspaceUnavailableError(f'A display command is missing: {(result.stderr or result.stdout).strip()}')
         if result.exit_code != 0:
             raise WorkspaceError(
-                f'Display command failed with exit code {result.exit_code} on display {DISPLAY}: '
-                f'{(result.stderr or result.stdout).strip()}'
+                f'Display command failed with exit code {result.exit_code}: {(result.stderr or result.stdout).strip()}'
             )
         return result
 
@@ -302,7 +303,7 @@ class X11Computer:
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         keydown = ['keydown', *keysyms] if keysyms else []
-        await self._input(_press(keysyms, [*_RELEASE_MODIFIERS, *keydown, *args, *keyup]), [*release, *keyup])
+        await self._input(_press(keysyms, [*self._release_modifiers, *keydown, *args, *keyup]), [*release, *keyup])
 
     async def _input(self, command: list[str], release: list[str]) -> None:
         """Run an input command; if it fails or is cancelled, let go of what it may hold with `xdotool <release>`."""
@@ -377,13 +378,13 @@ class X11Computer:
                 for keysyms in _typing(text):
                     # A cancel can land between a key's press and release, and X then repeats the key without end.
                     release = ['keyup', *_LEVEL_SHIFTS, *dict.fromkeys(keysyms)]
-                    command = [*_RELEASE_MODIFIERS, 'key', '--delay', _TYPING_DELAY_MS, '--', *keysyms]
+                    command = [*self._release_modifiers, 'key', '--delay', _TYPING_DELAY_MS, '--', *keysyms]
                     await self._input(_press(keysyms, command), release)
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
                 release = ['keyup', *reversed(keysyms)]
-                command = [*_RELEASE_MODIFIERS, 'key', '--repeat', str(repeat), '--', '+'.join(keysyms)]
+                command = [*self._release_modifiers, 'key', '--repeat', str(repeat), '--', '+'.join(keysyms)]
                 await self._input(_press(keysyms, command), release)
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys)

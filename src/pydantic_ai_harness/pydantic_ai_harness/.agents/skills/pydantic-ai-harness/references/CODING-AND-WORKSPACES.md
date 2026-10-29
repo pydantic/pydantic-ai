@@ -18,6 +18,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | Isolation on this machine with Docker or Podman | `DockerSandbox(image='python:3.13-slim')`: a local container |
 | A desktop the agent sees and controls | `DockerSandbox(desktop=True)` + `ComputerUse()`: a local container with a display; `E2BSandbox(desktop=True)` or `DaytonaSandbox(desktop=True)` in the cloud, watchable through `live_view_url()` |
+| A desktop on this Linux machine, without Docker | `LocalDesktop('.')` + `ComputerUse()`: a private virtual screen; `real_screen=True` drives yours (X11 only) |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 
@@ -447,6 +448,18 @@ Python up to 3.14.
   Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox) and later runs reuse
   it; a custom `image` needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`. Under durable execution, build the image first and
   pass it as `image`.
+
+### LocalDesktop
+
+`LocalDesktop(working_dir, *, size=(1280, 800), real_screen=False, ...)` (backend `LocalDesktopBackend`) is a
+`LocalWorkspace` with a screen for `ComputerUse()`, on Linux only. Needs `apt install xvfb fluxbox x11-utils xdotool
+x11-xserver-utils scrot util-linux`.
+
+- By default the screen is a private Xvfb display with a window manager, started on first use and shared by later and
+  concurrent runs of the capability; it stops when the program exits. Commands run on it, so apps the agent starts open there.
+- `real_screen=True` drives the X screen you're logged in to; pair with `ComputerUse(requires_approval=True)`. A Wayland
+  session or a missing `DISPLAY` fails the run at its first request; commands still run.
+- Commands and files are on this machine, as with `LocalWorkspace`: no isolation.
 
 ## Remote hosts and bubblewrap
 

@@ -43,6 +43,7 @@ from pydantic_ai_harness import (
     FileSystem,
     Grain,
     InputGuardrail,
+    LocalDesktop,
     Macroscope,
     ManagedPrompt,
     Ordinal,
@@ -274,6 +275,7 @@ FIXTURES: dict[str, Fixture] = {
     # Keeps the scenario's tools native, so the conversation checks the `run_code` declaration without
     # launching a kernel process for every provider.
     'IPythonCodeMode': lambda _: _ipython_code_mode(),
+    'LocalDesktop': lambda tmp_path: LocalDesktop(tmp_path),
     'Macroscope': _workspace(Macroscope),
     'ManagedPrompt': lambda _: ManagedPrompt('assistant', default='You answer questions about the news.'),
     'ModalSandbox': lambda _: _modal_sandbox(),

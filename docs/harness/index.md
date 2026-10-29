@@ -135,6 +135,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Shell](shell.md) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](modal-sandbox.md) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](e2b-sandbox.md) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Local Desktop](local-desktop.md) | Harness | A screen on this Linux machine for computer use: a private virtual one, or yours |
 | [Sprites Sandbox](sprites-sandbox.md) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [Daytona Sandbox](daytona-sandbox.md) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |
 | [boxd Sandbox](boxd-sandbox.md) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
