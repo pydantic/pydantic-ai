@@ -26,6 +26,7 @@ from playwright.async_api import Error as PlaywrightError, StorageState, Timeout
 
 import pydantic_ai_harness.playwright._toolset as toolset_module
 from pydantic_ai import Agent, AgentRunResult
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import CapabilityOrdering
 from pydantic_ai.exceptions import UserError
@@ -2022,6 +2023,15 @@ class TestPlaywrightBrowserHooks:
         assert browser.auto_install_chromium is False
         assert browser.cdp_url is None
         assert browser.storage_state is None
+
+    def test_from_spec_sets_the_base_capability_fields(self) -> None:
+        """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+        params = AgentSpec.model_json_schema_with_capabilities([PlaywrightBrowser])['$defs'][
+            'spec_params_PlaywrightBrowser'
+        ]
+        assert {'id', 'description', 'defer_loading'} <= params['properties'].keys()
+        capability = PlaywrightBrowser[None].from_spec(id='second', description='The second one.', defer_loading=True)
+        assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
 
     def test_repr_omits_credential_bearing_fields(self) -> None:
         # `repr` reaches diagnostics and logs. Session cookies must not ride along,
