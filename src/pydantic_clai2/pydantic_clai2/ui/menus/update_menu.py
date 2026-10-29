@@ -85,16 +85,23 @@ def update_menu(
     *,
     run: Callable[[str], None],
     refusal: Callable[[], str | None] = lambda: None,
+    raise_refusal: bool = False,
 ) -> SettingsMenu:
     """The menu, whose version row asks before entering `/update now` with `run`, as typing it would, and closing.
 
     `refusal` says why `/update` would be refused now, for example while other sessions run turns, so the menu
-    says so instead of claiming it runs.
+    says so instead of claiming it runs. With `raise_refusal`, the action raises that reason as `ValueError`
+    instead, so a remote UI such as the web UI's About shows it as an error rather than as a saved row.
     """
 
+    def refused(reason: str) -> Sequence[str]:
+        if raise_refusal:
+            raise ValueError(reason)
+        return [reason]
+
     async def update(dialogs: Dialogs) -> Sequence[str]:
-        if (refused := refusal()) is not None:
-            return [refused]
+        if (reason := refusal()) is not None:
+            return refused(reason)
         channel = context.settings.update_channel
         confirmed = await dialogs.confirm(
             title='Update CLAI?',
@@ -108,8 +115,8 @@ def update_menu(
         if not confirmed:
             return []
         # Another session may have started a turn while the dialog was open.
-        if (refused := refusal()) is not None:
-            return [refused]
+        if (reason := refusal()) is not None:
+            return refused(reason)
         run('/update now')
         return CloseMenu([f'Running /update now on the {channel} channel.'])
 

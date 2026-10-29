@@ -496,7 +496,10 @@ async def test_only_url_derived_mcp_ids_are_masked(include_content: bool, native
         return ModelResponse(parts=[TextPart('done')])
 
     settings, exporter = redacted_setup(include_content)
-    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=native, local=server)
+    # This module's in-process servers are passed as a pre-built `Client`, which keeps fastmcp's default of
+    # no handshake deadline. Wrapping the bare server would apply `MCPToolset`'s 5-second `init_timeout`,
+    # and a stalled CI worker can exceed it.
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=native, local=Client(server))
     assert capability.id is not None
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('previous'),
@@ -588,7 +591,7 @@ async def test_explicit_mcp_toolset_id_remains_in_request_telemetry() -> None:
         return ModelResponse(parts=[TextPart('done')])
 
     settings, exporter = redacted_setup()
-    toolset = MCPToolset(server, id='github')
+    toolset = MCPToolset(Client(server), id='github')
     await Agent(FunctionModel(respond), toolsets=[toolset], capabilities=[Instrumentation(settings=settings)]).run('go')
     chat = next(
         span
@@ -675,7 +678,7 @@ async def test_combined_mcp_keeps_the_winning_id_provenance(last_explicit: bool)
 @pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
 async def test_local_mcp_instruction_id_is_masked_without_tools() -> None:
     server = FastMCP('test', instructions='server guidance')
-    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=server)
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=Client(server))
     assert capability.id is not None
 
     def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
@@ -744,7 +747,7 @@ async def test_unrelated_toolset_id_matching_local_mcp_id_is_retained() -> None:
     def ping() -> str:
         return 'pong'
 
-    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=server)
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=Client(server))
     assert capability.id is not None
     unrelated = FunctionToolset(id=capability.id)
 

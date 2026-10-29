@@ -2086,10 +2086,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The ids of the models this run has checked for a thinking override, so each warns once per run.
         thinking_checked_model_ids: set[int] = set()
 
-        # Build model settings resolver using per-run capability. Shared with `realtime_session` via
-        # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
-        # base for a graph run). Resolved per model-request step here; once at connect in a session.
-        def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
+        # Build model settings resolver using per-run capability, via `_resolve_layered_model_settings`
+        # (agent -> capability -> run order, on the step model's own settings). Resolved per model-request step.
+        def get_model_settings(run_context: RunContext[AgentDepsT]) -> _agent_graph.StepModelSettings:
             # A capability can select a different model per step, so the base is the step's live
             # `run_context.model` settings, not a captured initial model. A graph run always uses a
             # request-response `Model` here; realtime has its own settings path and never reaches this.
@@ -2121,7 +2120,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         ),
                     ]
                 )
-            return _layer_model_settings(
+            return _resolve_layered_model_settings(
                 run_context,
                 (agent_model_settings, cap_model_settings, run_model_settings),
                 base=step_model.settings if isinstance(step_model, models.Model) else None,
@@ -2774,7 +2773,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def system_prompt(
-        self, /, *, dynamic: bool = False
+        self,
+        /,
+        *,
+        dynamic: bool = False,
+        name: str | None = None,
+        on_change: _messages.InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def system_prompt(
@@ -2783,6 +2787,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         dynamic: bool = False,
+        name: str | None = None,
+        on_change: _messages.InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register a system prompt function.
 
@@ -2798,7 +2804,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The function to decorate
             dynamic: If True, the system prompt will be reevaluated even when `messages_history` is provided,
-                see [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref]
+                see [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref].
+                `on_change='append'` makes the prompt dynamic whatever this says.
+            name: The name in the id `'system_prompt:<name>'` of the `<context>` element a system prompt with
+                `on_change='append'` is sent as, which the model sees. Defaults to the function's `__name__`.
+                It has no effect without `on_change='append'`. Existing histories tie the prompt to the
+                function's `__qualname__` whether or not this is set, so renaming or moving the function
+                disconnects it from them: the old part keeps its last value, and the renamed function isn't sent
+                in conversations that continue them.
+            on_change: Whether a dynamic system prompt whose value changed between runs rewrites its part in the
+                message history (the default), which changes the start of every later request and so misses the
+                provider's prompt cache, or is appended to the history as a replacement that keeps the cached
+                prefix. `'append'` makes the prompt dynamic, and sends it inside a `<context>` element from the
+                first request on; see [appending system prompt changes](../agent.md#appending-system-prompt-changes).
 
         Example:
         ```python
@@ -2815,22 +2833,46 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return f'{ctx.deps} is the best'
         ```
         """
+        is_dynamic = dynamic or on_change == 'append'
         if func is None:
 
             def decorator(
                 func_: SystemPromptFunc[AgentDepsT],
             ) -> SystemPromptFunc[AgentDepsT]:
-                runner = _system_prompt.SystemPromptRunner[AgentDepsT](func_, dynamic=dynamic)
+                runner = _system_prompt.SystemPromptRunner[AgentDepsT](
+                    func_, dynamic=is_dynamic, context_id=self._system_prompt_context_id(func_, name, on_change)
+                )
                 self._system_prompt_functions.append(runner)
-                if dynamic:  # pragma: lax no cover
+                if is_dynamic:  # pragma: lax no cover
                     self._system_prompt_dynamic_functions[func_.__qualname__] = runner
                 return func_
 
             return decorator
         else:
-            assert not dynamic, "dynamic can't be True in this case"
-            self._system_prompt_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](func, dynamic=dynamic))
+            assert not is_dynamic, "dynamic can't be True in this case"
+            self._system_prompt_functions.append(
+                _system_prompt.SystemPromptRunner[AgentDepsT](func, dynamic=is_dynamic)
+            )
             return func
+
+    def _system_prompt_context_id(
+        self,
+        func: SystemPromptFunc[AgentDepsT],
+        name: str | None,
+        on_change: _messages.InstructionChangePolicy,
+    ) -> str | None:
+        """The `<context>` id an appending dynamic system prompt is sent as, unique among the agent's."""
+        if on_change != 'append':
+            return None
+        name = name if name is not None else func.__name__
+        _instructions.validate_instruction_id_segment(name, kind='System prompt name')
+        context_id = f'system_prompt:{name}'
+        if any(runner.context_id == context_id for runner in self._system_prompt_functions):
+            raise exceptions.UserError(
+                f'Another dynamic system prompt with `on_change={on_change!r}` is already named {name!r}; '
+                'pass a different `name=`.'
+            )
+        return context_id
 
     @overload
     def output_validator(
@@ -4251,6 +4293,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     UserWarning,
                     stacklevel=2,
                 )
+            if appending_system_prompts := [
+                runner.context_id for runner in self._system_prompt_functions if runner.context_id is not None
+            ]:
+                warnings.warn(
+                    "`on_change='append'` is not supported by realtime sessions, so dynamic system prompts "
+                    f'{", ".join(map(repr, appending_system_prompts))} are re-evaluated in place and their changes '
+                    'are not appended.',
+                    UserWarning,
+                    stacklevel=2,
+                )
             # Nothing appends here, so an empty append-mode block has no withdrawal to record.
             instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
             # A standard run states a loaded deferred capability's instructions in history, after its load return,
@@ -4272,7 +4324,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             system_prompt_parts: list[_messages.SystemPromptPart] = []
             if seeded_history:
                 await _system_prompt.reevaluate_dynamic_system_prompts(
-                    seeded_history, self._system_prompt_dynamic_functions, run_context
+                    seeded_history, self._system_prompt_dynamic_functions, run_context, append=False
                 )
             else:
                 system_prompt_parts = await _system_prompt.resolve_system_prompts(
@@ -5419,27 +5471,28 @@ class _ResolvedRunCapabilities(Generic[AgentDepsT]):
     """The run's own capabilities after `for_run`, combined, or `None` when the run passed none."""
 
 
-def _layer_model_settings(
+def _resolve_layered_model_settings(
     run_context: RunContext[AgentDepsT],
     layers: Sequence[AgentModelSettings[AgentDepsT] | None],
     *,
-    base: ModelSettings | None = None,
-) -> ModelSettings | None:
+    base: ModelSettings | None,
+) -> _agent_graph.StepModelSettings:
     """Merge model-settings layers left-to-right, stamping `run_context.model_settings` before each.
 
-    Each layer is a static `ModelSettings`, a callable resolved against the run context, or `None`.
-    Stamping the merged-so-far onto `run_context.model_settings` before a callable layer runs lets it
-    observe the previous layers — the agent -> capability -> run order both `iter` (per model-request
-    step) and `realtime_session` (once, at connect) rely on. `base` is the model's own settings for a
-    graph run; a realtime model has none, so it defaults to `None`.
+    Each layer is a static `ModelSettings`, a callable resolved against the run context, or `None`, and is
+    resolved once. Stamping the merged-so-far onto `run_context.model_settings` before a callable layer runs
+    lets it observe the previous layers, in the agent -> capability -> run order. `base` is the step model's
+    own settings. The layers are also merged without `base`, for an attempt the step moves to another model.
     """
     merged = base
+    layered: ModelSettings | None = None
     run_context.model_settings = merged
     for layer in layers:
         resolved = layer(run_context) if callable(layer) else layer
         merged = merge_model_settings(merged, resolved)
+        layered = merge_model_settings(layered, resolved)
         run_context.model_settings = merged
-    return merged
+    return _agent_graph.StepModelSettings(merged=merged, layered=layered)
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
