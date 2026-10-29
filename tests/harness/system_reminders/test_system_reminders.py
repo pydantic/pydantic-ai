@@ -684,7 +684,7 @@ def _capture_model(store: dict[str, str], output: str = 'generated') -> Function
 
 def _reminder_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     # `caplog` holds every logger's records, such as asyncio reporting a task another test leaked.
-    return [record for record in caplog.records if record.name == 'pydantic_ai_harness.system_reminders._capability']
+    return [record for record in caplog.records if record.name.startswith('pydantic_ai_harness.system_reminders')]
 
 
 class TestLLMReminder:
@@ -819,6 +819,7 @@ class TestLLMReminder:
         assert operation in {name for name, _ in durability.calls}
         [record] = _reminder_records(caplog)
         assert record.levelno == logging.WARNING
+        assert record.name == 'pydantic_ai_harness.system_reminders._capability'
         assert record.getMessage() == 'LLMReminder generation operation failed; using GoalReanchor text instead'
         assert record.exc_info is not None
 
