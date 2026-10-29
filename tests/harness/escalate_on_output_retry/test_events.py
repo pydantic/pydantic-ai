@@ -1,0 +1,144 @@
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+
+import anyio
+import pytest
+from inline_snapshot import snapshot
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from pydantic import TypeAdapter
+
+from pydantic_ai import Agent, AgentStreamEvent, ModelRetry, RunContext, ToolOutput
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation
+from pydantic_ai.messages import CapabilityEvent, ModelMessage
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness import EscalateOnOutputRetry, EscalationLevel, OutputRetryEvent
+
+from .test_capability import Answer
+
+
+@dataclass
+class RecordRetries(AbstractCapability[object]):
+    events: list[OutputRetryEvent] = field(default_factory=list[OutputRetryEvent])
+
+    async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+        if isinstance(event, OutputRetryEvent):
+            self.events.append(event)
+
+
+class TestOutputRetryEvent:
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_retry_events_and_single_trace(self, include_content: bool) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        recorder = RecordRetries()
+        agent = Agent(
+            capabilities=[
+                EscalateOnOutputRetry(
+                    id='escalation',
+                    levels=[
+                        EscalationLevel(TestModel(custom_output_text='draft'), after_failures=1),
+                        EscalationLevel(TestModel(custom_output_text='ready')),
+                    ],
+                ),
+                recorder,
+                Instrumentation(
+                    settings=InstrumentationSettings(tracer_provider=provider, include_content=include_content)
+                ),
+            ],
+        )
+
+        @agent.output_validator
+        def validate(value: str) -> str:
+            if value == 'draft':
+                raise ModelRetry('Finish the draft.')
+            return value
+
+        assert (await agent.run('Answer.')).output == 'ready'
+        [event] = recorder.events
+        assert event.source == 'response_output'
+        assert event.response.text == 'draft'
+        assert (event.retry.cause, event.retry.attempt, event.retry.max_retries) == ('model_retry', 1, 1)
+        assert event.capability_id == 'escalation'
+        adapter = TypeAdapter(CapabilityEvent)
+        assert adapter.validate_json(adapter.dump_json(event)) == event
+        spans = exporter.get_finished_spans()
+        [transition] = [s for s in spans if s.name == 'escalate_on_output_retry']
+        assert dict(transition.attributes or {}) == snapshot(
+            {
+                'escalate_on_output_retry.from_level': 0,
+                'escalate_on_output_retry.to_level': 1,
+                'escalate_on_output_retry.failures': 1,
+                'escalate_on_output_retry.model': 'test',
+                'escalate_on_output_retry.source': 'response_output',
+                'escalate_on_output_retry.producer': 'test',
+            }
+        )
+        assert len({s.context.trace_id for s in spans if s.context is not None}) == 1
+        assert len([s for s in spans if s.parent is None]) == 1
+
+    async def test_concurrent_runs_and_history_start_at_first_level(self) -> None:
+        recorder = RecordRetries()
+        agent = Agent(
+            capabilities=[
+                EscalateOnOutputRetry(
+                    levels=[
+                        EscalationLevel(TestModel(custom_output_text='draft'), after_failures=1),
+                        EscalationLevel(TestModel(custom_output_text='ready')),
+                    ]
+                ),
+                recorder,
+            ]
+        )
+
+        @agent.output_validator
+        def validate(value: str) -> str:
+            if value == 'draft':
+                raise ModelRetry('Finish the draft.')
+            return value
+
+        async def run() -> None:
+            assert (await agent.run('Answer.')).output == 'ready'
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(run)
+            group.start_soon(run)
+        first = await agent.run('Answer.')
+        assert (await agent.run('Answer again.', message_history=first.all_messages())).output == 'ready'
+        assert [event.response.text for event in recorder.events] == ['draft'] * 4
+
+    async def test_failed_output_sibling_is_reported_without_another_request(self) -> None:
+        calls: list[str] = []
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            calls.append('primary')
+            yield {
+                0: DeltaToolCall(name='first', json_args='{"number": "bad"}', tool_call_id='one'),
+                1: DeltaToolCall(name='second', json_args='{"number": 42}', tool_call_id='two'),
+            }
+
+        recorder = RecordRetries()
+        agent = Agent(
+            output_type=[ToolOutput(Answer, name='first'), ToolOutput(Answer, name='second')],
+            end_strategy='exhaustive',
+            capabilities=[
+                EscalateOnOutputRetry(
+                    levels=[
+                        EscalationLevel(FunctionModel(stream_function=stream), after_failures=1),
+                        EscalationLevel(TestModel(custom_output_args={'number': -1})),
+                    ]
+                ),
+                recorder,
+            ],
+        )
+        assert (await agent.run('Answer.')).output == Answer(number=42)
+        [event] = recorder.events
+        assert (event.source, event.tool_name, event.tool_call_id) == ('output_tool', 'first', 'one')
+        assert (event.retry.attempt, event.retry.max_retries) == (1, 1)
+        assert calls == ['primary']

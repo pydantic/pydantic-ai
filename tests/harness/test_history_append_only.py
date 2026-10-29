@@ -39,6 +39,8 @@ from pydantic_ai_harness import (
     CompactOnRequest,
     DayAI,
     DeduplicateFileReads,
+    EscalateOnOutputRetry,
+    EscalationLevel,
     FallbackCompaction,
     FileSystem,
     Grain,
@@ -265,6 +267,7 @@ FIXTURES: dict[str, Fixture] = {
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),
     'DeduplicateFileReads': _deduplicate_file_reads,
+    'EscalateOnOutputRetry': lambda _: EscalateOnOutputRetry(levels=[EscalationLevel(TestModel())]),
     'FallbackCompaction': lambda _: FallbackCompaction(
         fallback_chain=[SlidingWindowCompaction(max_messages=6, keep_messages=2)]
     ),

@@ -210,6 +210,7 @@ Load the references for the capabilities the task uses; each is self-contained.
 | Research the web with Exa or You.com, use the `Researcher` stack, or drive a browser | [Research and Browsing](./references/RESEARCH-AND-BROWSING.md) |
 | Connect GitHub, Linear, Notion, Slack, Google Workspace, PostHog, Logfire, or another hosted service | [Hosted Integrations](./references/HOSTED-INTEGRATIONS.md) |
 | Use or evaluate Render Workflows for background agents with separate model and tool task policies | [Render Workflows](./references/RUNTIME-AND-EXTENSION.md#renderworkflows); retrying the task that calls `agent.run()` starts the agent again |
+| Escalate to stronger models after output validation retries | [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md#escalateonoutputretry) |
 | Save, resume, or fork runs; run under AWS Lambda, Absurd, or pgtask; use managed prompts, runtime-created capabilities, ACP, GitHub Agentic Workflows, or agent specs | [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) |
 | Test an agent that uses harness capabilities, or debug a failing one | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 
