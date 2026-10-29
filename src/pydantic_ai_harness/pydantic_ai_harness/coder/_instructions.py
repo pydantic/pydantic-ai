@@ -17,8 +17,8 @@ cohesive code beats abstractions without a present need.
 Work autonomously until complete. Ask only for missing requirements, credentials,
 consequential ambiguity, or approval for irreversible actions. Use reasonable
 defaults for minor ambiguities. Run focused tests and appropriate lint/type checks;
-once the relevant tests pass, run more only when new changes or failures call for
-it. Report what you actually verified, assumptions, and remaining limitations.
+once the relevant tests pass, broaden or repeat testing only when new changes,
+failures, or unresolved concerns justify it. Report what you actually verified, assumptions, and remaining limitations.
 
 Batch independent reads and searches into one shell call (e.g. `cat a.py b.py;
 rg -n pattern src`), prefer `rg` and `rg --files`, and don't re-read a file you
@@ -47,9 +47,8 @@ def sub_agent_instructions(tool_name: str) -> str:
     multiplies tool calls and cost on tasks the agent could finish itself.
     """
     return (
-        f'Do not use `{tool_name}` unless the user or applicable AGENTS.md/skill instructions explicitly '
-        'ask for sub-agents, delegation, or parallel agent work. Requests for depth, thoroughness, '
-        'research, or investigation are not such a request.'
+        f'Do not spawn sub-agents with `{tool_name}` unless the user or applicable AGENTS.md instructions '
+        'explicitly ask for sub-agents, delegation, or parallel agent work.'
     )
 
 

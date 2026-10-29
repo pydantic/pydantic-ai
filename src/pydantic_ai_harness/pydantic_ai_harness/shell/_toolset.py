@@ -428,12 +428,13 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         Foreground waits up to `timeout` seconds (at most 270) and returns the
         combined stdout/stderr inline (the last 16 KB, marked when earlier output
         is cut), then the PID, the log and status file paths, and the exit status.
-        A command that finished needs no further reads. Chain related commands in
-        one call (`cmd1; cmd2`). Background returns the handles immediately. For a
-        background command, one still running at the timeout, or cut output, read
-        the log or the JSON status file (`exit_code` is null until the command
-        exits) in a later shell call, e.g. with `tail`, and stop the process with
-        `kill` and the returned PID; no notification arrives when it finishes.
+        A command that finished needs no further reads: do not open its log or
+        status file. Chain related commands in one call (`cmd1; cmd2`). Background
+        returns the handles immediately. For a background command, one still
+        running at the timeout, or cut output, read the log or the JSON status file
+        (`exit_code` is null until the command exits) in a later shell call, e.g.
+        with `tail`, and stop the process with `kill` and the returned PID; no
+        notification arrives when it finishes.
 
         Args:
             ctx: The current agent run context.

@@ -208,7 +208,7 @@ class TestCoder:
         assert all(principle in default for principle in ('DRY', 'YAGNI', 'SOLID'))
         assert 'delete any scratch files you created' in default
         assert 'Batch independent reads and searches into one shell call' in default
-        assert 'once the relevant tests pass, run more only when new changes or failures call for' in default
+        assert 'once the relevant tests pass, broaden or repeat testing only when new changes' in default
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
 
@@ -236,7 +236,7 @@ class TestCoder:
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
         tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
         assert ('from the project directory are already in your' in text) is repo_context
-        rule = 'Do not use `delegate_task` unless the user or applicable AGENTS.md/skill instructions explicitly ask'
+        rule = 'Do not spawn sub-agents with `delegate_task` unless the user or applicable AGENTS.md instructions'
         assert (rule in text) is sub_agents
         assert ('delegate_task' in tools) is sub_agents
 
