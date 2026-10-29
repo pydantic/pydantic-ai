@@ -10,6 +10,7 @@ import pytest
 from genai_prices.data_snapshot import get_snapshot
 
 from pydantic_ai import Agent, UserError
+from pydantic_ai._frame_ref import frame_ref
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     ModelMessage,
@@ -550,6 +551,9 @@ def _request_parts(messages: list[ModelMessage]) -> list[list[tuple[str, object]
     ]
 
 
+HI_REF = frame_ref([ModelRequest(parts=[UserPromptPart(content='hi')])])
+
+
 @pytest.mark.parametrize(
     'supports_inline,messages,expected',
     [
@@ -562,7 +566,7 @@ def _request_parts(messages: list[ModelMessage]) -> list[list[tuple[str, object]
             ],
             [
                 [('UserPromptPart', 'hi')],
-                [('UserPromptPart', '<system>Be terse.</system>'), ('UserPromptPart', 'ok?')],
+                [('UserPromptPart', f'<system ref="{HI_REF}">Be terse.</system>'), ('UserPromptPart', 'ok?')],
             ],
             id='wraps-non-leading-system-prompt',
         ),
@@ -595,8 +599,8 @@ def _request_parts(messages: list[ModelMessage]) -> list[list[tuple[str, object]
             [
                 [('UserPromptPart', 'hi')],
                 [
-                    ('UserPromptPart', '<system>A</system>'),
-                    ('UserPromptPart', '<system>B</system>'),
+                    ('UserPromptPart', f'<system ref="{HI_REF}">A</system>'),
+                    ('UserPromptPart', f'<system ref="{HI_REF}">B</system>'),
                     ('UserPromptPart', 'c'),
                 ],
             ],
@@ -679,7 +683,7 @@ def test_prepare_messages_orders_tool_results_by_call():
         (
             'UserPromptPart',
             "Your previous response failed the application's validation (this is automated feedback, not a message "
-            'from the user):\n<retry_feedback>\noutput invalid\n</retry_feedback>',
+            f'from the user):\n<retry_feedback ref="{frame_ref(messages)}">\noutput invalid\n</retry_feedback>',
         ),
         ('ToolReturnPart', 'bad args'),
         ('ToolReturnPart', 'Z'),

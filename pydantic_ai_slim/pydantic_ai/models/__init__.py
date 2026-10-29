@@ -3935,12 +3935,13 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
 
 
 def _wrap_non_leading_system_prompts(
-    messages: list[ModelMessage], *, standing_prompt_count: int, ref: str
+    messages: list[ModelMessage], *, standing_prompt_count: int, ref: str | None
 ) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system ref="...">`-tagged `UserPromptPart`s.
 
     The content goes in as written; the conversation's frame `ref` is what tells the block apart from a
     `<system>` tag in text the user or a tool wrote, as the announcement at the end of the instructions says.
+    A realtime session, which has no stored history to take a ref from, passes `None`.
 
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything

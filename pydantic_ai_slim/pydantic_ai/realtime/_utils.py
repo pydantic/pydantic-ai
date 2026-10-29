@@ -86,7 +86,7 @@ def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMe
     # prompt mustn't promote the system prompt after it into the standing one `session_instructions` skips.
     standing_prompt_count = len(_standing_system_prompt(messages))
     messages = _drop_superseded_request_scoped_prompts(list(messages))
-    return _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
+    return _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count, ref=None)
 
 
 def replay_recorded_system_prompts_in_place(messages: Sequence[ModelMessage]) -> Sequence[ModelMessage]:
