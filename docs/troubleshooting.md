@@ -1,5 +1,5 @@
 ---
-description: "Fix common Pydantic AI errors: 'This event loop is already running' in Jupyter, 'Event loop is closed', run_sync inside a tool, and missing provider API keys."
+description: "Fix common Pydantic AI errors: event loop errors in Jupyter, missing API keys and extras, V1 to V2 upgrade errors, Bedrock model routes, provider HTTP errors, usage limits and retries, unprocessed tool calls, Temporal toolset IDs, and errors fixed in past versions."
 ---
 
 # Troubleshooting
@@ -52,54 +52,59 @@ If you're running into issues with setting the API key for your model, visit the
 
 To try Pydantic AI without an API key, use the built-in [`'test'` model](testing.md#unit-testing-with-testmodel): [`Agent('test')`][pydantic_ai.agent.Agent].
 
-## Upgrading from Older Versions
+## Upgrading from V1
 
-The [V1 → V2 Migration Map](migration.md) lists every renamed or removed name. The entries below cover the errors people search for most.
-
-### `TypeError: Agent.__init__() got an unexpected keyword argument 'result_type'`
-
-`result_type` was renamed to `output_type` before V1, and the other `result_*` names were renamed with it. Use the current names:
-
-| Old | Current |
-| --- | --- |
-| `Agent(result_type=...)` | `Agent(output_type=...)`, see [Output](output.md) |
-| `result.data` | [`result.output`][pydantic_ai.agent.AgentRunResult.output] |
-| `@agent.result_validator` | [`@agent.output_validator`][pydantic_ai.agent.Agent.output_validator] |
-| `Agent(result_retries=N)`, `Agent(output_retries=N)` | `Agent(retries={'output': N})`, see [Output retries](retries.md#output-retries) |
-
-`output_retries=` is also gone as of V2, where both retry budgets moved onto the single [`retries`][pydantic_ai.agent.AgentRetries] argument, so a `TypeError` for `output_retries` has the same fix.
-
-### [`UserError`][pydantic_ai.exceptions.UserError]: `Unknown model: gpt-6-sol. Did you mean 'openai-chat:gpt-6-sol'?`
-
-As of V2, a model name needs a provider prefix: the V1 fallback that guessed the provider from a bare name now raises this error. Write `'openai:gpt-6-sol'` (the Responses API), `'openai-chat:gpt-6-sol'` (Chat Completions) or `'anthropic:claude-opus-5-5'`. Some prefixes were renamed too, such as `google-gla:` to `google:` and `google-vertex:` to `google-cloud:`. See [Model name prefixes](migration.md#model-name-prefixes) and [Model Providers](models/overview.md).
+The [V1 → V2 Migration Map](migration.md) lists every renamed or removed name. If a library you depend on breaks on V2, check whether it declares `pydantic-ai>=1` without an upper bound: until it supports V2, pin `pydantic-ai<2` in your own project.
 
 ### `ImportError: cannot import name 'OpenAIModel' from 'pydantic_ai.models.openai'`
 
-V2 removed the model and MCP classes that V1 had deprecated. `OpenAIModel` is now [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], `GeminiModel` (and the `pydantic_ai.models.gemini` module) is now [`GoogleModel`][pydantic_ai.models.google.GoogleModel], and `MCPServerStdio`, `MCPServerSSE` and `MCPServerStreamableHTTP` are all [`MCPToolset`][pydantic_ai.mcp.MCPToolset]. Look up any other name in the [V1 → V2 Migration Map](migration.md).
+V2 removed the names V1 had deprecated. The ones code most often still imports are `OpenAIModel` (now [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]), `MCPServerStdio`, `MCPServerSSE` and `MCPServerStreamableHTTP` (now [`MCPToolset`][pydantic_ai.mcp.MCPToolset]), `Usage` from `pydantic_ai.usage` (now [`RunUsage`][pydantic_ai.usage.RunUsage]) and `GeminiModel` (now [`GoogleModel`][pydantic_ai.models.google.GoogleModel]). Look up any other name in the [Migration Map](migration.md).
+
+### `TypeError: Agent.__init__() got an unexpected keyword argument 'result_type'`
+
+`result_type` is the pre-1.0 name of `output_type`, and `result.data` the pre-1.0 name of [`result.output`][pydantic_ai.agent.AgentRunResult.output]. If the error names `output_retries` or `tool_retries` instead, use the V2 [`retries`][pydantic_ai.agent.AgentRetries] argument: `Agent(retries={'output': N, 'tools': N})`. See [Agent configuration](migration.md#agent-configuration) in the Migration Map.
+
+### `TypeError: 'RunUsage' object is not callable`
+
+In V2, `usage` on a run result is a property, not a method: write `result.usage` instead of `result.usage()`. If your code wraps the call in `try`/`except Exception`, the error is swallowed and the usage you record stays empty, so search for `.usage()` after upgrading.
+
+### `AttributeError: 'FunctionToolResultEvent' object has no attribute 'result'`
+
+V2 renamed the field to `part`: read [`event.part`][pydantic_ai.messages.ToolResultEvent.part], a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. See [Messages, events and usage](migration.md#messages-events-and-usage) for the other event renames.
+
+### `AttributeError: 'dict' object has no attribute 'supports_thinking'`
+
+[`ModelProfile`][pydantic_ai.profiles.ModelProfile] is a `TypedDict` in V2, so read a field with `profile.get('supports_thinking')` instead of `profile.supports_thinking`. [Model profiles](migration.md#model-profiles) in the Migration Map has the replacements for setting and merging fields.
+
+## Installation and Dependencies
 
 ### ``` ImportError: Please install `boto3` to use the Bedrock model ```
 
 Each provider's SDK is an optional dependency, and the error names the extra that installs it. As of V2, a bare `pip install pydantic-ai` no longer includes `bedrock`, `groq`, `mistral`, `cohere`, `xai`, `huggingface`, `temporal`, `ag-ui`, `ui` or `spec`, so code that worked on V1 can hit this after upgrading. Add the extras you use, for example `uv add 'pydantic-ai[bedrock,groq]'`. [Slim Install](install.md#slim-install) has the full list.
 
-An `ImportError` naming a class inside a third-party package, such as `cannot import name 'ThinkingEndEvent' from 'ag_ui.core'`, usually means that package is older than the version Pydantic AI requires. Upgrade it along with Pydantic AI.
+If you already installed the extra the error names, install the missing package directly as a workaround, and please [report it](https://github.com/pydantic/pydantic-ai/issues): the extra should have pulled it in.
 
 ## Model Providers
 
 ### [`UserError`][pydantic_ai.exceptions.UserError]: `Model '...' is not served by the Bedrock Converse API`
 
-Bedrock serves models through two APIs: Converse on the `bedrock-runtime` endpoint (the `bedrock:` prefix), and Mantle, an OpenAI-compatible API (the `bedrock-mantle:` prefix). Some OpenAI models, such as GPT-5.4 and GPT-5.5, are available only on Mantle, so `bedrock:` refuses them. Use `Agent('bedrock-mantle:openai.gpt-5.5')` and install the `bedrock-mantle` extra. Both routes use the same AWS credentials. [OpenAI model routes](models/bedrock.md#bedrock-openai-model-routes) lists which models each route serves, and [Bedrock Mantle](models/bedrock.md#bedrock-mantle) covers its setup.
+Pydantic AI keeps a list of the OpenAI models that Bedrock serves on its Converse API (the `bedrock:` prefix) and refuses the others, which AWS serves only through Bedrock Mantle (the `bedrock-mantle:` prefix). When AWS starts serving a new model on Converse, the list catches up in a release, so upgrade first: Converse support arrived for GPT-5.6 Sol, Luna and Terra in v2.45.0, for GPT-6 Sol, Luna and Astra in v2.49.0, and for GPT-6.1 Sol in v2.55.0. If the model is Mantle-only, use the `bedrock-mantle:` prefix and install the `bedrock-mantle` extra; see [OpenAI model routes](models/bedrock.md#bedrock-openai-model-routes) and [Bedrock Mantle](models/bedrock.md#bedrock-mantle).
 
-If AWS has since started serving the model on Converse, upgrade Pydantic AI: the list of Mantle-only models is updated as AWS adds models to Converse.
+If AWS already serves the model on Converse and no release knows it yet, override the check with a partial profile: `BedrockConverseModel(model_name, profile={'bedrock_supported_on_converse': True})`. A partial `profile=` dict is merged over the provider's defaults for that model, so the same approach works on any provider when a new model gets the wrong capabilities. See [Models, providers, and profiles](models/overview.md#models-and-providers).
 
-### [`UserError`][pydantic_ai.exceptions.UserError]: `CachePoint cannot be the first content in a user message`
+### [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]: `status_code: 400, model_name: ..., body: ...`
 
-A [`CachePoint`][pydantic_ai.messages.CachePoint] marks the content before it for caching, so it needs content ahead of it in the same user message. To cache the instructions or tool definitions, don't put a `CachePoint` at the start of the prompt: use the `anthropic_cache_instructions` and `anthropic_cache_tool_definitions` settings, or `bedrock_cache_instructions` and `bedrock_cache_tool_definitions` on Bedrock. See prompt caching for [Anthropic](models/anthropic.md#prompt-caching) and [Bedrock](models/bedrock.md#prompt-caching).
+The provider rejected the request, and `body` is the provider's own error response, also available as the exception's [`body`][pydantic_ai.exceptions.ModelAPIError.body]. Read it first: it usually names the field or setting the provider didn't accept.
+
+To handle specific failures, catch the error categories rather than matching on the message text, which differs between providers: [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] for "maximum context length" or "prompt is too long", [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] for rate limits, [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] for exhausted credits or billing, and [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] for a 401 or 403. An HTTP error in one of these categories is still a `ModelHTTPError` too, so existing `except ModelHTTPError` blocks keep working. The first three arrived in v2.59.0 and `ModelAuthenticationError` in v2.62.0. See [Handling Model API Errors](models/overview.md#handling-model-api-errors).
 
 ## Usage Limits and Retries
 
 ### [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded]: `The next request would exceed the request_limit of 50`
 
-Every run has a default [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] of 50 model requests, which stops a model that loops on tool calls from running forever. Long agentic runs with many tool calls can reach it legitimately. Raise it with `usage_limits=UsageLimits(request_limit=200)` on `run()`, `run_sync()` or `run_stream()`, or pass `request_limit=None` to remove it. [Usage Limits](agent.md#usage-limits) covers the other limits: tokens, tool calls and cost.
+Every run has a default [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] of 50 model requests, which stops a model that loops on tool calls from running forever. Long agentic runs can reach it legitimately. Raise it with `usage_limits=UsageLimits(request_limit=200)` on `run()`, `run_sync()` or `run_stream()`, or pass `request_limit=None` to remove it.
+
+An agent run from inside a tool or capability with `usage=ctx.usage` counts its requests against the parent run's usage, but without `usage_limits` it applies the default limit of 50 to that shared count. Pass `usage_limits=ctx.usage_limits` along with `usage=ctx.usage`, or limits of its own. See [Usage Limits](agent.md#usage-limits) and [Agent delegation](multi-agent-applications.md#agent-delegation).
 
 ### [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]: `Tool 'my_tool' exceeded max retries count of 1`
 
@@ -107,27 +112,49 @@ The model called `my_tool` with arguments that failed validation, or the tool ra
 
 ### [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]: `Exceeded maximum output retries (1)`
 
-The model's final answer failed validation against your `output_type`, or an [output validator](output.md#output-validator-functions) raised `ModelRetry`, more often than the output retry budget allows. A response with no usable output, such as empty text, also uses up this budget. The default is `1`: raise it with `Agent(retries={'output': N})`, or per run with `agent.run(..., retries={'output': N})`. If an empty answer is acceptable, make the output type optional (`output_type=str | None`) so that an empty response ends the run with `None` instead of a retry. See [Output retries](retries.md#output-retries), and use [`capture_run_messages()`][pydantic_ai.capture_run_messages] to inspect the response that failed.
+The model's final answer failed validation against your `output_type`, or an [output validator](output.md#output-validator-functions) raised `ModelRetry`, more often than the output retry budget allows. A response with no usable output, such as empty text or plain text when the output type needs structured data, also uses up this budget. The default is `1`: raise it with `Agent(retries={'output': N})`, or per run with `agent.run(..., retries={'output': N})`.
 
-## Message History and Deferred Tools
+Smaller and local models often answer in text instead of calling the output tool. For those, try [`NativeOutput`](output.md#native-output) where the model supports it, or [`PromptedOutput`](output.md#prompted-output). If an empty answer is acceptable, make the output type optional (`output_type=str | None`) so that an empty response ends the run with `None`; see [Optional output](output.md#optional-output). Use [`capture_run_messages()`][pydantic_ai.capture_run_messages] to inspect the response that failed, and see [Output retries](retries.md#output-retries).
+
+## Message History
 
 ### [`UserError`][pydantic_ai.exceptions.UserError]: `Cannot provide a new user prompt when the message history contains unprocessed tool calls.`
 
-The `message_history` you passed ends with a model response whose tool calls have no results yet, and you also passed a new prompt. Either run without a new prompt, which executes the pending tool calls and continues the run, or, if the calls were [deferred](deferred-tools.md), pass their results with `deferred_tool_results=...`. A history left behind by a cancelled or interrupted run is repaired automatically; see [Making histories provider-valid](message-history.md#making-histories-provider-valid).
+The `message_history` you passed ends with a model response whose tool calls have no results yet, and you also passed a new prompt. This usually happens when your application saved the history of a run that stopped after the model asked for tools but before they ran. Either run without a new prompt, which executes the pending tool calls and continues the run; pass their results with `deferred_tool_results=...` if the calls were [deferred](deferred-tools.md); or, to abandon them, pass the history through [`repair_messages()`][pydantic_ai.messages.repair_messages] first. See [Making histories provider-valid](message-history.md#making-histories-provider-valid).
 
-### [`UserError`][pydantic_ai.exceptions.UserError]: `Tool call results need to be provided for all deferred tool calls.`
-
-When you resume a run that ended with [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests], the [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] you pass need one entry for each pending call, keyed by its `tool_call_id`: approvals go in `results.approvals` and externally executed results in `results.calls`. The error prints the IDs it expected and the ones it got, so compare the two. See [Human-in-the-Loop Tool Approval](deferred-tools.md#human-in-the-loop-tool-approval) and [External Tool Execution](deferred-tools.md#external-tool-execution).
+Before v2.38.0, a run cancelled during its first tool call also left a history that raised this error. Upgrade if that is how you got here.
 
 ## Durable Execution
 
 ### [`UserError`][pydantic_ai.exceptions.UserError]: ```Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal```
 
-Durable execution names each toolset's activities after the toolset's `id`, so that a restarted workflow runs the same code. Give every `FunctionToolset`, `MCPToolset` and `DynamicToolset` a stable `id`. When a capability contributes the toolset, set the capability's `id` instead, for example `Capability(id='search', tools=[...])` or `MCP(url='...', id='docs')`. Prefect and DBOS have the same requirement. See [Agent Names and Toolset IDs](durable_execution/temporal.md#agent-names-and-toolset-ids).
+Durable execution names each toolset's activities after the toolset's `id`, so that a restarted workflow runs the same code. Give every toolset that runs its own tools a stable `id`: `FunctionToolset(id=...)`, `MCPToolset(..., id=...)` or `DynamicToolset(id=...)`. When a capability contributes the toolset, set the capability's `id` instead, for example `Capability(id='search', tools=[...])` or `MCP(url='...', id='docs')`. A capability function passed directly to `capabilities=` can't carry an `id`, so wrap it: `DynamicCapability(my_func, id='...')`. DBOS and Prefect raise the same error under their own names. See [Agent Names and Toolset IDs](durable_execution/temporal.md#agent-names-and-toolset-ids).
 
-### [`UserError`][pydantic_ai.exceptions.UserError]: `FunctionToolset cannot be added at runtime with Temporal`
+## Observability
 
-A toolset that runs its own tools needs its activities registered with the worker before the workflow starts, so it can't be added later through `run(toolsets=...)`, `override(toolsets=...)` or `@agent.toolset`. Pass it to the agent constructor instead. Toolsets whose tools run outside the agent, like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], can still be passed per run. A function toolset whose tools are all async and don't need durable wrapping can opt out by giving each tool `metadata={'temporal': False}`. See [Toolsets at Runtime](durable_execution/temporal.md#toolsets-at-runtime).
+### A banner saying `observability: off` appears in logs or in your application's output
+
+Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr`. It's only shown to a terminal or a coding agent, never under `pytest` or when `CI` is set. If your application or library captures `stderr`, set the `PYDANTIC_AI_NO_BANNER` environment variable to any value, or set `pydantic_ai.BANNER_ENABLED = False` before the first agent run. Configuring [instrumentation](logfire.md) also turns it off. See [The first-run banner](logfire.md#the-first-run-banner).
+
+## Errors Fixed in Past Versions
+
+These errors came from bugs that have since been fixed. If you still see one, you may be on an older version: check `pydantic_ai.__version__` and upgrade.
+
+### `TypeError: Cannot instantiate typing.Union`
+
+Depending on the Python version, the same error reads `TypeError: 'typing.Union' object is not callable`. Every `AnthropicModel` request failed this way with `anthropic` 2.x installed, because Pydantic AI v2.59.0 and older didn't support it while allowing it to be installed. Fixed in v2.60.0. If you can't upgrade yet, pin `anthropic<2`.
+
+### [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]: `status_code: 400, ... 'message': 'Schema is too complex.'`
+
+Anthropic compiles strict schemas, including the output schema of Native Output, into a grammar and rejects them past its size limits. Since v2.63.0, Pydantic AI checks the documented limits before sending, and a structured `output_type` without an explicit output mode falls back to a non-strict output tool when its schema would be too large. If you still see the error on v2.63.0 or later, its message carries a hint: simplify the schema, or use `ToolOutput` without `strict=True` or `PromptedOutput`. See [Schema complexity limits](models/anthropic.md#schema-complexity-limits).
+
+### [`UserError`][pydantic_ai.exceptions.UserError]: `CachePoint cannot be the first content in a user message`
+
+The [Planning](harness/planning.md) and [SystemReminders](harness/system-reminders.md) capabilities of Pydantic AI Harness could put a [`CachePoint`][pydantic_ai.messages.CachePoint] at the start of a user message. On Bedrock this was fixed in Pydantic AI v2.28.0, and on OpenRouter and in the capabilities themselves in v2.57.0 (Pydantic AI Harness 0.57.0). If you place a `CachePoint` at the start of a prompt yourself, it has nothing before it to cache: to cache the instructions or tool definitions, use the `anthropic_cache_instructions` and `anthropic_cache_tool_definitions` settings, or their `bedrock_` equivalents. See [prompt caching](models/anthropic.md#prompt-caching).
+
+### [`UserError`][pydantic_ai.exceptions.UserError]: `Anthropic does not support thinking and output tools at the same time.`
+
+Older versions raised this for [Tool Output](output.md#tool-output) whenever thinking was on, including adaptive thinking on Claude models, which supports it. Fixed for `AnthropicModel` in v2.27.1, and for Claude on Bedrock, where the message starts with `Bedrock does not support`, in v2.46.0.
 
 ## Monitoring HTTPX Requests
 
