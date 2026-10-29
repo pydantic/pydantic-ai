@@ -734,6 +734,18 @@ async def test_a_backend_error_keeps_its_details_across_a_durable_call(error: Ex
     ]
 
 
+async def test_a_display_start_in_a_failed_unit_is_reported_by_the_retry() -> None:
+    provider = InMemoryProvider()
+    workspace = Workspace(provider.backend(None))
+    # The display starts again, then the unit fails outside the error table, so the engine retries it.
+    provider.restart_display = provider.lose_next_action = True
+    with pytest.raises(RuntimeError, match='the worker was lost'):
+        await execute_call(workspace, WorkspaceCall(method='act', action=PressKeys(keys=('a',))))
+    retried = await execute_call(workspace, WorkspaceCall(method='screenshot'))
+    assert (retried.data, retried.starts) == (FAKE_SCREENSHOT, 1)
+    assert (await execute_call(workspace, WorkspaceCall(method='screenshot'))).starts == 0
+
+
 def test_unexpected_errors_fail_the_unit() -> None:
     assert error_as_data(ConnectionError('flaky')) is None
     assert error_as_data(TimeoutError('flaky')) is None

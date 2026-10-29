@@ -288,6 +288,12 @@ async def test_a_desktop_size_is_set_on_a_new_sandbox(fake_daytona: FakeDaytona)
     ]
 
 
+@pytest.mark.parametrize('size', [(640, 400), (1280, 700)])
+def test_a_desktop_smaller_than_daytona_starts_is_refused(size: tuple[int, int]) -> None:
+    with pytest.raises(UserError, match="Daytona's desktop is at least 1024x768"):
+        DaytonaSandboxBackend(desktop=size)
+
+
 async def test_a_sandbox_without_a_desktop_has_no_display(fake_daytona: FakeDaytona) -> None:
     backend = DaytonaSandboxBackend()
 
