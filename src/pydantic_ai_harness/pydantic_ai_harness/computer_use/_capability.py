@@ -617,8 +617,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """Fail the run at its start when its workspace has no display."""
         if not ctx.workspace.has_display:
             raise UserError(
-                '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a '
-                "desktop. This run's workspace has none."
+                "`ComputerUse` needs a workspace with a display, and this run's has none. Start a sandbox with "
+                'one, such as `DockerSandbox(desktop=True)`.'
             )
 
     async def before_tool_execute(

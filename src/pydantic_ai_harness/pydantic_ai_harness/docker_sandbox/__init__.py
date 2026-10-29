@@ -5,10 +5,11 @@ workspace, such as `Coder`. `DockerSandboxBackend` is the workspace backend itse
 applications that want to build one and pass it to a run as `workspace=`.
 """
 
-from pydantic_ai_harness.docker_sandbox._backend import DockerSandboxBackend
+from pydantic_ai_harness.docker_sandbox._backend import DESKTOP_DOCKERFILE, DockerSandboxBackend
 from pydantic_ai_harness.docker_sandbox._capability import DockerSandbox
 
 __all__ = [
+    'DESKTOP_DOCKERFILE',
     'DockerSandbox',
     'DockerSandboxBackend',
 ]
