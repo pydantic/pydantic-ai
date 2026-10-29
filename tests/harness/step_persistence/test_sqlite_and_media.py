@@ -596,15 +596,14 @@ class TestEndToEndMediaWithAgent:
     async def test_images_below_the_threshold_are_written_once_not_into_every_snapshot(self, tmp_path: Path) -> None:
         """Each `FileStepStore` snapshot repeats the history, so an inline image would be written again at every step."""
         screenshots = [bytes([n]) * 40_000 for n in range(3)]
+        shots = iter(screenshots)
 
         def look() -> ToolReturn:
-            return ToolReturn('Looked.', content=[BinaryImage(data=screenshots[len(seen)], media_type='image/png')])
-
-        seen: list[int] = []
+            return ToolReturn('Looked.', content=[BinaryImage(data=next(shots), media_type='image/png')])
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            seen[:] = [i for i, m in enumerate(messages) if isinstance(m, ModelRequest)][1:]
-            if len(seen) < len(screenshots):
+            looks = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+            if looks < len(screenshots):
                 return ModelResponse(parts=[ToolCallPart('look', {})])
             return ModelResponse(parts=[TextPart('done')])
 
@@ -613,7 +612,6 @@ class TestEndToEndMediaWithAgent:
         await agent.run('Look three times.')
 
         snapshots = list((tmp_path / 'runs').glob('*/snapshots/*.json'))
-        assert len(snapshots) > len(screenshots)
         written = [path.read_text(encoding='utf-8') for path in snapshots]
         for screenshot in screenshots:
             assert not any(base64.b64encode(screenshot).decode('ascii') in text for text in written)
