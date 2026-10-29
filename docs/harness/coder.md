@@ -16,7 +16,7 @@ It works in the run's workspace, on this machine or in a sandbox. It is a regula
 
 ## Usage
 
-Install the Coder extra to include ripgrep (`rg`), which backs the `list_files` and `grep` tools:
+Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, and ripgrep (`rg`), which backs the `list_files` and `grep` tools. Without the extra, importing `Coder` raises an `ImportError` naming it:
 
 ```bash
 pip/uv-add "pydantic-ai-harness[coder]"
@@ -279,6 +279,8 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 `Coder` works under Temporal, DBOS, and Prefect: attach it next to the workspace and the durability capability, as the [workspace guide](../workspace.md#durable-execution) shows with what works on each engine. On Temporal, `delegate_task` delegates to `self` only; see [delegation on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
 
 ## Upgrading
+
+`json-repair` moved from the base install to the `coder` and `repair-tool-arguments` extras. If you install plain `pydantic-ai-harness`, importing `Coder` or `coder_agent` raises an `ImportError`: install `pydantic-ai-harness[coder]`, or add `coder` to the extras you already use. If you use `RepairToolArguments` on its own, install `pydantic-ai-harness[repair-tool-arguments]`.
 
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 

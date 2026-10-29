@@ -59,7 +59,7 @@ that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairT
 prompt caching (unified `cache=True`).
 
 ```bash
-uv add "pydantic-ai-harness[coder]"   # installs ripgrep (rg) on the agent host
+uv add "pydantic-ai-harness[coder]"   # installs json-repair, and ripgrep (rg) on the agent host
 ```
 
 ```python

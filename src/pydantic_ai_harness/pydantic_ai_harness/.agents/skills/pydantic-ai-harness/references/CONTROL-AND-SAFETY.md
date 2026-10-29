@@ -4,8 +4,8 @@ Capabilities that constrain, screen, budget, or steer a run: repair malformed to
 guard prompts/tool calls/outputs, scan tool results for prompt injection, cap spend, ask the user
 a question mid-run, re-inject reminders, interrupt repeated-action loops, and review the trajectory with a
 judge model. All are
-`AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `PromptInjectionDefender` needs
-an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
+`AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `RepairToolArguments` (`[repair-tool-arguments]`) and
+`PromptInjectionDefender` need an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 `DeferredToolRequests`, `HandleDeferredToolCalls`), use the core mechanism documented in the
 `building-pydantic-ai-agents` skill (`references/TOOLS-ADVANCED.md`); do not rebuild it here.
 
@@ -33,7 +33,8 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 ## RepairToolArguments
 
 Runs `json-repair` on raw tool-call argument strings in `before_tool_validate`, for every tool on the
-agent. No extra (`json-repair` is a base dependency), no options.
+agent. Needs the `repair-tool-arguments` extra, which installs `json-repair`
+(`uv add "pydantic-ai-harness[repair-tool-arguments]"`; `[coder]` includes it); no options.
 
 ```python
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
