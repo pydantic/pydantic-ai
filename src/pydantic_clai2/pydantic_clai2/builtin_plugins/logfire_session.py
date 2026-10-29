@@ -4,6 +4,7 @@ import asyncio
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from uuid import uuid4
 from weakref import ref
 
@@ -191,19 +192,19 @@ class SessionTracing(AbstractCapability[None]):
         with parent_span(self.root()):
             try:
                 return await handler()
-            except Exception as error:
+            except Exception as exc:
                 # Every enabled copy of the plugin looks the error up at turn end, but `combine` keeps only the last
                 # copy's `wrap_run`, so this one tells them all.
                 for tracing in _live_tracings():
-                    tracing._run_errors.append(error)
+                    tracing._run_errors.append(exc)
                 raise
 
 
-async def git_email() -> str | None:
-    """Read the configured Git author email, without making telemetry depend on Git."""
+async def git_email(*, cwd: Path) -> str | None:
+    """Read the Git author email configured for `cwd`, without making telemetry depend on Git."""
     with move_on_after(2):
         try:
-            result = await run_process(['git', 'config', '--get', 'user.email'], check=False)
+            result = await run_process(['git', 'config', '--get', 'user.email'], cwd=cwd, check=False)
         except OSError:
             return None
         if result.returncode == 0:

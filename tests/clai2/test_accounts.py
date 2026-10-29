@@ -17,7 +17,6 @@ from pydantic_ai.exceptions import FallbackExceptionGroup, ModelHTTPError, UserE
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import _ModelResolver, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.auth import CodexAuth, login_command
 from pydantic_clai2.config.credential_store import has_credentials, save_codex_credentials
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -25,7 +24,9 @@ from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import accounts as accounts_module, key_profiles
 from pydantic_clai2.models.accounts import Account, LoginChoice, accounts, login_choices, pool, remember, sign_out
+from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import ModelProvider, PluginLogin
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import accounts_menu
 from pydantic_clai2.ui.menus.accounts_menu import (
     AccountsMenu,
@@ -181,7 +182,7 @@ async def test_login_records_accounts_it_signs_in(tmp_path: Path, monkeypatch: p
         await login_command(['openai-codex@*'], codex=codex, store=store)
 
 
-def keyed_resolver(tmp_path: Path, *, store: SettingsStore | None = None) -> _ModelResolver:
+def keyed_resolver(tmp_path: Path, *, store: SettingsStore | None = None) -> ModelResolver:
     def resolve_profile(name: str, profile: str) -> Model:
         return TestModel(custom_output_text=f'{profile} answered {name}')
 
@@ -189,7 +190,7 @@ def keyed_resolver(tmp_path: Path, *, store: SettingsStore | None = None) -> _Mo
         return TestModel()
 
     providers = {'claude-code': ModelProvider(prefix='claude-code', resolve=resolve, resolve_profile=resolve_profile)}
-    return _ModelResolver(console=Console(file=io.StringIO()), plugins=lambda: providers, store=store)
+    return ModelResolver(console=Console(file=io.StringIO()), plugins=lambda: providers, store=store)
 
 
 async def test_all_accounts_fall_back_in_list_order(tmp_path: Path) -> None:
@@ -213,7 +214,7 @@ async def test_all_accounts_fall_back_in_list_order(tmp_path: Path) -> None:
     assert (await Agent(model).run('hi')).output == 'side answered opus'
 
 
-def pooling_resolver(store: SettingsStore, pooled: Callable[[], bool]) -> _ModelResolver:
+def pooling_resolver(store: SettingsStore, pooled: Callable[[], bool]) -> ModelResolver:
     def resolve(name: str) -> Model:
         return TestModel(custom_output_text=f'default answered {name}')
 
@@ -221,7 +222,7 @@ def pooling_resolver(store: SettingsStore, pooled: Callable[[], bool]) -> _Model
         return TestModel(custom_output_text=f'{profile} answered {name}')
 
     providers = {'claude-code': ModelProvider(prefix='claude-code', resolve=resolve, resolve_profile=resolve_profile)}
-    return _ModelResolver(
+    return ModelResolver(
         console=Console(file=io.StringIO()), plugins=lambda: providers, store=store, pool_accounts=pooled
     )
 

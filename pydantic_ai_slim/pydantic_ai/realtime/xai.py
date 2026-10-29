@@ -44,6 +44,9 @@ try:
         ConversationItem,
         ConversationItemAdded,
         ConversationItemCreatedEvent,
+        InputAudioBufferCommittedEvent,
+        InputAudioBufferSpeechStartedEvent,
+        InputAudioBufferSpeechStoppedEvent,
         RealtimeConversationItemFunctionCall,
         RealtimeConversationItemFunctionCallOutput,
         RealtimeResponseUsage,
@@ -59,7 +62,6 @@ except ImportError as _import_error:  # pragma: no cover
         '`pip install "pydantic-ai-slim[xai-realtime]"`'
     ) from _import_error
 
-from .._instrumentation import get_instructions
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import BinaryAudio, ModelMessage, RealtimeSessionErrorEvent
@@ -67,11 +69,13 @@ from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._lifecycle import InputId
+from ._lifecycle import InputId, LifecycleEvent, ResponseStarted
+from ._openai_lifecycle import AudioCommit, OpenAILifecycle
 from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
     INPUT_AUDIO_BUFFER_COMMIT_EVENT,
+    ProtocolResponse,
     client_event_id,
     config_interrupts_response_on_speech,
     connect_openai_protocol,
@@ -83,7 +87,7 @@ from ._openai_protocol import (
     tool_def_to_openai,
     turn_detection_config,
 )
-from ._utils import inject_trace_context, resolve_advertised_tools
+from ._utils import inject_trace_context, resolve_advertised_tools, session_instructions
 from .codec import (
     CancelResponse,
     ClearAudio,
@@ -259,6 +263,53 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     return event
 
 
+class _XaiVadLifecycle(OpenAILifecycle):
+    """The OpenAI lifecycle under xAI's server VAD, which can take back a stop.
+
+    xAI commits a spoken turn a few hundred milliseconds after its VAD hears it stop, and starts the reply in
+    between. If the user speaks again before the commit, xAI reports `speech_started` again for the same item, and
+    drops the reply it started without ever ending it: no `response.done` comes for it (recorded live). So the turn
+    goes on, as the turn already under way rather than a new one, and the dropped reply ends here, cancelled, as a
+    barge-in would cancel it.
+    """
+
+    def __init__(self, *, transcribes: bool) -> None:
+        super().__init__(transcribes=transcribes, acknowledges_commits=False)
+        self._stopped: dict[str, str | None] = {}
+        """Spoken turns VAD heard stop and hasn't committed yet, each with the reply xAI started for it, if any."""
+
+    def speech_stopped(self, data: dict[str, Any]) -> list[LifecycleEvent]:
+        if item_id := InputAudioBufferSpeechStoppedEvent.model_validate(data).item_id:  # pragma: no branch
+            self._stopped[item_id] = None
+        return super().speech_stopped(data)
+
+    def response_created(
+        self, response: ProtocolResponse, *, outstanding: tuple[str, tuple[InputId, ...]] | None
+    ) -> list[LifecycleEvent]:
+        events = super().response_created(response, outstanding=outstanding)
+        for event in events:
+            if isinstance(event, ResponseStarted) and event.user_turn_id in self._stopped:
+                self._stopped[event.user_turn_id] = event.response_id
+        return events
+
+    def speech_started(self, data: dict[str, Any]) -> list[LifecycleEvent]:
+        item_id = InputAudioBufferSpeechStartedEvent.model_validate(data).item_id
+        if item_id not in self._stopped:
+            return super().speech_started(data)
+        # The user goes on with the turn VAD heard stop: it is under way again.
+        reply = self._stopped.pop(item_id)
+        self._speaking[item_id] = None
+        if reply is None or reply not in self._open:
+            return []
+        # The reply xAI started at the stop is dropped: the turn is unanswered until the reply to its new stop.
+        self._unclaimed_turn = item_id
+        return [self._end(reply, 'cancelled', None, None)]
+
+    def audio_committed(self, data: dict[str, Any]) -> list[LifecycleEvent]:
+        self._stopped.pop(InputAudioBufferCommittedEvent.model_validate(data).item_id, None)
+        return super().audio_committed(data)
+
+
 class XaiRealtimeConnection(OpenAIRealtimeConnection):
     """A live WebSocket connection to the xAI Grok Voice realtime API.
 
@@ -299,6 +350,15 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             interrupts_response_on_speech=interrupts_response_on_speech,
             model_name=model_name,
             model_name_getter=model_name_getter,
+            manual_turns=manual_turns,
+        )
+        # With turn detection off, xAI doesn't commit audio it heard no speech in, so a commit it never acknowledged
+        # is a turn only if it did. With it on, xAI ignores a commit of ours altogether (no acknowledgement, no error;
+        # checked live): it commits only what its VAD hears, and can take back the stop it heard (`_XaiVadLifecycle`).
+        self._lifecycle = (
+            OpenAILifecycle(transcribes=input_transcription_enabled, commits_need_speech=True)
+            if manual_turns
+            else _XaiVadLifecycle(transcribes=input_transcription_enabled)
         )
         self._conversation_id = conversation_id
         # xAI reports `billable_audio_seconds` as the conversation's running total, not the response's own
@@ -313,9 +373,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         # joins the conversation (checked live). Nothing below applies with turn detection on.
         self._manual_turns = manual_turns
         self._commit_held = False
-        self._audio_commit_listener: Callable[[], None] | None = None
-        # Whether the listener heard about the held commit already, which a reconnect sends again.
-        self._commit_announced = False
         # Whether xAI heard speech in the audio it has since the last commit. It doesn't answer a commit of
         # silence at all (checked live), so without speech the commit goes out with a `response.create`.
         self._speech_detected = False
@@ -386,9 +443,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         """Send the held commit, and the audio it covers, with the request for a response."""
         # Marked first, so audio sent meanwhile is kept back until the reply ends rather than joining the turn.
         self._response_active = True
-        if not self._commit_announced:
-            self._commit_announced = True
-            self._announce_commit()
         # Each frame leaves the held audio only as it goes out, and the commit stays held until it's sent, so
         # a connection that drops midway still has the whole turn to send again after the reconnect.
         while self._held_audio_committed:
@@ -413,13 +467,8 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         await super()._send_event({'type': INPUT_AUDIO_BUFFER_COMMIT_EVENT, 'event_id': event_id})
         self._release_commit()
 
-    def _announce_commit(self) -> None:
-        """Tell the listener audio is being committed, before anything goes out that xAI could answer first."""
-        if self._audio_commit_listener is not None:
-            self._audio_commit_listener()
-
     def _release_commit(self) -> None:
-        self._commit_held = self._commit_announced = False
+        self._commit_held = False
         self._sent_audio.clear()
         # The commit lands after anything sent while it was held, so the audio is xAI's latest input.
         self._audio_is_latest_input = True
@@ -428,13 +477,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         """Send the audio kept back behind a reply that has ended, until a new commit is held or a reply starts."""
         while self._held_audio and not self._commit_held and not self._response_active:
             await self._send_audio(self._held_audio.pop(0))
-
-    @property
-    def _defers_audio_commit(self) -> bool:
-        return self._manual_turns
-
-    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
-        self._audio_commit_listener = listener
 
     @property
     def _response_request_dropped(self) -> bool:
@@ -456,18 +498,17 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             await super()._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
             self._audio_is_latest_input = False
         # Audio still in the buffer is committed by the request, and answered by its response.
-        sent_before: list[InputId] | None = None
+        commit: AudioCommit | None = None
         if self._audio_uncommitted:
-            self._announce_commit()
             # Whatever went out before the request joins the conversation ahead of the turn it commits.
-            sent_before = self._lifecycle.audio_commit_sent()
+            commit = self._lifecycle.audio_commit_sent()
         self._audio_uncommitted = self._speech_detected = False
         self._sent_audio.clear()
         try:
             await super()._create_response(input_indexes, answers)
         except BaseException:
-            if sent_before is not None:
-                self._lifecycle.audio_commit_failed(sent_before)
+            if commit is not None:
+                self._lifecycle.audio_commit_failed(commit)
             raise
 
     async def _attempt_reconnect(self) -> bool:
@@ -592,6 +633,8 @@ class XaiRealtimeModel(RealtimeModel):
     model: XaiRealtimeModelName
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
+    # xAI takes both on the wire but doesn't apply them.
+    unsupported_settings = frozenset({'max_tokens', 'parallel_tool_calls'})
     _provider: XaiProvider = field(init=False, repr=False)
     _api_key: str = field(init=False, repr=False)
 
@@ -710,7 +753,7 @@ class XaiRealtimeModel(RealtimeModel):
         settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         reconnect = settings.get('reconnect')
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         session_config = self._session_config(
             instructions=instructions, tools=model_request_parameters.function_tools, model_settings=settings
         )

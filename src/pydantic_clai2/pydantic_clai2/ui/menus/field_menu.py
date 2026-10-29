@@ -12,12 +12,12 @@ from termflow.tui.pager import Pager
 from termflow.tui.terminal import terminal_size
 from termflow.tui.textinput import TextInput, TextInputResult
 
-from pydantic_clai2.plugins.menus import ChoicePreview, FieldRow, FieldSource
+from pydantic_clai2.plugins.menus import ChoicePreview, CloseMenu, FieldRow, FieldSource
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.text_editor import TextEditor, edit_text
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 CUSTOM = 'Type a value...'
 KEEP = 'Keep current'
@@ -58,10 +58,14 @@ class _Reset:
     key: str
 
 
+NOT_SET = '(not set)'
+"""What `shown` displays for a value that is not set; the editor starts empty instead."""
+
+
 def shown(value: JsonValue) -> str:
     """Display a stored value the way the user would type it back."""
     if value is None:
-        return '(not set)'
+        return NOT_SET
     return value if isinstance(value, str) else json.dumps(value)
 
 
@@ -170,16 +174,27 @@ class FieldMenu:
             return ''
         return render(item.value, width=max(20, terminal_size()[0] - _PREVIEW_LIST_WIDTH - 4))
 
+    def initial(self, row: FieldRow) -> str:
+        """The text the editor starts with: the current value, so Enter keeps it.
+
+        Empty for a secret, for a value that is not set, and for one at its default, which a source may
+        show as text you would not type, such as `LOGFIRE_API_KEY, if set`. Enter on empty resets, which
+        keeps the default. Text that is not printable is left out rather than drawn as control characters.
+        """
+        if row.secret:
+            return ''
+        current = self._source.current(row)
+        return '' if current in (row.default, NOT_SET) or not current.isprintable() else current
+
     def build_editor(self, row: FieldRow) -> TextInput:
-        """A typed input that validates as you go; empty resets."""
+        """A typed input that opens holding `initial(row)` and validates as you go; empty resets."""
         builder = (
             TextInputBuilder(f'New value for {row.label or row.key}')
             .style(markdown_style())
             .prompt('Value: ')
+            .initial(self.initial(row))
             .placeholder(
-                'Enter a new secret'
-                if row.secret
-                else f'current: {row.display(self._source.current(row))} (empty resets)'
+                'Enter a new secret' if row.secret else f'empty resets to {row.display(row.default) or "(empty)"}'
             )
             .validator(lambda text: None if not text.strip() else self._source.problem(row, text.strip()))
             .footer_hint('Enter save - Esc cancel')
@@ -276,7 +291,7 @@ async def run_flow_async(
     """`run_flow` driven from the event loop, for submenus that are themselves async, such as `prompt_api_key`.
 
     Each widget runs in its own `run_worker`, so a submenu can open its own worker without nesting one
-    terminal owner inside another.
+    terminal owner inside another. A submenu that returns `CloseMenu` closes the list too.
     """
     messages: list[str] = []
     cursor = 0
@@ -288,7 +303,10 @@ async def run_flow_async(
         if row is None:
             continue
         if submenus and row.key in submenus:
-            messages.extend(await submenus[row.key]())
+            done = await submenus[row.key]()
+            messages.extend(done)
+            if isinstance(done, CloseMenu):
+                return messages
             continue
         message = await run_worker(partial(_edit, menu, row, runners))
         if message is not None:
@@ -328,4 +346,9 @@ def _edit(menu: FieldMenu, row: FieldRow, runners: Runners) -> str | None:
     typed = runners.run_text(menu.build_editor(row))
     if typed.cancelled or not isinstance(typed.value, str):
         return None
-    return menu.apply(row, typed.value)
+    raw = typed.value.strip()
+    # Enter on the value it opened with saves nothing: in `/set`, saving would copy a value from the
+    # project's settings file into your own.
+    if raw and raw == menu.initial(row).strip():
+        return None
+    return menu.apply(row, raw)

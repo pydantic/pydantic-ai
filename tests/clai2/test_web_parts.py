@@ -1,12 +1,15 @@
 """The `web` plugin's parts on their own: event translation, history, the answerer race, the server, and `--web`."""
 
 import asyncio
+import hashlib
 import io
+import json
 import os
 import re
 import socket
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import anyio
@@ -28,7 +31,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -44,7 +46,7 @@ from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserR
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_clai2.builtin_plugins.web import WebPlugin, remote as remote_module, server as server_module
+from pydantic_clai2.builtin_plugins.web import WebPlugin, channel as channel_module, server as server_module
 from pydantic_clai2.builtin_plugins.web.app import HEADER, Receive, Scope, Send
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
@@ -54,10 +56,15 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Diff,
     DiffAdded,
     EventTranslator,
+    ForkEntry,
+    ImageIds,
     Item,
     ItemAdded,
     ItemLog,
+    LiveChanged,
+    LiveEntry,
     Notice,
+    OrchestratorMessage,
     ServerMessage,
     ShellDone,
     StatusChanged,
@@ -65,26 +72,31 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     SubCallAdded,
     SubCallDone,
     SubCallOutput,
+    TaskItems,
     TextDelta,
     ToolArgs,
     ToolDone,
     ToolOutput,
     TurnEnded,
     TurnStarted,
+    dump,
+    dump_session,
     history_items,
+    legacy_tags,
 )
-from pydantic_clai2.builtin_plugins.web.remote import Observer
 from pydantic_clai2.builtin_plugins.web.server import WebServer
-from pydantic_clai2.cli import _cli
+from pydantic_clai2.builtin_plugins.web.service import Observer
+from pydantic_clai2.cli import cli
 from pydantic_clai2.cli.web import run_web
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, Transcript
+from pydantic_clai2.plugins import CommandEnd, ForkEnd, ForkInfo, PluginHost, Transcript
 from pydantic_clai2.plugins.menus import Option
 from pydantic_clai2.runtime.monty_cells import MontyCell
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.worktrees import Worktree
+from pydantic_clai2.ui.rendering.status import Status
 from tests.clai2.test_web import WIRE
 
 REQUEST = AskUserRequest(
@@ -138,7 +150,7 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
     assert translate(FunctionToolResultEvent(part=ToolReturnPart('shell', 'a.py', tool_call_id='c1'))) == [
         ToolDone(id='c1', text='a.py', state='done')
     ]
-    retry = RetryPromptPart('bad arguments', tool_name='shell', tool_call_id='c2')
+    retry = ToolReturnPart('shell', 'bad arguments', tool_call_id='c2', outcome='retried')
     [failed] = translate(FunctionToolResultEvent(part=retry))
     assert isinstance(failed, ToolDone) and failed.state == 'error' and 'bad arguments' in failed.text
 
@@ -196,7 +208,9 @@ def test_a_run_code_cell_streams_with_its_sandbox_calls() -> None:
     ]
     finished = SandboxCallFinishedEvent(result=ToolReturnPart('shell', 'a.py', tool_call_id='cell__1'))
     assert translate(finished) == [SubCallDone(id='cell', call_id='cell__1', text='a.py', state='done')]
-    failed = SandboxCallFinishedEvent(result=RetryPromptPart('no', tool_name='grep', tool_call_id='cell__spec_2'))
+    failed = SandboxCallFinishedEvent(
+        result=ToolReturnPart('grep', 'no', tool_call_id='cell__spec_2', outcome='retried')
+    )
     [done] = translate(failed)
     assert isinstance(done, SubCallDone) and (done.call_id, done.state) == ('cell__spec_2', 'error')
     call = ToolCallPart('run_code', {'code': 'ls'}, tool_call_id='cell')
@@ -237,7 +251,17 @@ def test_the_item_log_follows_a_cell() -> None:
 def test_history_items() -> None:
     long = 'x' * (RESULT_CHARS + 5)
     messages = [
-        ModelRequest(parts=[UserPromptPart(['Look', BinaryContent(b'png', media_type='image/png')])]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        'Look',
+                        BinaryContent(b'png', media_type='image/png'),
+                        BinaryContent(b'pdf', media_type='application/pdf'),
+                    ]
+                )
+            ]
+        ),
         ModelResponse(
             parts=[
                 ThinkingPart('plan'),
@@ -252,7 +276,7 @@ def test_history_items() -> None:
         ModelRequest(
             parts=[
                 ToolReturnPart('read_file', long, tool_call_id='r1'),
-                RetryPromptPart('no such command', tool_name='shell', tool_call_id='s1'),
+                ToolReturnPart('shell', 'no such command', tool_call_id='s1', outcome='retried'),
                 ToolReturnPart('missing', 'orphan', tool_call_id='zz'),
             ]
         ),
@@ -266,7 +290,21 @@ def test_history_items() -> None:
         ('tool', 'shell', 'error'),
         ('tool', 'grep', 'interrupted'),
     ]
-    assert items[0].text == 'Look\n[BinaryContent]'
+    assert (items[0].text, items[0].images) == ('Look\n[image]\n[BinaryContent]', []), 'a preview serves no images'
+    image = BinaryContent(b'png', media_type='image/png')
+    image_only = ModelRequest(parts=[UserPromptPart(['', image])])
+    assert history_items([image_only])[0].text == '[image]', 'a prompt of images alone'
+    # A live session lists its images by ID, which it serves, rather than naming them.
+    ids = ImageIds()
+    [listed] = history_items([image_only], image_ids=ids)
+    assert (listed.text, listed.images) == ('', [hashlib.sha256(b'png').hexdigest()])
+    assert history_items([image_only], image_ids=ids)[0].images == listed.images, 'from the IDs already hashed'
+    assert history_items([ModelRequest(parts=[UserPromptPart('plain')])], image_ids=ids)[0].images == []
+    assert ids.find(listed.images[0]) is image
+    ids.keep([image])
+    assert ids.find(listed.images[0]) is image
+    ids.keep([])
+    assert ids.find(listed.images[0]) is None, 'not once the session no longer holds it'
     note = MontyCell(code='x = 1', returned='{}').note()
     assert history_items([ModelRequest(parts=[UserPromptPart([note, 'what is x?'])])])[0].text == 'what is x?'
     assert items[3].text.endswith('\n… 5 more characters') and len(items[3].text) < len(long) + 40
@@ -309,9 +347,9 @@ async def test_hub_fans_out_only_while_subscribed() -> None:
         assert hub.clients == 2
         hub.publish(Notice(text='hello'))
         assert (
-            first.get_nowait()
-            == second.get_nowait()
-            == '{"type":"notice","text":"hello","level":"info","command":null,"usage":null}'
+            first.queue.get_nowait()
+            == second.queue.get_nowait()
+            == '{"type":"notice","text":"hello","level":"info","command":null,"usage":null,"forks":null,"fork":null}'
         )
     assert hub.clients == 0
 
@@ -327,7 +365,7 @@ async def test_the_browser_answers_first() -> None:
             stopped.set()
         return RED  # pragma: no cover
 
-    answerer = BrowserAnswerer(publish=published.append, terminal=terminal)
+    answerer = BrowserAnswerer(publish=lambda message, _: published.append(message), terminal=terminal)
     answers: list[AskUserResponse] = []
     async with anyio.create_task_group() as group:
 
@@ -353,7 +391,7 @@ async def test_the_terminal_answers_first() -> None:
     async def terminal(request: AskUserRequest) -> AskUserResponse:
         return RED
 
-    answerer = BrowserAnswerer(publish=lambda message: None, terminal=terminal)
+    answerer = BrowserAnswerer(publish=lambda message, _: None, terminal=terminal)
     assert await answerer(REQUEST) == RED
     assert answerer.questions == []
 
@@ -366,29 +404,61 @@ async def test_only_the_held_conversation_reaches_the_browser(monkeypatch: pytes
     """A background `/fork` or delegated task runs with the plugin's capability too; the browser shows only the shell's own."""
     host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
     plugin = WebPlugin.from_host(host)
-    observer = Observer(plugin.remote)
-    with plugin.hub.subscribe() as queue:
+    observer = Observer(plugin.service)
+    with plugin.service.hub.subscribe() as client:
+        queue = client.queue
         await observer.on_event(context('another'), event=PartStartEvent(index=0, part=TextPart('fork')))
         assert queue.empty()
-        monkeypatch.setattr(remote_module, 'STATUS_INTERVAL', 0)
+        monkeypatch.setattr(channel_module, 'STATUS_INTERVAL', 0)
         await observer.on_event(
             context(host.conversation.conversation_id), event=PartStartEvent(index=0, part=TextPart('mine'))
         )
         assert '"text":"mine"' in queue.get_nowait()
         assert '"type":"status"' in queue.get_nowait()
-    assert isinstance(StatusChanged(status=plugin.remote.status()), StatusChanged)
+    assert isinstance(StatusChanged(status=plugin.service.default().status()), StatusChanged)
+
+
+async def test_forks_that_failed_or_were_cancelled() -> None:
+    """A failed fork's notice says why, as the terminal's line does; a cancelled one has no text; a lone host has no forks."""
+    host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
+    plugin = WebPlugin.from_host(host)
+    fork = ForkInfo(id=2, model='test', prompt='go', status='failed', elapsed=1.5, session_id=None)
+    entry = ForkEntry(id=2, model='test', prompt='go', status='failed', elapsed=1.5, session_id=None)
+    with plugin.service.hub.subscribe() as client:
+        await plugin.on_fork_end(ForkEnd(fork=fork, error=RuntimeError('provider down\nsecond line')))
+        await plugin.on_fork_end(ForkEnd(fork=replace(fork, status='cancelled')))
+        await plugin.on_command_end(CommandEnd(text='/forks', output='No forks yet.'))
+        messages = [WIRE.validate_json(client.queue.get_nowait()) for _ in range(client.queue.qsize())]
+    notices = [message for message in messages if isinstance(message, Notice)]
+    assert notices == [
+        Notice(text='RuntimeError: provider down', level='error', fork=entry),
+        Notice(text='', fork=replace(entry, status='cancelled')),
+        Notice(text='No forks yet.', command='/forks'),
+    ]
+
+
+def test_the_browser_status_shows_the_known_window_before_a_request_measures_one() -> None:
+    status = Status(context_tokens=0, model_window=200_000)
+    host = PluginHost[None](
+        name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript(), status=status
+    )
+    channel = WebPlugin.from_host(host).service.default()
+    assert (channel.status().context_tokens, channel.status().context_window) == (0, 200_000)
+    status.context_window = 100_000
+    assert channel.status().context_window == 100_000
 
 
 async def test_runs_of_the_held_conversation_are_turns() -> None:
     """A run woken by a finished task has no prompt; a failure without a message is named by its type."""
     host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
     plugin = WebPlugin.from_host(host)
-    observer = Observer(plugin.remote)
+    observer = Observer(plugin.service)
 
     async def fail() -> AgentRunResult[object]:
         raise RuntimeError()
 
-    with plugin.hub.subscribe() as queue:
+    with plugin.service.hub.subscribe() as client:
+        queue = client.queue
         with pytest.raises(RuntimeError):
             await observer.wrap_run(context('another'), handler=fail)
         assert queue.empty(), 'a background run is not a turn'
@@ -399,7 +469,7 @@ async def test_runs_of_the_held_conversation_are_turns() -> None:
         TurnStarted(item=None),
         TurnEnded(outcome='failed', error='RuntimeError'),
     ]
-    assert not plugin.remote.running
+    assert not plugin.service.default().running
 
 
 async def test_a_taken_port_is_reported() -> None:
@@ -477,7 +547,10 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
 
 
 async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`clai2 --web` works where a session runs: `--resume` starts in its directory, `/workspace` starts one elsewhere."""
+    """`clai2 --web` works where a session runs: `--resume` starts in its directory, `/workspace` starts one elsewhere.
+
+    The process's working directory never changes.
+    """
     opened: list[str] = []
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
     launch, other = tmp_path / 'launch', tmp_path / 'other'
@@ -501,7 +574,7 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
                 )
             )
             await output.ready.wait()
-            assert Path.cwd() == other.resolve()
+            assert Path.cwd() == launch
             found = re.search(r'(http://\S+)/\?token=(\S+)', output.getvalue())
             assert found is not None
             async with httpx.AsyncClient(base_url=found[1], headers={HEADER: found[2]}) as client:
@@ -512,7 +585,7 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
             group.cancel_scope.cancel()
     assert 'Resumed Elsewhere' in output.getvalue()
     assert f'New session in {launch.resolve()}.' in output.getvalue()
-    assert Path.cwd() == launch.resolve()
+    assert Path.cwd() == launch
 
 
 async def test_run_web_refuses_a_session_whose_directory_is_gone(tmp_path: Path) -> None:
@@ -569,7 +642,7 @@ def test_web_flag_rejects(
 ) -> None:
     monkeypatch.setattr(sys, 'argv', ['clai2', *argv])
     with pytest.raises(SystemExit):
-        _cli.run()
+        cli.run()
     assert error in capsys.readouterr().err
 
 
@@ -585,7 +658,7 @@ def test_web_flag_runs_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         sys, 'argv', ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '-m', 'test', '--request-limit', '7']
     )
     with pytest.raises(SystemExit) as exited:
-        _cli.run()
+        cli.run()
     assert exited.value.code == 130
     [call] = calls
     assert (call['resume'], call['session_id'], call['fork_session']) == (None, None, False)
@@ -620,10 +693,10 @@ def test_web_flag_reads_a_private_token_file(
         os.chdir(elsewhere)
         return Worktree(path=elsewhere, branch='clai-x', head='0', created=False)
 
-    monkeypatch.setattr(_cli, '_enter_worktree', enter_worktree)
+    monkeypatch.setattr(cli, '_enter_worktree', enter_worktree)
     argv = ['clai2', '--web', '--database', 'c.db', '--port', '4567', '--token-file', 'token', '--worktree', 'x']
     monkeypatch.setattr(sys, 'argv', argv)
-    _cli.run()
+    cli.run()
     [call] = calls
     assert (call['token'], call['port']) == ('a' * 40, 4567)
     argv = ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '--token-file', str(token)]
@@ -635,11 +708,11 @@ def test_web_flag_reads_a_private_token_file(
         token.write_text(text)
         token.chmod(mode)
         with pytest.raises(SystemExit):
-            _cli.run()
+            cli.run()
         assert error in capsys.readouterr().err
     token.unlink()
     with pytest.raises(SystemExit):
-        _cli.run()
+        cli.run()
     assert 'No such file' in capsys.readouterr().err
 
 
@@ -693,7 +766,7 @@ def test_web_flag_returns_after_the_web_ui(tmp_path: Path, monkeypatch: pytest.M
 
     monkeypatch.setattr('pydantic_clai2.cli.web.run_web', fake_run_web)
     monkeypatch.setattr(sys, 'argv', ['clai2', '--web', '--database', str(tmp_path / 'c.db')])
-    _cli.run()
+    cli.run()
 
 
 async def test_browser_dialogs_back_out_and_cancel_a_wait() -> None:
@@ -743,3 +816,65 @@ async def test_browser_dialogs_back_out_and_cancel_a_wait() -> None:
             dialogs.answer(second.id, 'a')
     assert sorted(answers, key=str) == [False, None]
     assert [type(message).__name__ for message in published].count('DialogClosed') == 4
+
+
+def test_wire_tags_follow_their_class_names_in_python_and_typescript() -> None:
+    """Each tag is its class in snake case, as `ArgsDelta` is `args_delta`, and `protocol.ts` sends the same."""
+    tags = {
+        TextDelta: 'text_delta',
+        SubCallAdded: 'sub_call',
+        SubCallOutput: 'sub_call_output',
+        SubCallDone: 'sub_call_done',
+        TurnStarted: 'turn_started',
+        TurnEnded: 'turn_ended',
+        TaskItems: 'task_items',
+    }
+    assert {message: message.type for message in tags} == tags
+    protocol_ts = (Path(__file__).parents[2] / 'src' / 'pydantic_clai2' / 'web-ui' / 'src' / 'protocol.ts').read_text()
+    assert [tag for tag in tags.values() if f"{{ type: '{tag}';" not in protocol_ts] == []
+    assert 'export type DelegationOutcome =' in protocol_ts
+    assert 'TaskOutcome' not in protocol_ts
+
+
+def test_legacy_tags_give_a_page_from_before_the_renames_the_tags_it_knows() -> None:
+    delta = TextDelta(id='i1', text='hi')
+    assert json.loads(legacy_tags(dump_session(delta, session='c1'))) == {
+        'session': 'c1',
+        'type': 'delta',
+        'id': 'i1',
+        'text': 'hi',
+    }
+    items = TaskItems(id='t1', messages=[delta, ToolOutput(id='i2', text='out')])
+    assert json.loads(legacy_tags(dump(items))) == {
+        'type': 'task_event',
+        'id': 't1',
+        'messages': [{'type': 'delta', 'id': 'i1', 'text': 'hi'}, {'type': 'tool_output', 'id': 'i2', 'text': 'out'}],
+    }
+    started = OrchestratorMessage(message=TurnStarted())
+    assert json.loads(legacy_tags(dump(started))) == {
+        'type': 'orchestrator',
+        'message': {'type': 'turn_start', 'item': None},
+    }
+    assert json.loads(legacy_tags('{"type":"task_items","id":"t1","messages":[1]}')) == {
+        'type': 'task_event',
+        'id': 't1',
+        'messages': [1],
+    }
+    output = ToolOutput(id='i2', text='"type":"text_delta"')
+    for unchanged in (dump(output), dump(OrchestratorMessage(message=output))):
+        assert legacy_tags(unchanged) == unchanged
+
+
+def test_dump_names_the_session_of_a_per_session_message() -> None:
+    """A per-session message carries its conversation ID first; a global one carries none."""
+    assert json.loads(dump_session(TextDelta(id='live1', text='hi'), session='conv "1"')) == {
+        'session': 'conv "1"',
+        'type': 'text_delta',
+        'id': 'live1',
+        'text': 'hi',
+    }
+    live = LiveChanged(sessions=[LiveEntry(id='c1', state='queued', title=None, workspace='/w')])
+    assert json.loads(dump(live)) == {
+        'type': 'live',
+        'sessions': [{'id': 'c1', 'state': 'queued', 'title': None, 'workspace': '/w'}],
+    }

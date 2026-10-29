@@ -14,7 +14,6 @@ from datetime import date, datetime
 from typing import NoReturn
 
 import pixeltable as pxt
-from pixeltable.catalog.table_metadata import ColumnMetadata, TableMetadata
 from pixeltable.exprs.expr import Expr
 from typing_extensions import TypedDict
 
@@ -92,7 +91,7 @@ _WHERE_PARSERS: dict[str, Callable[[str], object]] = {
 }
 
 
-def _computed_on_read(info: ColumnMetadata) -> bool:
+def _computed_on_read(info: pxt.ColumnMetadata) -> bool:
     # An unstored computed column reruns its function, possibly a paid or side-effecting UDF, on every read.
     return info['is_computed'] and not info['is_stored']
 
@@ -316,7 +315,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         except pxt.Error as exc:
             _retry_or_raise(exc)
 
-    def _metadata(self, t: pxt.Table) -> TableMetadata:
+    def _metadata(self, t: pxt.Table) -> pxt.TableMetadata:
         try:
             return t.get_metadata()
         except pxt.Error as exc:
@@ -334,7 +333,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         assert t is not None  # if_not_exists='error' raises instead of returning None
         return t
 
-    def _default_columns(self, metadata: TableMetadata) -> list[str]:
+    def _default_columns(self, metadata: pxt.TableMetadata) -> list[str]:
         columns: list[str] = []
         for name, info in metadata['columns'].items():
             type_ = info['type_']
@@ -343,7 +342,9 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             columns.append(name)
         return columns
 
-    def _project(self, t: pxt.Table, columns: list[str] | None, metadata: TableMetadata, **extra: Expr) -> pxt.Query:
+    def _project(
+        self, t: pxt.Table, columns: list[str] | None, metadata: pxt.TableMetadata, **extra: Expr
+    ) -> pxt.Query:
         path = _norm(metadata['path'])
         column_md = metadata['columns']
         if columns is None:
@@ -376,7 +377,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         return t.select(*items, **named)
 
     def _where(
-        self, query: pxt.Query, t: pxt.Table, where: dict[str, WhereValue] | None, metadata: TableMetadata
+        self, query: pxt.Query, t: pxt.Table, where: dict[str, WhereValue] | None, metadata: pxt.TableMetadata
     ) -> pxt.Query:
         if not where:
             return query

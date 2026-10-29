@@ -11,7 +11,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -162,13 +161,13 @@ def catalog(root: str) -> str:
     return root
 
 
-def _tool_returns(messages: list[ModelMessage]) -> list[ToolReturnPart | RetryPromptPart]:
+def _tool_returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     return [
         part
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, ToolReturnPart | RetryPromptPart)
+        if isinstance(part, ToolReturnPart)
     ]
 
 
@@ -195,7 +194,8 @@ class TestPixeltableAgent:
         listed, refused, queried = _tool_returns(result.all_messages())
         assert isinstance(listed, ToolReturnPart)
         assert listed.content == {'tables': [chunks]}
-        assert isinstance(refused, RetryPromptPart)
+        assert isinstance(refused, ToolReturnPart)
+        assert refused.outcome == 'retried'
         assert 'not in the Pixeltable allowlist' in str(refused.content)
         assert isinstance(queried, ToolReturnPart)
         assert queried.content == {

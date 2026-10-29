@@ -1,8 +1,8 @@
 # `pydantic_ai.realtime`
 
 Support for **realtime, bidirectional speech-to-speech models** (OpenAI Realtime, OpenAI GPT-Live,
-Azure OpenAI, Gemini Live, xAI Grok Voice, and any other provider that streams audio in and out over
-a persistent connection).
+Azure OpenAI, Gemini Live, xAI Grok Voice, Eleven Realtime, ElevenLabs Agents, and any other provider that
+streams audio in and out over a persistent connection).
 
 Unlike [`Model`][pydantic_ai.models.Model], which is request-response, a realtime model opens a
 long-lived connection: you stream audio (or text/images) in, and consume audio, transcripts, and
@@ -50,7 +50,7 @@ provider-specific (see [Concurrent tool execution](../realtime/tools.md#concurre
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
 
 **Browser / WebRTC** — for browser voice agents, the media flows browser ↔ provider directly while the
-backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Connecting a frontend](../realtime/deployment.md#browser-webrtc-server-sideband)):
+backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Deployment](../realtime/deployment.md#browser-webrtc-server-sideband)):
 
 | Object | Role |
 | --- | --- |
@@ -87,8 +87,9 @@ live view; [`RealtimeSession.closed`][pydantic_ai.realtime.RealtimeSession.close
 The session starts receiving at whichever comes first: the first outbound call, the first
 `stream_audio()` or `stream_transcripts()` view, or the first `async for` over the session. It does
 not start on entry, so a view created inside the session block — as every example here does — cannot
-miss output the model produced before it subscribed. A fatal receive or tool failure is raised
-from active event iteration; without an active iterator, the views end and context exit raises it.
+miss output the model produced before it subscribed. A fatal receive failure or a tool failure is
+raised from active event iteration, which can go on after a tool failure; without an active
+iterator, the views end and context exit raises it.
 The next outbound session method raises an already-ended receive side's failure first, and the same
 failure is never delivered twice.
 
@@ -109,6 +110,7 @@ completes.
 vocabulary yielded by a connection:
 [`AudioDelta`][pydantic_ai.realtime.codec.AudioDelta],
 [`OutputTranscript`][pydantic_ai.realtime.codec.OutputTranscript],
+[`OutputSpeechTimestamps`][pydantic_ai.realtime.codec.OutputSpeechTimestamps],
 [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript],
 [`ToolCall`][pydantic_ai.realtime.codec.ToolCall],
 [`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled],
@@ -133,15 +135,17 @@ yields with its codec events, each [`RealtimeFrame`][pydantic_ai.realtime.lifecy
 [`RealtimeConnection.frames()`][pydantic_ai.realtime.codec.RealtimeConnection.frames] holding what one provider
 message made. They say what the codec events can't: where each response starts and ends
 ([`ResponseStarted`][pydantic_ai.realtime.lifecycle.ResponseStarted] /
-[`ResponseEnded`][pydantic_ai.realtime.lifecycle.ResponseEnded]) and which inputs it answers, where each
+[`ResponseEnded`][pydantic_ai.realtime.lifecycle.ResponseEnded]) and which inputs it answers (corrected with
+[`AnswersRevised`][pydantic_ai.realtime.lifecycle.AnswersRevised] when the connection learns better), where each
 spoken turn starts, joins the conversation, and gets the last of its audio and transcript
 ([`UserTurnStarted`][pydantic_ai.realtime.lifecycle.UserTurnStarted] /
 [`UserTurnEnded`][pydantic_ai.realtime.lifecycle.UserTurnEnded] /
 [`UserTurnClosed`][pydantic_ai.realtime.lifecycle.UserTurnClosed]), where each input joins it
 ([`InputAdded`][pydantic_ai.realtime.lifecycle.InputAdded]), and which inputs no response will answer
 ([`InputLost`][pydantic_ai.realtime.lifecycle.InputLost] /
-[`ResponseRequestRefused`][pydantic_ai.realtime.lifecycle.ResponseRequestRefused]). The session builds history,
-usage, and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] from them.
+[`ResponseRequestRefused`][pydantic_ai.realtime.lifecycle.ResponseRequestRefused]), and which tool calls' results
+it won't answer either ([`ToolCallsAbandoned`][pydantic_ai.realtime.lifecycle.ToolCallsAbandoned]). The session
+builds history, usage, and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] from them.
 
 **Implementing a connection** — subclass [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection]
 and implement [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send] and
@@ -149,7 +153,12 @@ and implement [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send] and
 turns, and inputs (as the OpenAI Realtime API does) is best translated into lifecycle events directly. One that
 identifies none of them (as Gemini Live and OpenAI GPT-Live don't) can hand each input it sends and each
 provider message it reads to an [`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle], which
-works the lifecycle out from their order. Here, a reply to a text turn is a response that answers it:
+works the lifecycle out from their order. Either way, a connection that names the output items its codec events
+stream (their `item_id`) can say more about one:
+[`OutputItemDetails`][pydantic_ai.realtime.lifecycle.OutputItemDetails] keeps what the provider says about it on
+the part it makes, and [`OutputItemCut`][pydantic_ai.realtime.lifecycle.OutputItemCut] reports how much of it the
+listener heard, which can come after its response ended and revises the copy history recorded. Here, a reply to a
+text turn is a response that answers it:
 
 ```python
 import asyncio
@@ -212,7 +221,27 @@ is a spoken turn. A provider that departs from that gets a subclass overriding `
 points: [`transcripts_lag_replies`][pydantic_ai.realtime.lifecycle.InferredLifecycle.transcripts_lag_replies],
 [`audio_starts_response`][pydantic_ai.realtime.lifecycle.InferredLifecycle.audio_starts_response],
 [`untranscribed_audio_is_a_turn`][pydantic_ai.realtime.lifecycle.InferredLifecycle.untranscribed_audio_is_a_turn],
+[`inputs_cut_off_replies`][pydantic_ai.realtime.lifecycle.InferredLifecycle.inputs_cut_off_replies],
 and [`takes_turn()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.takes_turn].
+
+Which inputs a response answers settles each input's reply obligation, which is what
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] and
+[`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] wait for, so only the response that
+answers an input may name it. A connection that can't tell yet names its best guess in `ResponseStarted.answers`
+(with `basis='inferred'`) and corrects it with an
+[`AnswersRevised`][pydantic_ai.realtime.lifecycle.AnswersRevised] once it can: `released` hands inputs the response
+turned out not to answer to a later one, as `InferredLifecycle` does for a response an input cut off (with
+`inputs_cut_off_replies`, telling it when the provider heard the user speak with
+[`speech_heard()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.speech_heard], where no
+`RealtimeInputSpeechStartEvent` says so), and `claimed`
+settles inputs sent while a response was under way that it answers after all, as GPT-Live does by speaking to text
+in the reply it is giving. Neither moves anything in history.
+
+A provider can also give up on tool calls before their results are in: Eleven Realtime does once it starts a reply to
+the user, and GPT-Live when its delegated backend fails. The connection then names them in a
+[`ToolCallsAbandoned`][pydantic_ai.realtime.lifecycle.ToolCallsAbandoned]: the tools keep running and their results
+are recorded, but no reply to them is waited for, so the exchange ends with the reply that is under way. Unlike a
+[`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled], it doesn't stop them.
 
 **Session events** — [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent], yielded by a
 session. The session translates codec events into the shared vocabulary from
@@ -227,8 +256,10 @@ session. The session translates codec events into the shared vocabulary from
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], deferred calls and their inline resolution as
 [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /
 [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], enqueued-message delivery as
-[`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], and the rest as the
-control-plane events above (`RealtimeInputSpeechStartEvent`, `RealtimeInputSpeechEndEvent`,
+[`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], events emitted with
+[`RunContext.emit`][pydantic_ai.tools.RunContext.emit] as the
+[`CustomEvent`][pydantic_ai.messages.CustomEvent] or [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]
+that was emitted, and the rest as the control-plane events above (`RealtimeInputSpeechStartEvent`, `RealtimeInputSpeechEndEvent`,
 `RealtimeOutputSpeechStartEvent`, `RealtimeOutputSpeechEndEvent`, `RealtimeInputTranscriptionErrorEvent`,
 `RealtimeResponseInterruptedEvent`, `RealtimeSessionReconnectEvent`, and `RealtimeSessionErrorEvent`), plus
 [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent], which the
@@ -238,6 +269,7 @@ The lower-level codec vocabulary is documented in
 [`pydantic_ai.realtime.codec`](realtime/codec.md), and each provider in its own module:
 [`pydantic_ai.realtime.openai`](realtime/openai.md), [`pydantic_ai.realtime.openai_live`](realtime/openai_live.md),
 [`pydantic_ai.realtime.google`](realtime/google.md), [`pydantic_ai.realtime.xai`](realtime/xai.md),
-and [`pydantic_ai.realtime.azure`](realtime/azure.md).
+[`pydantic_ai.realtime.azure`](realtime/azure.md), [`pydantic_ai.realtime.elevenlabs`](realtime/elevenlabs.md),
+and [`pydantic_ai.realtime.elevenlabs_agents`](realtime/elevenlabs_agents.md).
 
 ::: pydantic_ai.realtime

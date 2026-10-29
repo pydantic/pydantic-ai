@@ -38,12 +38,17 @@ from pydantic_ai import Agent
 from pydantic_ai._instrumentation import provider_attributes
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.capabilities.mcp import MCP
+from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
     SpeechPart,
     TextPart,
     ToolCallPart,
@@ -66,6 +71,7 @@ from pydantic_ai.realtime import (
     RealtimeSession as _RealtimeSession,
     RealtimeSessionReconnectEvent,
 )
+from pydantic_ai.realtime._instrumentation import SessionInstrumentation
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
@@ -77,11 +83,21 @@ from pydantic_ai.realtime.codec import (
     SessionUsage,
     ToolCall,
 )
+from pydantic_ai.realtime.lifecycle import RealtimeFrame, ResponseEnded, ResponseStarted
 from pydantic_ai.tools import RunContext, ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
+from ..conftest import try_import
 from ..realtime_connections import InferredConnection
 from .test_session import FakeRealtimeModel, make_tool_manager
+
+with try_import() as openai_live_installed:
+    from pydantic_ai.realtime.openai_live import OpenAILiveModelSettings
+
+with try_import() as mcp_installed:
+    from fastmcp import FastMCP
+
+    from pydantic_ai.mcp import MCPToolset
 
 
 def RealtimeSession(connection: RealtimeConnection, runner: Any, **kwargs: Any) -> _RealtimeSession:
@@ -123,8 +139,10 @@ def _span_tree(exporter: InMemorySpanExporter) -> list[dict[str, Any]]:
 class _Connection(InferredConnection):
     """Replays a fixed list of events; records nothing of interest for these tests."""
 
-    def __init__(self, events: list[RealtimeCodecEvent]) -> None:
+    def __init__(self, events: list[RealtimeCodecEvent], *, hold_open: bool = False) -> None:
         self._events = events
+        # Whether the connection stays open after its events, rather than ending (which cuts off what's under way).
+        self._hold_open = hold_open
 
     async def send_input(self, content: RealtimeInput) -> None:
         pass
@@ -132,6 +150,8 @@ class _Connection(InferredConnection):
     async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
+        if self._hold_open:
+            await asyncio.Event().wait()
 
 
 class _Model(RealtimeModel):
@@ -212,10 +232,44 @@ async def _ok_runner(name: str, args: dict[str, Any], call_id: str) -> str:
     return 'sunny'
 
 
+async def test_a_limit_tripped_mid_frame_still_ends_the_response_span() -> None:
+    """A usage limit that stops the session partway through a frame doesn't leave the `chat` span open.
+
+    Gemini reports a response's output, usage and end in one message, so the limit can trip after the response
+    ended but before the session streamed that it did.
+    """
+
+    class _OneFrame(_Connection):
+        async def frames(self) -> AsyncIterator[RealtimeFrame]:
+            yield [
+                ResponseStarted(response_id='r1'),
+                SessionUsage(usage=RequestUsage(input_tokens=100), response_scoped=True),
+                OutputTranscript(text='Hi.', is_final=True),
+                ResponseDone(),
+                ResponseEnded(response_id='r1', status='completed'),
+            ]
+
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _OneFrame([]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        usage_limits=UsageLimits(per_request_input_tokens_limit=50),
+    )
+    with pytest.raises(UsageLimitExceeded):
+        async with session:
+            _ = [event async for event in session]
+
+    assert [span.name for span in exporter.get_finished_spans() if span.name.startswith('chat')] == [
+        'chat gpt-realtime'
+    ]
+
+
 async def test_owner_error_marks_active_chat_and_session_spans() -> None:
     settings, exporter = _settings()
     session = RealtimeSession(
-        _Connection([OutputTranscript(text='partial')]),
+        _Connection([OutputTranscript(text='partial')], hold_open=True),
         _ok_runner,
         instrumentation=settings,
         model_name='gpt-realtime',
@@ -243,7 +297,7 @@ async def test_error_events_honor_include_content(include_content: bool) -> None
     """
     settings, exporter = _settings(include_content=include_content)
     session = RealtimeSession(
-        _Connection([OutputTranscript(text='partial')]),
+        _Connection([OutputTranscript(text='partial')], hold_open=True),
         _ok_runner,
         instrumentation=settings,
         model_name='gpt-realtime',
@@ -289,6 +343,7 @@ async def test_playback_boundary_opens_a_speak_span_outlasting_the_response() ->
                 RealtimeOutputSpeechStartEvent(),
                 # A repeat, which some providers send: one utterance is one span, not two.
                 RealtimeOutputSpeechStartEvent(),
+                OutputTranscript(text='Hello.', is_final=True),
                 ResponseDone(),
                 RealtimeOutputSpeechEndEvent(),
             ]
@@ -302,7 +357,11 @@ async def test_playback_boundary_opens_a_speak_span_outlasting_the_response() ->
         events = [event async for event in session]
 
     # The events reach the caller as well, so a UI can drive a 'speaking' indicator from them.
-    assert [type(event).__name__ for event in events] == [
+    assert [
+        type(event).__name__
+        for event in events
+        if not isinstance(event, (PartStartEvent, PartDeltaEvent, PartEndEvent))
+    ] == [
         'RealtimeOutputSpeechStartEvent',
         'RealtimeOutputSpeechStartEvent',
         'RealtimeTurnCompleteEvent',
@@ -588,6 +647,79 @@ async def test_session_and_chat_spans_carry_request_config() -> None:
     assert chat_attributes['logfire.msg'] == 'response gpt-realtime'
 
 
+@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('direct_toolset', [False, True])
+async def test_mcp_url_derived_identity_is_withheld_from_realtime_request_config(
+    include_content: bool, direct_toolset: bool
+) -> None:
+    server = FastMCP('test', instructions='server guidance')
+
+    @server.tool
+    def ping() -> str:
+        return 'pong'
+
+    settings, exporter = _settings(include_content=include_content)
+    capability = MCP('https://mcp.example.test/private/SENTINEL-mcp-path-token', native=False, local=server)
+    assert isinstance(capability.local, MCPToolset)
+    toolset = capability.get_toolset()
+    assert toolset is not None
+    agent = (
+        Agent(toolsets=[toolset], capabilities=[Instrumentation(settings=settings)])
+        if direct_toolset
+        else Agent(capabilities=[capability, Instrumentation(settings=settings)])
+    )
+    async with agent.realtime(
+        _Model(_Connection([OutputTranscript(text='done', is_final=True), ResponseDone()]))
+    ).session() as session:
+        _ = [event async for event in session]
+
+    # The id is derived from the hostname alone, so the path's token never reaches it.
+    assert capability.id == 'mcp.example.test'
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    for name in ('invoke_agent agent', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        serialized = attributes['model_request_parameters']
+        assert isinstance(serialized, str)
+        assert 'SENTINEL-mcp-path-token' not in serialized
+        assert json.loads(serialized)['function_tools']
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+def test_realtime_chat_and_session_mask_url_derived_native_names(include_content: bool) -> None:
+    identity = 'mcp.example.test'
+    settings, exporter = _settings(include_content=include_content)
+    instrumentation = SessionInstrumentation(
+        settings,
+        model_request_parameters=ModelRequestParameters(_telemetry_mcp_url_ids={identity}),
+    )
+    response = ModelResponse(parts=[NativeToolCallPart(tool_name=f'mcp_server:{identity}', tool_call_id='call-1')])
+    instrumentation.start_session_span()
+    instrumentation.ensure_chat_span('response-1')
+    instrumentation.end_chat_span('response-1', [ModelRequest.user_text_prompt('go')], response)
+    instrumentation.end_session_span(
+        None,
+        usage=RunUsage(),
+        messages=[response],
+        new_message_index=0,
+        final_result=None,
+        audio_chunks_dropped=0,
+        transcript_items_dropped=0,
+        queue_dropped_deltas=0,
+        queue_dropped_structural=0,
+    )
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    chat_attributes = spans['chat'].attributes
+    session_attributes = spans['invoke_agent agent'].attributes
+    assert chat_attributes is not None and session_attributes is not None
+    assert identity not in str(chat_attributes['gen_ai.output.messages'])
+    assert identity not in str(session_attributes['pydantic_ai.all_messages'])
+    assert isinstance(response.parts[0], NativeToolCallPart)
+    assert response.parts[0].tool_name == f'mcp_server:{identity}'
+
+
 async def test_tool_call_otel_metadata_comes_from_definition() -> None:
     settings, exporter = _settings()
     conn = _Connection([ToolCall(tool_call_id='c1', tool_name='run_code', args='{"python_code":"1 + 1"}')])
@@ -628,6 +760,7 @@ async def test_tool_call_otel_metadata_comes_from_definition() -> None:
                         'arguments': '{"python_code":"1 + 1"}',
                     }
                 ],
+                'finish_reason': 'tool_call',
             }
         ]
     )
@@ -664,6 +797,37 @@ async def test_request_config_respects_include_model_request_parameters() -> Non
             {'type': 'function', 'name': 'get_weather', 'parameters': {'type': 'object', 'properties': {}}}
         ]
         # The spec-standard setting is still emitted when the serialized blobs are gated off.
+        assert attributes['gen_ai.request.max_tokens'] == 4096
+
+
+@pytest.mark.skipif(not openai_live_installed(), reason='openai not installed')
+async def test_request_config_omits_model_settings_without_content() -> None:
+    # Provider settings can carry prompt text (GPT-Live's spoken-behavior instructions, Gemini's
+    # `google_config_overrides`, ...), so with `include_content=False` the serialized `model_settings`
+    # blob is left off. The spec-standard `gen_ai.request.max_tokens` still goes out, like the classic path.
+    settings, exporter = _settings(include_content=False)
+    conn = _Connection([ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), ResponseDone()])
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_request_parameters=ModelRequestParameters(function_tools=[ToolDefinition(name='get_weather')]),
+        model_settings=OpenAILiveModelSettings(
+            max_tokens=4096, openai_live_instructions='You are Ada, a secret persona.'
+        ),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    for name in ('invoke_agent agent', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        assert 'model_settings' not in attributes
+        assert 'model_settings' not in json.loads(str(attributes['logfire.json_schema']))['properties']
+        assert 'secret persona' not in json.dumps(dict(attributes))
+        assert 'model_request_parameters' in attributes
         assert attributes['gen_ai.request.max_tokens'] == 4096
 
 
@@ -817,6 +981,25 @@ async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:
     assert dict(interrupt.attributes or {}) == {'pydantic_ai.realtime': True, 'played_ms': 1500}
 
 
+async def test_interrupt_at_playback_without_truncation_records_the_offset() -> None:
+    # Without output truncation (xAI), no position goes to the provider, but the span still records how far
+    # playback got, as history does.
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([AudioDelta(b'a' * 4800), AudioDelta(b'b' * 4800)], hold_open=True),
+        _ok_runner,
+        instrumentation=settings,
+        profile=RealtimeModelProfile(supports_interruption=True, supports_output_truncation=False),
+    )
+    async with session:
+        stream = session.stream_audio()
+        await anext(stream)  # the second chunk stays buffered and unheard
+        assert await session.interrupt(played_bytes=4800) is True
+
+    interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
+    assert dict(interrupt.attributes or {}) == {'pydantic_ai.realtime': True, 'played_ms': 100}
+
+
 async def test_interrupt_without_offset_records_bare_lifecycle_span() -> None:
     # A cancel without truncation (no `played_ms`) still records the `interrupt` marker, with no
     # null attribute — just the realtime marker every session span carries.
@@ -942,6 +1125,7 @@ async def test_chat_spans_split_on_tool_call_are_session_children() -> None:
                 {'type': 'text', 'content': 'let me check'},
                 {'type': 'tool_call', 'id': 'c1', 'name': 'get_weather', 'arguments': '{"city": "Paris"}'},
             ],
+            'finish_reason': 'tool_call',
         },
     ]
     # The synthetic connection emits the post-tool response without yielding, so the concurrent tool
@@ -1213,9 +1397,9 @@ async def test_session_span_counts_dropped_session_queue_structural_events() -> 
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
-    # Seven structural events per turn, not five: the untranscribed-segment placeholder this PR adds
-    # contributes a part start and end of its own.
-    assert sess.attributes['pydantic_ai.queue_dropped_structural'] == 200 * 7 - 512
+    # Seven structural events per turn: the untranscribed segment's part starts and ends too. The cap evicts a
+    # part's start with the rest of the part, so it can keep one fewer than it allows.
+    assert sess.attributes['pydantic_ai.queue_dropped_structural'] == 200 * 7 - 511
 
 
 async def test_session_span_includes_resolved_run_attributes() -> None:
@@ -1246,6 +1430,12 @@ async def test_session_span_includes_resolved_run_attributes() -> None:
         # session span renders it as an object.
         'model_request_parameters': {'type': 'object'},
     }
+    # Each response's `chat` span reports the session's instructions, like a classic run's.
+    chat = next(s for s in exporter.get_finished_spans() if s.name.startswith('chat'))
+    assert chat.attributes is not None
+    assert json.loads(str(chat.attributes['gen_ai.system_instructions'])) == [
+        {'type': 'text', 'content': 'Keep answers concise.'}
+    ]
 
 
 async def test_session_span_marks_seeded_history_boundary() -> None:
@@ -1425,9 +1615,9 @@ def test_chat_span_without_response_ends_without_metrics() -> None:
     settings, exporter, metric_reader = _settings_with_metrics()
     session = RealtimeSession(_Connection([]), _ok_runner, instrumentation=settings)
     session._session_instrumentation.context = Context()  # pyright: ignore[reportPrivateUsage]
-    session._ensure_chat_span()  # pyright: ignore[reportPrivateUsage]
+    session._session_instrumentation.ensure_chat_span('r1')  # pyright: ignore[reportPrivateUsage]
 
-    session._session_instrumentation.end_chat_span([], None)  # pyright: ignore[reportPrivateUsage]
+    session._session_instrumentation.end_chat_span('r1', [], None)  # pyright: ignore[reportPrivateUsage]
 
     assert [span.name for span in exporter.get_finished_spans()] == ['chat']
     assert metric_reader.get_metrics_data() is None

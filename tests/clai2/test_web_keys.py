@@ -21,7 +21,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.github_copilot import GitHubCopilotCredentials, GitHubCopilotOAuthFlow
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
 from pydantic_clai2.auth import CodexAuth, login_command
-from pydantic_clai2.builtin_plugins.web.protocol import DialogClosed, DialogOpened, DialogShown, SettingsChanged
+from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
+    DialogClosed,
+    DialogOpened,
+    DialogShown,
+    SettingsChanged,
+)
 from pydantic_clai2.config import api_keys
 from pydantic_clai2.config.credential_store import has_credentials, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -37,7 +43,7 @@ from tests.clai2.test_auth import CREDENTIALS, fake_browser, never_called_back, 
 from tests.clai2.test_github_copilot import device_flow as device_flow
 from tests.clai2.test_web import TOKEN, MakeWeb, Web, make_web as make_web, receive_until
 
-SOCKET = f'/ws?token={TOKEN}'
+SOCKET = f'/ws?token={TOKEN}&protocol={PROTOCOL}'
 ORIGIN = {'origin': 'http://testserver'}
 CODEX = json.dumps({'access_token': 'a', 'refresh_token': 'r', 'account_id': 'x'})
 
@@ -294,7 +300,9 @@ async def test_login_with_dialogs_saves_api_keys_in_keys_and_sends_the_rest_to_t
     assert json.loads(load_codex_credentials(account='openai@work') or '') == {'token': {'name': 'OPENAI_WORK'}}
     picked = await login_command(['openai@side'], codex=auth, dialogs=ScriptedDialogs([Pick(value='OPENAI_WORK')]))
     assert picked.startswith('openai@side connected')
-    cancelled = await key_profiles.login(provider='openai', profile='gone', dialogs=ScriptedDialogs([Back()]))
+    cancelled = await key_profiles.login(
+        provider='openai', profile='gone', console=auth.console, dialogs=ScriptedDialogs([Back()])
+    )
     assert cancelled == 'Sign-in cancelled.'
     with pytest.raises(ValueError, match=r'Connect openrouter@x in the terminal: /login openrouter@x\.'):
         await login_command(['openrouter@x'], codex=auth, dialogs=ScriptedDialogs([]))

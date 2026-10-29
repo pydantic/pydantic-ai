@@ -16,8 +16,11 @@ loads the plugin again afterwards, so the next run uses it. Its first row runs t
 
 import os
 from collections.abc import Callable, Sequence
+from concurrent.futures import Future
 from dataclasses import replace
 from functools import partial
+from pathlib import Path
+from threading import Thread
 from typing import Annotated, ClassVar, Literal, Self
 
 import logfire
@@ -116,6 +119,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     at the same instance while it is loaded and restores when it unloads.
     """
 
+    scope = 'process'
+    """Global instrumentation, configured once for the process; `SessionTracing` keeps a root per session."""
     _active_httpx: ClassVar[list['LogfirePlugin']] = []
     """Live opt-in instances, ordered so HTTPX instrumentation can move to a remaining instance on unload."""
 
@@ -209,7 +214,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
-        self._session_tracing.start(await _user_email(self.settings))
+        self._session_tracing.start(await _user_email(self.settings, workspace=self.host.workspace))
         agent_instrumentation.claim(self.instrumentation.settings)
         if self.settings.httpx:
             if not self._active_httpx:
@@ -281,10 +286,10 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 )
 
 
-async def _user_email(settings: LogfireSettings) -> str | None:
-    """The email `user_tag` names; Git is queried only when chosen."""
+async def _user_email(settings: LogfireSettings, *, workspace: Path) -> str | None:
+    """The email `user_tag` names; Git is queried in `workspace` only when chosen."""
     if settings.user_tag == 'git-email':
-        return await git_email()
+        return await git_email(cwd=workspace)
     account = settings.account
     if settings.user_tag == 'logfire-account' and account is not None and account.token == settings.token:
         return account.email
@@ -542,9 +547,25 @@ def _variables_key(config: LogfireSettings, host: PluginHost[None]) -> str | Non
 
 
 def _shutdown(instance: logfire.Logfire) -> bool:
-    # SDK shutdown with flush=True can return on a flush timeout before stopping providers.
-    try:
-        flushed = instance.force_flush(timeout_millis=3000)
-    finally:
-        stopped = instance.shutdown(timeout_millis=3000, flush=False)
-    return flushed and stopped
+    timeout_seconds = 3
+    result: Future[bool] = Future()
+
+    def shutdown() -> None:
+        try:
+            # SDK shutdown with flush=True can return on a flush timeout before stopping providers.
+            try:
+                flushed = instance.force_flush(timeout_millis=timeout_seconds * 1000)
+            finally:
+                stopped = instance.shutdown(timeout_millis=timeout_seconds * 1000, flush=False)
+            result.set_result(flushed and stopped)
+        except BaseException as exc:  # noqa: BLE001 -- transfer worker failures back to the caller.
+            result.set_exception(exc)
+
+    # OTel can ignore its flush timeout: https://github.com/open-telemetry/opentelemetry-python/issues/4568
+    # A daemon lets cleanup finish later without adding an interpreter-exit thread join.
+    worker = Thread(target=shutdown, name='clai2-logfire-shutdown', daemon=True)
+    worker.start()
+    worker.join(timeout_seconds)
+    if worker.is_alive():
+        return False
+    return result.result()

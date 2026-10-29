@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from typing_extensions import TypedDict
 
+from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..exceptions import PydanticAIDeprecationWarning
-from ..messages import CachePoint, ModelRequest, ModelResponse, UserPromptPart
+from ..messages import CachePoint, DocumentMediaType, ModelRequest, ModelResponse, UserPromptPart
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 from ..settings import CacheRetention
@@ -102,12 +103,62 @@ class ModelProfile(TypedDict, total=False):
     provider accepts audio in user messages.
     """
 
+    supports_image_input: bool
+    """Whether the model accepts images. Default: `True`.
+
+    The file-input flags (this one, `supports_document_input`, `supported_document_media_types`,
+    `supports_audio_file_input` and `supports_video_input`) say which files can be sent to the model.
+    A model adapter turns off what its message mapping cannot send, whatever the profile says.
+
+    A file a tool returns that the model cannot take is replaced, in the request only, by a note naming
+    it: see [Where a returned file is sent](../tools-advanced.md#tool-return-file-provenance). A file in a
+    user prompt is sent as it is, and the request fails if the model cannot take it.
+    [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] reads the same flags to describe
+    such files in text instead.
+
+    Shipped profiles turn these off where an adapter or a model family is known not to take the file; `True`
+    means nothing says otherwise, not that the model was checked. A text-only model served through an adapter
+    that sends images (a text-only Llama on vLLM, say) needs `profile=ModelProfile(supports_image_input=False)`.
+    """
+
+    supports_document_input: bool
+    """Whether the model accepts documents, such as PDFs. Default: `True`.
+
+    Which document media types it accepts is narrowed by `supported_document_media_types`.
+    See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supported_document_media_types: frozenset[DocumentMediaType]
+    """The document media types the model accepts, when it accepts documents at all. Default: every
+    media type in `DocumentMediaType`.
+
+    Only narrows those known types: a document with any other media type is judged by
+    `supports_document_input` alone. Anthropic, for example, reads PDFs and plain text but not Word or
+    Excel files. See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supports_audio_file_input: bool
+    """Whether the model accepts audio files, such as an [`AudioUrl`][pydantic_ai.messages.AudioUrl]
+    or audio [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Default: `True`.
+
+    Separate from `supports_audio_input`, which is about realtime speech history. See
+    `supports_image_input` for how the file-input flags are used.
+    """
+
+    supports_video_input: bool
+    """Whether the model accepts video. Default: `True`.
+
+    See `supports_image_input` for how the file-input flags are used.
+    """
+
     supports_inline_system_prompts: bool
     """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
 
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
-    provider's top-level system parameter.
+    provider's top-level system parameter, and when there are any, or instructions, they're followed
+    by a sentence saying what the tag means. `<system>` tags in user prompts and tool returns are escaped,
+    so that text can't open or close the tag.
 
     APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
     to follow a user turn) still set this to `True`; it's on their model adapters to make the
@@ -140,6 +191,18 @@ class ModelProfile(TypedDict, total=False):
     request-scoped part render as a lasting system prompt on every later request.
     """
 
+    supports_mid_conversation_effort: bool
+    """Whether the provider's API can change the thinking effort from a point in the conversation onward. Default: `False`.
+
+    When `True`, on a model whose adapter renders the change (`OpenAIResponsesModel`'s `configuration_update`
+    item, `AnthropicModel`'s per-message `output_config`, `OpenRouterModel`'s `configuration_update` system
+    message), a
+    [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] is sent in place and the request
+    keeps the conversation's earlier request-level effort, so the prompt cache survives the change. When
+    `False`, `Model.prepare_messages` drops those parts and the current effort goes out as the request-level
+    setting.
+    """
+
     default_structured_output_mode: StructuredOutputMode
     """The default structured output mode to use for the model. Default: `'tool'`."""
 
@@ -166,9 +229,14 @@ class ModelProfile(TypedDict, total=False):
     supports_auto_cache: bool
     """Whether the provider has a server-managed automatic prompt-caching mode the request can switch on. Default: `False`.
 
-    When True, the unified `cache` setting uses that mode, which places and moves the cache breakpoint
-    itself. Otherwise the library places explicit cache breakpoints at the end of the tool definitions,
-    the static instructions, and the conversation. Only meaningful when `supports_cache` is True.
+    The unified `cache` setting consults it only when `supports_cache` is True: then, if this is True, the
+    conversation is cached with that mode, which places and moves the cache breakpoint itself; otherwise the
+    library places an explicit breakpoint at the end of the conversation too, as it does at the end of the tool
+    definitions and the static instructions.
+
+    On Anthropic, the explicit `anthropic_cache` setting consults it whatever `supports_cache` says: if this is
+    True, the request carries the top-level `cache_control` parameter; otherwise `anthropic_cache` falls back
+    to a breakpoint on the last block.
     """
 
     supported_cache_retentions: tuple[CacheRetention, ...]
@@ -213,7 +281,7 @@ class ModelProfile(TypedDict, total=False):
     thinking_always_enabled: bool
     """Whether the model always uses thinking/reasoning (e.g., OpenAI o-series, DeepSeek R1). Default: `False`.
 
-    When True, `thinking=False` is silently ignored since the model cannot disable thinking.
+    When True, the model can't disable thinking, so `thinking=False` uses the lowest effort the model accepts instead.
     Implies `supports_thinking=True`.
     """
 
@@ -266,13 +334,14 @@ class ModelProfile(TypedDict, total=False):
     When `True`, a `ThinkingPart` that can't be sent through the model's native reasoning channel is
     rendered into a *user* message ahead of the assistant turn instead of into the turn itself, which
     stops the imitation. Attributed to the user, that reasoning would read as something the user thought,
-    so it is wrapped in an `assistant_thinking` tag naming the model and provider that produced it rather
-    than in the model's own thinking tags. The cost is that the model still reports the reasoning's authorship
-    inaccurately when asked about it: naming the source in the tag does not change the answer it gives.
+    so it is wrapped in an `assistant_thinking` tag rather than in the model's own thinking tags. The cost
+    is that the model reports the reasoning's authorship inaccurately when asked about it, which naming the
+    source in the tag would not change.
 
-    This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
-    OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key — tracked in
-    https://github.com/pydantic/pydantic-ai/issues/7419.
+    This is used by `AnthropicModel`, `BedrockConverseModel`, `OpenAIChatModel` (and the models built on it)
+    and `OpenAIResponsesModel`, so it also covers Claude served through an OpenAI-compatible provider. An
+    `OpenAIChatModel` profile that sends reasoning back in a field (`openai_chat_send_back_thinking_parts='field'`,
+    as OpenRouter's does) never renders it as text, so there is nothing for this key to move.
 
     Where the carried reasoning goes is each adapter's own decision rather than a shared rewrite ahead of
     them: it has to land in front of whatever that provider renders next out of the same request — an
@@ -414,6 +483,11 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_json_object_output': False,
     'supports_image_output': False,
     'supports_audio_input': False,
+    'supports_image_input': True,
+    'supports_document_input': True,
+    'supported_document_media_types': KNOWN_DOCUMENT_MEDIA_TYPES,
+    'supports_audio_file_input': True,
+    'supports_video_input': True,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,

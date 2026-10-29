@@ -49,7 +49,7 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectStatus,
 )
 from tests.harness._postgres_sqlite import SqlitePool
-from tests.harness.step_persistence._histories import growing_histories
+from tests.harness.step_persistence._histories import growing_histories, history_with_unordered_keys
 
 
 class _UnusedPool:
@@ -481,6 +481,16 @@ class TestPostgresStepStoreMedia:
 
 
 class TestPostgresStepStoreStoresEachMessageOnce:
+    async def test_dict_key_order_round_trips(self, pool: SqlitePool) -> None:
+        """A reloaded history keeps its dict key order, so the next request sends the provider the same bytes."""
+        store = PostgresStepStore(pool, table='steps', media_store=None)
+        history = history_with_unordered_keys()
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=history))
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert ModelMessagesTypeAdapter.dump_json(snap.messages) == ModelMessagesTypeAdapter.dump_json(history)
+
     async def test_stores_each_message_once_and_restores_every_snapshot(self, pool: SqlitePool) -> None:
         store = PostgresStepStore(pool, table='steps', media_store=None)
         histories = growing_histories(4)

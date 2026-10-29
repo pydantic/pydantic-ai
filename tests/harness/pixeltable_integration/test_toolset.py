@@ -192,10 +192,9 @@ class TestPixeltableToolsetQuery:
         with pytest.raises(ModelRetry, match='No selectable columns'):
             _tools([path]).query_table(path)
 
-    def test_named_media_column_is_rejected(self, catalog: str, tmp_path: Path) -> None:
+    def test_named_media_column_is_rejected(self, catalog: str, assets_path: Path) -> None:
         docs = create_table(f'{catalog}.docs', {'doc': pxt.Document, 'title': pxt.String})
-        note = tmp_path / 'note.md'
-        note.write_text('# note\n')
+        note = assets_path / 'dummy.pdf'
         insert_rows(docs, [{'doc': str(note), 'title': 'note'}])
         tools = _tools([f'{catalog}.docs'])
 
@@ -329,10 +328,9 @@ class TestPixeltableToolsetQuery:
         with pytest.raises(ModelRetry, match="Cannot filter 'data'"):
             tools.query_table(f'{catalog}.blobs', where={'data': [1, 2]})  # pyright: ignore[reportArgumentType]
 
-    def test_media_and_null_filters(self, catalog: str, tmp_path: Path) -> None:
+    def test_media_and_null_filters(self, catalog: str, assets_path: Path) -> None:
         # Media columns never match an equality filter; None is still an IS NULL filter.
-        note_file = tmp_path / 'note.md'
-        note_file.write_text('x')
+        note_file = assets_path / 'dummy.pdf'
         docs = create_table(
             f'{catalog}.docs', {'title': pxt.String, 'note': pxt.String | None, 'doc': pxt.Document | None}
         )

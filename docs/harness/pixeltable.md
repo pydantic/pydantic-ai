@@ -17,7 +17,7 @@ and [memory store source](https://github.com/pydantic/pydantic-ai/blob/main/src/
 
 ## Usage
 
-Install the `pixeltable` extra (Python 3.11 to 3.14). The example uses an OpenAI model and OpenAI
+Install the `pixeltable` extra (Python 3.11 to 3.14; Pixeltable 0.7.21 or later). The example uses an OpenAI model and OpenAI
 embeddings, so it also pulls in the `openai` provider, plus `spec` for the YAML agent spec below:
 
 ```bash

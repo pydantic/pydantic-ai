@@ -37,16 +37,18 @@ class TestPixeltableMemory:
         store = PixeltableMemoryStore(table_name=f'{root}.memory')
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if 'uv' not in _memory_context(messages):
-                return ModelResponse(
-                    parts=[ToolCallPart('write_memory', {'content': '- user prefers uv'}, tool_call_id='w1')]
-                )
-            return ModelResponse(parts=[TextPart('injected-ok')])
+            if 'uv' in _memory_context(messages):
+                return ModelResponse(parts=[TextPart('injected-ok')])
+            if any(isinstance(message, ModelResponse) for message in messages):
+                return ModelResponse(parts=[TextPart('written')])
+            return ModelResponse(
+                parts=[ToolCallPart('write_memory', {'content': '- user prefers uv'}, tool_call_id='w1')]
+            )
 
         agent = Agent(FunctionModel(model), capabilities=[Memory(store)])
-        # The snapshot is refreshed before every model request, so the write shows up in the same run.
+        # Writes persist immediately; a fresh run receives the updated notebook snapshot.
         first = await agent.run('Remember that I prefer uv.')
-        assert first.output == 'injected-ok'
+        assert first.output == 'written'
         file = await store.read('main/MEMORY.md', max_chars=1_000)
         assert file is not None
         assert file.content == '- user prefers uv\n'

@@ -45,7 +45,16 @@ class CohereProvider(Provider[AsyncClientV2]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile:
-        return merge_profile(cohere_model_profile(model_name), ModelProfile(supports_inline_system_prompts=True))
+        profile = merge_profile(cohere_model_profile(model_name), ModelProfile(supports_inline_system_prompts=True))
+        if profile.get('supports_thinking', False):
+            # Cohere's reasoning models think by default, but `CohereModel` can turn that off with
+            # `thinking={'type': 'disabled'}` (verified live 2026-10-22 on `command-a-reasoning-08-2025`). The shared
+            # `cohere_model_profile` keeps them always-on for routes that can't send that.
+            # https://docs.cohere.com/docs/reasoning
+            profile = merge_profile(
+                profile, ModelProfile(thinking_always_enabled=False, thinking_enabled_by_default=True)
+            )
+        return profile
 
     def __init__(
         self,

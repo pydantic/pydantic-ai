@@ -1,0 +1,65 @@
+--- expected
++++ actual
+@@ -110 +110 @@
+-   "text": "<context id=\"capability:progress:state\">\nThe user has asked 1 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
++   "text": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
+@@ -169,29 +169,25 @@
+-    },
+-    {
+-     "text": "<system><context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context></system>",
+-     "type": "text"
+-    }
+-   ]
+-  }
+- ],
+- "tools": [
+-  {
+-   "name": "start_job",
+-   "description": "",
+-   "input_schema": {
+-    "additionalProperties": false,
+-    "properties": {},
+-    "type": "object"
+-   }
+-  }
+- ]
+-}
+-{
+- "system": [
+-  {
+-   "type": "text",
+-   "text": "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed."
+-  },
+-  {
+-   "type": "text",
+-   "text": "<context id=\"capability:progress:state\">\nThe user has asked 1 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
++    }
++   ]
++  }
++ ],
++ "tools": [
++  {
++   "name": "start_job",
++   "description": "",
++   "input_schema": {
++    "additionalProperties": false,
++    "properties": {},
++    "type": "object"
++   }
++  }
++ ]
++}
++{
++ "system": [
++  {
++   "type": "text",
++   "text": "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed."
++  },
++  {
++   "type": "text",
++   "text": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
+@@ -256,4 +251,0 @@
+-    },
+-    {
+-     "text": "<system><context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context></system>",
+-     "type": "text"

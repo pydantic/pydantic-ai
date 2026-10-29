@@ -11,13 +11,15 @@ Run your agent's commands in a Linux [bubblewrap](https://github.com/containers/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. BubblewrapSandbox wraps another workspace capability, here SSHWorkspace, and its get_workspace hook runs every command and file operation on that host inside a bwrap sandbox. In the sandbox the working directory is writable, the rest of the host's files are read-only, /tmp is private, /run is empty, and a seccomp filter blocks every socket. The sandbox does not stop commands from reading files the host user can read, signalling the host user's processes, or writing files such as git hooks that run unsandboxed later.](../img/harness/bubblewrap-sandbox.svg)
+
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,anthropic]"
 ```
 
-The sandbox's host must run Linux with `bwrap` installed (the `bubblewrap` package) and user namespaces allowed; otherwise commands raise `WorkspaceUnavailableError`. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.
+The sandbox's host must run Linux with `bwrap` installed (the `bubblewrap` package) and user namespaces allowed; otherwise commands raise `WorkspaceUnavailableError`. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.
 
 ## Quick start
 
@@ -36,6 +38,8 @@ result = agent.run_sync('Run the test suite and fix the first failure.')
 
 ## What the sandbox allows
 
+The wrapped workspace must run commands without a controlling terminal. `BubblewrapWorkspace` omits `bwrap --new-session` so the backend can stop foreground descendants on timeout or cancellation; with a controlling terminal, kernels permitting `TIOCSTI` could let sandboxed commands inject input into the host terminal. `LocalWorkspaceBackend` starts a new session and `SSHWorkspaceBackend` uses `ssh -T`. `E2BSandboxBackend` and `ModalSandboxBackend` run commands through their providers' non-PTY command APIs, so no terminal is attached, with or without `setsid` in the image. All four satisfy this requirement; custom backends must do so too.
+
 Inside the sandbox, commands see the host's files read-only, a private `/tmp` and no network, and can write only to the working directory. `/run` is empty, because host daemons such as Docker listen on sockets there, and a read-only mount doesn't stop a connection. `bwrap` must be able to give the sandbox its own user namespace, and the sandbox has no capabilities.
 
 When the working directory contains the host account's home directory, as an `SSHWorkspace` without a `working_dir` does, the files the host runs or reads when the next SSH connection logs in, before the command starts, are mounted read-only: `~/.ssh`, `~/.pam_environment`, and the startup files a login shell runs for a command (`~/.bashrc`, `~/.zshenv`, `~/.cshrc`, `~/.tcshrc` and `~/.config/fish`). Missing ones are created first, empty. If one of them is a symlink, the sandbox doesn't start, because a command could replace the link.
@@ -44,7 +48,7 @@ Without the network, a seccomp filter blocks the same system calls as the [Codex
 
 Pass `network=True` to share the host's network: commands can reach it, including services on the host's loopback and anything the host can reach, and can listen on the host's ports. The DNS configuration under `/run` comes back with it, and there is no seccomp filter. Add `bwrap` arguments with `bwrap_args=`: they come after the defaults, so `['--bind', path, path]` makes another directory writable and `['--tmpfs', path]` hides one, such as `~/.ssh`. The program that starts `bwrap`, and `base64` when the filter loads, is taken from a `PATH` directory outside the working directory. When the working directory contains the host account's `~/.ssh`, the sandbox bind-mounts it read-only, creating the directory if it is missing, because OpenSSH runs `~/.ssh/rc` before the next connection. That check reads an absolute `$HOME` with `cd -P` and `pwd -P`, and creates a missing directory with `/bin/mkdir`, so neither step searches `PATH`. Without an absolute home the sandbox does not start. `bwrap_args` come after that mount and can still replace it.
 
-Commands share the host's process list rather than getting their own, so a command started in the background, such as a [Shell](shell.md) background job or a dev server, keeps running after the call that started it, and after the agent run, until something stops it. Later calls can check on it or stop it. The cost is that sandboxed commands can see the host's processes and their command lines, and signal the host user's own. A call's `env` values are `bwrap --setenv` arguments, so they show up in that process list while the command runs.
+Commands share the host's process list rather than getting their own, so a command started in the background, such as a [Shell](shell.md) background job or a dev server, keeps running after the call that started it, and after the agent run, until something stops it. Later calls can check on it or stop it. On timeout or cancellation, what stops is up to the wrapped backend. `LocalWorkspaceBackend` and `SSHWorkspaceBackend` stop the command and its foreground descendants; SSH cleanup is best effort if the host stalls or becomes unreachable. The E2B and Modal backends do the same only when the image has `setsid`, and otherwise stop just the command itself, so its children may keep running. Jobs deliberately detached into their own session keep running on every backend. The cost is that sandboxed commands can see the host's processes and their command lines, and signal the host user's own. A call's `env` values are `bwrap --setenv` arguments, so they show up in that process list while the command runs.
 
 File methods such as `write_text`, and so the [FileSystem](filesystem.md) and [Coder](coder.md) file tools, run in the sandbox too, as shell commands, so they see what commands see: they can't write outside the working directory, even through a symlink a command swapped in after a path check. Only when the wrapped workspace is read-only, and so runs no commands, are its files read from the host directly. The run's ref is the wrapped workspace's, and its `backend` is the wrapped backend.
 

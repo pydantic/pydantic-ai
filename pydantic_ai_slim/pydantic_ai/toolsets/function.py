@@ -8,16 +8,25 @@ import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
 from .. import _utils
-from .._instructions import AgentInstructions, normalize_instructions
+from .._instructions import (
+    AgentInstructions,
+    InstructionFunc,
+    SourcedInstruction,
+    normalize_instructions,
+    resolve_instruction_function,
+    validate_instruction_name,
+)
 from .._run_context import AgentDepsT, RunContext
-from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
-from ..messages import InstructionPart
+from ..messages import InstructionChangePolicy, InstructionPart, ToolKind, ToolKindLike, ToolPartKind
 from ..tools import (
     ArgsValidatorFunc,
     DocstringFormat,
     GenerateToolJsonSchema,
-    SystemPromptFunc,
+    KindArgsT,
+    KindContentT,
+    KindedToolDecorator,
+    KindedToolPlainDecorator,
     Tool,
     ToolDefinition,
     ToolFuncContext,
@@ -140,10 +149,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         # A part is kept whole rather than reduced to its text, because it carries the author's
         # declared `name` and its `dynamic` flag -- the flag that decides whether the part falls inside
         # the cacheable prefix, so toolset collection preserves the part rather than reducing it to text.
-        self._instructions: list[str | InstructionPart | SystemPromptRunner[AgentDepsT]] = [
+        self._instructions: list[str | InstructionPart | SourcedInstruction[AgentDepsT]] = [
             instruction
             if isinstance(instruction, (str, InstructionPart))
-            else SystemPromptRunner[AgentDepsT](instruction)
+            else SourcedInstruction(instruction, dynamic=True)
             for instruction in normalize_instructions(instructions)
         ]
 
@@ -170,6 +179,29 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ...] | None = None,
+        docstring_format: DocstringFormat | None = None,
+        require_parameter_descriptions: bool | None = None,
+        schema_generator: type[GenerateJsonSchema] | None = None,
+        strict: bool | None = None,
+        sequential: bool | None = None,
+        requires_approval: bool | None = None,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKind[KindArgsT, KindContentT],
+        timeout: float | None = None,
+        defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
+    ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
+
+    @overload
+    def tool(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
@@ -178,6 +210,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolPartKind | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -200,6 +233,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -267,6 +301,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            tool_kind: What the tool is, independent of its name: a [`ToolKind`][pydantic_ai.messages.ToolKind], or the id of one.
+                Its call and return parts are then promoted to the typed parts registered for the kind.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
@@ -295,6 +332,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                tool_kind=tool_kind,
                 timeout=timeout,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
@@ -315,6 +353,29 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ...] | None = None,
+        docstring_format: DocstringFormat | None = None,
+        require_parameter_descriptions: bool | None = None,
+        schema_generator: type[GenerateJsonSchema] | None = None,
+        strict: bool | None = None,
+        sequential: bool | None = None,
+        requires_approval: bool | None = None,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKind[KindArgsT, KindContentT],
+        timeout: float | None = None,
+        defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
+    ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
+
+    @overload
+    def tool_plain(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
@@ -323,6 +384,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolPartKind | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -345,6 +407,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -413,6 +476,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            tool_kind: What the tool is, independent of its name: a [`ToolKind`][pydantic_ai.messages.ToolKind], or the id of one.
+                Its call and return parts are then promoted to the typed parts registered for the kind.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
@@ -442,6 +508,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                tool_kind=tool_kind,
                 timeout=timeout,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
@@ -450,11 +517,55 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         return tool_decorator if func is None else tool_decorator(func)
 
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | None]]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], str | None], /) -> Callable[[], str | None]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], Awaitable[str | None]], /) -> Callable[[], Awaitable[str | None]]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str | InstructionPart | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | InstructionPart | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], str | InstructionPart | None], /
+    ) -> Callable[[], str | InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], Awaitable[str | InstructionPart | None]], /
+    ) -> Callable[[], Awaitable[str | InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, /, *, name: str | None = None, on_change: InstructionChangePolicy = 'rewrite'
+    ) -> Callable[[InstructionFunc[AgentDepsT]], InstructionFunc[AgentDepsT]]: ...
+
     def instructions(
         self,
-        func: SystemPromptFunc[AgentDepsT],
+        func: InstructionFunc[AgentDepsT] | None = None,
         /,
-    ) -> SystemPromptFunc[AgentDepsT]:
+        *,
+        name: str | None = None,
+        on_change: InstructionChangePolicy = 'rewrite',
+    ) -> Callable[[InstructionFunc[AgentDepsT]], InstructionFunc[AgentDepsT]] | InstructionFunc[AgentDepsT]:
         """Decorator to register an instructions function for this toolset.
 
         The function can be sync or async, and can optionally take a
@@ -477,9 +588,28 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         Args:
             func: The instructions function to register.
+            name: An optional name for the instruction part this function produces, keyed as
+                `'toolset:<toolset id>:<name>'` on
+                [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an application can
+                address this part specifically, where the toolset's own key addresses everything it
+                contributes. Requires the toolset to have an
+                [`id`][pydantic_ai.toolsets.AbstractToolset.id] — without one there is no source key to
+                qualify the name against, so the part stays unaddressable. See
+                [instruction parts](../agent.md#instruction-parts).
+            on_change: Whether to rewrite the instruction prefix (the default) or append full
+                replacements when this block changes. Appending requires an addressable instruction
+                identity; otherwise it warns and rewrites. The function still runs on every request.
+                Use `'append'` for instructions that change mid-conversation, to keep the cached
+                prefix; see [appending instruction changes](../agent.md#appending-instruction-changes).
         """
-        self._instructions.append(SystemPromptRunner(func))
-        return func
+        if name is not None:
+            validate_instruction_name(name)
+
+        def decorator(func_: InstructionFunc[AgentDepsT]) -> InstructionFunc[AgentDepsT]:
+            self._instructions.append(SourcedInstruction(func_, name=name, dynamic=True, on_change=on_change))
+            return func_
+
+        return decorator if func is None else decorator(func)
 
     def add_function(
         self,
@@ -498,6 +628,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         defer_loading: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         include_return_schema: bool | None = None,
     ) -> Tool[AgentDepsT]:
@@ -546,6 +677,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            tool_kind: What the tool is, independent of its name: a [`ToolKind`][pydantic_ai.messages.ToolKind], or the id of one.
+                Its call and return parts are then promoted to the typed parts registered for the kind.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
@@ -583,6 +717,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            tool_kind=tool_kind,
             timeout=timeout,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
@@ -618,9 +753,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 if instruction.strip():
                     parts.append(InstructionPart(content=instruction, dynamic=False))
             else:
-                result = await instruction.run(ctx)
-                if result and result.strip():
-                    parts.append(InstructionPart(content=result, dynamic=True))
+                assert not isinstance(instruction.instruction, (str, InstructionPart))
+                if (part := await resolve_instruction_function(instruction, instruction.instruction, ctx)) is not None:
+                    # Keyed beneath this toolset when collected, like any part it returns.
+                    parts.append(part)
         return parts or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -644,6 +780,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 retry=ctx.retries.get(exposed, 0),
                 max_retries=max_retries,
                 _tool_name_path=(),
+                # A listing nested in a tool call must not inherit that call's tool manager name.
+                _dispatched_tool_name=None,
             )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:

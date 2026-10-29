@@ -15,7 +15,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -31,6 +30,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, collect
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus import dialogs
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, run_flow
 from tests.clai2.menu_script import Script, pick, typed
 
 
@@ -70,7 +70,7 @@ def coder_host(*, terminal: bool = False, **settings: JsonValue) -> PluginHost[o
 def test_settings_source_validates_saves_and_resets() -> None:
     host = coder_host(sub_agents=False, instructions='Keep this guidance.')
     source = CoderSource(host)
-    unrestricted, sub_agents, folders, _skill_folders, skills = source.rows()
+    unrestricted, sub_agents, folders, _skill_folders, skills, _delegate_models, _review_agent = source.rows()
     assert (source.current(skills), skills.display(source.current(skills))) == ('[]', 'All on')
     assert source.current(unrestricted) == 'false'
     assert source.apply(unrestricted, 'true') == 'Saved Unrestricted filesystem.'
@@ -104,6 +104,30 @@ def test_menu_edits_save_only_chosen_settings() -> None:
     assert saved[-1] == {'unrestricted_filesystem': True, 'sub_agents': False}
     source.reset(source.rows()[1])
     assert saved[-1] == {'unrestricted_filesystem': True}
+
+
+def test_enter_on_skill_folders_turned_off_keeps_them_off() -> None:
+    """The editor opens holding `[]`, so Enter keeps skills off."""
+    saved: list[dict[str, JsonValue]] = []
+    host = PluginHost[object](
+        name='coder', console=Console(file=io.StringIO()), settings={'skill_folders': []}, save_settings=saved.append
+    )
+    menu = FieldMenu(CoderSource(host))
+    skill_folders = menu.row_for('skill_folders')
+    assert skill_folders is not None
+    editor = menu.build_editor(skill_folders)
+    assert (editor.text, editor._placeholder) == (  # pyright: ignore[reportPrivateUsage]
+        '[]',
+        'empty resets to [".agents/skills", ".claude/skills", "~/.agents/skills", "~/.claude/skills"]',
+    )
+    script = Script(
+        lists=[pick('skill_folders'), pick('skill_folders'), MenuResult(cancelled=True)],
+        choices=[],
+        texts=[typed('[]'), typed('')],
+    )
+    assert run_flow(menu, script.runners) == ['Reset Skill folders.']
+    assert saved == [{}]
+    assert menu.initial(skill_folders) == '', 'a setting at its default opens empty'
 
 
 async def test_configure_outside_a_terminal_explains_how(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -168,7 +192,7 @@ async def test_unrestricted_filesystem_setting_controls_paths_outside_the_projec
         for message in result.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, (ToolReturnPart, RetryPromptPart))
+        if isinstance(part, ToolReturnPart)
     ]
     assert any('reachable-content' in content for content in returns) is unrestricted
 

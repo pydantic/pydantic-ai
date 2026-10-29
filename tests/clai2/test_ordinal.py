@@ -29,7 +29,6 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ordinal import Ordinal
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins.ordinal import (
     INSTRUCTIONS,
     INVALID,
@@ -54,12 +53,10 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, load_plugin
-from pydantic_clai2.plugins.loader import (
-    _RETIRED_BUILTINS,  # pyright: ignore[reportPrivateUsage]
-    PluginError,
-    PluginLoader,
-)
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.plugins.menus import Option, SettingsMenu
+from pydantic_clai2.plugins.process_plugins import RETIRED_BUILTINS
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
@@ -208,7 +205,9 @@ class Shell:
         return auth  # pyright: ignore[reportUnknownVariableType]
 
     async def run_capability(self) -> Ordinal[None] | None:
-        return await self.auth()(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        ordinal = await self.auth()(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert ordinal is None or ordinal.defer_loading
+        return ordinal
 
     async def next_run(self) -> Ordinal[None]:
         ordinal = await self.run_capability()
@@ -242,7 +241,7 @@ def test_declared_as_a_disabled_built_in_with_no_settings() -> None:
     assert BUILTIN.factory == 'pydantic_clai2.builtin_plugins.ordinal'
     assert not BUILTIN.enabled
     assert BUILTIN.settings == {}
-    assert _RETIRED_BUILTINS['ordinal'].factory == 'pydantic_ai_harness.ordinal:Ordinal'
+    assert RETIRED_BUILTINS['ordinal'].factory == 'pydantic_ai_harness.ordinal:Ordinal'
 
 
 def test_url_matches_the_harness_endpoint() -> None:

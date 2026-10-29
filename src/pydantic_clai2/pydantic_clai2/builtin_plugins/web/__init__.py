@@ -21,19 +21,20 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.ask_user import AskUser
 from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer, render_question
 from pydantic_clai2.builtin_plugins.web.app import ASGIApp, create_app
-from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
-from pydantic_clai2.builtin_plugins.web.remote import Observer, Remote
 from pydantic_clai2.builtin_plugins.web.server import LOOPBACK, WebServer
+from pydantic_clai2.builtin_plugins.web.service import Observer, WebService
+from pydantic_clai2.builtin_plugins.web.workspaces import conversation_switched
 from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    ForkEnd,
+    InstallProgress,
     Plugin,
     PluginHost,
     SessionEnd,
-    TaskEvent,
+    TaskProgress,
     TurnEnd,
-    UpdateProgress,
 )
 from pydantic_clai2.ui.browser import open_browser
 
@@ -79,6 +80,9 @@ class WebSettings(BaseModel):
 class WebPlugin(Plugin[WebSettings]):
     """Drive this session from a local web UI: streaming chat, tool cards, sessions sidebar. /web starts it."""
 
+    scope = 'process'
+    """One server for the whole process, which shows every live session; see `WebService`."""
+
     def __init__(self, host: PluginHost[None], settings: WebSettings) -> None:
         super().__init__(host, settings)
         self.token = secrets.token_urlsafe(32)
@@ -87,19 +91,17 @@ class WebPlugin(Plugin[WebSettings]):
         """This launch's port, replacing the saved one, as `clai2 --web --port` sets it."""
         self.listen: str | None = None
         """This launch's address, replacing the saved one: loopback for a launcher's `clai2 --web --token-file`."""
-        self.hub = Hub()
         terminal = (
             TerminalAnswerer(full_screen=host.full_screen, console=host.console) if host.console.is_terminal else None
         )
-        self.answerer = BrowserAnswerer(publish=self.hub.publish, terminal=terminal)
-        self.remote = Remote(host=host, hub=self.hub, answerer=self.answerer)
+        self.service = WebService(host=host, terminal=terminal)
         self.server: WebServer | None = None
         self.url: str | None = None
         self._launch_page: Path | None = None
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        observer = Observer(self.remote)
-        return (observer, AskUser(answerer=self.answerer)) if self.settings.ask_user else (observer,)
+        observer = Observer(self.service)
+        return (observer, AskUser(answerer=self.service.answerer)) if self.settings.ask_user else (observer,)
 
     def get_commands(self) -> Sequence[Command]:
         return (
@@ -136,7 +138,7 @@ class WebPlugin(Plugin[WebSettings]):
         if args == ['status']:
             if self.url is None:
                 return 'The web UI is not running. Start it with /web.'
-            return f'Web UI at {self.url} with {self.hub.clients} browser(s) connected.'
+            return f'Web UI at {self.url} with {self.service.hub.clients} browser(s) connected.'
         raise ValueError(USAGE)
 
     def _launcher(self, url: str) -> Path:
@@ -165,7 +167,7 @@ class WebPlugin(Plugin[WebSettings]):
             if port == HTTP_PORT:
                 # Browsers leave the scheme's default port out of `Host`.
                 hosts |= frozenset(names)
-            return create_app(remote=self.remote, token=self.token, hosts=hosts)
+            return create_app(service=self.service, token=self.token, hosts=hosts)
 
         self.server = WebServer.serve(app, host=host, port=self.settings.port if self.port is None else self.port)
         self.url = f'http://{address}:{self.server.port}/?token={self.token}'
@@ -174,30 +176,38 @@ class WebPlugin(Plugin[WebSettings]):
     async def stop(self) -> None:
         server, self.server, self.url = self.server, None, None
         # An action waiting on a dialog nobody can now answer backs out, which also lets its menu close.
-        self.remote.dialogs.cancel_all()
+        self.service.dialogs.cancel_all()
         if self._launch_page is not None:
             self._launch_page.unlink(missing_ok=True)
             self._launch_page = None
         if server is not None:
             await server.stop()
         # Its chat is in the page alone: a turn no page can watch, or answer, stops.
-        await self.remote.orchestrator.close()
+        await self.service.orchestrator.close()
 
     async def on_session_end(self, event: SessionEnd) -> None:
         await self.stop()
+        self.service.close()
 
     async def on_turn_end(self, event: TurnEnd) -> None:
         # The run ended before the session saved its outcome; the browser's turn ended with the run.
-        self.remote.turn_ended()
+        self.service.turn_ended()
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
-        self.remote.conversation_changed(event)
+        try:
+            # Before the page and the orchestrator follow the switch, so they find the workspace naming it.
+            await conversation_switched(self.service, event)
+        finally:
+            self.service.conversation_changed(event)
 
     async def on_command_end(self, event: CommandEnd) -> None:
-        self.remote.command_ended(event)
+        self.service.command_ended(event)
 
-    async def on_task_event(self, event: TaskEvent) -> None:
-        self.remote.workers.observe(event)
+    async def on_task_progress(self, event: TaskProgress) -> None:
+        self.service.task_progress(event)
 
-    async def on_update_progress(self, event: UpdateProgress) -> None:
-        self.remote.update_progress(event)
+    async def on_fork_end(self, event: ForkEnd) -> None:
+        self.service.fork_ended(event)
+
+    async def on_install_progress(self, event: InstallProgress) -> None:
+        self.service.install_progress(event)

@@ -19,6 +19,7 @@ from typing import Any, TypeVar
 import anyio.to_thread
 import pixeltable as pxt
 import sqlalchemy as sa
+from pixeltable.exprs.expr import Expr
 from typing_extensions import TypedDict
 
 from pydantic_ai_harness.memory import (
@@ -195,9 +196,24 @@ class PixeltableMemoryStore:
         max_chars: int,
         max_file_chars: int,
     ) -> MemorySearchResult:
-        return await anyio.to_thread.run_sync(
-            self._locked,
-            functools.partial(self._search_sync, prefix, query, limit, max_files, max_chars, max_file_chars),
+        validate_store_prefix(prefix)
+        if not query.split() or limit <= 0 or max_files <= 0 or max_chars <= 0 or max_file_chars <= 0:
+            return MemorySearchResult(matches=[], scanned=0, truncated=False)
+        fetched = await anyio.to_thread.run_sync(
+            self._locked, functools.partial(self._search_files_sync, prefix, max_files, max_file_chars)
+        )
+        files = [(str(row['path']), row['content'] or '') for row in fetched]
+        result = await lexical_search(
+            [(path, content[:max_file_chars]) for path, content in files],
+            query,
+            limit=limit,
+            max_files=max_files,
+            max_chars=max_chars,
+            score_prefix=prefix,
+        )
+        content_truncated = any(len(content) > max_file_chars for _, content in files[:max_files])
+        return MemorySearchResult(
+            matches=result.matches, scanned=result.scanned, truncated=result.truncated or content_truncated
         )
 
     def _locked(self, fn: Callable[[], _T]) -> _T:
@@ -277,7 +293,7 @@ class PixeltableMemoryStore:
 
     def _file_row(self, t: pxt.Table, path: str) -> dict[str, Any] | None:
         query = t.where((t.path == path) & ((t.kind == _KIND_FILE) | (t.kind == _KIND_DELETED))).select(
-            t.kind, t.content, t.version, t.last_operation_id
+            t.kind, t.version
         )
         assert isinstance(query, pxt.Query)
         rows = query.collect()
@@ -494,13 +510,10 @@ class PixeltableMemoryStore:
             self._complete_operation(t, operation, intent)
         return mutation
 
-    def _file_rows(self, t: pxt.Table, prefix: str, limit: int, content_chars: int = 0) -> list[dict[str, Any]]:
-        """Return bounded file rows under `prefix` in code point order, slicing content in SQL."""
-        pred = t.kind == _KIND_FILE
-        if prefix:
-            pred = pred & (t.path.slice(0, len(prefix)) == prefix)
+    def _file_rows(self, t: pxt.Table, where: Expr, limit: int, content_chars: int = 0) -> list[dict[str, Any]]:
+        """Return bounded file rows in code point order, slicing content in SQL."""
         columns = {'content': t.content.slice(0, content_chars)} if content_chars else {}
-        query = t.where(pred).order_by(_code_point_order(t.path)).limit(limit)
+        query = t.where((t.kind == _KIND_FILE) & where).order_by(_code_point_order(t.path)).limit(limit)
         assert isinstance(query, pxt.Query)
         selected = query.select(t.path, **columns)
         assert isinstance(selected, pxt.Query)
@@ -511,34 +524,10 @@ class PixeltableMemoryStore:
         if limit <= 0:
             raise ValueError('limit must be positive')
         t = self._ensure_table()
-        return [str(row['path']) for row in self._file_rows(t, prefix, limit)]
+        return [str(row['path']) for row in self._file_rows(t, t.path.slice(0, len(prefix)) == prefix, limit)]
 
-    def _search_sync(
-        self,
-        prefix: str,
-        query: str,
-        limit: int,
-        max_files: int,
-        max_chars: int,
-        max_file_chars: int,
-    ) -> MemorySearchResult:
-        validate_store_prefix(prefix)
-        if not query.split() or limit <= 0 or max_files <= 0 or max_chars <= 0 or max_file_chars <= 0:
-            return MemorySearchResult(matches=[], scanned=0, truncated=False)
+    def _search_files_sync(self, prefix: str, max_files: int, max_file_chars: int) -> list[dict[str, Any]]:
         t = self._ensure_table()
-        # One extra character tells a file cut at max_file_chars from one that fits exactly.
-        # One file past max_files lets lexical_search report the scan bound as truncated.
-        fetched = self._file_rows(t, prefix, max_files + 1, content_chars=max_file_chars + 1)
-        files = [(str(row['path']), row['content'] or '') for row in fetched]
-        result = lexical_search(
-            [(path, content[:max_file_chars]) for path, content in files],
-            query,
-            limit=limit,
-            max_files=max_files,
-            max_chars=max_chars,
-            score_prefix=prefix,
-        )
-        content_truncated = any(len(content) > max_file_chars for _, content in files[:max_files])
-        return MemorySearchResult(
-            matches=result.matches, scanned=result.scanned, truncated=result.truncated or content_truncated
-        )
+        where = (t.path.slice(0, len(prefix)) == prefix) & ~t.path.slice(len(prefix)).contains('/')
+        # One extra file/character lets search report each truncation bound.
+        return self._file_rows(t, where, max_files + 1, content_chars=max_file_chars + 1)

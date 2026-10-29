@@ -8,9 +8,9 @@ from __future__ import annotations
 import copy
 import pickle
 import threading
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
@@ -26,6 +26,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     ProcessHistory,
     ToolSearch,
+    WrapModelRequestHandler,
 )
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
@@ -34,24 +35,30 @@ from pydantic_ai.capabilities.abstract import (
     NodeResult,
 )
 from pydantic_ai.exceptions import (
+    ModelRetry,
     UserError,
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
     EnqueuedMessagesEvent,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponseStreamEvent,
     PartStartEvent,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import (
     ModelRequestContext,
@@ -60,15 +67,24 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import AgentStream
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
+from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr, iter_message_parts
+from .conftest import IsDatetime, IsStr, iter_message_parts, try_import
+
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
 pytestmark = []
+
+
+_ENQUEUED_REQUEST_INSTRUCTIONS = 'an enqueued `ModelRequest` carries instructions of its own'
 
 
 # ===== Pending Message Queue Tests =====
@@ -182,7 +198,7 @@ async def test_outermost_hook_can_enqueue_on_end(hook_redirects: bool):
 
 
 async def test_enqueue_asap_message_from_tool():
-    """`'asap'` messages enqueued from a tool are injected before the next model request."""
+    """`'asap'` messages enqueued from a tool land right after its `ToolReturnPart`, in the same request."""
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(msg, ModelResponse) for msg in messages):
@@ -227,14 +243,9 @@ async def test_enqueue_asap_message_from_tool():
                         content='ok',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(content='Injected asap message', timestamp=IsDatetime()),
                 ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[UserPromptPart(content='Injected asap message', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -278,7 +289,25 @@ async def test_enqueue_asap_delivery_event_from_tool():
 
     assert enqueue_id is not None
     delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
-    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(result.all_messages()[3],))]
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert delivery_events == [
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_id,
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[1]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[1],),
+        )
+    ]
+    # `parts` are the very objects in history; `messages` holds them in a request of their own.
+    assert delivery_events[0].parts[0] is tool_request.parts[1]
+    assert delivery_events[0].messages[0] not in result.all_messages()
     # The delivery event precedes the model response that can depend on the delivered message.
     delivery_index = events.index(delivery_events[0])
     done_index = next(
@@ -358,10 +387,33 @@ async def test_multiple_enqueue_delivery_events_keep_order():
                 result = event.result
 
     assert result is not None
-    messages = result.all_messages()
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
     assert delivery_events == [
-        EnqueuedMessagesEvent(enqueue_id=enqueue_ids[0], messages=(messages[3],)),
-        EnqueuedMessagesEvent(enqueue_id=enqueue_ids[1], messages=(messages[4],)),
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_ids[0],
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[1]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[1],),
+        ),
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_ids[1],
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[2]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[2],),
+        ),
     ]
 
 
@@ -396,7 +448,22 @@ async def test_enqueue_delivery_event_survives_history_processor_rebuild():
 
     assert enqueue_id is not None
     delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
-    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(result.all_messages()[3],))]
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert delivery_events == [
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_id,
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[1]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[1],),
+        )
+    ]
 
 
 async def test_empty_enqueue_emits_no_delivery_event():
@@ -521,7 +588,22 @@ async def test_enqueue_delivery_event_via_run_stream():
     assert output == 'done'
     assert enqueue_id is not None
     delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
-    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(result.all_messages()[3],))]
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert delivery_events == [
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_id,
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[1]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[1],),
+        )
+    ]
 
 
 async def test_with_event_stream_buffer_drains_around_node_stream():
@@ -965,14 +1047,9 @@ async def test_pending_messages_accessible_on_run_context():
                         content='done',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(content='observed', timestamp=IsDatetime()),
                 ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[UserPromptPart(content='observed', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1084,6 +1161,7 @@ async def test_enqueue_accepts_multimodal_user_content():
     assert len(injected) == 1
 
 
+@pytest.mark.moves_cache_prefix(reason=_ENQUEUED_REQUEST_INSTRUCTIONS)
 async def test_enqueue_accepts_model_request_passthrough():
     """A full `ModelRequest` is enqueued verbatim, preserving `instructions`/`metadata`.
 
@@ -1178,14 +1256,10 @@ def test_enqueue_without_live_queue_raises():
         ctx.enqueue('this has nowhere to go')
 
 
-async def test_enqueue_parts_style_calls_produce_one_request_per_call():
-    """Each `enqueue` call produces its own `ModelRequest` in history.
+async def test_enqueue_parts_style_calls_keep_their_own_parts():
+    """Each `enqueue` call keeps its own part: two calls from one tool aren't coalesced into one prompt.
 
-    Each `enqueue` call pre-packages its content into a `ModelRequest` at enqueue time,
-    so two calls produce two `PendingMessage`s with two separate `ModelRequest`s. The
-    history reflects per-call structure; wire-level `_clean_message_history` still merges
-    adjacent compatible `ModelRequest`s so the model sees one turn. Producers wanting a
-    single message should pass a single `ModelRequest(parts=[...])` themselves.
+    Both land in the tool's request, after its return, in the order they were enqueued.
     """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1214,17 +1288,27 @@ async def test_enqueue_parts_style_calls_produce_one_request_per_call():
         if isinstance(msg, ModelRequest)
         and any(isinstance(p, UserPromptPart) and p.content in ('first hint', 'second hint') for p in msg.parts)
     ]
-    assert len(drained) == 2, 'expected one ModelRequest per enqueue call'
+    assert [[type(p).__name__ for p in msg.parts] for msg in drained] == [
+        ['ToolReturnPart', 'UserPromptPart', 'UserPromptPart']
+    ]
     assert [p.content for p in iter_message_parts(drained, ModelRequest, UserPromptPart)] == [
         'first hint',
         'second hint',
     ]
 
 
+@pytest.mark.moves_cache_prefix(reason=_ENQUEUED_REQUEST_INSTRUCTIONS)
 async def test_enqueue_passthrough_stays_separate_from_parts_style():
-    """A passthrough `ModelRequest` stays its own message even when surrounded by parts-style enqueues."""
+    """A passthrough `ModelRequest` stays its own message, and nothing enqueued after it moves ahead of it.
+
+    It may carry its own `instructions` or other message-level fields, so it's never put into the tool's
+    request. Content enqueued before it goes into the tool's request; content enqueued after it follows it as
+    its own message, so the model gets all three in enqueue order.
+    """
+    received: list[list[ModelMessage]] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(messages)
         if any(isinstance(msg, ModelResponse) for msg in messages):
             return ModelResponse(
                 parts=[TextPart(content='done')],
@@ -1246,28 +1330,426 @@ async def test_enqueue_passthrough_stays_separate_from_parts_style():
         ctx.enqueue('after')
         return 'ok'
 
+    def contents(messages: Sequence[ModelMessage]) -> list[list[str]]:
+        return [
+            [
+                f'return:{p.content}' if isinstance(p, ToolReturnPart) else str(p.content)
+                for p in message.parts
+                if isinstance(p, ToolReturnPart | UserPromptPart)
+            ]
+            for message in messages
+            if isinstance(message, ModelRequest)
+        ]
+
     result = await agent.run('Hello')
-    # Three drained requests: synthesized(["before"]), passthrough, synthesized(["after"]).
-    drained = [
-        msg
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        and any(isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after') for p in msg.parts)
-    ]
-    assert len(drained) == 3
-    contents = [
-        next(
-            p.content
-            for p in r.parts
-            if isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after')
-        )
-        for r in drained
-    ]
-    assert contents == ['before', 'passthrough', 'after']
+    assert contents(result.all_messages()[2:]) == [['return:ok', 'before'], ['passthrough'], ['after']]
+    passthrough = result.all_messages()[3]
+    assert isinstance(passthrough, ModelRequest)
     # Passthrough preserved its instructions.
-    assert drained[1].instructions == 'careful'
-    assert drained[0].instructions is None
-    assert drained[2].instructions is None
+    assert passthrough.instructions == 'careful'
+    assert contents(received[-1])[-1] == ['return:ok', 'before', 'passthrough', 'after']
+
+
+async def test_parallel_tool_enqueues_land_after_their_own_returns():
+    """Content enqueued by parallel tool calls lands after its own call's return, in enqueue order per call.
+
+    The calls interleave their enqueues (`a1`, `b1`, `a2`) and their returns are stored in call order
+    (`tool_b` first), so `b1` goes in ahead of `tool_a`'s content and must not push `a2` ahead of `a1`.
+    `tool_c` enqueues nothing and asks for a retry, so its result gets nothing after it. The model still
+    gets every tool result ahead of the enqueued content, as providers require.
+    """
+    model_requests: list[ModelRequest] = []
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        assert isinstance(messages[-1], ModelRequest)
+        model_requests.append(messages[-1])
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            yield 'done'
+            return
+        yield {
+            0: DeltaToolCall(name='tool_b', json_args='{}', tool_call_id='call-b'),
+            1: DeltaToolCall(name='tool_a', json_args='{}', tool_call_id='call-a'),
+            2: DeltaToolCall(name='tool_c', json_args='{}', tool_call_id='call-c'),
+        }
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+    a1_enqueued, b1_enqueued = anyio.Event(), anyio.Event()
+
+    @agent.tool
+    async def tool_a(ctx: RunContext[object]) -> str:
+        ctx.enqueue('a1')
+        a1_enqueued.set()
+        await b1_enqueued.wait()
+        ctx.enqueue('a2')
+        return 'a'
+
+    @agent.tool
+    async def tool_b(ctx: RunContext[object]) -> str:
+        await a1_enqueued.wait()
+        ctx.enqueue('b1')
+        b1_enqueued.set()
+        return 'b'
+
+    @agent.tool_plain
+    def tool_c() -> str:
+        raise ModelRetry('try again')
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    result = await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    def describe(request: ModelMessage) -> list[str]:
+        assert isinstance(request, ModelRequest)
+        return [
+            f'{part.part_kind}:{part.tool_name}'
+            if isinstance(part, ToolReturnPart)
+            else f'{part.part_kind}:{part.content}'
+            for part in request.parts
+            if isinstance(part, ToolReturnPart | UserPromptPart)
+        ]
+
+    assert describe(result.all_messages()[2]) == snapshot(
+        [
+            'tool-return:tool_b',
+            'user-prompt:b1',
+            'tool-return:tool_a',
+            'user-prompt:a1',
+            'user-prompt:a2',
+            'tool-return:tool_c',
+        ]
+    )
+    # One event per `enqueue` call, in the order the content lands in history.
+    assert [
+        [part.content for part in event.parts if isinstance(part, UserPromptPart)]
+        for event in events
+        if isinstance(event, EnqueuedMessagesEvent)
+    ] == [['b1'], ['a1'], ['a2']]
+    assert describe(model_requests[-1]) == snapshot(
+        [
+            'tool-return:tool_b',
+            'tool-return:tool_a',
+            'tool-return:tool_c',
+            'user-prompt:b1',
+            'user-prompt:a1',
+            'user-prompt:a2',
+        ]
+    )
+
+
+async def test_enqueue_from_tool_is_its_own_request_when_the_request_was_rebuilt():
+    """When a wrapper has replaced the request's messages with copies, the tool's request isn't there to add to.
+
+    The enqueued content is then added as its own request, so the model still sees it and history keeps it.
+    """
+    received: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    @dataclass
+    class CopyMessages(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            handler: WrapModelRequestHandler,
+        ) -> ModelResponse:
+            request_context.messages = copy.deepcopy(request_context.messages)
+            return await handler(request_context)
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[CopyMessages()])
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[object]) -> str:
+        ctx.enqueue('Injected asap message')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert [[part.part_kind for part in message.parts] for message in result.all_messages()[2:4]] == [
+        ['tool-return'],
+        ['user-prompt'],
+    ]
+    assert [part.part_kind for part in received[-1][-1].parts] == ['tool-return', 'user-prompt']
+
+
+@pytest.mark.vcr
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_parallel_tool_enqueues_reach_anthropic(allow_model_requests: None, anthropic_api_key: str):
+    """Anthropic accepts the request after parallel tool calls that each enqueue content.
+
+    It requires every tool result to lead the message answering the calls, and in history each call's
+    content sits between the results.
+    """
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model)
+
+    @agent.tool
+    def get_weather(ctx: RunContext[object], city: str) -> str:
+        ctx.enqueue(f'The {city} reading came from a backup station.')
+        return f'Sunny in {city}'
+
+    result = await agent.run(
+        'Call get_weather for Paris and for London in parallel, then summarize both in one short sentence.'
+    )
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert [type(part).__name__ for part in tool_request.parts] == snapshot(
+        ['ToolReturnPart', 'UserPromptPart', 'ToolReturnPart', 'UserPromptPart']
+    )
+    assert result.output == snapshot(
+        'Both Paris and London are reported as sunny, but both readings came from backup weather stations, so they may be less reliable than primary-station data.'
+    )
+
+
+async def test_late_enqueue_from_an_earlier_call_with_a_reused_id_is_its_own_request():
+    """Content an earlier call enqueues late isn't put next to a later call's return that reuses its id.
+
+    The model calls `tool_a` with `call_0` twice, in two steps, and each call's own content follows its return.
+    The first call also starts a task that enqueues while the second call runs, so that content still carries
+    `call_0`, but it doesn't belong to the second return.
+    """
+    model_calls = 0
+    second_call_started, late_enqueued = anyio.Event(), anyio.Event()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls <= 2:
+            return ModelResponse(parts=[ToolCallPart('tool_a', {'call': model_calls}, tool_call_id='call_0')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    async with anyio.create_task_group() as task_group:
+
+        @agent.tool
+        async def tool_a(ctx: RunContext[object], call: int) -> str:
+            ctx.enqueue(f'from call {call}')
+            if call == 1:
+
+                async def report_later() -> None:
+                    await second_call_started.wait()
+                    ctx.enqueue('late from the first call')
+                    late_enqueued.set()
+
+                task_group.start_soon(report_later)
+            else:
+                second_call_started.set()
+                await late_enqueued.wait()
+            return f'result {call}'
+
+        result = await agent.run('Hello')
+        assert [
+            [part.content for part in message.parts if isinstance(part, ToolReturnPart | UserPromptPart)]
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+        ] == [
+            ['Hello'],
+            ['result 1', 'from call 1'],
+            ['result 2', 'from call 2'],
+            ['late from the first call'],
+        ]
+
+
+async def test_tool_call_content_delivered_in_two_drains_keeps_enqueue_order():
+    """Content a call enqueues after the first delivery of the step still lands after what that delivery put in.
+
+    A task the tool started enqueues `b` while a `before_model_request` hook runs, between the delivery ahead of
+    the hooks and the one after them.
+    """
+    first_delivered, b_enqueued = anyio.Event(), anyio.Event()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    @dataclass
+    class WaitForLateContent(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if any(isinstance(part, ToolReturnPart) for part in ctx.messages[-1].parts):
+                first_delivered.set()
+                await b_enqueued.wait()
+            return request_context
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[WaitForLateContent()])
+
+    async with anyio.create_task_group() as task_group:
+
+        @agent.tool
+        async def inject_msg(ctx: RunContext[object]) -> str:
+            ctx.enqueue('a')
+
+            async def enqueue_later() -> None:
+                await first_delivered.wait()
+                ctx.enqueue('b')
+                b_enqueued.set()
+
+            task_group.start_soon(enqueue_later)
+            return 'ok'
+
+        result = await agent.run('Hello')
+        tool_request = result.all_messages()[2]
+        assert isinstance(tool_request, ModelRequest)
+        assert [part.content for part in tool_request.parts if isinstance(part, ToolReturnPart | UserPromptPart)] == [
+            'ok',
+            'a',
+            'b',
+        ]
+
+
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+async def test_request_with_tool_call_content_records_what_was_sent():
+    """The request tool-call content went into is the step's request: what's recorded on it lands in history.
+
+    A `before_model_request` hook adds an instruction part each step, and the instructions sent are recorded on
+    the step's request, which the content was put into by a copy.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    @dataclass
+    class StepInstructions(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            parameters = request_context.model_request_parameters
+            request_context.model_request_parameters = replace(
+                parameters,
+                instruction_parts=[*(parameters.instruction_parts or []), InstructionPart(f'step {ctx.run_step}')],
+            )
+            return request_context
+
+    agent = Agent(FunctionModel(model_fn), instructions='base', capabilities=[StepInstructions()])
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[object]) -> str:
+        ctx.enqueue('side effect')
+        return 'ok'
+
+    nodes: list[_agent_graph.ModelRequestNode[Any, Any]] = []
+    async with agent.iter('Hello') as run:
+        async for node in run:
+            if isinstance(node, _agent_graph.ModelRequestNode):
+                nodes.append(node)
+    assert run.result is not None
+    history = run.result.all_messages()
+    assert [any(node.request is message for message in history) for node in nodes] == [True, True]
+    tool_request = history[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert [part.part_kind for part in tool_request.parts] == ['tool-return', 'user-prompt']
+    assert tool_request.instructions == 'base\n\nstep 2'
+
+
+async def test_directly_built_pending_message_with_several_messages_is_delivered_whole():
+    """A `PendingMessage` built by hand, holding more than one request's worth, is added as its own messages."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[object]) -> str:
+        assert ctx.pending_messages is not None and ctx.tool_call_id is not None
+        ctx.pending_messages.append(
+            PendingMessage(
+                messages=[
+                    ModelResponse(parts=[TextPart(content='synthetic')]),
+                    ModelRequest(parts=[UserPromptPart(content='follow-up')]),
+                ],
+                _tool_call=(ctx.tool_call_id, ctx.run_step),
+            )
+        )
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert [message.kind for message in result.all_messages()[2:5]] == ['request', 'response', 'request']
+
+
+async def test_enqueue_from_tool_renders_like_its_own_request():
+    """The model gets the same bytes as when the enqueued content was its own request after the tool's."""
+    received: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[object]) -> str:
+        ctx.enqueue('first hint')
+        ctx.enqueue('second hint')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    *before, tool_request, _ = result.all_messages()
+    assert isinstance(tool_request, ModelRequest)
+    tool_return, *enqueued = tool_request.parts
+    own_request = [*before, replace(tool_request, parts=[tool_return]), replace(tool_request, parts=enqueued)]
+    expected = _clean_message_history(own_request, repair_last_response=True)
+    # Merging two requests drops their `run_id` / `conversation_id`, which are never sent to the model.
+    sent = [*received[-1][:-1], replace(received[-1][-1], run_id=None, conversation_id=None)]
+    assert ModelMessagesTypeAdapter.dump_json(sent) == ModelMessagesTypeAdapter.dump_json(expected)
+
+
+@pytest.mark.parametrize(
+    'parts',
+    [
+        pytest.param([UserPromptPart('Then this.'), ToolReturnPart('tool_a', 'a', 'call-a')], id='prompt-first'),
+        pytest.param([ToolReturnPart('tool_a', 'a', 'call-a'), UserPromptPart('Then this.')], id='prompt-last'),
+        pytest.param(
+            [
+                RetryFeedbackPart('Try again.', retry=RetryInfo(cause='model_retry')),
+                ToolReturnPart('tool_a', 'a', 'call-a'),
+            ],
+            id='plain-retry-first',
+        ),
+        pytest.param(
+            [
+                ToolReturnPart('tool_a', 'a', 'call-a'),
+                ToolAvailabilityDeltaPart(tools_added=['tool_c']),
+                ToolReturnPart('tool_b', 'b', 'call-b'),
+            ],
+            id='delta-between-results',
+        ),
+    ],
+)
+def test_requests_without_parts_between_tool_results_are_sent_unchanged(parts: list[ModelRequestPart]):
+    """Only parts sitting between a request's tool results move; any other request goes out exactly as stored.
+
+    A unit test because it pins the wire shape of histories that enqueue doesn't produce, such as persisted ones.
+    """
+    calls = [
+        ToolCallPart(part.tool_name, {}, tool_call_id=part.tool_call_id)
+        for part in parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hello')]),
+        ModelResponse(parts=calls),
+        ModelRequest(parts=parts),
+    ]
+    cleaned = _clean_message_history(history)
+    assert ModelMessagesTypeAdapter.dump_json(cleaned) == ModelMessagesTypeAdapter.dump_json(history)
 
 
 async def test_enqueue_system_prompt_part():
@@ -1337,7 +1819,9 @@ async def test_enqueue_tool_availability_delta_part():
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest) and any(isinstance(p, ToolAvailabilityDeltaPart) for p in msg.parts)
     )
-    assert [type(part).__name__ for part in injected.parts] == snapshot(['ToolAvailabilityDeltaPart', 'UserPromptPart'])
+    assert [type(part).__name__ for part in injected.parts] == snapshot(
+        ['ToolReturnPart', 'ToolAvailabilityDeltaPart', 'UserPromptPart']
+    )
 
 
 async def test_enqueue_interleaved_response_and_request():
@@ -1511,7 +1995,7 @@ async def test_enqueue_asap_with_rich_message_history_tail():
     The history keeps the un-merged view (drain's request is a separate `ModelRequest`
     after the rich tail) so `all_messages()` reflects per-call structure. On the wire,
     `_clean_message_history` merges the two adjacent `ModelRequest`s and sorts
-    `ToolReturnPart`/`RetryPromptPart` first — non-tool parts keep arrival order, so the
+    `ToolReturnPart`s first — non-tool parts keep arrival order, so the
     enqueued content lands at the *end* of the merged turn (not interleaved between
     existing parts). Captures the `messages` arg `FunctionModel` actually received to
     validate the wire-level merge through the public path.
@@ -1689,6 +2173,107 @@ async def test_enqueue_asap_drains_at_end_if_arrived_during_final_step():
             ),
         ]
     )
+
+
+async def test_enqueue_at_deferred_tool_pause_is_recorded_without_another_model_request():
+    """Content left in the queue when a run pauses for deferred tools goes into the history and the pause stands.
+
+    A redirect would give the model a turn while the deferred call is unanswered.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[ToolCallPart(tool_name='lookup'), ToolCallPart(tool_name='gated')])
+
+    @dataclass
+    class LateContentCap(AbstractCapability[Any]):
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            ctx.enqueue('late content')
+            return response
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[LateContentCap()])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:
+        # Never approved in this test.
+        return 'approved'  # pragma: no cover
+
+    result = await agent.run('Hello')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert call_count == 1
+    assert result.all_messages()[-1] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='late content', timestamp=IsDatetime())],
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
+@pytest.mark.parametrize('case', ['all_calls_deferred', 'queued_response'])
+async def test_enqueue_at_deferred_tool_pause_redirects_when_history_cannot_record_it(case: str):
+    """The pause redirects as before when recording would change how the paused history resumes.
+
+    After a step whose calls all deferred, a trailing request would read as interrupting them; a queued
+    `ModelResponse` would read as the paused response.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count > 1:
+            return ModelResponse(parts=[TextPart(content='done')])
+        calls = [ToolCallPart(tool_name='gated')]
+        if case == 'queued_response':
+            calls.insert(0, ToolCallPart(tool_name='lookup'))
+        return ModelResponse(parts=calls)
+
+    @dataclass
+    class LateContentCap(AbstractCapability[Any]):
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if call_count == 1:
+                if case == 'queued_response':
+                    ctx.enqueue(ModelResponse(parts=[TextPart(content='synthetic turn')]), 'late content')
+                else:
+                    ctx.enqueue('late content')
+            return response
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[LateContentCap()])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:
+        # Never approved in this test.
+        return 'approved'  # pragma: no cover
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'done'
+    assert call_count == 2
 
 
 async def test_enqueue_when_idle_drains_after_leftover_asap():

@@ -69,6 +69,7 @@ async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path, monk
             'api-key': 'sk-fake_api_key_123456',
             'google-api-key': 'AIzaFakeApiKey123456',
             'xai-key': 'xai-fake_api_key_123456',
+            'xi-api-key': 'sk_0123456789abcdef0123456789abcdef',
         },
         # A WebRTC ephemeral client secret a provider echoes back inside a frame body.
         'client_secret': 'ek_fake_secret_123456',
@@ -101,6 +102,7 @@ async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path, monk
         'sk-fake_api_key_123456',
         'AIzaFakeApiKey123456',
         'xai-fake_api_key_123456',
+        'sk_0123456789abcdef0123456789abcdef',
         'ek_fake_secret_123456',
         '0paque-azure-key-value-42',
         'internal.service:443',
@@ -117,6 +119,7 @@ async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path, monk
                     'api-key': '<scrubbed>',
                     'google-api-key': '<scrubbed>',
                     'xai-key': '<scrubbed>',
+                    'xi-api-key': '<scrubbed>',
                 },
                 'client_secret': '<scrubbed>',
                 'note': 'the key is <scrubbed> here',
@@ -383,6 +386,33 @@ async def test_audio_turn_wait_gives_up_without_progress(monkeypatch: pytest.Mon
 async def test_audio_turn_wait_is_a_no_op_while_recording() -> None:
     """Unit test: recording sends in real time, so there is no recorded order to wait for."""
     await RealtimeCassette().before_audio_send()
+
+
+async def test_recording_truncates_elevenlabs_audio() -> None:
+    """Unit test: both ElevenLabs audio shapes are truncated when recorded.
+
+    The outbound microphone chunk is the one client message without a `type` field, and the inbound
+    `audio` event keeps the per-character `alignment` the session times words by.
+    """
+    long_audio = 'A' * 400  # far longer than the retained byte budget
+    inbound = {
+        'type': 'audio',
+        'audio_event': {'audio_base_64': long_audio, 'event_id': 7, 'alignment': {'chars': ['H', 'i']}},
+    }
+    fake_ws = _FakeWebSocket([json.dumps(inbound)])
+    cassette = RealtimeCassette()
+    recording = RecordingWebSocket(fake_ws, cassette)
+
+    await recording.send(json.dumps({'user_audio_chunk': long_audio}))
+    await recording.recv()
+
+    outbound_stored, inbound_stored = cassette.interactions
+    assert isinstance(outbound_stored, CassetteMessage) and isinstance(inbound_stored, CassetteMessage)
+    assert 0 < len(outbound_stored.data['user_audio_chunk']) < len(long_audio)
+    audio_event = inbound_stored.data['audio_event']
+    assert 0 < len(audio_event['audio_base_64']) < len(long_audio)
+    assert audio_event['event_id'] == 7
+    assert audio_event['alignment'] == {'chars': ['H', 'i']}
 
 
 async def test_recording_records_clean_close_while_iterating() -> None:

@@ -4,6 +4,8 @@ description: "Unit test Pydantic AI agents with pytest by swapping in TestModel 
 
 # Unit testing
 
+Before you deploy an agent, and on every change after, unit tests check your own code around the model: tools, dependencies, output validation and failure handling, with no model requests and the same result every run. They don't tell you whether the model's answers are good; that is what [evals](evals.md) are for.
+
 Writing unit tests for Pydantic AI code is just like unit tests for any other Python code.
 
 Because for the most part they're nothing new, we have pretty well established tools and patterns for writing and running these kinds of tests.
@@ -267,6 +269,25 @@ async def test_forecast_future():
 3. We use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to replace the agent's model with our custom function.
 
 If your replacement model needs to carry state between requests, `FunctionModel` also accepts a callable instance with an `async def __call__` in place of a function; see the [`FunctionModel` API docs](api/models/function.md) for an example.
+
+### Testing batch processing
+
+`TestModel` and `FunctionModel` implement the [batch API](batch.md) in memory: a batch's requests run as soon as it's created, and it ends straight away. To test an agent that uses [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests], replace its model with one of them, and set short intervals so the test doesn't wait:
+
+```python {title="test_batch_agent.py" call_name="test_batch_agent"}
+from datetime import timedelta
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import BatchModelRequests
+from pydantic_ai.models.test import TestModel
+
+
+async def test_batch_agent():
+    batching = BatchModelRequests(max_wait=timedelta(milliseconds=1), poll_interval=timedelta(milliseconds=1))
+    agent = Agent(TestModel(custom_output_text='Paris'), capabilities=[batching])
+    result = await agent.run('What is the capital of France?')
+    assert result.output == 'Paris'
+```
 
 ### Overriding model via pytest fixtures
 

@@ -32,7 +32,7 @@ from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.keys import choose_key
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.plugins.sign_in import sign_in_command, sign_in_now, warn_if_signed_out
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import shown
 from pydantic_clai2.ui.rendering import theme
 
@@ -91,7 +91,12 @@ class LinearPlugin(Plugin[LinearSettings, DepsT]):
             return saved_key()(ctx)
 
         return (
-            Linear[DepsT](auth=token, read_only=settings.read_only, include_instructions=settings.include_instructions),
+            Linear[DepsT](
+                defer_loading=True,
+                auth=token,
+                read_only=settings.read_only,
+                include_instructions=settings.include_instructions,
+            ),
         )
 
     def get_commands(self) -> Sequence[Command]:
@@ -106,7 +111,9 @@ class LinearPlugin(Plugin[LinearSettings, DepsT]):
             return None
         # A new client per run: FastMCP keeps tokens in memory once connected, so `/linear logout` would
         # otherwise leave this session signed in.
-        return Linear[DepsT](client=method.client(), include_instructions=self.settings.include_instructions)
+        return Linear[DepsT](
+            defer_loading=True, client=method.client(), include_instructions=self.settings.include_instructions
+        )
 
     def settings_menu(self) -> SettingsMenu:
         source = _Settings(self.host)

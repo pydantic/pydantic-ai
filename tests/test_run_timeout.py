@@ -17,7 +17,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunCancelled, RunContext, RunTimedOut
 from pydantic_ai._cancel import RunCancellation
-from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback, SelectModel, WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -28,10 +28,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsDatetime, IsNow, IsStr
 
@@ -93,10 +95,20 @@ def _slow_tool_agent() -> Agent[object, str]:
 
 
 async def test_timeout_during_model_request():
-    agent = Agent(FunctionModel(_never_returns))
+    contexts: list[RunContext[object]] = []
+
+    async def expire_then_block(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        _expire(contexts[-1])
+        return await _never_returns(messages, info)
+
+    agent = Agent(FunctionModel(expire_then_block))
+
+    @agent.instructions
+    def capture_context(ctx: RunContext[object]) -> None:
+        contexts.append(ctx)
 
     with pytest.raises(RunTimedOut) as exc_info:
-        await agent.run('go', timeout=SHORT_TIMEOUT)
+        await agent.run('go', timeout=LONG_TIMEOUT)
 
     exc = exc_info.value
     assert isinstance(exc, RunCancelled)
@@ -112,6 +124,76 @@ async def test_timeout_during_model_request():
             )
         ]
     )
+
+
+@pytest.mark.parametrize('stop', ['timeout', 'cancel'])
+@pytest.mark.parametrize('via', ['FallbackModel', 'wrapped FallbackModel', 'ModelFallback'])
+async def test_stop_during_a_fallback_keeps_the_rejected_response_usage(stop: str, via: str):
+    """A rejected response's usage counts when the run stops while the next model is running."""
+    contexts: list[RunContext[object]] = []
+
+    def rejected(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
+
+    async def stop_then_block(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if stop == 'timeout':
+            _expire(contexts[-1])
+        else:
+            contexts[-1].cancel()
+        return await _never_returns(messages, info)
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    primary = FunctionModel(rejected, model_name='primary')
+    backup = FunctionModel(stop_then_block, model_name='backup')
+    if via == 'ModelFallback':
+        agent = Agent(primary, capabilities=[ModelFallback(backup, fallback_on=reject_primary)])
+    else:
+        model = FallbackModel(primary, backup, fallback_on=reject_primary)
+        # A wrapper, like the one instrumentation adds, passes the attempts on too.
+        agent = Agent(WrapperModel(model) if via == 'wrapped FallbackModel' else model)
+
+    @agent.instructions
+    def capture_context(ctx: RunContext[object]) -> None:
+        contexts.append(ctx)
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('go', timeout=LONG_TIMEOUT)
+    assert isinstance(exc_info.value, RunTimedOut) == (stop == 'timeout')
+    assert exc_info.value.usage == snapshot(RunUsage(input_tokens=1000, output_tokens=500))
+
+
+@pytest.mark.parametrize('stop', ['timeout', 'cancel'])
+async def test_stop_during_a_continuation_keeps_the_suspended_segment_usage(stop: str):
+    """A suspended response's usage counts when the run stops while the request continuing it is in flight."""
+    contexts: list[RunContext[object]] = []
+    calls = 0
+
+    async def suspend_then_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[TextPart('partial')], usage=RequestUsage(input_tokens=10, output_tokens=2), state='suspended'
+            )
+        if stop == 'timeout':
+            _expire(contexts[-1])
+        else:
+            contexts[-1].cancel()
+        return await _never_returns(messages, info)
+
+    agent = Agent(FunctionModel(suspend_then_stop))
+
+    @agent.instructions
+    def capture_context(ctx: RunContext[object]) -> None:
+        contexts.append(ctx)
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('go', timeout=LONG_TIMEOUT)
+    assert isinstance(exc_info.value, RunTimedOut) == (stop == 'timeout')
+    assert calls == 2
+    assert exc_info.value.usage == snapshot(RunUsage(input_tokens=10, output_tokens=2))
 
 
 async def test_timeout_during_tool_call_keeps_resumable_state():
@@ -383,12 +465,24 @@ async def test_sub_agent_own_timeout_is_a_failed_tool_call():
 async def test_nested_timeout_reaching_the_run_edge_keeps_its_type():
     """A nested run's `RunTimedOut` escaping into the outer run (not via a tool) is re-stamped as the outer run's."""
     agent = Agent(TestModel())
-    sub_agent = Agent(FunctionModel(_never_returns))
+    sub_contexts: list[RunContext[object]] = []
+
+    async def expire_then_block(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Expired once its request is recorded, rather than racing a real timer against the run's progress.
+        _expire(sub_contexts[-1])
+        return await _never_returns(messages, info)
+
+    sub_agent = Agent(FunctionModel(expire_then_block))
+
+    @sub_agent.instructions
+    def capture_context(ctx: RunContext[object]) -> str:
+        sub_contexts.append(ctx)
+        return 'Sub.'
 
     with pytest.raises(RunTimedOut) as exc_info:
         async with agent.iter('go') as agent_run:
             async for _node in agent_run:  # pragma: no branch
-                await sub_agent.run('sub', timeout=SHORT_TIMEOUT)
+                await sub_agent.run('sub', timeout=LONG_TIMEOUT)
 
     assert str(exc_info.value) == 'The agent run timed out in a nested run.'
     nested = exc_info.value.__cause__
@@ -453,10 +547,10 @@ _FIXED_NOW = datetime(2030, 1, 1, tzinfo=UTC)
 class _ReplaySafeClock(AbstractCapability[object]):
     """Stands in for a durability capability's replay-safe clock and recorded start time."""
 
-    def _run_clock(self) -> Callable[[], datetime] | None:
+    def get_run_clock(self) -> Callable[[], datetime] | None:
         return lambda: _FIXED_NOW
 
-    async def _run_start_time(self, run_id: str) -> datetime | None:
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
         return _FIXED_NOW - timedelta(seconds=10)
 
 
@@ -523,7 +617,7 @@ class _AdjustableClock(AbstractCapability[object]):
 
     now: datetime = _FIXED_NOW
 
-    def _run_clock(self) -> Callable[[], datetime] | None:
+    def get_run_clock(self) -> Callable[[], datetime] | None:
         return lambda: self.now
 
 
@@ -549,3 +643,32 @@ async def test_task_outliving_a_timed_run_does_not_inherit_its_deadline():
     clock.now += timedelta(seconds=LONG_TIMEOUT * 2)
     run_finished.set()
     assert await background[0] == 'success (no tool calls)'
+
+
+async def test_first_model_selection_counts_toward_the_run_timeout():
+    """The run's clock starts before its first model is selected, so the time a selector takes is part of the run.
+
+    The selector sees the deadline it is spending, like the step's `RunContext` does.
+    """
+    clock = _AdjustableClock()
+    model = TestModel()
+    selected_deadlines: list[datetime | None] = []
+    seen: list[tuple[datetime | None, float | None]] = []
+
+    def select(ctx: ModelSelectionContext[object]) -> TestModel:
+        selected_deadlines.append(ctx.deadline)
+        clock.now += timedelta(seconds=20)
+        return model
+
+    agent = Agent(None, capabilities=[clock, SelectModel(select)])
+
+    @agent.tool
+    def check_deadline(ctx: RunContext[object]) -> str:
+        seen.append((ctx.deadline, ctx.remaining_time()))
+        return 'ok'
+
+    await agent.run('go', timeout=60)
+    deadline = _FIXED_NOW + timedelta(seconds=60)
+    assert selected_deadlines == [deadline, deadline]
+    # The tool runs after the first selection only, which took 20 of the 60 seconds.
+    assert seen == [(deadline, 40.0)]

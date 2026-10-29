@@ -8,6 +8,8 @@ signed-in user's workspace.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![Inside your agent, the DayAI capability connects to Day AI's hosted MCP server at day.ai/api/mcp with an OAuth access token, and the model sees the server's tools under the day_ai_ prefix. The server marks no tool read-only, so there is no read_only option. Wrapping the capability's toolset with approval_required() pauses every Day AI tool call until you approve it.](https://pydantic.dev/docs/ai/img/harness/day-ai.svg)
+
 ## Before you start
 
 Day AI MCP needs a paid Day AI Agent tier; the tools and limits of your tier and
@@ -62,7 +64,7 @@ credentials](#per-user-credentials)).
 | Not set, `None`, or `''` | `DAY_AI_ACCESS_TOKEN`. If that is not set either, creating the agent raises an error. |
 | An access token | That token, for every run. |
 | `'oauth'` | The account you sign in to through the browser. This only works on your own machine. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Day AI tools. A function never uses `DAY_AI_ACCESS_TOKEN`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no Day AI tools. A function never uses `DAY_AI_ACCESS_TOKEN`, and must not return `'oauth'`. |
 
 A fixed token or `DAY_AI_ACCESS_TOKEN` suits a script or an agent on your own
 machine, where every run is the same account.
@@ -95,15 +97,50 @@ Each run connects as its own user, so concurrent runs never share an account.
 Your app gets each user's token, stores it, and refreshes it. For example, a
 "Connect Day AI" button that runs the OAuth flow from [Before you
 start](#before-you-start) and saves the token to their account. Before each run,
-load it (this can be async) and put it in the deps; the function only reads it.
+put it in the deps, or load it in an async `auth` function.
 
 With durable execution such as Temporal, read the token from the run's deps
-rather than from a global, since the function may run in another process. The
-capability's `id` defaults to `day_ai`, so `defer_loading=True` works without
-one. To add more than one `DayAI` to an agent, give each a distinct `id` and
-wrap them in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/),
-since their tool names are the same; two that share an `id` but differ raise an
-error.
+rather than from a global, since the function may run in another process.
+Temporal stores deps in workflow history, so encrypt history with a [payload
+codec](https://docs.temporal.io/develop/python/converters-and-encryption#custom-payload-codec)
+before you put tokens there.
+
+The capability's `id` defaults to `day_ai`, so `defer_loading=True` works
+without one. To add more than one `DayAI` to an agent, give each a distinct `id`
+and `tool_prefix`; two that share an `id` but differ raise an error.
+
+## Tool names
+
+The agent sees each of the server's tools under the `day_ai_` prefix, as in
+`day_ai_<tool>`, so they don't collide with other tools on the agent. Set
+`tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names
+the server gives them.
+
+A [toolset wrapper](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) on
+`capability.get_toolset()`, such as `filtered()`, sees the names the agent sees,
+prefix included.
+
+## Upgrading
+
+`DayAI` used to give the agent the server's tool names unprefixed. They now
+reach the agent as `day_ai_<tool>`. Code that refers to them by name, such as a
+`filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs
+the new names. A rule that no longer matches stops applying, so an approval rule
+or guardrail that named an old tool lets its calls through without approval or
+checks until you update it. Pass `tool_prefix=None` to keep the old names. If you
+wrapped `DayAI` in
+[PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) to avoid
+collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it
+adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses
+  it recorded, and their tool calls use the old names, so a run started before
+  the change that calls a `DayAI` tool after it no longer replays. Activity and
+  step names come from the capability's `id`, which is unchanged. Let those runs
+  finish, keep `tool_prefix=None` until they have, or deploy the change with
+  [Temporal worker
+  versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning)
+  or a new DBOS application version.
 
 ## Tool selection and approval
 
@@ -111,15 +148,14 @@ Day AI's server does not mark any tool as read-only, so there is no `read_only`
 option: the agent gets every tool your tier and role allow, including ones that
 change CRM records and send notifications.
 
-To filter tools or require approval in your application, wrap the toolset with
-the existing [toolset
-wrappers](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/). For example,
-this asks for approval before every tool call, which suits tools that create or
-update CRM records and send notifications:
+Tool results can include text written outside your workspace, such as inbound
+email and meeting notes, and that text can steer the model into calling those
+tools. To filter tools or require approval, wrap the toolset with the existing
+[toolset wrappers](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/). For
+example, this asks for approval before every tool call:
 
 ```python
-from pydantic_ai import Agent
-from pydantic_ai.messages import DeferredToolRequests
+from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness import DayAI
 
 capability = DayAI()

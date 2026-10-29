@@ -556,8 +556,8 @@ class FakeSandbox:
             raise self._control.exec_error
         # The command wrapper runs argv through sh; answer for the actual program.
         program = argv[4:] if argv[:4] == ['/bin/sh', '-c', 'exec "$@"', 'sh'] else argv
-        # In-memory fake stores only regular files; its generic responder does not know FIFOs.
-        probing_fifo = program[:2] == ['test', '-p']
+        # The in-memory store holds only regular files, so the read's file-kind probe passes unless a test says otherwise.
+        probing_kind = argv[:2] == ['sh', '-c'] and argv[3:4] == ['modal-probe']
         if program[:2] == ['test', '-L']:
             stdout, stderr, code = '', '', 1
         elif program[:2] == ['/bin/sh', '-c'] and 'links=0; while' in program[2]:
@@ -568,14 +568,16 @@ class FakeSandbox:
             path = posixpath.normpath('/' + rest)
             stdout, stderr, code = f'{len(path.encode())}\n{base64.b64encode(path.encode()).decode()}\n', '', 0
         else:
-            stdout, stderr, code = ('', '', 1) if probing_fifo else self._control.responder(program, timeout)
+            stdout, stderr, code = (
+                ('', '', self._control.kind_probe_exit) if probing_kind else self._control.responder(program, timeout)
+            )
         return _FakeProcess(
             _stream_bytes(stdout),
             _stream_bytes(stderr),
             code,
             self._control.wait_error,
-            self._control.wait_hangs and not probing_fifo,
-            self._control.stdout_hangs and not probing_fifo,
+            self._control.wait_hangs and not probing_kind,
+            self._control.stdout_hangs and not probing_kind,
             self._control.stdout_delay,
             self._control.stdout_error,
         )
@@ -610,6 +612,8 @@ class FakeModal:
         self.exec_hangs = False
         # Exit status of the backend's script that stops a command.
         self.stop_exit_code = 0
+        # Exit status of the read's file-kind probe in the in-memory store.
+        self.kind_probe_exit = 0
         self.wait_error: Exception | None = None
         self.wait_hangs = False
         self.stdout_hangs = False

@@ -10,12 +10,13 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import DEFAULT_PLUGINS, create_shell
-from pydantic_clai2.cli import _cli, headless
+from pydantic_clai2.app import DEFAULT_PLUGINS
+from pydantic_clai2.cli import cli, headless
 from pydantic_clai2.cli.agent_import import import_agent
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime.session_runtime import create_shell
 
 _MODULE = 'clai_agent_flag_fixture'
 
@@ -74,7 +75,7 @@ def test_import_agent_errors(path: str, error: type[Exception], message: str) ->
 def test_cli_rejects_bad_agent(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> None:
     monkeypatch.setattr('sys.argv', ['clai2', '--database', 'config.db', *args])
     with pytest.raises(SystemExit) as error:
-        _cli.run()
+        cli.run()
     assert error.value.code == 2
 
 
@@ -99,8 +100,8 @@ def test_cli_chats_with_agent_and_no_plugins(
     ) -> None:
         seen.append((agent, settings, load_plugins))
 
-    monkeypatch.setattr('pydantic_clai2._app.chat', chat)
-    _cli.run()
+    monkeypatch.setattr('pydantic_clai2.app.chat', chat)
+    cli.run()
     [(agent, settings, load_plugins)] = seen
     assert agent is getattr(sys.modules[_MODULE], attr)
     assert settings is not None and settings.model == expected
@@ -118,7 +119,7 @@ def test_cli_prompt_passes_agent_to_headless(fixture_module: Path, monkeypatch: 
 
     monkeypatch.setattr(headless, 'run_headless', run_headless)
     with pytest.raises(SystemExit) as error:
-        _cli.run()
+        cli.run()
     assert error.value.code == 0
     assert seen == [sys.modules[_MODULE].agent]
 

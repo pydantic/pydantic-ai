@@ -1,0 +1,152 @@
+name: PR Review Gates
+
+# Trusted default-branch review gates publish latest-per-context commit statuses.
+# Keep job names distinct from required checks in pull_request workflows.
+# `.github/workflows/AGENTS.md` documents the rules and trust boundaries.
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] -- executes only default-branch code and evaluates live metadata
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- no artifacts or upstream code are consumed; reevaluates live metadata
+    workflows: [PR Bots, PR Review Gates Events]
+    types: [completed]
+  # Review requirements are admission-only; report success on the merge-group SHA.
+  merge_group:
+    types: [checks_requested]
+
+permissions: {}
+
+jobs:
+  review-target:
+    name: Resolve review gate target
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: read
+    outputs:
+      number: ${{ steps.target.outputs.number }}
+      head: ${{ steps.target.outputs.head }}
+      repository: ${{ steps.target.outputs.repository }}
+      group: ${{ steps.target.outputs.group }}
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        id: target
+        with:
+          script: |
+            if (context.eventName === 'merge_group') {
+              core.setOutput('group', context.payload.merge_group.head_sha);
+              return;
+            }
+            let number, head, repository;
+            if (context.eventName === 'workflow_run') {
+              const {data: run} = await github.rest.actions.getWorkflowRun({
+                ...context.repo, run_id: context.payload.workflow_run.id
+              });
+              // REST name includes custom run-name titles; identify the workflow by path.
+              const events = {
+                '.github/workflows/bots.yml': ['pull_request_target'],
+                '.github/workflows/pr-review-gates-events.yml': ['pull_request_review', 'pull_request_review_comment']
+              };
+              if (!events[run.path]?.includes(run.event) ||
+                  run.repository.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+                throw new Error('Unrecognized review gate wake-up');
+              }
+              head = run.head_sha;
+              repository = run.head_repository?.id;
+              const owner = run.head_repository?.owner?.login;
+              if (!/^[a-f0-9]{40}$/.test(head) || !Number.isSafeInteger(repository) || repository < 1 ||
+                  typeof owner !== 'string' || !owner || typeof run.head_branch !== 'string' || !run.head_branch) {
+                throw new Error('Invalid workflow head identity');
+              }
+              // Fork runs may omit pull_requests. Ask the base repository for the
+              // server's PR associations, then require the exact head identity.
+              const pulls = await github.paginate(github.rest.pulls.list, {
+                ...context.repo, state: 'open', head: `${owner}:${run.head_branch}`, per_page: 100
+              });
+              const matches = pulls.filter(pull => pull.state === 'open' &&
+                pull.head.sha === head && pull.head.repo?.id === repository);
+              if (matches.length !== 1) throw new Error('Requires one open PR at the observed workflow head');
+              number = matches[0].number;
+            } else {
+              number = context.payload.pull_request.number;
+              head = context.payload.pull_request.head.sha;
+              repository = context.payload.pull_request.head.repo?.id;
+            }
+            if (!Number.isSafeInteger(number) || number < 1 || !/^[a-f0-9]{40}$/.test(head) ||
+                !Number.isSafeInteger(repository) || repository < 1) throw new Error('Invalid PR identity');
+            core.setOutput('number', number);
+            core.setOutput('head', head);
+            core.setOutput('repository', repository);
+
+  review-statuses:
+    name: Publish size-dependent review gates
+    needs: review-target
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: review-gates-${{ needs.review-target.outputs.number || needs.review-target.outputs.group }}
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      statuses: write
+    steps:
+      # Fail closed even if checkout or dependency installation fails after an earlier success.
+      - name: Mark both review requirements pending
+        id: pending
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ needs.review-target.outputs.number }}
+          EXPECTED_HEAD_SHA: ${{ needs.review-target.outputs.head }}
+          EXPECTED_HEAD_REPOSITORY_ID: ${{ needs.review-target.outputs.repository }}
+          MERGE_GROUP_SHA: ${{ needs.review-target.outputs.group }}
+        with:
+          script: |
+            let head = process.env.MERGE_GROUP_SHA;
+            if (!head) {
+              const number = Number(process.env.PR_NUMBER);
+              if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid PR number');
+              const {data: pull} = await github.rest.pulls.get({...context.repo, pull_number: number});
+              if (pull.state !== 'open' || pull.head.sha !== process.env.EXPECTED_HEAD_SHA ||
+                  pull.head.repo?.id !== Number(process.env.EXPECTED_HEAD_REPOSITORY_ID)) {
+                core.notice('Observed PR head is no longer open/current; no statuses written.');
+                return;
+              }
+              head = pull.head.sha;
+            }
+            for (const name of ['Gate: clean douwebot approval', 'Gate: human approval']) {
+              await github.rest.repos.createCommitStatus({
+                ...context.repo, sha: head, context: name,
+                state: 'pending', description: 'Reading current size and reviews.',
+                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+              });
+            }
+            core.setOutput('active', 'true');
+      - name: Checkout trusted default-branch gate
+        if: steps.pending.outputs.active == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/pr_gates.py
+            .github/scripts/review_gates.py
+            .github/scripts/publish_douwebot_review.py
+            .github/scripts/pr_size.sh
+            .github/scripts/check_api_compatibility.py
+          sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        if: steps.pending.outputs.active == 'true'
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Reevaluate live size and review requirements
+        if: steps.pending.outputs.active == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.review-target.outputs.number }}
+          EXPECTED_HEAD_SHA: ${{ needs.review-target.outputs.head }}
+          EXPECTED_HEAD_REPOSITORY_ID: ${{ needs.review-target.outputs.repository }}
+          MERGE_GROUP_SHA: ${{ needs.review-target.outputs.group }}
+        run: python3 .github/scripts/review_gates.py

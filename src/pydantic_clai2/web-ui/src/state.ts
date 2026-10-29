@@ -1,11 +1,15 @@
 import type {
   Dialog,
+  ForkEntry,
   Item,
   ItemMessage,
+  LiveEntry,
   OrchestratorEvent,
+  QueuedItem,
   Questions,
   ServerMessage,
   SessionInfo,
+  SessionMessage,
   StatusInfo,
   TaskEntry,
   ThemeInfo,
@@ -22,6 +26,10 @@ export interface NoticeEntry {
   command: string | null
   /** For `/usage` and `/cost`: the figures their text reports, shown as a card. */
   usage: UsageReport | null
+  /** For `/forks`: the rows of its table, shown as a card. */
+  forks: ForkEntry[] | null
+  /** A background `/fork` that ended; `text` is its answer, why it failed, or empty when it was cancelled. */
+  fork: ForkEntry | null
 }
 
 export interface TurnSummary {
@@ -36,28 +44,87 @@ export interface TurnSummary {
 
 export type Entry = Item | NoticeEntry | TurnSummary
 
-export interface State {
+/** One conversation as the page shows it: a live session's, or the orchestrator's. */
+export interface Chat {
   session: SessionInfo | null
   entries: Entry[]
   running: boolean
   status: StatusInfo | null
   questions: Questions[]
-  /** What open settings menus ask, oldest first. */
+  /** When the running turn started, by this page's clock. */
+  turnStartedAt: number | null
+  /** The conversation's delegated tasks, each parent before its children. */
+  tasks: TaskEntry[]
+  /** What each running task has done so far, by task ID; a finished task's saved history is fetched instead. */
+  taskItems: Record<string, Entry[]>
+  /** The input waiting for the running turn or command, oldest first, as the session's prompt holds it. */
+  queue: QueuedItem[]
+}
+
+export const initialChat: Chat = {
+  session: null,
+  entries: [],
+  running: false,
+  status: null,
+  questions: [],
+  turnStartedAt: null,
+  tasks: [],
+  taskItems: {},
+  queue: [],
+}
+
+export type Snapshot = Extract<ServerMessage, { type: 'snapshot' }>
+
+/** How many sessions the page keeps watching, the shown one included, so switching back to one shows it at once. */
+const KEPT = 5
+
+/** Watch `id` first, before the sessions watched already; the least recently shown beyond `KEPT` are dropped. */
+function watchFirst(watched: string[], id: string): string[] {
+  return [id, ...watched.filter((other) => other !== id)].slice(0, KEPT)
+}
+
+/** Only the chats of the watched sessions, as no other would stay current. */
+function keptChats(chats: Record<string, Chat>, watched: string[]): Record<string, Chat> {
+  return Object.fromEntries(watched.flatMap((id) => (id in chats ? [[id, chats[id] as Chat]] : [])))
+}
+
+export interface State {
+  /** The live session the main pane shows, by conversation ID; `null` until the first snapshot. */
+  shown: string | null
+  /** The session the page last asked to watch, until its snapshot comes. */
+  awaiting: string | null
+  /**
+   * Whether a `live` listed `awaiting`, or a reconnect asked for it, so a `live` without it means it closed; one sent
+   * before it opened may still arrive after the page asked.
+   */
+  confirmed: boolean
+  /** What showed before `awaiting`, shown again if the awaited session turns out not to be live. */
+  previous: string | null
+  /**
+   * Another session's snapshot that came while waiting: on reconnecting, the default session's, shown if the awaited
+   * one is gone.
+   */
+  stray: Snapshot | null
+  /**
+   * The sessions the page watches, most recently shown first, at most `KEPT`: the server keeps sending each one's
+   * messages, so its chat stays current and showing it again needs no new snapshot. One that closed stays until it
+   * is dropped, as the session switching conversation may list its new one in `live` before sending its snapshot.
+   */
+  watched: string[]
+  /** The watched sessions' chats, by conversation ID; one that was just shown has none until its snapshot comes. */
+  chats: Record<string, Chat>
+  /** The sessions live in this CLAI, by conversation ID, with what each is doing. */
+  live: Record<string, LiveEntry>
+  /** What open settings menus ask, oldest first; they belong to the page, not to one session. */
   dialogs: Dialog[]
   sessionsVersion: number
   /** Bumped after every command, which may have changed a plugin; an open plugins panel lists them again. */
   pluginsVersion: number
   /** Bumped after every command, or edit of a command's menu, which may have changed CLAI's settings. */
   settingsVersion: number
-  /** When the running turn started, by this page's clock. */
-  turnStartedAt: number | null
   theme: ThemeInfo | null
   /** Whether each session runs in its own directory, so a new one asks where. */
   followsWorkspace: boolean
-  /** The conversation's delegated tasks, each parent before its children. */
-  tasks: TaskEntry[]
-  /** What each running task has done so far, by task ID; a finished task's saved history is fetched instead. */
-  taskItems: Record<string, Entry[]>
   /** The CLAI this page talks to, by version; `null` until it connects. */
   version: string | null
   /** `/update` installing a newer CLAI, until the install ends or the new build is back. */
@@ -65,22 +132,37 @@ export interface State {
 }
 
 export const initial: State = {
-  session: null,
-  entries: [],
-  running: false,
-  status: null,
-  questions: [],
+  shown: null,
+  awaiting: null,
+  confirmed: false,
+  previous: null,
+  stray: null,
+  watched: [],
+  chats: {},
+  live: {},
   dialogs: [],
   sessionsVersion: 0,
   pluginsVersion: 0,
   settingsVersion: 0,
-  turnStartedAt: null,
   theme: null,
   followsWorkspace: false,
-  tasks: [],
-  taskItems: {},
   version: null,
   update: null,
+}
+
+/**
+ * What the page does itself: show a session, after asking the server to watch it, again when `reconnect`ing; stop waiting
+ * for one that never answered; or show the default session's snapshot when nothing shows.
+ */
+export type Action =
+  | ServerMessage
+  | { type: 'show'; id: string; reconnect: boolean }
+  | { type: 'give_up'; id: string }
+  | { type: 'fallback'; snapshot: Snapshot }
+
+/** The chat of the session the main pane shows, empty while it is on its way. */
+export function shownChat(state: State): Chat {
+  return (state.shown === null ? undefined : state.chats[state.shown]) ?? initialChat
 }
 
 let counter = 0
@@ -103,7 +185,7 @@ export function applyItem(entries: Entry[], message: ItemMessage): Entry[] {
   if (message.type === 'item') return [...entries, message.item]
   const change = (edit: (item: Item) => Item) => update(entries, message.id, edit)
   switch (message.type) {
-    case 'delta':
+    case 'text_delta':
       return change((item) => ({ ...item, text: item.text + message.text }))
     case 'tool_output':
       return change((item) => ({ ...item, output: item.output + message.text }))
@@ -113,14 +195,14 @@ export function applyItem(entries: Entry[], message: ItemMessage): Entry[] {
       return change((item) => ({ ...item, args: item.args + message.text }))
     case 'tool_args':
       return change((item) => ({ ...item, args: message.args }))
-    case 'call':
+    case 'sub_call':
       return change((item) => ({ ...item, calls: [...item.calls, message.call] }))
-    case 'call_output':
+    case 'sub_call_output':
       return change((item) => ({
         ...item,
         calls: item.calls.map((call) => (call.id === message.call_id ? { ...call, output: call.output + message.text } : call)),
       }))
-    case 'call_done':
+    case 'sub_call_done':
       return change((item) => ({
         ...item,
         calls: item.calls.map((call) =>
@@ -135,76 +217,49 @@ export function applyItem(entries: Entry[], message: ItemMessage): Entry[] {
 }
 
 /** A task's new row replaces its old one, or joins the list; a finished task's live items go, as its saved history serves. */
-function taskChanged(state: State, task: TaskEntry): State {
-  const found = state.tasks.some((entry) => entry.id === task.id)
-  const tasks = found ? state.tasks.map((entry) => (entry.id === task.id ? task : entry)) : [...state.tasks, task]
-  if (task.status === 'running' || !(task.id in state.taskItems)) return { ...state, tasks }
-  const taskItems = { ...state.taskItems }
+function taskChanged(chat: Chat, task: TaskEntry): Chat {
+  const found = chat.tasks.some((entry) => entry.id === task.id)
+  const tasks = found ? chat.tasks.map((entry) => (entry.id === task.id ? task : entry)) : [...chat.tasks, task]
+  if (task.status === 'running' || !(task.id in chat.taskItems)) return { ...chat, tasks }
+  const taskItems = { ...chat.taskItems }
   delete taskItems[task.id]
-  return { ...state, tasks, taskItems }
+  return { ...chat, tasks, taskItems }
 }
 
-/** Apply one server message; every change makes new objects, so memoized rows re-render only when theirs changed. */
-export function reduce(state: State, message: ServerMessage): State {
+/**
+ * Apply one message about a conversation; every change makes new objects, so memoized rows re-render only when theirs
+ * changed.
+ */
+export function reduceChat(chat: Chat, message: SessionMessage): Chat {
   switch (message.type) {
-    case 'snapshot': {
-      // A CLAI that `/update` restarted comes back as a new version, which the page says once it has reconnected.
-      const updated = state.version !== null && message.version !== state.version
-      const notice: NoticeEntry = {
-        id: nextId('notice'),
-        kind: 'notice',
-        text: `Updated CLAI to ${message.version}.`,
-        level: 'info',
-        command: null,
-        usage: null,
-      }
-      return {
-        ...state,
-        session: message.session,
-        entries: updated ? [...message.items, notice] : message.items,
-        running: message.running,
-        status: message.status,
-        questions: message.questions,
-        dialogs: message.dialogs,
-        turnStartedAt: message.running ? state.turnStartedAt : null,
-        theme: message.theme,
-        followsWorkspace: message.follows_workspace,
-        tasks: message.tasks,
-        taskItems: message.task_items,
-        version: message.version,
-        update: message.update,
-      }
-    }
-    case 'update':
-      return { ...state, update: message.update }
     case 'item':
-    case 'delta':
+    case 'text_delta':
     case 'tool_output':
     case 'tool_done':
     case 'args_delta':
     case 'tool_args':
-    case 'call':
-    case 'call_output':
-    case 'call_done':
+    case 'sub_call':
+    case 'sub_call_output':
+    case 'sub_call_done':
     case 'shell_done':
     case 'diff':
-      return { ...state, entries: applyItem(state.entries, message) }
+      return { ...chat, entries: applyItem(chat.entries, message) }
     case 'task':
-      return taskChanged(state, message.task)
-    case 'task_event': {
-      const items = message.messages.reduce(applyItem, state.taskItems[message.id] ?? [])
-      return { ...state, taskItems: { ...state.taskItems, [message.id]: items } }
+      return taskChanged(chat, message.task)
+    case 'task_items': {
+      const items = message.messages.reduce(applyItem, chat.taskItems[message.id] ?? [])
+      return { ...chat, taskItems: { ...chat.taskItems, [message.id]: items } }
     }
-    case 'turn_start':
+    case 'turn_started':
       // A turn a finished task woke has no prompt of its own.
       return {
-        ...state,
+        ...chat,
         running: true,
         turnStartedAt: Date.now(),
-        entries: message.item ? [...state.entries, message.item] : state.entries,
+        entries: message.item ? [...chat.entries, message.item] : chat.entries,
       }
-    case 'turn_end': {
-      const entries = state.entries.map((entry) =>
+    case 'turn_ended': {
+      const entries = chat.entries.map((entry) =>
         entry.kind === 'tool' && (entry.state === 'running' || entry.calls.some((call) => call.state === 'running'))
           ? {
               ...entry,
@@ -219,22 +274,16 @@ export function reduce(state: State, message: ServerMessage): State {
         outcome: message.outcome,
         error: message.error,
         usage: message.usage,
-        seconds: state.turnStartedAt === null ? null : (Date.now() - state.turnStartedAt) / 1000,
+        seconds: chat.turnStartedAt === null ? null : (Date.now() - chat.turnStartedAt) / 1000,
       }
-      return { ...state, running: false, turnStartedAt: null, entries: [...entries, summary] }
+      return { ...chat, running: false, turnStartedAt: null, entries: [...entries, summary] }
     }
     case 'status':
-      return { ...state, status: message.status }
+      return { ...chat, status: message.status }
     case 'question':
-      return { ...state, questions: [...state.questions.filter((q) => q.id !== message.questions.id), message.questions] }
+      return { ...chat, questions: [...chat.questions.filter((q) => q.id !== message.questions.id), message.questions] }
     case 'question_closed':
-      return { ...state, questions: state.questions.filter((q) => q.id !== message.id) }
-    case 'dialog':
-      return { ...state, dialogs: [...state.dialogs.filter((d) => d.id !== message.dialog.id), message.dialog] }
-    case 'dialog_shown':
-      return { ...state, dialogs: state.dialogs.map((d) => (d.id === message.id ? { ...d, shown: message.text } : d)) }
-    case 'dialog_closed':
-      return { ...state, dialogs: state.dialogs.filter((d) => d.id !== message.id) }
+      return { ...chat, questions: chat.questions.filter((q) => q.id !== message.id) }
     case 'notice': {
       const notice: NoticeEntry = {
         id: nextId('notice'),
@@ -243,13 +292,145 @@ export function reduce(state: State, message: ServerMessage): State {
         level: message.level,
         command: message.command,
         usage: message.usage,
+        forks: message.forks,
+        fork: message.fork,
       }
-      return { ...state, entries: [...state.entries, notice] }
+      return { ...chat, entries: [...chat.entries, notice] }
     }
     case 'title':
-      return state.session ? { ...state, session: { ...state.session, title: message.title } } : state
+      return chat.session ? { ...chat, session: { ...chat.session, title: message.title } } : chat
+    case 'queue':
+      return { ...chat, queue: message.queue }
+  }
+}
+
+/** A session's chat as its snapshot has it, keeping when its running turn started, by this page's clock. */
+function snapshotChat(message: Snapshot, previous: Chat | undefined, notice: NoticeEntry | null): Chat {
+  return {
+    session: message.session,
+    entries: notice ? [...message.items, notice] : message.items,
+    running: message.running,
+    status: message.status,
+    questions: message.questions,
+    turnStartedAt: message.running ? (previous?.turnStartedAt ?? null) : null,
+    tasks: message.tasks,
+    taskItems: message.task_items,
+    queue: message.queue,
+  }
+}
+
+/** Show a snapshot: its session's chat starts over from it, and it carries the page-wide state too. */
+function applySnapshot(state: State, message: Snapshot): State {
+  const id = message.session.id
+  // A CLAI that `/update` restarted comes back as a new version, which the page says once it has reconnected.
+  const updated = state.version !== null && message.version !== state.version
+  const notice: NoticeEntry = {
+    id: nextId('notice'),
+    kind: 'notice',
+    text: `Updated CLAI to ${message.version}.`,
+    level: 'info',
+    command: null,
+    usage: null,
+    forks: null,
+    fork: null,
+  }
+  // A conversation the shown session switched from is watched no more: this one took its place.
+  const watched = watchFirst(state.watched.filter((other) => other !== message.replaces), id)
+  const chat = snapshotChat(message, state.chats[id], updated ? notice : null)
+  const chats = keptChats({ ...state.chats, [id]: chat }, watched)
+  return {
+    ...state,
+    shown: id,
+    awaiting: null,
+    confirmed: false,
+    previous: null,
+    stray: null,
+    watched,
+    chats,
+    dialogs: message.dialogs,
+    theme: message.theme,
+    followsWorkspace: message.follows_workspace,
+    version: message.version,
+    update: message.update,
+  }
+}
+
+/** A watched session in the background sent its snapshot: its chat starts over from it, and nothing else changes. */
+function backgroundSnapshot(state: State, message: Snapshot): State {
+  const id = message.session.id
+  const replaced = message.replaces ?? null
+  // The session's new conversation takes the old one's place, and is listed only there.
+  const watched =
+    replaced === null || !state.watched.includes(replaced)
+      ? state.watched
+      : state.watched.filter((other) => other !== id).map((other) => (other === replaced ? id : other))
+  const chats = keptChats({ ...state.chats, [id]: snapshotChat(message, state.chats[id], null) }, watched)
+  return { ...state, watched, chats }
+}
+
+/** The awaited session will not answer: show what came instead, or what showed before if it is live, or nothing. */
+function giveUp(state: State): State {
+  if (state.stray) return applySnapshot(state, state.stray)
+  const back = state.previous !== null && state.previous in state.live ? state.previous : null
+  const watched = state.watched.filter((id) => id !== state.awaiting)
+  const chats = keptChats(state.chats, watched)
+  return { ...state, shown: back, awaiting: null, confirmed: false, previous: null, watched, chats }
+}
+
+/** Apply one server message or page action to the page's state. */
+export function reduce(state: State, action: Action): State {
+  switch (action.type) {
+    case 'show': {
+      // Shown and watched already: no new snapshot answers, so there is nothing to wait for.
+      if (!action.reconnect && action.id === state.shown && state.awaiting === null) return state
+      const watched = watchFirst(state.watched, action.id)
+      const chats = keptChats(state.chats, watched)
+      // Watched and live, so its chat is current: it shows at once, and no snapshot comes to wait for.
+      if (!action.reconnect && action.id in chats && action.id in state.live)
+        return { ...state, shown: action.id, awaiting: null, confirmed: false, previous: null, stray: null, watched, chats }
+      // A reconnect's first `live` is current, so a session missing from it has closed.
+      const confirmed = action.reconnect || action.id in state.live
+      const previous = state.previous ?? state.shown
+      return { ...state, shown: action.id, awaiting: action.id, confirmed, previous, stray: null, watched, chats }
+    }
+    case 'snapshot': {
+      const id = action.session.id
+      const replaced = action.replaces ?? null
+      // A session watched in the background: its fresh snapshot, or its new conversation's when it switched (`/new`).
+      const background = (other: string | null) =>
+        other !== null && other !== state.awaiting && other !== state.shown && state.watched.includes(other)
+      if (background(id) || background(replaced)) return backgroundSnapshot(state, action)
+      // While a watch is unanswered, another session's snapshot is the one a reconnect sends first, kept in case.
+      if (id !== state.awaiting && state.awaiting !== null) return { ...state, stray: action }
+      // Otherwise it is the shown session's, the first one, or the shown session's new conversation (`/new`).
+      return applySnapshot(state, action)
+    }
+    case 'live': {
+      const live = Object.fromEntries(action.sessions.map((entry) => [entry.id, entry]))
+      const next = { ...state, live }
+      // The shown session closed, as with `/exit` typed in it: nothing shows until the default session does.
+      if (state.awaiting === null) return state.shown === null || state.shown in live ? next : { ...next, shown: null }
+      if (state.awaiting in live) return { ...next, confirmed: true }
+      // Sent before the awaited session opened: its answer is still to come.
+      if (!state.confirmed) return next
+      // The awaited session closed, so no answer comes.
+      return giveUp(next)
+    }
+    case 'give_up':
+      return state.awaiting === action.id ? giveUp(state) : state
+    case 'fallback':
+      // Only while nothing shows or is on its way: a session picked meanwhile wins.
+      return state.shown === null && state.awaiting === null ? applySnapshot(state, action.snapshot) : state
+    case 'dialog':
+      return { ...state, dialogs: [...state.dialogs.filter((d) => d.id !== action.dialog.id), action.dialog] }
+    case 'dialog_shown':
+      return { ...state, dialogs: state.dialogs.map((d) => (d.id === action.id ? { ...d, shown: action.text } : d)) }
+    case 'dialog_closed':
+      return { ...state, dialogs: state.dialogs.filter((d) => d.id !== action.id) }
+    case 'update':
+      return { ...state, update: action.update }
     case 'theme':
-      return { ...state, theme: message.theme }
+      return { ...state, theme: action.theme }
     case 'sessions':
       return { ...state, sessionsVersion: state.sessionsVersion + 1 }
     case 'plugins':
@@ -259,27 +440,38 @@ export function reduce(state: State, message: ServerMessage): State {
     case 'orchestrator':
       // The orchestrator chat keeps its own state, with `reduceOrchestrator`.
       return state
+    default: {
+      // An older CLAI names no session: its messages are the shown one's.
+      const id = action.session ?? state.shown
+      const chat = id === null ? undefined : state.chats[id]
+      // Messages still on their way about a session the page never showed have no chat to change.
+      if (id === null || chat === undefined) return state
+      return { ...state, chats: { ...state.chats, [id]: reduceChat(chat, action) } }
+    }
   }
 }
 
-/** The orchestrator chat: a transcript of its own, kept by the same reducer as the session's. */
+/** The orchestrator chat: a transcript of its own, kept by the same reducer as a session's. */
 export interface OrchestratorView {
   /** Whether the `workspaces` plugin is on, which the orchestrator needs; `null` until the server says. */
   enabled: boolean | null
-  chat: State
+  /** The saved default model, which the orchestrator runs on; `null` when there is none. */
+  model: string | null
+  chat: Chat
 }
 
-export const initialOrchestrator: OrchestratorView = { enabled: null, chat: initial }
+export const initialOrchestrator: OrchestratorView = { enabled: null, model: null, chat: initialChat }
 
-/** What the orchestrator chat gets on the WebSocket, or `enabled` from asking the server again. */
-export type OrchestratorAction = OrchestratorEvent | { type: 'enabled'; enabled: boolean }
+/** What the orchestrator chat gets on the WebSocket, or `enabled` and `model` from asking the server again. */
+export type OrchestratorAction = OrchestratorEvent | { type: 'refreshed'; enabled: boolean; model: string | null }
 
 export function reduceOrchestrator(view: OrchestratorView, action: OrchestratorAction): OrchestratorView {
-  if (action.type === 'enabled') return { ...view, enabled: action.enabled }
-  if (action.type !== 'orchestrator_state') return { ...view, chat: reduce(view.chat, action) }
+  if (action.type === 'refreshed') return { ...view, enabled: action.enabled, model: action.model }
+  if (action.type !== 'orchestrator_state') return { ...view, chat: reduceChat(view.chat, action) }
   const chat = view.chat
   return {
     enabled: action.enabled,
+    model: action.model,
     chat: {
       ...chat,
       entries: action.items,
