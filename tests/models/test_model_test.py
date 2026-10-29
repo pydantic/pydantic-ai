@@ -990,3 +990,42 @@ def test_structured_dict_oneof_beside_type():
     result = agent.run_sync('hello')
 
     assert result.output == snapshot({'a': 0})
+
+
+async def test_streamed_tool_call_usage_matches_run():
+    """Regression test for #11854: a streamed `ToolCallPart` response counts its output tokens.
+
+    The streamed response's usage previously omitted tool-call output tokens, so it
+    under-counted relative to the non-streamed response from the same run.
+    """
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def get_weather(city: str, day: str) -> str:
+        return f'The weather in {city} on {day} is sunny'
+
+    async with agent.run_stream('Hello') as result:
+        async for _ in result.stream_text():
+            pass
+        stream_responses = [m for m in result.all_messages() if isinstance(m, ModelResponse)]
+
+    run_result = await agent.run('Hello')
+    run_responses = [m for m in run_result.all_messages() if isinstance(m, ModelResponse)]
+
+    assert stream_responses[0].usage == run_responses[0].usage
+    assert stream_responses[0].usage.output_tokens == 7
+
+
+async def test_streamed_run_usage_totals_include_tool_call_tokens():
+    """Regression test for #11854: streamed run usage totals include tool-call output tokens."""
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def get_weather(city: str, day: str) -> str:
+        return f'The weather in {city} on {day} is sunny'
+
+    async with agent.run_stream('Hello') as result:
+        async for _ in result.stream_text():
+            pass
+
+    assert result.usage == snapshot(RunUsage(input_tokens=110, output_tokens=25, requests=2, tool_calls=1))
