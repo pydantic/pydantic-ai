@@ -784,6 +784,42 @@ def test_strict_true_strips_array_max_items():
     )
 
 
+def test_strict_true_strips_unsupported_regex_patterns():
+    """With strict=True, patterns using lookaround or backreferences are stripped and noted in description.
+
+    A raw schema, since Pydantic's default Rust regex engine rejects these patterns in `Field(pattern=...)`.
+    """
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'decimal': {'type': 'string', 'pattern': '^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$'},
+            'lookbehind': {'type': 'string', 'pattern': '\\d+(?<!000)'},
+            'backreference': {'type': 'string', 'pattern': '^(a)\\1$'},
+            'named_backreference': {'type': 'string', 'pattern': '^(?P<x>a)(?P=x)$'},
+            'escaped': {'type': 'string', 'pattern': '^\\(?=\\\\1$'},
+            'plain': {'type': 'string', 'pattern': '^[A-Z]{3}$'},
+        },
+        'required': ['decimal', 'lookbehind', 'backreference', 'named_backreference', 'escaped', 'plain'],
+    }
+
+    assert BedrockJsonSchemaTransformer(deepcopy(schema), strict=None).walk() == schema
+    assert BedrockJsonSchemaTransformer(schema, strict=True).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'decimal': {'type': 'string', 'description': 'pattern=^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$'},
+                'lookbehind': {'type': 'string', 'description': 'pattern=\\d+(?<!000)'},
+                'backreference': {'type': 'string', 'description': 'pattern=^(a)\\1$'},
+                'named_backreference': {'type': 'string', 'description': 'pattern=^(?P<x>a)(?P=x)$'},
+                'escaped': {'type': 'string', 'pattern': '^\\(?=\\\\1$'},
+                'plain': {'type': 'string', 'pattern': '^[A-Z]{3}$'},
+            },
+            'required': ['decimal', 'lookbehind', 'backreference', 'named_backreference', 'escaped', 'plain'],
+            'additionalProperties': False,
+        }
+    )
+
+
 @pytest.mark.parametrize(
     'model_name',
     [

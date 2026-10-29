@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
@@ -65,6 +66,15 @@ _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE: dict[str, tuple[str, ...]] = {
     'array': ('maxItems',),
 }
 
+# Bedrock's `pattern` regex subset excludes lookaround and backreferences (rejected with a 400), per
+# https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html.
+# Escapes are matched too, so that a literal `\(?=` is skipped.
+_REGEX_TOKEN = re.compile(r'\\.|\(\?<?[=!]|\(\?P=')
+
+
+def _regex_is_unsupported(pattern: str) -> bool:
+    return any(token[0] == '(' or token[1] in '123456789k' for token in _REGEX_TOKEN.findall(pattern))
+
 
 @dataclass(init=False)
 class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
@@ -119,6 +129,9 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
                     incompatible[key] = schema[key]
             if schema_type == 'array' and schema.get('minItems', 0) > 1:
                 incompatible['minItems'] = schema['minItems']
+        pattern = schema.get('pattern')
+        if isinstance(pattern, str) and _regex_is_unsupported(pattern):
+            incompatible['pattern'] = pattern
 
         if incompatible:
             notes: list[str] = []

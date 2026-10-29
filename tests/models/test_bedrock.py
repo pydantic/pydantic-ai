@@ -17,7 +17,7 @@ import anyio
 import anyio.from_thread
 import anyio.to_thread
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
@@ -3089,6 +3089,29 @@ async def test_bedrock_opus_5_thinking_uses_native_output(
     assert 'toolConfig' not in sent
     assert sent['outputConfig']['textFormat']['type'] == 'json_schema'
     assert result.output == 42
+
+
+async def test_bedrock_native_output_unsupported_regex_pattern(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+) -> None:
+    """Bedrock rejects a `pattern` with lookaround, so Native Output sends it in the field's description instead."""
+
+    class Code(BaseModel):
+        # `python-re`, since Pydantic's default Rust regex engine rejects lookaround.
+        model_config = ConfigDict(regex_engine='python-re')
+
+        code: str = Field(pattern=r'^(?!000)\d{3}$')
+
+    model = BedrockConverseModel('us.anthropic.claude-opus-4-7', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(Code))
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('Return the code 123.')
+
+    [sent] = sent_requests
+    schema = json.loads(sent['outputConfig']['textFormat']['structure']['jsonSchema']['schema'])
+    assert schema['properties'] == snapshot({'code': {'type': 'string', 'description': 'pattern=^(?!000)\\d{3}$'}})
+    assert result.output == Code(code='123')
 
 
 async def test_bedrock_anthropic_unified_max_effort(allow_model_requests: None, bedrock_provider: BedrockProvider):
