@@ -64,6 +64,7 @@ print(result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.00023'), input_tokens=55, output_tokens=12),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -134,6 +135,7 @@ async def main():
                 ],
                 usage=RequestUsage(input_tokens=50, output_tokens=12),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -196,6 +198,7 @@ print(result2.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.00023'), input_tokens=55, output_tokens=12),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -220,6 +223,7 @@ print(result2.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.000372'), input_tokens=56, output_tokens=26),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -473,6 +477,10 @@ assert forked.conversation_id != result1.conversation_id
 
 The [UI adapters](ui/overview.md) auto-populate `conversation_id` from the protocol's own thread/chat ID, so frontends using these protocols get conversation correlation for free. Protocol-level run IDs (for example AG-UI's `runId`) are **not** mapped into the agent's `run_id` — pass `run_id=` explicitly on [`AGUIAdapter.run_stream`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] / [`dispatch_request`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] (or a plain `Agent.run`) if you need them to match.
 
+### Which model answered
+
+Each `ModelResponse` the agent gets from a model request records the model it sent the request to as [`model_id`][pydantic_ai.messages.ModelResponse.model_id]: the string the model was selected by, like `'openai:gpt-5'` or an alias a capability resolved, or otherwise the model's own [`model_id`][pydantic_ai.models.Model.model_id]. That's the model as you configured it, while [`model_name`][pydantic_ai.messages.ModelResponse.model_name] is what the provider reported, often a dated version, and the same for two configurations of one model. When a capability moves a request to another model, such as a [`ModelFallback`](capabilities/model-fallback.md) candidate, the response records that model, so a later run continuing the history can tell which of your models answered and send a request back to it.
+
 ## Storing and loading messages (to JSON)
 
 While maintaining conversation state in memory is enough for many applications, often times you may want to store the messages history of an agent run on disk or in a database. This might be for evals, for sharing data between Python and JavaScript/TypeScript, or any number of other use cases.
@@ -612,7 +620,7 @@ async with agent.run_stream('Tell me a joke.') as streamed:
 
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
 
-[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts and request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions], pins client-returned retry feedback to the voice its cause allows, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, resets [workspace](workspace.md) references so a client can't point your agent at another environment, drops [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] from user prompts so a client can't pass its text off as content your application or a capability added, drops the framework-reserved `__pydantic_ai__` key from message [`metadata`][pydantic_ai.messages.ModelRequest.metadata] (keeping your own keys) so a client can't set state Pydantic AI and its capabilities act on, and removes unresolved tool calls at the end of the history.
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts and request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions], pins client-returned retry feedback to the voice its cause allows, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, resets [workspace](workspace.md) references so a client can't point your agent at another environment, resets [`ModelResponse.model_id`][pydantic_ai.messages.ModelResponse.model_id] so a client can't pick which of your models a request is routed back to, drops [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] from user prompts so a client can't pass its text off as content your application or a capability added, drops the framework-reserved `__pydantic_ai__` key from message [`metadata`][pydantic_ai.messages.ModelRequest.metadata] (keeping your own keys) so a client can't set state Pydantic AI and its capabilities act on, and removes unresolved tool calls at the end of the history.
 
 `strip_system_prompts` strips [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, and keeps the [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s that carry Pydantic AI's own [retry feedback](retries.md#feedback-that-belongs-to-no-tool-call), so the model still sees why it corrected itself. The client picks a submitted feedback part's cause, so what the part may say is pinned to that cause: `'validation_error'` and `'model_retry'` feedback reach the model in the user voice, fenced behind a line attributing it to the application, which a client could write as plain user text anyway. `'no_output'` is the one cause in the system voice, and a client can forge the part as easily as a system prompt, so a client-submitted one is demoted to the same fenced, attributed user text, whatever it says. A tool-less legacy [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is translated into the feedback part it always meant and takes the same rule. If stripping empties a `ModelRequest`, the request is dropped from the history entirely.
 
@@ -631,7 +639,7 @@ message_history = sanitize_messages(loaded_history)
 result = agent.run_sync('Tell me a different joke.', message_history=message_history)
 ```
 
-Most of these sanitizations can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False` to keep both the system prompts and the retry feedback, `strip_instructions=False` to keep request-level instructions, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, set `allow_uploaded_files=True`, or set `strip_workspace_refs=False`. The others can't: [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is always dropped from user prompts, and the framework-reserved `__pydantic_ai__` metadata key from every message, so pass history that should keep them as trusted server-side `message_history` instead. To continue client-supplied history in the same workspace, pass a reference you saved server-side as `workspace=` (see [Continuing in the same workspace](workspace.md#continuing-in-the-same-workspace)). See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
+Most of these sanitizations can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False` to keep both the system prompts and the retry feedback, `strip_instructions=False` to keep request-level instructions, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, set `allow_uploaded_files=True`, or set `strip_workspace_refs=False`. The others can't: [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is always dropped from user prompts, `model_id` is always reset on responses, and the framework-reserved `__pydantic_ai__` metadata key from every message, so pass history that should keep them as trusted server-side `message_history` instead. To continue client-supplied history in the same workspace, pass a reference you saved server-side as `workspace=` (see [Continuing in the same workspace](workspace.md#continuing-in-the-same-workspace)). See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
 
 ## Persisting sessions
 
@@ -776,6 +784,7 @@ print(result2.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.00023'), input_tokens=55, output_tokens=12),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -800,6 +809,7 @@ print(result2.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.000372'), input_tokens=56, output_tokens=26),
         model_name='{{ google:large.name }}',
+        model_id='{{ google:large }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',

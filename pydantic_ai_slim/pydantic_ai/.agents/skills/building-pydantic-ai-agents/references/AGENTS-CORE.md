@@ -328,9 +328,11 @@ agent = Agent(
 `fallback_on` defaults to `ModelAPIError`; it also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass and native tool factory call (with the candidate as `ctx.model`), so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
 
 Each step restarts the chain from the step's model. Pass `sticky=True` to keep a conversation on the candidate that
-last answered (to keep its prompt cache warm and stop retrying a failing primary every step); it's recorded in the
-message history, so it carries over to later runs continuing that history. It only replaces the agent's default model,
+last answered (to keep its prompt cache warm and stop retrying a failing primary every step); the agent records the answering model as each
+response's `model_id`, so it carries over to later runs continuing that history. It only replaces the agent's default model,
 not `run(model=...)`, `override(model=...)` or `SelectModel`, and if the sticky candidate fails, the chain continues after it and wraps around.
+
+In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError]}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
 
 Good defaults:
 

@@ -56,22 +56,14 @@ __all__ = (
     'stamp_continuation_pin',
     'continuation_pin',
     'FALLBACK_MODEL_PIN_KEY',
-    'FALLBACK_CAPABILITY_PIN_KEY',
 )
 
 FALLBACK_MODEL_PIN_KEY = 'fallback_model_id'
 """Where `FallbackModel` pins a suspended response to the inner model that started it."""
-FALLBACK_CAPABILITY_PIN_KEY = 'fallback_candidate'
-"""Where the `ModelFallback` capability pins a response to the candidate that served it.
-
-Every suspended response it accepts is pinned, and with `sticky=True` so is an answer from a candidate it moved to.
-
-Separate from `FALLBACK_MODEL_PIN_KEY` so a `FallbackModel` candidate keeps its own inner pin.
-"""
 
 
 def stamp_continuation_pin(response: ModelResponse | StreamedResponse, model_id: str, *, key: str) -> None:
-    """Record which model produced a response, so a continuation or a sticky conversation goes back to it.
+    """Record which model produced a suspended response, so its continuation goes back to it.
 
     Stored in `metadata['__pydantic_ai__']` to keep framework routing state apart from provider data.
     `response` is a `ModelResponse` or a `StreamedResponse`, whose metadata ends up on the response.

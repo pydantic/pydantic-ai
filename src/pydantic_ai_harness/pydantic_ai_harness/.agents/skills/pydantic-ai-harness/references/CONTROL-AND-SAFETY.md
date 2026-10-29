@@ -497,7 +497,7 @@ print(agent.run_sync('Set up storage').output)
 
 ## SystemReminders
 
-Enqueues reminders at the tail of each model request as a request-scoped `SystemPromptPart`
+By default, enqueues reminders at the tail of each model request as a request-scoped `SystemPromptPart`
 (`scope='request'`): the model sees each one only in the model request it's part of, and the next
 request, even the next step of the same run, no longer shows it. It's kept in message history, and
 it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
@@ -528,12 +528,15 @@ agent = Agent(
 )
 ```
 
-- `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag=None)`:
+- `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag=None, scope='request')`:
   requests are counted from 1 per run, so `interval=4` fires on requests 4, 8, 12; `first_after=N`
   moves the first fire to request N, then every `interval` after (`first_after=1, interval=4` fires
   on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. Pass `tag=None`: left unset it warns that the
   default used to be `'system-reminder'`. A reminder needs no tag, since it's already sent as a
-  system prompt; `tag='name'` wraps the text in `<name>`.
+  system prompt; `tag='name'` wraps the text in `<name>`. `scope='conversation'` records each firing
+  as a lasting `SystemPromptPart` re-sent on every later request (one more part per firing, so bound it
+  with `interval`/`max_fires`); use it for guidance that must outlast its step, instructions for text
+  that holds on every step, and the default `'request'` for per-step nudges or changing values.
 - `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
   on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
   quote user input or tool output as data.

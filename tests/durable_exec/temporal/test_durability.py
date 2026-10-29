@@ -403,9 +403,9 @@ fallback_durable_agent = Agent(
 @workflow.defn
 class FallbackDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str) -> tuple[str, str | None]:
         result = await fallback_durable_agent.run(prompt)
-        return result.output
+        return result.output, result.response.model_id
 
 
 async def test_durability_fallback_attempts_run_as_activities(client: Client):
@@ -424,7 +424,8 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
         )
         output = await wf.result()
         history = await wf.fetch_history()
-    assert output == 'from fallback'
+    # The response records the candidate that answered, which is what the workflow resumes a continuation on.
+    assert output == ('from fallback', 'fallback_target')
     # The failed attempt on the agent's model and the one on the fallback model.
     assert _scheduled_activity_count(history) == 2
 
@@ -473,13 +474,9 @@ sticky_wrap_around_durable_agent = Agent(
 )
 
 
-def _served_and_stamped(messages: list[ModelMessage]) -> list[tuple[str | None, str | None]]:
-    """The model behind each response, and the candidate it's stamped with for `sticky`."""
-    return [
-        (message.model_name, (message.metadata or {}).get('__pydantic_ai__', {}).get('fallback_candidate'))
-        for message in messages
-        if isinstance(message, ModelResponse)
-    ]
+def _served_and_recorded(messages: list[ModelMessage]) -> list[tuple[str | None, str | None]]:
+    """The model behind each response, and the model it records it came from, which `sticky` follows."""
+    return [(message.model_name, message.model_id) for message in messages if isinstance(message, ModelResponse)]
 
 
 @workflow.defn
@@ -488,7 +485,7 @@ class StickyFallbackDurableAgentWorkflow:
     async def run(self, prompt: str) -> list[list[tuple[str | None, str | None]]]:
         first = await sticky_fallback_durable_agent.run(prompt)
         second = await sticky_fallback_durable_agent.run(prompt, message_history=first.all_messages())
-        return [_served_and_stamped(first.new_messages()), _served_and_stamped(second.new_messages())]
+        return [_served_and_recorded(first.new_messages()), _served_and_recorded(second.new_messages())]
 
 
 @workflow.defn
@@ -500,11 +497,11 @@ class StickyWrapAroundDurableAgentWorkflow:
             ModelResponse(
                 parts=[TextPart('earlier answer')],
                 model_name='down_target',
-                metadata={'__pydantic_ai__': {'fallback_candidate': 'down_target'}},
+                model_id='down_target',
             ),
         ]
         result = await sticky_wrap_around_durable_agent.run(prompt, message_history=history)
-        return _served_and_stamped(result.new_messages())
+        return _served_and_recorded(result.new_messages())
 
 
 async def test_durability_sticky_fallback_goes_straight_to_the_candidate(client: Client):
@@ -534,8 +531,8 @@ async def test_durability_sticky_fallback_goes_straight_to_the_candidate(client:
     assert len(model_requests) == 5
 
 
-async def test_durability_sticky_fallback_wraps_around_to_the_primary_unstamped(client: Client):
-    """When the sticky candidate fails, the chain comes back around to the wrapped primary, whose answer isn't stamped."""
+async def test_durability_sticky_fallback_wraps_around_to_the_wrapped_primary(client: Client):
+    """When the sticky candidate fails, the chain comes back around to the wrapped primary, whose answer records it."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -550,7 +547,8 @@ async def test_durability_sticky_fallback_wraps_around_to_the_primary_unstamped(
         )
         output = await wf.result()
         history = await wf.fetch_history()
-    assert output == [('primary', None)]
+    # The answer records the primary, so the conversation goes back to starting from it.
+    assert output == [('primary', 'function:primary')]
     # The failed attempt on the sticky candidate, then the primary.
     assert _scheduled_activity_count(history) == 2
 
@@ -2789,6 +2787,7 @@ async def test_durability_continue_as_new_real_workflow_transition(client: Clien
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=3),
                 model_name='function:_continue_as_new_model_fn:',
+                model_id='function:function:_continue_as_new_model_fn:',
                 timestamp=IsDatetime(),
                 run_id=predecessor_run_id,
                 conversation_id=conversation_id,
@@ -2810,6 +2809,7 @@ async def test_durability_continue_as_new_real_workflow_transition(client: Clien
                 parts=[TextPart(content='successor received: first request completed')],
                 usage=RequestUsage(input_tokens=5, output_tokens=7),
                 model_name='function:_continue_as_new_model_fn:',
+                model_id='function:function:_continue_as_new_model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=conversation_id,
@@ -4064,6 +4064,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
@@ -4114,6 +4115,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
@@ -4156,6 +4158,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
@@ -4951,6 +4954,7 @@ async def test_durability_tool_return_metadata_survives(allow_model_requests: No
                 parts=[ToolCallPart(tool_name='durability_analyze_data', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
                 model_name='function:_durability_tool_return_metadata_model:',
+                model_id='function:function:_durability_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4974,6 +4978,7 @@ async def test_durability_tool_return_metadata_survives(allow_model_requests: No
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
                 model_name='function:_durability_tool_return_metadata_model:',
+                model_id='function:function:_durability_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
