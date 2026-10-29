@@ -1054,8 +1054,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 (m for m in result if isinstance(m, UserMessage | SystemMessage | ToolMessage)),
                 None,
             )
-            if carrier is not None and (encrypted := with_encrypted_frame_ref(carrier.encrypted_value, ref)):
-                carrier.encrypted_value = encrypted
+            if carrier is not None:
+                carrier.encrypted_value = with_encrypted_frame_ref(carrier.encrypted_value, ref)
         return result
 
     @staticmethod

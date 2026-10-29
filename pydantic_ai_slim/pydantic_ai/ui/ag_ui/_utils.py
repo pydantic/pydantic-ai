@@ -372,19 +372,14 @@ def parse_encrypted_retry_feedback(encrypted_value: str | None) -> RetryFeedback
     return retry_feedback_from_payload(namespaced.get('retry_feedback'))
 
 
-def with_encrypted_frame_ref(encrypted_value: str | None, ref: str) -> str | None:
+def with_encrypted_frame_ref(encrypted_value: str | None, ref: str) -> str:
     """`encrypted_value` with the conversation's frame ref added to its `pydantic_ai` namespace.
 
     A `ModelRequest` stores the ref in its metadata, which AG-UI has no slot for, so it rides the namespaced carrier of
-    the first message dumped from the request, next to whatever claims that message already carries. `None` when the
-    slot holds something other than our namespace, which is then left alone.
+    the first message dumped from the request, next to whatever claims that message already carries. The messages it's
+    added to only ever carry our own namespace there.
     """
-    if encrypted_value is None:
-        return _namespaced_encrypted_value({'frame_ref': ref})
-    namespaced = _parse_encrypted_namespace(encrypted_value)
-    if namespaced is None:
-        return None
-    return _namespaced_encrypted_value({**namespaced, 'frame_ref': ref})
+    return _namespaced_encrypted_value({**(_parse_encrypted_namespace(encrypted_value) or {}), 'frame_ref': ref})
 
 
 def parse_encrypted_frame_ref(encrypted_value: str | None) -> str | None:

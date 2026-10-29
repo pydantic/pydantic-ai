@@ -139,13 +139,7 @@ class TurnReminder(AbstractCapability[Any]):
 
 def unref(value: Any) -> Any:
     """`value` with the conversation's frame ref left out of every `<system ref="...">` tag, so assertions name the tag."""
-    if isinstance(value, str):
-        return re.sub(r'<system ref="[0-9a-f]{12}">', '<system>', value)
-    if isinstance(value, list):
-        return [unref(item) for item in cast(list[Any], value)]
-    if isinstance(value, dict):
-        return {key: unref(item) for key, item in cast(dict[str, Any], value).items()}
-    return value
+    return json.loads(re.sub(r'<system ref=\\"[0-9a-f]{12}\\">', '<system>', json.dumps(value)))
 
 
 def weather_agent(model: Any, **kwargs: Any) -> Agent[None, str]:

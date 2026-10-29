@@ -2038,12 +2038,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         frame_at = next((i for i, part in enumerate(parts) if id(part) in framed_ids), None)
         if frame_at is None:
             return parts, None
-        if tool_indices := [i for i, part in enumerate(parts) if _is_tool_result_part(part)]:
-            first, last = tool_indices[0], tool_indices[-1]
-            if precede_tool_results and first < frame_at <= last:
-                frame_at = first
-            elif not precede_tool_results and frame_at <= last:
-                frame_at = last + 1
+        # Where the notes follow the tool results, so does the announcement. Where they precede them, the first
+        # frame is a note ahead of the results already: a frame among them is a moved file, which only a model
+        # without inline system messages has, and that model announces in its instructions instead.
+        last = max((i for i, part in enumerate(parts) if _is_tool_result_part(part)), default=-1)
+        if not precede_tool_results and frame_at <= last:
+            frame_at = last + 1
         if first_request and all(isinstance(part, SystemPromptPart) for part in parts[:frame_at]):
             frame_at = len(parts)
         return parts, frame_at
@@ -3982,9 +3982,8 @@ def _wrap_non_leading_system_prompts(
 
 def _with_frame_ref_on_last_request(messages: list[ModelMessage], ref: str) -> list[ModelMessage]:
     """`messages` with the last request storing the conversation's frame ref, or `messages` itself when it already does."""
-    index = next((i for i in range(len(messages) - 1, -1, -1) if isinstance(messages[i], ModelRequest)), None)
-    if index is None:
-        return messages
+    # Only called when the history frames something or stores a ref, so it has a request.
+    index = next(i for i in range(len(messages) - 1, -1, -1) if isinstance(messages[i], ModelRequest))
     request = messages[index]
     assert isinstance(request, ModelRequest)
     stamped = with_frame_ref(request, ref)

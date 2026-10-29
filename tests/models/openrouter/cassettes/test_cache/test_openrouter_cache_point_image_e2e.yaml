@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -55,9 +55,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792905530-5ZMq7CSU0XbZ4obQAgb6
+        id: gen-1793245766-Z39sXMvx8Y0uZpFCB3l5
         object: chat.completion
-        created: 1792905530
+        created: 1793245766
         model: anthropic/claude-sonnet-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -91,4 +91,4 @@ interactions:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-25T05:18:52.313988+00:00
+  recorded_at: 2026-10-29T03:49:27.780221+00:00

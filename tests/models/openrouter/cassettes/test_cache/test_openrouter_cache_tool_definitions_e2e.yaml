@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -64,9 +64,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792905661-599h1fHorleLKZbKLd9k
+        id: gen-1793245785-chU1vKT3PVfawqA9ergc
         object: chat.completion
-        created: 1792905661
+        created: 1793245785
         model: anthropic/claude-sonnet-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -81,7 +81,7 @@ interactions:
             content: |-
               I have one tool:
 
-              - **get_weather**: Gets weather information for a city. It takes one required parameter, `city`, which is a string.
+              - **get_weather**: Gets the weather for a city. It takes one required parameter, `city`, which is a string.
             refusal: null
             reasoning: null
         usage:
@@ -103,4 +103,4 @@ interactions:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-25T05:21:02.120761+00:00
+  recorded_at: 2026-10-29T03:49:47.116800+00:00

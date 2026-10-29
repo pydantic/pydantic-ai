@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -57,9 +57,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792905539-ZyZmUICqqGS33l29DKXF
+        id: gen-1793245778-cp4hmdVqFPUOm7wAzdkh
         object: chat.completion
-        created: 1792905539
+        created: 1793245778
         model: anthropic/claude-sonnet-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -72,27 +72,27 @@ interactions:
           message:
             role: assistant
             content: |-
-              There's no question or task in your message, just the phrase "Final context to cache" repeated. I can't cache anything beyond this conversation. I only have what's in this chat, and nothing carries over to future sessions unless you paste it in again.
+              I'm not sure what you'd like me to do. Your message just repeats "Final context to cache" and has no question or task. I also can't cache anything between conversations, because I only see what's in this chat.
 
-              If you meant to send a document, code, or instructions, it didn't come through, so please resend it. If you're setting up prompt caching through an API, I can help with that too. Just tell me what you're trying to do.
+              If you meant to paste a document, code, or instructions, it didn't come through, so please send it again. If you have a question or task, tell me what you need and I'll help.
             refusal: null
             reasoning: |+
-              This message just repeats "Final context to cache." over and over with no real question attached. I don't have a persistent caching mechanism, so I should let them know that and ask what they actually want help with.
+              This message just repeats "Final context to cache" without an actual question or task attached, so I don't have anything concrete to act on, and I can't persist a cache across turns anyway. I should ask what they'd actually like me to help with.
 
             reasoning_details:
             - type: reasoning.text
               text: |+
-                This message just repeats "Final context to cache." over and over with no real question attached. I don't have a persistent caching mechanism, so I should let them know that and ask what they actually want help with.
+                This message just repeats "Final context to cache" without an actual question or task attached, so I don't have anything concrete to act on, and I can't persist a cache across turns anyway. I should ask what they'd actually like me to help with.
 
               format: anthropic-claude-v1
               index: 0
               signature: >-
-                CAQSxAYKEAgTGAI4AUIIdGhpbmtpbmcSDK726zdjDKe5pKj/KxoMebRvxtxSTbvwNTN9IjB6jmv8qrTi+GqMqBRzjnmQR8ABm7d/lUKRvt4aztRZPRjyrZ4T48jw0DX5KrMR1scq4QVh3fIk2hVSbsg6uIOWKtA8POWSsOs9YZ6XO/jCFtTmW2QC/b7OVUNi18dxSLC8VT0EpFp+1zcwG6yLpVKm0It1zrSNebH4IAtbqpgmSiYqBtxshN+PhSXdPfwXml2FyNNbdMBNiJXHrPUjg5llCEcZY13rOrhrLI56elpj7uSLxTJ+DFkm+qhIoSBXhatI/KcXPO+A0PRjD60DRQor8O7gLSfzzCL4FAn3SW6+9v57vuDBgs3MCSC+fFsHDqnu7oTD5IS8x4vCtX3Fn0BoZZ+q821R57QwjrxfI7x8V9C4C/blpURm6cAPhvMzjk/hkul0DUtLrkRPvWk0JxRQBInVQwC2vnACqIgtBMHk5SH6JO9XzYJqasoclvc1v2OHzRO1vepveZJgp/eHqVJIB8BMMTKZ+Ca3ISfDqP43/FDtrckqxJDo0mfEXlcCSlmZ5DxLGL9DJhO6VEBC4S4uCnKodIZaKeSHN97tI2IzkHJElMUfzM6TaBdrwCS4r/ajD1L6Sygxf57U+dSJQjde7h2Y3M/n5EMtX6PT0788NIP/0cHBUUtpFVS2E2tcUMBr3tOx53zhrf6CghZQgyEB3MCKdMxRrlZcAO1PnM3jMxP/8WzkrtiN1JsuPmAPLR9+FUJOYcelQMNUoPZNxYQnR4gfuGCJBdj6+WEYz03luGLQX4ho4ow+NqJ+QrEvYV5IE3Vs9mTYeM2jXwPVirUvAXL2JxqSOYXZSPDv73o8u/LSMU3nOTmwP1KMGososCW57NJgwHqC0WC6HjkbIfzpUqeMVi44xvtIfC2gNBOHI2twk0Dw3Ys+avY/VkrpBYqNthSn08lB6j0JsrWZ7kNIc8bEMKGtd2Y8UYJORKBZA9w96Nz7pE0B7uHQkbwp9MWQietiKrtYiqk7HWhoQoR4a+LYIrTnKROwFdRFxIcs0WokBeUH4zoA21V0IFN+U886iMFiQmPujfLqizC6tl4pitE8bhgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGNsYXVkZS1vbi1hd3MifQ
+                CAQSwgYKEAgTGAI4AUIIdGhpbmtpbmcSDIwq1TZ2KeBGvDxWoBoMR0D9fA1otpmrX9pnIjCgGGgcYjNCQfSnVvqoJkGkQ9qlPd3Hw2FZ3ZP4ea8/u/0Y174xrVkAxR00Iupgrm8q3wUt/cr8mpAPFOV1+fSe8SzikkpSNNv2cEuENewMg5xajkGmIj0ggKyEbAQxQ+OVQOxC3gTyy3nLx72plf0BpZNmmHbHhyjl5nl3A2I0ql/TPvXilynN/o1mAUbwMNi2SjMFHYKSzfVp0eBR5LxhW8Kt0VdL8ZR+dGOMzmodOcIXub4yJGP4mdcljBnQS19tFe8uJpSskvmj5TzhaQCLHjF+BD4eGmOUIQ2AltDr1HpKazFzJsioll3oP8Q6FuAbwHQg5z+jhg3kdpxd4SkpLosqMFmh0RIsEcW5Gc5Z7w75mVDnypxofjHXa6Td8NEf655ihMxAgyESUAu3c5PWYQX1mKl/ECUrxqqJZqSa3L7khCJIhtO+shS2/FSdT8KkmFNYgRfvK7c8RCVPW8swKwsHWEcm7TwQvD8Lk0d6bx3ZYKUxJ3rN1rTZ69XE7e2OtVOvBIKA4E770u2Fraz4aWqya6I5Qi73fXtRONJBw7x837ogj/JaPlnORkiL6zmkWWVY0uLtwU7sBotHS6D8736Q2XeUvbRzcl1e1NDBD5bgijPqwzyhJO7/4TZp0yue6hLSQ1J3bTTYBzyQJluQshN8DMYueEO8amwHcZ81LaaDa/eSvhPhZhf8t+RAN4LNPJNOjm3vTkmez6Mi4Wuzvk8MpndFRBJzL9v6mRqZ0pKO8yV9bXkA16nn4lJ9W48f+ogG+7G687e7mT/CjdVpqVdeB01TH89dUQkMLR1zvkTu+BCsFZRUurLiOLt0Mv490M69rL8ENWGeefGH+PKL4NaYnWAGUwSO0I8JlikbGEiTR6xG2bZzQAl0qMbg3Zh5R0vlyQgYoXRLQ8nXUlUmU6eWhDjd/n8SUfLpFTm1NR/a2fZc09yr58HRuW+X0Wle6XTJR8E2lxk9JNjFCNMIiIi48eMDWnsmRVvQidTeeCHpfNUYmKDG80wzHB8FVEly5WrVSgMlTUEZGM66XFgIHyMYAQ==.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGNsYXVkZS1vbi1hd3MifQ
         usage:
           prompt_tokens: 148
-          completion_tokens: 205
-          total_tokens: 353
-          cost: 0.002346
+          completion_tokens: 181
+          total_tokens: 329
+          cost: 0.002106
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -100,11 +100,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.002346
+            upstream_inference_cost: 0.002106
             upstream_inference_prompt_cost: 0.000296
-            upstream_inference_completions_cost: 0.00205
+            upstream_inference_completions_cost: 0.00181
           completion_tokens_details:
-            reasoning_tokens: 65
+            reasoning_tokens: 67
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-25T05:19:02.030945+00:00
+  recorded_at: 2026-10-29T03:49:40.960915+00:00

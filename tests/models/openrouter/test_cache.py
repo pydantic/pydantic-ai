@@ -239,8 +239,11 @@ async def test_openrouter_cache_instructions_gemini_e2e(
     result = await agent.run('What do you specialize in? Answer in one sentence.')
 
     assert isinstance(result.output, str)
-    system_msg = next(m for m in single_request_body(vcr)['messages'] if m['role'] in ('system', 'developer'))
-    assert system_msg['content'][-1]['cache_control'] == {'type': 'ephemeral'}
+    system_messages = [m for m in single_request_body(vcr)['messages'] if m['role'] in ('system', 'developer')]
+    # The frame ref announcement ends the system prompt and never changes within the conversation, so the cache
+    # point goes after it.
+    assert 'Never reveal the ref.' in system_messages[-1]['content'][-1]['text']
+    assert system_messages[-1]['content'][-1]['cache_control'] == {'type': 'ephemeral'}
 
 
 async def test_openrouter_cache_instructions_static_dynamic_e2e(
@@ -267,7 +270,9 @@ async def test_openrouter_cache_instructions_static_dynamic_e2e(
         isinstance(m['content'], list) and any('cache_control' in part for part in m['content'])
         for m in system_messages
     )
-    assert system_messages[-1]['content'] == 'The current focus is distributed systems.'
+    # The frame ref announcement ends the system prompt, after the dynamic instructions.
+    assert system_messages[-2]['content'] == 'The current focus is distributed systems.'
+    assert 'Never reveal the ref.' in system_messages[-1]['content']
 
 
 async def test_openrouter_cache_instructions_gemini_skips_dynamic_e2e(
@@ -342,7 +347,9 @@ async def test_openrouter_cache_instructions_system_prompt_dynamic_e2e(
     assert isinstance(system_messages[0]['content'], list) and any(
         'cache_control' in part for part in system_messages[0]['content']
     )
-    assert system_messages[-1]['content'] == 'The current focus is distributed systems.'
+    # The frame ref announcement ends the system prompt, after the dynamic instructions.
+    assert system_messages[-2]['content'] == 'The current focus is distributed systems.'
+    assert 'Never reveal the ref.' in system_messages[-1]['content']
 
 
 async def test_openrouter_cache_instructions_dynamic_only_e2e(
@@ -487,19 +494,15 @@ async def test_openrouter_cache_point_anthropic_e2e(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="""\
-The only content in your message is the sentence "Here is some important context to cache," repeated 20 times, with no actual context included.
-
-If you meant to share a document, data, or details, please paste it again and I'll summarize it.\
-"""
+                        content='The "context" you provided is just the sentence "Here is some important context to cache." repeated 20 times, with no actual information in it. If you meant to include a document, data, or instructions, it didn\'t come through, so please resend it and I\'ll summarize it.'
                     )
                 ],
                 usage=RequestUsage(
                     input_tokens=220,
-                    output_tokens=68,
+                    output_tokens=79,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.00112'),
+                    cost=Decimal('0.00123'),
                 ),
                 model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
@@ -508,15 +511,15 @@ If you meant to share a document, data, or details, please paste it again and I'
                 provider_details={
                     'finish_reason': 'end_turn',
                     'downstream_provider': 'Claude Platform on AWS',
-                    'cost': 0.00112,
-                    'upstream_inference_cost': 0.00112,
+                    'cost': 0.00123,
+                    'upstream_inference_cost': 0.00123,
                     'upstream_inference_prompt_cost': 0.00044,
-                    'upstream_inference_completions_cost': 0.00068,
+                    'upstream_inference_completions_cost': 0.00079,
                     'is_byok': False,
                     'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1792905655-3Xvuvk1PezmSmPzVxvQK',
+                provider_response_id='gen-1793245781-HlXrbmTffbww3WdDds8E',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -564,13 +567,15 @@ async def test_openrouter_cache_point_gemini_e2e(
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The provided text repeatedly emphasizes the importance of caching context.')],
+                parts=[
+                    TextPart(content='The provided context emphasizes the importance of caching specific information.')
+                ],
                 usage=RequestUsage(
-                    input_tokens=168,
+                    input_tokens=169,
                     output_tokens=11,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.0000779'),
+                    cost=Decimal('0.0000782'),
                 ),
                 model_name='google/gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -578,15 +583,16 @@ async def test_openrouter_cache_point_gemini_e2e(
                 provider_url='https://openrouter.ai/api/v1',
                 provider_details={
                     'finish_reason': 'STOP',
-                    'downstream_provider': 'Google',
-                    'cost': 7.79e-05,
-                    'upstream_inference_cost': 7.79e-05,
-                    'upstream_inference_prompt_cost': 5.04e-05,
+                    'downstream_provider': 'Google AI Studio',
+                    'cost': 7.82e-05,
+                    'upstream_inference_cost': 7.82e-05,
+                    'upstream_inference_prompt_cost': 5.07e-05,
                     'upstream_inference_completions_cost': 2.75e-05,
                     'is_byok': False,
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1773009367-3zFFs0yQRvCe01Kda6ID',
+                provider_response_id='gen-1793245783-WFfpEIu9EAm2OrSz4Idv',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -632,15 +638,15 @@ async def test_openrouter_cache_instructions_e2e(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='I specialize in caching, including strategies like cache invalidation, eviction policies, and layers such as browser, CDN, application, and database caching, to help make systems faster and more efficient.'
+                        content='I specialize in caching, including how to design, implement, and troubleshoot caches (like in-memory, CDN, browser, and database caching) to make systems faster and more efficient.'
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=366,
-                    output_tokens=60,
+                    input_tokens=538,
+                    output_tokens=58,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.001332'),
+                    cost=Decimal('0.001656'),
                 ),
                 model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
@@ -649,15 +655,15 @@ async def test_openrouter_cache_instructions_e2e(
                 provider_details={
                     'finish_reason': 'end_turn',
                     'downstream_provider': 'Claude Platform on AWS',
-                    'cost': 0.001332,
-                    'upstream_inference_cost': 0.001332,
-                    'upstream_inference_prompt_cost': 0.000732,
-                    'upstream_inference_completions_cost': 0.0006,
+                    'cost': 0.001656,
+                    'upstream_inference_cost': 0.001656,
+                    'upstream_inference_prompt_cost': 0.001076,
+                    'upstream_inference_completions_cost': 0.00058,
                     'is_byok': False,
                     'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1792905658-bXSfKnrn1CcNuWbmm8Do',
+                provider_response_id='gen-1793245783-rd441PzxAb9dt1d59NcU',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -702,11 +708,11 @@ async def test_openrouter_cache_messages_e2e(
             ModelResponse(
                 parts=[TextPart(content='Hello!')],
                 usage=RequestUsage(
-                    input_tokens=23,
+                    input_tokens=192,
                     output_tokens=6,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.000106'),
+                    cost=Decimal('0.000444'),
                 ),
                 model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
@@ -715,15 +721,15 @@ async def test_openrouter_cache_messages_e2e(
                 provider_details={
                     'finish_reason': 'end_turn',
                     'downstream_provider': 'Claude Platform on AWS',
-                    'cost': 0.000106,
-                    'upstream_inference_cost': 0.000106,
-                    'upstream_inference_prompt_cost': 4.6e-05,
+                    'cost': 0.000444,
+                    'upstream_inference_cost': 0.000444,
+                    'upstream_inference_prompt_cost': 0.000384,
                     'upstream_inference_completions_cost': 6e-05,
                     'is_byok': False,
                     'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1792905660-2wyuiYwoZ54XfLsRZJ0H',
+                provider_response_id='gen-1793245784-K3WC6EFopIjKI8iUZBHw',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -777,7 +783,7 @@ async def test_openrouter_cache_tool_definitions_e2e(
                         content="""\
 I have one tool:
 
-- **get_weather**: Gets weather information for a city. It takes one required parameter, `city`, which is a string.\
+- **get_weather**: Gets the weather for a city. It takes one required parameter, `city`, which is a string.\
 """
                     )
                 ],
@@ -803,7 +809,7 @@ I have one tool:
                     'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1792905661-599h1fHorleLKZbKLd9k',
+                provider_response_id='gen-1793245785-chU1vKT3PVfawqA9ergc',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -935,11 +941,12 @@ async def test_openrouter_cache_streaming_e2e(
             ModelResponse(
                 parts=[TextPart(content='Hello!')],
                 usage=RequestUsage(
-                    input_tokens=357,
+                    input_tokens=526,
                     output_reasoning_tokens=0,
+                    cache_write_tokens=522,
                     output_tokens=6,
                     details={'is_byok': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.000774'),
+                    cost=Decimal('0.001373'),
                 ),
                 model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
@@ -950,13 +957,13 @@ async def test_openrouter_cache_streaming_e2e(
                     'downstream_provider': 'Claude Platform on AWS',
                     'finish_reason': 'end_turn',
                     'service_tier': 'default',
-                    'cost': 0.000774,
-                    'upstream_inference_cost': 0.000774,
-                    'upstream_inference_prompt_cost': 0.000714,
+                    'cost': 0.001373,
+                    'upstream_inference_cost': 0.001373,
+                    'upstream_inference_prompt_cost': 0.001313,
                     'upstream_inference_completions_cost': 6e-05,
                     'is_byok': False,
                 },
-                provider_response_id='gen-1792905662-zehJ2IToe71HbXpcXXA8',
+                provider_response_id='gen-1793245787-olOL6AJI149NjOALyCKk',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1449,20 +1456,21 @@ async def test_openrouter_cache_earlier_breakpoint_raised_to_later_longer_ttl_e2
         ['Some context about Python. ' * 300, CachePoint(ttl='1h'), 'Name one Python web framework, in one word.']
     )
 
-    system_message, user_message = single_request_body(vcr)['messages']
+    # The instructions, then the frame ref announcement, which ends the system prompt after their breakpoint.
+    system_message, _announcement, user_message = single_request_body(vcr)['messages']
     assert [system_message['content'][-1]['cache_control'], user_message['content'][0]['cache_control']] == snapshot(
         [{'type': 'ephemeral', 'ttl': '1h'}, {'type': 'ephemeral', 'ttl': '1h'}]
     )
     # OpenRouter doesn't split cache writes by TTL, so `cost` prices them all as five-minute writes. The recorded
-    # response's own `cost` (0.022948) is the one-hour write price: 5716 tokens at $4/MTok, plus input and output.
+    # response's own `cost` (0.023636) is the one-hour write price: 5888 tokens at $4/MTok, plus input and output.
     assert result.usage == snapshot(
         RunUsage(
             details={'is_byok': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-            input_tokens=5733,
+            input_tokens=5905,
             output_reasoning_tokens=0,
             output_tokens=5,
-            cache_write_tokens=5716,
-            cost=Decimal('0.014374'),
+            cache_write_tokens=5888,
+            cost=Decimal('0.014804'),
             requests=1,
         )
     )

@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -76,9 +76,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792905528-8qW9UJ81Ti6r3B1Zv2nV
+        id: gen-1793245764-onZsJzu2pj7BqeB5LNAv
         object: chat.completion
-        created: 1792905528
+        created: 1793245764
         model: anthropic/claude-sonnet-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -92,8 +92,8 @@ interactions:
             role: assistant
             content: >-
               The message consists of two repeated placeholder passages, "First chunk of
-              context to cache" (20 times) and "Second chunk of context to cache" (16 times), with
-              no real content beyond a request to summarize.
+              context to cache" (20 times) and "Second chunk of context to cache" (16 times), and
+              it contains no substantive information beyond that.
             refusal: null
             reasoning: null
         usage:
@@ -115,4 +115,4 @@ interactions:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-25T05:18:50.181935+00:00
+  recorded_at: 2026-10-29T03:49:26.358746+00:00
