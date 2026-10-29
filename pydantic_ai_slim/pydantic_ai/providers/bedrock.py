@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
@@ -66,14 +65,26 @@ _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE: dict[str, tuple[str, ...]] = {
     'array': ('maxItems',),
 }
 
-# Bedrock's `pattern` regex subset excludes lookaround and backreferences (rejected with a 400), per
-# https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html.
-# Escapes are matched too, so that a literal `\(?=` is skipped.
-_REGEX_TOKEN = re.compile(r'\\.|\(\?<?[=!]|\(\?P=')
+# Bedrock rejects a `pattern` using lookaround or backreferences with a 400. Source: AWS docs at
+# https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html, verified against
+# `us.anthropic.claude-opus-4-7` and `qwen.qwen3-32b-v1:0` on 2026-10-29.
+_REGEX_UNSUPPORTED_TOKENS = ('(?=', '(?!', '(?<=', '(?<!', '(?P=')
 
 
-def _regex_is_unsupported(pattern: str) -> bool:
-    return any(token[0] == '(' or token[1] in '123456789k' for token in _REGEX_TOKEN.findall(pattern))
+def _regex_contains_unsupported_syntax(pattern: str) -> bool:
+    escaped = False
+    for i, char in enumerate(pattern):
+        if escaped:
+            if char in '123456789':  # numbered backreference
+                return True
+            escaped = False
+            continue
+        if char == '\\':
+            escaped = True
+            continue
+        if pattern.startswith(_REGEX_UNSUPPORTED_TOKENS, i):
+            return True
+    return False
 
 
 @dataclass(init=False)
@@ -130,7 +141,7 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
             if schema_type == 'array' and schema.get('minItems', 0) > 1:
                 incompatible['minItems'] = schema['minItems']
         pattern = schema.get('pattern')
-        if isinstance(pattern, str) and _regex_is_unsupported(pattern):
+        if isinstance(pattern, str) and _regex_contains_unsupported_syntax(pattern):
             incompatible['pattern'] = pattern
 
         if incompatible:

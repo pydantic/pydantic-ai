@@ -3094,7 +3094,7 @@ async def test_bedrock_opus_5_thinking_uses_native_output(
 async def test_bedrock_native_output_unsupported_regex_pattern(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ) -> None:
-    """Bedrock rejects a `pattern` with lookaround, so Native Output sends it in the field's description instead."""
+    """A thinking request uses Native Output, where Bedrock rejects a lookaround `pattern`, so it moves to the description."""
 
     class Code(BaseModel):
         # `python-re`, since Pydantic's default Rust regex engine rejects lookaround.
@@ -3103,7 +3103,7 @@ async def test_bedrock_native_output_unsupported_regex_pattern(
         code: str = Field(pattern=r'^(?!000)\d{3}$')
 
     model = BedrockConverseModel('us.anthropic.claude-opus-4-7', provider=bedrock_provider)
-    agent = Agent(model, output_type=NativeOutput(Code))
+    agent = Agent(model, output_type=Code, model_settings={'thinking': True})
 
     with _capture_bedrock_request_bodies(model) as sent_requests:
         result = await agent.run('Return the code 123.')

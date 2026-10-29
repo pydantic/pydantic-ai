@@ -2,7 +2,7 @@ from copy import deepcopy
 from typing import Annotated, Literal, cast, get_args
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pytest_mock import MockerFixture
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
@@ -785,36 +785,48 @@ def test_strict_true_strips_array_max_items():
 
 
 def test_strict_true_strips_unsupported_regex_patterns():
-    """With strict=True, patterns using lookaround or backreferences are stripped and noted in description.
+    """With strict=True, patterns using lookaround or backreferences are stripped and noted in description."""
 
-    A raw schema, since Pydantic's default Rust regex engine rejects these patterns in `Field(pattern=...)`.
-    """
-    schema: JsonSchema = {
-        'type': 'object',
-        'properties': {
-            'decimal': {'type': 'string', 'pattern': '^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$'},
-            'lookbehind': {'type': 'string', 'pattern': '\\d+(?<!000)'},
-            'backreference': {'type': 'string', 'pattern': '^(a)\\1$'},
-            'named_backreference': {'type': 'string', 'pattern': '^(?P<x>a)(?P=x)$'},
-            'escaped': {'type': 'string', 'pattern': '^\\(?=\\\\1$'},
-            'plain': {'type': 'string', 'pattern': '^[A-Z]{3}$'},
-        },
-        'required': ['decimal', 'lookbehind', 'backreference', 'named_backreference', 'escaped', 'plain'],
-    }
+    class Codes(BaseModel):
+        # `python-re`, since Pydantic's default Rust regex engine rejects lookaround and backreferences.
+        model_config = ConfigDict(regex_engine='python-re')
 
-    assert BedrockJsonSchemaTransformer(deepcopy(schema), strict=None).walk() == schema
-    assert BedrockJsonSchemaTransformer(schema, strict=True).walk() == snapshot(
+        lookahead: str = Field(pattern=r'\d+(?=USD)')
+        negative_lookahead: str = Field(pattern=r'\d+(?!USD)')
+        lookbehind: str = Field(pattern=r'(?<=USD)\d+')
+        negative_lookbehind: str = Field(pattern=r'(?<!USD)\d+')
+        backreference: str = Field(pattern=r'^(a)\1$')
+        named_backreference: str = Field(pattern=r'^(?P<x>a)(?P=x)$')
+        escaped: str = Field(pattern=r'^\(?=\\1$')
+        plain: str = Field(pattern=r'^[A-Z]{3}$')
+
+    transformer = BedrockJsonSchemaTransformer(Codes.model_json_schema(), strict=True)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is True
+    assert transformed == snapshot(
         {
-            'type': 'object',
             'properties': {
-                'decimal': {'type': 'string', 'description': 'pattern=^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$'},
-                'lookbehind': {'type': 'string', 'description': 'pattern=\\d+(?<!000)'},
+                'lookahead': {'type': 'string', 'description': 'pattern=\\d+(?=USD)'},
+                'negative_lookahead': {'type': 'string', 'description': 'pattern=\\d+(?!USD)'},
+                'lookbehind': {'type': 'string', 'description': 'pattern=(?<=USD)\\d+'},
+                'negative_lookbehind': {'type': 'string', 'description': 'pattern=(?<!USD)\\d+'},
                 'backreference': {'type': 'string', 'description': 'pattern=^(a)\\1$'},
                 'named_backreference': {'type': 'string', 'description': 'pattern=^(?P<x>a)(?P=x)$'},
-                'escaped': {'type': 'string', 'pattern': '^\\(?=\\\\1$'},
-                'plain': {'type': 'string', 'pattern': '^[A-Z]{3}$'},
+                'escaped': {'pattern': '^\\(?=\\\\1$', 'type': 'string'},
+                'plain': {'pattern': '^[A-Z]{3}$', 'type': 'string'},
             },
-            'required': ['decimal', 'lookbehind', 'backreference', 'named_backreference', 'escaped', 'plain'],
+            'required': [
+                'lookahead',
+                'negative_lookahead',
+                'lookbehind',
+                'negative_lookbehind',
+                'backreference',
+                'named_backreference',
+                'escaped',
+                'plain',
+            ],
+            'type': 'object',
             'additionalProperties': False,
         }
     )
