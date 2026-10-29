@@ -22,6 +22,9 @@ Most V1 `Agent(...)` arguments that configured behavior moved onto [capabilities
 | `Agent(history_processors=...)` | `Agent(capabilities=[ProcessHistory(...)])` |
 | `Agent(instrument=...)`, `Agent.from_spec(instrument=...)`, `Agent.from_file(instrument=...)`, `AgentSpec.instrument` | `Agent(capabilities=[Instrumentation(...)])` |
 | `Agent(mcp_servers=[...])` | `Agent(toolsets=[...])` |
+| `Agent(output_retries=N)`, `Agent(tool_retries=N)` | `Agent(retries={'output': N})`, `Agent(retries={'tools': N})` ([`AgentRetries`][pydantic_ai.agent.AgentRetries]); a bare `retries=N` sets both budgets |
+| `output_retries=N` on `run()`/`run_sync()`/`run_stream()`/`iter()`/`override()` | `retries={'output': N}` on the same methods |
+| `output_retries:` / `tool_retries:` in an [agent spec](agent-spec.md) | `retries:`, an integer or a mapping with `output` and `tools` keys |
 | `Agent(prepare_tools=...)` | `Agent(capabilities=[PrepareTools(...)])` |
 | `Agent.run_mcp_servers()` | `async with agent:` |
 | `Agent.sequential_tool_calls()` | `Agent.parallel_tool_call_execution_mode('sequential')` |

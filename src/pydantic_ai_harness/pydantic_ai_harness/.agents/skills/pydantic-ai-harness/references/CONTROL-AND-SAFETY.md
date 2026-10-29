@@ -4,8 +4,8 @@ Capabilities that constrain, screen, budget, or steer a run: repair malformed to
 guard prompts/tool calls/outputs, scan tool results for prompt injection, cap spend, ask the user
 a question mid-run, re-inject reminders, interrupt repeated-action loops, and review the trajectory with a
 judge model. All are
-`AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `PromptInjectionDefender` needs
-an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
+`AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `RepairToolArguments` (`[repair-tool-arguments]`) and
+`PromptInjectionDefender` need an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 `DeferredToolRequests`, `HandleDeferredToolCalls`), use the core mechanism documented in the
 `building-pydantic-ai-agents` skill (`references/TOOLS-ADVANCED.md`); do not rebuild it here.
 
@@ -33,7 +33,8 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 ## RepairToolArguments
 
 Runs `json-repair` on raw tool-call argument strings in `before_tool_validate`, for every tool on the
-agent. No extra (`json-repair` is a base dependency), no options.
+agent. Needs the `repair-tool-arguments` extra, which installs `json-repair`
+(`uv add "pydantic-ai-harness[repair-tool-arguments]"`; `[coder]` includes it); no options.
 
 ```python
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -431,11 +432,11 @@ Gotchas:
   same store object to two `SpendLimits` to share counters. `defer_loading=True` is refused.
 - `SpendLimits` counts every billed response, including one a nested hook rejects, whatever the
   capability order; cached and `SkipModelRequest` responses aren't charged.
-- Each response a `FallbackModel` rejected is charged as its own request, with its own
-  `SpendRecordedEvent` (`failed_attempt=True`). `price` receives it as a `ModelResponse` with the
-  attempt's model, provider and usage but no `parts` and no `provider_url`, so a `price` that reads
-  the output or keys on the endpoint will misprice it. `Spent.requests` can exceed
-  `RunUsage.requests`.
+- Each response a `FallbackModel` or the `ModelFallback` capability rejected is charged as its own request,
+  with its own `SpendRecordedEvent` (`failed_attempt=True`). `Spent.requests` can exceed `RunUsage.requests`.
+- For a `FallbackModel` rejection, `price` receives a `ModelResponse` rebuilt from the attempt's model,
+  provider and usage, with no `parts` and no `provider_url`, so a `price` that reads the output or keys
+  on the endpoint will misprice it. A `ModelFallback` capability rejection reaches `price` as the real response.
 - Spec-loadable except callables (`store`, `price`, `scope`, `clock`).
 
 ## AskUser
@@ -476,6 +477,13 @@ print(agent.run_sync('Set up storage').output)
 ```
 
 - Answerer: any `async (AskUserRequest) -> AskUserResponse`. `request.id` matches replies in a UI.
+- Two required positional parameters receive `(ctx, request)` (`ContextAnswerer[DepsT]`), including lambdas.
+  If both call shapes bind, a first parameter annotated `RunContext[DepsT]` selects the context form; otherwise request-only.
+  Only the first annotation is inspected; unresolved `RunContext` references are recognized.
+  Read the asking run's dependencies and messages through `ctx`, not the request.
+  A delegated question receives the child's context. For durable field access, follow
+  https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#agent-run-context-and-dependencies.
+- Type a stored callback as `AnyAnswerer[DepsT]` when either signature is possible.
 - Decline: return `AskUserResponse(cancelled=True)`; the model gets a "user declined" tool result.
 - Free text: `AskUserAnswer(header=..., custom_answer='...')` with `selected` empty.
 - An answer that does not fit (unknown header/label, several picks on single-select, missing
@@ -497,7 +505,7 @@ print(agent.run_sync('Set up storage').output)
 
 ## SystemReminders
 
-Enqueues reminders at the tail of each model request as a request-scoped `SystemPromptPart`
+By default, enqueues reminders at the tail of each model request as a request-scoped `SystemPromptPart`
 (`scope='request'`): the model sees each one only in the model request it's part of, and the next
 request, even the next step of the same run, no longer shows it. It's kept in message history, and
 it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
@@ -528,12 +536,15 @@ agent = Agent(
 )
 ```
 
-- `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag=None)`:
+- `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag=None, scope='request')`:
   requests are counted from 1 per run, so `interval=4` fires on requests 4, 8, 12; `first_after=N`
   moves the first fire to request N, then every `interval` after (`first_after=1, interval=4` fires
   on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. Pass `tag=None`: left unset it warns that the
   default used to be `'system-reminder'`. A reminder needs no tag, since it's already sent as a
-  system prompt; `tag='name'` wraps the text in `<name>`.
+  system prompt; `tag='name'` wraps the text in `<name>`. `scope='conversation'` records each firing
+  as a lasting `SystemPromptPart` re-sent on every later request (one more part per firing, so bound it
+  with `interval`/`max_fires`); use it for guidance that must outlast its step, instructions for text
+  that holds on every step, and the default `'request'` for per-step nudges or changing values.
 - `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
   on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
   quote user input or tool output as data.
@@ -553,8 +564,8 @@ agent = Agent(
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
   (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
   gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
-- `SystemReminders` adds no cache breakpoint; `Planning` adds one for its plan reminder, and
-  Anthropic allows 4.
+- Neither `SystemReminders` nor `Planning` adds a cache breakpoint; the model's caching settings
+  place them.
 - Not spec-serializable.
 
 ## TrajectoryJudge
@@ -591,8 +602,8 @@ output validators, and gets no deps.
 
 Gotchas: judge usage counts against the run's `usage` and `usage_limits` (a tick that cannot fit
 the request limit is skipped); one evaluation in flight per judge (a slow judge skips ticks); judge
-failures are raised on the run at the next tick or run end (use a `FallbackModel` in a custom
-agent to degrade); rejected with `UserError` inside Temporal/DBOS/Prefect durable execution. It
+failures are raised on the run at the next tick or run end (give a custom agent the `ModelFallback`
+capability to degrade); rejected with `UserError` inside Temporal/DBOS/Prefect durable execution. It
 observes and steers only; enforcement belongs to guardrails. Try `SystemReminders` first.
 
 `TrajectoryJudge(model='openai:...')` builds its judge `Agent` in the constructor, so defining it

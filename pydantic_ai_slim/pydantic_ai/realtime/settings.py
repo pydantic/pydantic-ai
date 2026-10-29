@@ -166,6 +166,20 @@ class RealtimeModelSettings(TypedDict, total=False):
     instead.
     """
 
+    output_speech_timestamps: bool
+    """Whether to report when each piece of the model's speech is heard in its audio, so an application can line
+    the text up with playback (for example, to reveal words as they are spoken). Defaults to `False`.
+
+    When on, the timestamps stream as [`SpeechPartDelta.timestamps`][pydantic_ai.messages.SpeechPartDelta.timestamps]
+    and are recorded on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] in history. How fine they are is the
+    model profile's
+    [`output_speech_timestamp_granularity`][pydantic_ai.realtime.RealtimeModelProfile.output_speech_timestamp_granularity];
+    a model that reports none emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]
+    when the session opens.
+
+    Supported by: Azure AI Voice Live (per word, with an Azure voice), ElevenLabs Agents (per word).
+    """
+
     thinking: ThinkingLevel
     """Enable or configure reasoning/thinking, mirroring the unified
     [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting on the request-response models.
@@ -245,6 +259,7 @@ RealtimeModelSettingName = TypeAliasType(
         'tool_choice',
         'input_transcription_model',
         'output_modality',
+        'output_speech_timestamps',
         'thinking',
         'turn_detection',
         'handshake_timeout',

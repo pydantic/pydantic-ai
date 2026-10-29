@@ -17,7 +17,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunCancelled, RunContext, RunTimedOut
 from pydantic_ai._cancel import RunCancellation
-from pydantic_ai.capabilities import AbstractCapability, SelectModel, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback, SelectModel, WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -32,6 +32,7 @@ from pydantic_ai.models import ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsDatetime, IsNow, IsStr
@@ -123,6 +124,44 @@ async def test_timeout_during_model_request():
             )
         ]
     )
+
+
+@pytest.mark.parametrize('stop', ['timeout', 'cancel'])
+@pytest.mark.parametrize('via', ['FallbackModel', 'wrapped FallbackModel', 'ModelFallback'])
+async def test_stop_during_a_fallback_keeps_the_rejected_response_usage(stop: str, via: str):
+    """A rejected response's usage counts when the run stops while the next model is running."""
+    contexts: list[RunContext[object]] = []
+
+    def rejected(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
+
+    async def stop_then_block(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if stop == 'timeout':
+            _expire(contexts[-1])
+        else:
+            contexts[-1].cancel()
+        return await _never_returns(messages, info)
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    primary = FunctionModel(rejected, model_name='primary')
+    backup = FunctionModel(stop_then_block, model_name='backup')
+    if via == 'ModelFallback':
+        agent = Agent(primary, capabilities=[ModelFallback(backup, fallback_on=reject_primary)])
+    else:
+        model = FallbackModel(primary, backup, fallback_on=reject_primary)
+        # A wrapper, like the one instrumentation adds, passes the attempts on too.
+        agent = Agent(WrapperModel(model) if via == 'wrapped FallbackModel' else model)
+
+    @agent.instructions
+    def capture_context(ctx: RunContext[object]) -> None:
+        contexts.append(ctx)
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('go', timeout=LONG_TIMEOUT)
+    assert isinstance(exc_info.value, RunTimedOut) == (stop == 'timeout')
+    assert exc_info.value.usage == snapshot(RunUsage(input_tokens=1000, output_tokens=500))
 
 
 @pytest.mark.parametrize('stop', ['timeout', 'cancel'])

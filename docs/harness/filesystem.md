@@ -14,6 +14,8 @@ containment-checked before any I/O, and access is filtered through allow, deny, 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls FileSystem tools such as read_file, write_file and edit_file. Before any I/O, each path is resolved with symlinks, checked to stay inside root_dir, and matched against the allowed, denied and read-only patterns; only then does the tool touch the workspace. Four example calls show a read that succeeds, a write to .env rejected as read-only, a read of /etc/passwd rejected as outside root_dir, and an edit announced as a FileChangeRequestEvent that a listener can cancel.](../img/harness/filesystem.svg)
+
 ## The problem
 
 Letting an agent touch the filesystem directly is risky: path traversal
