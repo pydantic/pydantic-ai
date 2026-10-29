@@ -128,7 +128,7 @@ Some providers suspend a response and continue it on a later request, like Anthr
 
 ## Request deadlines
 
-A [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings bounds each model's attempt as a whole, across the provider SDK's own retries: each model `ModelFallback` tries gets a fresh deadline, and the [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] it raises when the deadline passes moves on to the next model by default. A model's own `settings` can set a different `request_timeout` for it.
+A [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings bounds each model's attempt as a whole, across the provider SDK's own retries: each model `ModelFallback` tries gets a fresh deadline, and the [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] it raises when the deadline passes moves on to the next model by default. A model's own `settings` can set a different `request_timeout` or `first_event_timeout` for it, which applies only when neither the agent nor the run sets one, as those take precedence.
 
 On a streamed request, [`first_event_timeout`](../timeouts.md#waiting-for-the-first-event) also bounds each model's wait for its first output, and whichever deadline passes first applies: a model that hasn't started streaming in time raises `ModelRequestTimeout` too, and `ModelFallback` moves on to the next model, which gets a fresh deadline. Once a response has started, the setting no longer applies, so a long response isn't cut off.
 
