@@ -52,7 +52,7 @@ print(result.output)
 ## Audio Input
 
 !!! info
-    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input. On OpenAI's Chat Completions API, only the audio models (`gpt-audio`, `gpt-audio-mini`, `gpt-4o-audio-preview`, `gpt-4o-mini-audio-preview`) take audio, and the profile `OpenAIProvider` gives the other models says so.
+    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input. On OpenAI's Chat Completions API, only the audio models take audio, such as `gpt-audio` and `gpt-4o-audio-preview`: those are the OpenAI models with `audio` in their name. With another OpenAI model, audio in the prompt raises an error, and audio a tool returns is replaced by a note saying the model can't read it.
 
 For audio, use [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
@@ -205,7 +205,7 @@ Support for file URLs varies depending on type and provider:
 
 | Model | Send URL directly | Download and send bytes | Unsupported |
 |-------|-------------------|-------------------------|-------------|
-| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/azure.md#using-azure-with-the-responses-api) or [`AlibabaProvider`](models/compatible-apis.md#alibaba-cloud-model-studio-dashscope) |
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl` (audio models only), `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/azure.md#using-azure-with-the-responses-api) or [`AlibabaProvider`](models/compatible-apis.md#alibaba-cloud-model-studio-dashscope) |
 | [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | — | `VideoUrl` |
 | [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Google Cloud) | All URL types | — | — |
