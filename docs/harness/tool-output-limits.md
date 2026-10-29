@@ -232,6 +232,9 @@ reduces both with the same band logic (they spill to distinct handles). Text `co
 reduced in place; non-text `content` (multimodal parts) that overflows is left unreduced with
 a `warnings.warn`, since it cannot be safely truncated.
 
+An image or file in `return_value`, alone or in a list, reaches the model as it is; text
+beside it in the list warns rather than being reduced.
+
 ### `ToolReturn.metadata` is preserved
 
 Spill keys (`overflow_handle`, `overflow_bytes`, `overflow_content_handle`) live in
