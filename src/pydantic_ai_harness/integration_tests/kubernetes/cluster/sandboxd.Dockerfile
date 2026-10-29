@@ -1,6 +1,6 @@
 # The sandbox image the cluster tests claim: sandboxd built from an agent-sandbox release tag, in a
-# Debian userland with `sh`, coreutils, findutils and Python. agent-sandbox publishes no release
-# image for sandboxd, only a moving `latest-main` in its staging registry, so it is built here.
+# Debian userland with `sh`, coreutils, findutils and Python. agent-sandbox doesn't publish sandboxd
+# to `registry.k8s.io`, so it is built here.
 FROM golang:1.26-bookworm AS sandboxd
 ARG AGENT_SANDBOX_VERSION
 RUN CGO_ENABLED=0 GOTOOLCHAIN=auto GOBIN=/out \

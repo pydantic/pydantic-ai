@@ -41,7 +41,7 @@ spec:
       securityContext: {runAsNonRoot: true, fsGroup: 1000}
       initContainers:
         - name: install-sandboxd
-          image: us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/sandboxd:latest-main
+          image: us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/sandboxd:v20261015-v1.0.7
           command: [/bin/sh, -c, cp /usr/local/bin/sandboxd /sandboxd-bin/sandboxd]
           securityContext: {runAsUser: 1000}
           volumeMounts: [{name: sandboxd-bin, mountPath: /sandboxd-bin}]
@@ -68,7 +68,7 @@ spec:
   sandboxTemplateRef: {name: python}
 ```
 
-At the time of writing, agent-sandbox publishes the sandboxd image only from its staging registry; pin a digest, or build it from the release tag's `packages/sandboxd/Dockerfile`. For stronger isolation, set `runtimeClassName` (gVisor or Kata) on the pod template, and connect from inside the cluster (see [Connect from inside the cluster](#connect-from-inside-the-cluster)).
+agent-sandbox doesn't publish sandboxd to `registry.k8s.io` yet, so this template uses the build of the v1.0.7 release from its staging registry. Staging images aren't guaranteed to stay available: for production, build sandboxd from the release tag's `packages/sandboxd/Dockerfile` and push it to your own registry. For stronger isolation, set `runtimeClassName` (gVisor or Kata) on the pod template, and connect from inside the cluster (see [Connect from inside the cluster](#connect-from-inside-the-cluster)).
 
 ## Quick start
 
