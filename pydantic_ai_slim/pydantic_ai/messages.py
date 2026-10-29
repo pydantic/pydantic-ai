@@ -3309,12 +3309,13 @@ class CapabilityLoadDeltaPart:
 
     Additions only, in `loaded`: unloading a capability isn't supported yet.
 
-    [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] records one on the request
-    after the tool call that loaded the capability, followed by a
-    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] revealing its tools, if it has
-    any. A load's record is the model's exchange, or else this delta: a capability the model loads through the
-    `load_capability` tool is recorded by that call and its return, as with tool search, and writes no delta. Either way, the capability is loaded from the next model request on: its tools are callable,
-    its instructions are stated, and its model settings and hooks apply.
+    [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] records one on the request after the
+    tool call that loaded the capability, followed by a
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] revealing its tools, if it has any. A
+    load's record is the model's exchange, or else this delta: a capability the model loads through the
+    `load_capability` tool is recorded by that call and its return, as with tool search, and writes no delta. Either
+    way, the capability is loaded from the next model request on: its tools are callable, its instructions are stated,
+    and its model settings and hooks apply.
 
     Never sent to the model: `prepare_messages` drops it, and the model sees the capability's instructions and
     tools instead.

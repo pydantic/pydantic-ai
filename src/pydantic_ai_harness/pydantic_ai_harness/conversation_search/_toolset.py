@@ -247,9 +247,9 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
         if not part.transcript:
             return None
         return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
-    # Tool-list, capability, instruction and effort bookkeeping rather than conversation, so there is no line to contribute.
-    # Redundant against the union as it stands today, but kept explicit so the fallthrough
-    # below stays a real branch at runtime rather than dead code.
+    # Tool-list, capability, instruction and effort bookkeeping rather than conversation, so there is no line to
+    # contribute. Redundant against the union as it stands today, but kept explicit so the fallthrough below stays a
+    # real branch at runtime rather than dead code.
     if isinstance(
         part,
         (ToolAvailabilityDeltaPart, CapabilityLoadDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart),

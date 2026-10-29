@@ -4307,11 +4307,11 @@ _UnpreparedPart: TypeAlias = (
 )
 """The request parts `prepare_messages` translates away before any adapter sees them.
 
-Each of these carries something no provider API has a field for — a mid-conversation change to the
-tool list or the thinking effort, a capability load from code, or a retry that isn't a plain turn — and `prepare_messages` turns it
-into the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that step never
-ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart`
-on a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
+Each of these carries something no provider API has a field for — a mid-conversation change to the tool list or the
+thinking effort, a capability load from code, or a retry that isn't a plain turn — and `prepare_messages` turns it into
+the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that
+step never ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
+a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` or a request-side `CompactionPart` never reaches this branch either:
 adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts.
 """

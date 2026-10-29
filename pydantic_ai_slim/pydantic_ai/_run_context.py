@@ -1039,12 +1039,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
         `after_tool_execute`, or `after_model_request` on a response with tool calls the run executes, for the next
         request; from a `before_model_request` hook, for the request being prepared, which gets the capability's tools
         and instructions (its model settings, native tools and hooks apply from the next request); or from a
-        `before_run` hook, for the run's first request. The load rides along with that request and never causes one: if a step with
-        tool calls ends the run instead (because a tool call needs approval or is deferred, or the run produces its
-        output), the load is discarded, and resuming the run doesn't run that tool again.
-        Durable execution engines run some tools in an
-        activity, step, or task, where it isn't supported; see
-        [Loading a capability from code](../capabilities/on-demand.md#loading-from-code).
+        `before_run` hook, for the run's first request. The load rides along with that request and never causes one: if
+        a step with tool calls ends the run instead (because a tool call needs approval or is deferred, or the run
+        produces its output), the load is discarded, and resuming the run doesn't run that tool again. Durable execution
+        engines run some tools in an activity, step, or task, where it isn't supported; see [Loading a capability from
+        code](../capabilities/on-demand.md#loading-from-code).
 
         Args:
             capability: The capability to load: its `id` in this run, or the capability instance itself.
@@ -1056,10 +1055,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
             call succeeds.
 
         Raises:
-            UserError: If the capability isn't registered in this run, if it's a non-deferred member of a
-                deferred group that isn't loaded yet (load the group instead), or if this context can't load
-                capabilities: where no model request follows (such as `after_model_request` on a final response, or `after_run`), from
-                an output tool, in a realtime session, or inside a durable execution activity, step, or task.
+            UserError: If the capability isn't registered in this run, if it's a non-deferred member of a deferred group
+                that isn't loaded yet (load the group instead), or if this context can't load capabilities: where no
+                model request follows (such as `after_model_request` on a final response, or `after_run`), from an
+                output tool, in a realtime session, or inside a durable execution activity, step, or task.
         """
         # Imported here: the loader module imports `RunContext`.
         from .toolsets._deferred_capability_loader import load_capability
