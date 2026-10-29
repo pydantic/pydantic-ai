@@ -884,7 +884,9 @@ name, checkout root, branch) for the workspace, so a browser can still group the
 conversation by repository after that folder is removed; the store saves it as given.
 
 `ConversationSummary.created_at` records when the conversation was first saved;
-later saves keep it, so a browser can list conversations in a stable order. A
+later saves keep it, so a browser can list conversations in a stable order:
+`listing(order_by='created_at')` pages by it, so using an old conversation again
+does not move it onto the first page. A
 conversation saved without it, by a version before the field existed, takes its
 last activity time at its next save.
 

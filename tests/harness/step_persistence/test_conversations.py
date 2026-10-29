@@ -163,6 +163,24 @@ async def test_creation_time_survives_later_saves(tmp_path: Path) -> None:
     assert (await store.get(conversation_id=first.id)).summary.created_at == first.created_at
 
 
+async def test_listing_pages_by_creation_when_asked(tmp_path: Path) -> None:
+    """With `order_by='created_at'`, using an old conversation again leaves the first page as it was."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    old = await store.save(summary=ConversationSummary(workspace='/a', title='Old'), messages=[])
+    legacy = await store.save(summary=ConversationSummary(workspace='/a', title='Legacy'), messages=[])
+    new = await store.save(summary=ConversationSummary(workspace='/a', title='New'), messages=[])
+    with closing(sqlite3.connect(store.database)) as conn, conn:
+        conn.execute(
+            "UPDATE conversations SET metadata = json_remove(metadata, '$.created_at') WHERE id = ?", (legacy.id,)
+        )
+    await store.save(summary=old, messages=[])
+    assert [e.id for e in await store.listing()] == [old.id, new.id, legacy.id]
+    assert [e.id for e in await store.listing(order_by='created_at')] == [new.id, legacy.id, old.id], (
+        'one saved without a creation time sorts by its last activity'
+    )
+    assert [e.id for e in await store.listing(order_by='created_at', limit=1)] == [new.id]
+
+
 async def test_metadata_saved_before_creation_time_existed_keeps_its_last_activity(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     saved = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
