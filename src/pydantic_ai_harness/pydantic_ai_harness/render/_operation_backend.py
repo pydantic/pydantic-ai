@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, TypeGuard, TypeVar
 
@@ -19,6 +20,7 @@ from pydantic_ai.durable_exec import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.workspaces._telemetry import workspace_telemetry_scope
 
 from ._compat import (
     BoundDurableOperation,
@@ -194,7 +196,7 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                     return permanent_error('invalid-request', exc)
 
                 try:
-                    with self._runtime.activate(context):
+                    with self._runtime.activate(context), _workspace_telemetry(params):
                         value = await operation.handler(params)
                 except RenderProtocolError as exc:
                     return permanent_error('invalid-result', exc)
@@ -279,3 +281,11 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
         for toolset in agent.toolsets:
             toolset.apply(visit)
         return found[0] if len(found) == 1 else None
+
+
+def _workspace_telemetry(params: object) -> AbstractContextManager[None]:
+    """Trace the task's workspace calls with the tracer its run context was rebuilt with, as its tools are."""
+    ctx = operation_run_context(params)
+    if ctx is None:
+        return nullcontext()
+    return workspace_telemetry_scope(ctx.tracer, include_content=ctx.trace_include_content)

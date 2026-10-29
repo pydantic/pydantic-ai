@@ -255,6 +255,36 @@ async def test_calls_from_a_task_the_tool_starts_are_traced(tmp_path: Path) -> N
     assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == ['workspace exists'] * 2
 
 
+async def test_a_run_started_inside_a_workspace_operation_traces_its_own(tmp_path: Path) -> None:
+    """A backend whose operation runs another agent, such as a summarizer, doesn't silence that agent's calls."""
+    instrumentation, exporter = instrumented(include_content=False)
+    sub_agent = file_agent(capabilities=[instrumentation])
+
+    class DelegatingBackend(LocalWorkspaceBackend):
+        async def exists(self, path: str) -> bool:
+            await sub_agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
+            return await super().exists(path)
+
+    agent = Agent(TestModel(call_tools=['look']), capabilities=[instrumentation])
+
+    @agent.tool
+    async def look(ctx: RunContext[Any]) -> bool:
+        return await ctx.workspace.exists('notes.txt')
+
+    await agent.run('go', workspace=DelegatingBackend(tmp_path))
+
+    assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == snapshot(
+        [
+            'workspace exists',
+            'workspace write_bytes',
+            'workspace read_bytes',
+            'workspace exists',
+            'workspace stat',
+            'workspace run',
+        ]
+    )
+
+
 class LazySandbox(RunOnlyWorkspaceBackend):
     """A command-only backend that creates its sandbox on first use, as the harness provider backends do."""
 

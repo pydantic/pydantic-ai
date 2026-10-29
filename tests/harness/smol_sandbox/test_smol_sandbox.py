@@ -12,11 +12,16 @@ from typing import Any, cast
 import anyio
 import pytest
 import smol
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.workspaces import (
@@ -363,6 +368,35 @@ async def test_failed_creation_can_retry(fake_smol: FakeSmol, working_dir: str) 
     fake_smol.create_error = None
     await backend.get_sandbox()
     assert backend.ref is not None
+
+
+async def test_a_failed_creation_span_names_the_vm(fake_smol: FakeSmol, working_dir: str) -> None:
+    """The backend drops the VM's ref when creating it fails, but the `workspace create` span keeps it."""
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    agent = Agent(
+        TestModel(call_tools=['look']),
+        capabilities=[
+            SmolSandbox(working_dir=working_dir),
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider)),
+        ],
+    )
+
+    @agent.tool
+    async def look(ctx: RunContext[Any]) -> str:
+        with pytest.raises(smol.SmolError, match='image pull failed'):
+            await ctx.workspace.exists('notes.txt')
+        assert ctx.workspace.ref is None
+        return 'failed'
+
+    fake_smol.create_error = smol.SmolError('SMOLVM_ERROR', 'image pull failed')
+    await agent.run('go')
+
+    [create] = [span for span in exporter.get_finished_spans() if span.name == 'workspace create']
+    assert create.status.status_code.name == 'ERROR'
+    assert (create.attributes or {})['pydantic_ai.workspace.provider'] == 'smol'
+    assert str((create.attributes or {})['pydantic_ai.workspace.id']).startswith('pydantic-ai-')
 
 
 @pytest.mark.parametrize(

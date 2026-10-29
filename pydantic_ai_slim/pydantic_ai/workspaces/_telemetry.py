@@ -29,6 +29,7 @@ __all__ = (
     'lifecycle_span',
     'operation_span',
     'publish_workspace_telemetry',
+    'workspace_telemetry_scope',
     'set_command',
     'set_content',
     'stop_span',
@@ -79,8 +80,24 @@ resolving a path through `Workspace(self)`, stay inside that span rather than ad
 
 
 def publish_workspace_telemetry(tracer: Tracer, *, include_content: bool) -> None:
-    """Trace workspace calls in the current context with `tracer`; a `NoOpTracer` turns tracing off."""
+    """Trace workspace calls in the current context with `tracer`; a `NoOpTracer` turns tracing off.
+
+    A run started inside a workspace operation, such as from a backend, traces its own operations again.
+    """
     _telemetry.set(None if isinstance(tracer, NoOpTracer) else _Telemetry(tracer, include_content))
+    _in_operation.set(False)
+
+
+@contextmanager
+def workspace_telemetry_scope(tracer: Tracer, *, include_content: bool) -> Generator[None]:
+    """Publish workspace telemetry for the block only, for a durable unit that may run in its caller's context."""
+    tokens = _telemetry.set(None), _in_operation.set(False)
+    try:
+        publish_workspace_telemetry(tracer, include_content=include_content)
+        yield
+    finally:
+        _telemetry.reset(tokens[0])
+        _in_operation.reset(tokens[1])
 
 
 def set_content(span: Span, key: str, value: AttributeValue) -> None:
@@ -146,6 +163,8 @@ def _span(
     with telemetry.tracer.start_as_current_span(
         f'workspace {operation}', record_exception=False, set_status_on_exception=False
     ) as span:
+        # A failed create may drop the ref it had allocated; the span still names that sandbox.
+        entry_ref = _ref(workspace)
         token = _in_operation.set(True)
         try:
             yield span
@@ -158,7 +177,7 @@ def _span(
         finally:
             _in_operation.reset(token)
             # A sandbox this operation created has its ref only now.
-            if (ref := _ref(workspace)) is not None:
+            if (ref := _ref(workspace) or entry_ref) is not None:
                 span.set_attribute('pydantic_ai.workspace.provider', ref.provider)
                 span.set_attribute('pydantic_ai.workspace.id', ref.id)
 
