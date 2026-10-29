@@ -1,14 +1,16 @@
 ---
-description: "Debug a Pydantic AI agent that misbehaves without an error: read what the model saw in a trace, where the cause usually is, and which failures are silent. Plus fixes for errors users report: Jupyter event loops, API keys and extras, V1 to V2 upgrades, Bedrock model routes, provider HTTP errors, usage limits and retries, Temporal toolset IDs, and errors fixed in past versions."
+description: "Debug a Pydantic AI agent that raises an error or does the wrong thing: read what the model saw in a trace, where the cause usually is, and which failures are silent. Plus fixes for the errors users report most: Jupyter event loops, API keys and extras, V1 to V2 upgrades, Bedrock model routes, provider HTTP errors, usage limits and retries, Temporal toolset IDs, and errors fixed in past versions."
 ---
 
 # Troubleshooting
 
-This page starts with how to debug an agent that does the wrong thing without raising an error, then lists errors users have reported, with their fixes. If your problem isn't covered here or elsewhere in the documentation, ask in the [Pydantic Slack](help.md) or create an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues).
+This page starts with how to debug an agent run, whether it raised an error or finished but did the wrong thing, then lists the errors users report most, each headed by the exact error text, with its fix. If your problem isn't covered here or elsewhere in the documentation, ask in the [Pydantic Slack](help.md) or create an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues).
 
-## Debugging an agent that misbehaves
+## Debugging an agent
 
-Most agent problems don't raise an error. The run finishes, but the agent called the wrong tool, ignored an instruction, looped, or gave a worse answer than you expected. The cause is almost always in what the model was sent, so start from that rather than from your code. The same process works when you hand the problem to a coding agent: "find out why my agent does X" goes much faster when the agent can read the run.
+If the run raised an error, search this page for its message first: the entries below are headed by the exact error text. If it isn't listed, the steps below show which model request or tool call failed and what led up to it.
+
+Many agent problems don't raise an error at all. The run finishes, but the agent called the wrong tool, ignored an instruction, looped, or gave a worse answer than you expected. The cause is almost always in what the model was sent, so start from that rather than from your code. The same process works when you hand the problem to a coding agent: "find out why my agent does X" goes much faster when the agent can read the run.
 
 ### Look at what the model saw
 
