@@ -5,7 +5,7 @@ on the sandbox's display. Re-check these before changing the mapping, by running
 `tests/harness/daytona_sandbox/test_daytona_live.py`:
 
 - `computer_use.start()` returns once the display answers, and starting a running desktop is harmless.
-- `VNC_RESOLUTION` set on a new sandbox, such as `1280x800`, is the display's size; without it, 1024x768.
+- `VNC_RESOLUTION` set on a new sandbox, such as `1280x800`, is the display's size; without it, or with a smaller size such as `640x400`, 1024x768 (checked 2026-10-29).
 - Screenshots are PNGs at the display's size; a region screenshot is the region at full resolution.
 - `mouse.scroll`'s amount is wheel clicks, and `left`/`right` send X buttons 6 and 7.
 - Modifiers given to `click`, `scroll` and `press` are held around the event; `cmd` is `Super_L`.
