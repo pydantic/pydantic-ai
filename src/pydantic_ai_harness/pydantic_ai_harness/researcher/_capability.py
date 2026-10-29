@@ -1,6 +1,7 @@
 """Complete research-agent harness assembled from regular capabilities."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, WebFetch, WebSearch
@@ -33,6 +34,7 @@ def _researcher(store: OverflowStore | WorkspaceStore | None = None) -> SubAgent
     return SubAgent(agent)
 
 
+@dataclass(init=False, repr=False, eq=False)
 class Researcher(CombinedCapability[AgentDepsT]):
     """A complete research-agent harness built as a regular combined capability.
 
