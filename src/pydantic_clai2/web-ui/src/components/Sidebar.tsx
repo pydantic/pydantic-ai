@@ -179,6 +179,14 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   useEffect(() => keep('clai-sidebar-view', view), [view])
   useEffect(() => keep('clai-sidebar-collapsed', collapsed), [collapsed])
 
+  /** The session picked from Attention, which stays listed there while it opens and shows. */
+  const pickedHere = useRef<string | null>(null)
+  // What was waiting to open or stay listed belongs to the view the user has left.
+  useEffect(() => {
+    openFirst.current = null
+    pickedHere.current = null
+  }, [view])
+
   const pick = useCallback((next: View) => {
     setView((current) => {
       if (current !== next) previous.current = current
@@ -287,7 +295,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   )
   // The row picked from Attention stays there while it opens and shows, though it no longer needs you.
   const shownSections = useMemo(
-    () => sections(rows, view, (row) => row.id === selected || needsYou(row)),
+    () => sections(rows, view, (row) => (row.id === selected && row.id === pickedHere.current) || needsYou(row)),
     [rows, view, selected, needsYou],
   )
   const attention = useMemo(() => rows.filter((row) => !row.archived && needsYou(row)).length, [rows, needsYou])
@@ -319,6 +327,13 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   // A search lists only a group's matching sessions, so it cannot archive all of them.
   const archiveAll = (found: Row[]) =>
     act(() => api.archiveAll(found.filter((row) => !row.archived && archivable(row)).map((row) => row.id)))
+  /** Why archiving these at once is off: a search lists only some of them, or none can be archived. */
+  const bulkRefusal = (found: Row[]): string | null =>
+    query
+      ? 'Clear the search to archive them all'
+      : found.some((row) => !row.archived && archivable(row))
+        ? null
+        : 'No session here can be archived'
   const markRead = (found: Row[]) => {
     setMenu(null)
     setSeen((current) => markSeen(current, found))
@@ -341,7 +356,10 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     const current = session.id === selected
     const working = WORKING.includes(state)
     const chip = section.kind === 'project' ? (section.branches ? session.branch : null) : session.projectName
-    const siblings = section.rows.filter((other) => other.branch === session.branch && !other.archived)
+    // Branch labels are unique only within a project, and Removed worktrees spans every project.
+    const siblings = section.rows.filter(
+      (other) => other.project === session.project && other.branch === session.branch && !other.archived,
+    )
     const begun = started.current.get(session.id)
     const time = working && begun !== undefined ? short(Math.max(0, (now - begun) / 1000)) : ago(session.updated_at)
     return (
@@ -372,7 +390,10 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         ) : (
           <button
             className="session-main"
-            onClick={() => onView(session)}
+            onClick={() => {
+              pickedHere.current = view === 'attention' ? session.id : null
+              onView(session)
+            }}
             title={`${session.title}\n${session.workspace}`}
             aria-current={current ? 'true' : undefined}
           >
@@ -423,9 +444,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                 </button>
                 {section.branches && siblings.length > 1 && (
                   <button
-                    disabled={query !== ''}
+                    disabled={bulkRefusal(siblings) !== null}
                     onClick={() => void archiveAll(siblings)}
-                    title={query ? 'Clear the search to archive the whole branch' : 'Archive every session of this branch you can'}
+                    title={bulkRefusal(siblings) ?? 'Archive every session of this branch you can'}
                   >
                     Archive all in {session.branch}
                   </button>
@@ -484,9 +505,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         {menu === key && (
           <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
             <button
-              disabled={query !== ''}
+              disabled={bulkRefusal(section.rows) !== null}
               onClick={() => void archiveAll(section.rows)}
-              title={query ? 'Clear the search to archive them all' : 'Archive every session here you can'}
+              title={bulkRefusal(section.rows) ?? 'Archive every session here you can'}
             >
               Archive chats
             </button>

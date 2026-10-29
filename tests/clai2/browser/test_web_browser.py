@@ -397,7 +397,18 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
     ]
 
     async def sessions(route: Route) -> None:
-        await route.fulfill(json=[{'key': 'repo', 'name': 'repo', 'current': True, 'worktrees': worktrees}])
+        # Another project's removed worktree has the same label; archiving one branch leaves it alone.
+        other_gone = {
+            'root': '/other/gone',
+            'label': 'gone',
+            'current': False,
+            'missing': True,
+            'sessions': [sidebar_session('o1', 'Other gone')],
+        }
+        other_project = {'key': 'other', 'name': 'other', 'current': False, 'worktrees': [other_gone]}
+        await route.fulfill(
+            json=[{'key': 'repo', 'name': 'repo', 'current': True, 'worktrees': worktrees}, other_project]
+        )
 
     async def archive(route: Route) -> None:
         await route.fulfill(status=204)
@@ -408,7 +419,7 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
     sidebar = page.locator('.sidebar')
     await sidebar.get_by_role('button', name='Projects', exact=True).click()
     await expect(sidebar.get_by_text('Live work', exact=True)).to_be_visible()
-    fold = sidebar.get_by_role('button', name='Removed worktrees (2)')
+    fold = sidebar.get_by_role('button', name='Removed worktrees (3)')
     await expect(fold).to_be_visible()
     await expect(sidebar.get_by_text('Gone one', exact=True)).to_have_count(0)
     await fold.click()
