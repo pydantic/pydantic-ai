@@ -386,7 +386,8 @@ def _interrupt_reads(event_stream: EventStream[Any]) -> None:
     """
     with suppress(Exception):
         # botocore's `urllib3` response, whose connection is `None` once the stream was read through and released.
-        event_stream._raw_stream.connection.sock.shutdown(socket.SHUT_RDWR)  # pyright: ignore[reportPrivateUsage]
+        raw_stream: Any = vars(event_stream)['_raw_stream']
+        raw_stream.connection.sock.shutdown(socket.SHUT_RDWR)
 
 
 def _close_abandoned_result(result: Mapping[str, Any]) -> None:

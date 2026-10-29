@@ -12,7 +12,7 @@ import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import anyio
 import anyio.from_thread
@@ -22,8 +22,7 @@ import pytest
 from pydantic_ai import ModelRequest
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import ModelRequestTimeout
-from pydantic_ai.profiles import DEFAULT_PROFILE
-from pydantic_ai.providers import Provider
+from pydantic_ai.settings import ModelSettings
 
 from ..conftest import try_import
 
@@ -31,6 +30,7 @@ with try_import() as imports_successful:
     from botocore.hooks import HierarchicalEmitter
 
     from pydantic_ai.models.bedrock import BedrockConverseModel
+    from pydantic_ai.providers.bedrock import BedrockProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
 
@@ -55,8 +55,10 @@ class _BlockingEventStream:
     closed: threading.Event = field(default_factory=threading.Event)
 
     def __post_init__(self) -> None:
-        socket = SimpleNamespace(shutdown=lambda how: self.client.release.set())
-        self._raw_stream = SimpleNamespace(connection=SimpleNamespace(sock=socket))
+        def shutdown(how: int) -> None:
+            self.client.release.set()
+
+        self._raw_stream = SimpleNamespace(connection=SimpleNamespace(sock=SimpleNamespace(shutdown=shutdown)))
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
         self.client.block()
@@ -70,10 +72,11 @@ class _BlockingEventStream:
 class _BlockingBedrockClient:
     """A Bedrock client whose call, or its stream's first read, blocks until released."""
 
-    def __init__(self, blocks: Blocks, on_blocked: Callable[[], None] | None = None) -> None:
+    def __init__(self, blocks: Blocks) -> None:
         self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
         self.blocks = blocks
-        self.on_blocked = on_blocked
+        self.on_blocked: Callable[[], None] | None = None
+        """Called on the event loop once the call or read is blocked, to cancel the request from there."""
         self.release = threading.Event()
         self.unblocked = threading.Event()
         self.stream = _BlockingEventStream(self)
@@ -94,30 +97,13 @@ class _BlockingBedrockClient:
         return {'stream': self.stream, 'ResponseMetadata': {}}
 
 
-class _BlockingBedrockProvider(Provider[Any]):
-    def __init__(self, client: _BlockingBedrockClient) -> None:
-        self._client = client
-
-    @property
-    def name(self) -> str:
-        return 'bedrock'
-
-    @property
-    def base_url(self) -> str:
-        return 'https://bedrock.stub'
-
-    @property
-    def client(self) -> _BlockingBedrockClient:
-        return self._client
-
-    @staticmethod
-    def model_profile(model_name: str):
-        return DEFAULT_PROFILE
+def _model(client: _BlockingBedrockClient) -> BedrockConverseModel:
+    return BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=BedrockProvider(bedrock_client=cast(Any, client)))
 
 
 async def _request(model: BedrockConverseModel, blocks: Blocks, *, request_timeout: float | None = None) -> None:
     messages = [ModelRequest.user_text_prompt('hi')]
-    settings = {'request_timeout': request_timeout} if request_timeout is not None else None
+    settings = ModelSettings(request_timeout=request_timeout) if request_timeout is not None else None
     if blocks == 'converse':
         await model_request(model, messages, model_settings=settings)
     else:
@@ -146,7 +132,7 @@ async def _assert_cleaned_up(client: _BlockingBedrockClient, blocks: Blocks) -> 
 async def test_request_timeout_ends_a_blocked_request(allow_model_requests: None, blocks: Blocks):
     """A `request_timeout` raises `ModelRequestTimeout` while the blocked thread is still waiting."""
     client = _BlockingBedrockClient(blocks)
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=_BlockingBedrockProvider(client))
+    model = _model(client)
     with pytest.raises(ModelRequestTimeout):
         await _request(model, blocks, request_timeout=SHORT_TIMEOUT)
     _assert_ended_while_blocked(client, blocks)
@@ -156,9 +142,10 @@ async def test_request_timeout_ends_a_blocked_request(allow_model_requests: None
 @pytest.mark.parametrize('blocks', ['converse', 'converse_stream', 'stream_read'])
 async def test_cancellation_ends_a_blocked_request(allow_model_requests: None, blocks: Blocks):
     """Cancelling a request ends it while the blocked thread is still waiting."""
+    client = _BlockingBedrockClient(blocks)
+    model = _model(client)
     with anyio.CancelScope() as scope:
-        client = _BlockingBedrockClient(blocks, on_blocked=scope.cancel)
-        model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=_BlockingBedrockProvider(client))
+        client.on_blocked = scope.cancel
         await _request(model, blocks)
     assert scope.cancelled_caught
     _assert_ended_while_blocked(client, blocks)
