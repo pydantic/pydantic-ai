@@ -5044,3 +5044,16 @@ async def test_a_failed_pinned_continuation_job_is_cancelled_once_when_the_chain
         else:
             await agent.run(message_history=history)
     assert cancelled == [('primary', 'job-1')]
+
+
+async def test_fallback_pin_joins_framework_metadata_the_response_already_has() -> None:
+    """A suspended response that already carries `__pydantic_ai__` metadata keeps it next to `FallbackModel`'s pin."""
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('paused')], state='suspended', metadata={'__pydantic_ai__': {'other': 'kept'}}
+        )
+
+    model = FallbackModel(FunctionModel(primary, model_name='primary'), FunctionModel(primary, model_name='backup'))
+    response = await model.request([ModelRequest.user_text_prompt('x')], None, ModelRequestParameters())
+    assert response.metadata == {'__pydantic_ai__': {'other': 'kept', 'fallback_model_id': 'function:primary'}}

@@ -2139,9 +2139,10 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
             model_name=model_name,
             profile=model.profile if isinstance(model, Model) else None,
         )
-        if isinstance(model, Model):
-            # Named after the provider it stands in for, so the `model_id` responses record is the one the user would see.
-            mocked_model._system = model.system  # pyright: ignore[reportPrivateUsage]
+        # Named after the provider it stands in for, so the `model_id` responses record is the one the user would see.
+        # A model name was inferred into a model above.
+        assert isinstance(model, Model)
+        mocked_model._system = model.system  # pyright: ignore[reportPrivateUsage]
         return mocked_model
 
 
