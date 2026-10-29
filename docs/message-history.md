@@ -837,6 +837,8 @@ Some providers accept data they can't use: OpenAI ignores encrypted reasoning fr
 
 [`Model.accepts_stateless_artifacts()`][pydantic_ai.models.Model.accepts_stateless_artifacts] tells you whether a model would send a part's data back. A provider subclass that only changes its name, such as one that signs in differently to the same API, keeps its parent's canonical system, except for subclasses of [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], which are assumed to talk to another service. To declare your own, override `canonical_system` or `compatible_systems` on your provider, or pass them to [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider].
 
+The canonical system names the API family a provider speaks, not only whose signed data it verifies: code that decides by API family rather than by provider reads it too, such as the [Pydantic AI Harness `Advisor`](harness/advisor.md), which uses it to tell whether an executor takes Anthropic or OpenRouter advisor model IDs.
+
 ## Sharing messages between agents
 
 The same `message_history` parameter also works when the next run uses a
