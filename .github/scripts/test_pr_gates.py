@@ -254,6 +254,7 @@ def test_review_failure_reports_distinguish_cancellation_from_failure():
 def test_observer_cannot_choose_the_status_target():
     scenarios: list[tuple[str, str]] = [
         ('forged-title', 'active'),
+        ('review-comment', 'active'),
         ('empty-event-prs', 'active'),
         ('producer', 'active'),
         ('native', 'active'),
@@ -264,6 +265,10 @@ def test_observer_cannot_choose_the_status_target():
         ('ambiguous', 'error'),
         ('closed-association', 'error'),
         ('wrong-source', 'error'),
+        ('wrong-path', 'error'),
+        ('foreign-workflow-repository', 'error'),
+        ('observer-bot-event', 'error'),
+        ('producer-review-event', 'error'),
         ('api-error', 'error'),
         ('moved-while-queued', 'stale'),
         ('repository-changed', 'stale'),
@@ -283,7 +288,7 @@ const core = {setOutput: (name, value) => {outputs[name] = value;}};
 core.notice = () => {};
 const source = {number: 8, state: 'open', head: {sha: data.head, repo: {id: 888}}};
 const serverRun = {
-  name: 'PR Review Gates Events', event: 'pull_request_review',
+  name: 'PR Review Gates Events #7 @ ' + data.otherHead, event: 'pull_request_review',
   path: '.github/workflows/pr-review-gates-events.yml',
   repository: {full_name: 'pydantic/pydantic-ai'},
   head_sha: data.head, head_branch: 'attacker-branch',
@@ -303,10 +308,15 @@ if (data.scenario === 'moved-while-queued') live.head.sha = data.otherHead;
 if (data.scenario === 'repository-changed') live.head.repo.id = 777;
 if (data.scenario === 'closed-while-queued') live.state = 'closed';
 if (data.scenario === 'wrong-source') serverRun.event = 'workflow_dispatch';
-if (data.scenario === 'producer') {
+if (data.scenario === 'review-comment') serverRun.event = 'pull_request_review_comment';
+if (data.scenario === 'wrong-path') serverRun.path = '.github/workflows/untrusted.yml';
+if (data.scenario === 'foreign-workflow-repository') serverRun.repository.full_name = 'attacker/pydantic-ai';
+if (data.scenario === 'observer-bot-event') serverRun.event = 'pull_request_target';
+if (['producer', 'producer-review-event'].includes(data.scenario)) {
   serverRun.name = 'PR Bots'; serverRun.path = '.github/workflows/bots.yml';
   serverRun.event = 'pull_request_target';
 }
+if (data.scenario === 'producer-review-event') serverRun.event = 'pull_request_review';
 const context = {
   eventName: 'workflow_run', serverUrl: 'https://github.com', runId: 1,
   repo: {owner: 'pydantic', repo: 'pydantic-ai'},
