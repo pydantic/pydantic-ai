@@ -874,38 +874,52 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return [] if submitter is None else submitter.tool_defs
 
     async def submit_output(self, tool_name: str, args: dict[str, Any]) -> None:
-        """Submit the agent run's output from inside a tool, as if the model had called that output tool.
+        """Submit the agent run's output, as if the model had called that output tool.
 
         `args` goes through the same validation, output hooks, output functions and output validators as
-        output the model produces in the run's output mode. When it's accepted, the calling tool still
+        output the model produces in the run's output mode.
+
+        From a tool, or a capability's `before_tool_execute`, `after_tool_execute` or `wrap_tool_execute`
+        hook for its call, the submission belongs to that tool call. When it's accepted, the tool still
         returns as usual and its result is recorded in message history, and its call then counts as the
         final output tool call of the model response it belongs to: the run ends after this step's tool
         calls, the same way [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] decides for an output
         tool call at that position. If the tool fails or asks for a retry after submitting, the submission
-        is dropped.
+        is dropped. A rejected submission uses up one output retry, like a rejected output from the model,
+        and raises [`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError] carrying the feedback. Let it
+        propagate, re-raising it if the tool catches exceptions broadly: the calling tool call is then
+        answered with that feedback, without counting against the tool's own retries. A tool that swallows
+        it returns as if it succeeded, so the model never sees the feedback.
 
-        A rejected submission uses up one output retry, like a rejected output from the model, and raises
-        [`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError] carrying the feedback. Let it propagate,
-        re-raising it if the tool catches exceptions broadly: the calling tool call is then answered with that
-        feedback, without counting against the tool's own retries. A tool that swallows it returns as if it
-        succeeded, so the model never sees the feedback.
+        From anywhere else in the run, such as another capability hook, the run ends with an accepted
+        submission at the next point it would otherwise continue: before the next model request is sent,
+        in which case that request isn't sent, or, from `after_model_request`, as an output tool call at
+        the start of the model response, so `end_strategy` decides what happens to its tool calls. A
+        rejected submission raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] carrying the feedback,
+        and doesn't use up an output retry, as there's no tool call to answer: catch it to try again, or
+        let it propagate to have the hook's own `ModelRetry` behavior apply, such as a model retry from a
+        model request hook. A run can then submit again, but only one submission outside a tool call can
+        be accepted.
 
         Args:
             tool_name: The name of one of [`output_tool_defs`][pydantic_ai.tools.RunContext.output_tool_defs].
             args: The arguments, matching that definition's `parameters_json_schema`.
 
         Raises:
-            UserError: If this isn't called from a tool call during an agent run in the same process as
-                the run itself (so not inside a Temporal activity), if it's called from a durable step or task
-                (such as a DBOS step or Prefect task, including one the tool's own code runs), or if the tool call already submitted an output.
-            ToolRetryError: If the submission was rejected, carrying the feedback for the model.
-            UnexpectedModelBehavior: If the submission was rejected and the output retries ran out.
+            UserError: If this isn't called during an agent run in the same process as the run itself (so not
+                inside a Temporal activity), if it's called from a durable step or task (such as a DBOS step or
+                Prefect task, including one the tool's own code runs), if it's called while output is being
+                validated or processed (from an output function, output validator or output hook), if the tool
+                call or, outside a tool call, the run already submitted an output, or if the run already has its
+                final result.
+            ToolRetryError: If a submission from a tool call was rejected, carrying the feedback for the model.
+            UnexpectedModelBehavior: If a submission from a tool call was rejected and the output retries ran out.
+            ModelRetry: If a submission from outside a tool call was rejected, carrying the feedback.
         """
         submitter = self._live_output_submitter
-        if submitter is None or self.tool_call_id is None:
+        if submitter is None:
             raise UserError(
-                '`submit_output` can only be called from a tool call during an agent run, '
-                'in the same process as the run itself.'
+                '`submit_output` can only be called during an agent run, in the same process as the run itself.'
             )
         await submitter.submit(self, tool_name, args)
 

@@ -3,7 +3,9 @@ from __future__ import annotations as _annotations
 import inspect
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Container, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Container, Generator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import partial
 from types import NoneType
@@ -217,6 +219,23 @@ def make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[A
     )
 
 
+_IN_OUTPUT_PIPELINE: ContextVar[bool] = ContextVar('pydantic_ai.output.in_output_pipeline', default=False)
+
+
+def in_output_pipeline() -> bool:
+    """Whether the current task is validating or processing output, in output hooks, functions or validators."""
+    return _IN_OUTPUT_PIPELINE.get()
+
+
+@contextmanager
+def output_pipeline_scope() -> Generator[None]:
+    token = _IN_OUTPUT_PIPELINE.set(True)
+    try:
+        yield
+    finally:
+        _IN_OUTPUT_PIPELINE.reset(token)
+
+
 async def run_output_validate_hooks(
     capability: AbstractCapability[AgentDepsT],
     *,
@@ -251,9 +270,10 @@ async def run_output_validate_hooks(
         return await capability.after_output_validate(run_context, output_context=output_context, output=validated)
 
     try:
-        return await capability.wrap_output_validate(
-            run_context, output_context=output_context, output=output, handler=lifecycle
-        )
+        with output_pipeline_scope():
+            return await capability.wrap_output_validate(
+                run_context, output_context=output_context, output=output, handler=lifecycle
+            )
     except (ValidationError, ModelRetry) as e:
         if wrap_validation_errors:
             raise make_retry_signal(e, run_context) from e
@@ -298,9 +318,10 @@ async def run_output_process_hooks(
         return await capability.after_output_process(run_context, output_context=output_context, output=result)
 
     try:
-        return await capability.wrap_output_process(
-            run_context, output_context=output_context, output=output, handler=lifecycle
-        )
+        with output_pipeline_scope():
+            return await capability.wrap_output_process(
+                run_context, output_context=output_context, output=output, handler=lifecycle
+            )
     except ToolRetryError:
         raise  # Already wrapped, propagate
     except (ValidationError, ModelRetry) as e:
