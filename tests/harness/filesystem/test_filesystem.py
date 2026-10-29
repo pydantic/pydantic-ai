@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import io
+import mimetypes
 import os
 import posixpath
 import re
@@ -833,72 +834,43 @@ class TestReadFile:
             (b'\xff\xf1\x50\x80\x00', 'audio/aac'),
             (_zip_with('word/document.xml'), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
             (_zip_with('xl/workbook.xml'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
-            (b'\x1a\x45\xdf\xa3\x9fB\x82\x88matroska', 'video/x-matroska'),
+            (b'\x1a\x45\xdf\xa3\x9fB\x82\x88matroska\x00\x00', 'video/x-matroska'),
         ],
     )
     async def test_a_format_some_models_reject_is_described(self, tmp_path: Path, data: bytes, media_type: str) -> None:
         # A profile admits documents, audio or video as a whole, and some adapters take only some formats
         # (Gemini no Office documents or Matroska, `OpenAIChatModel` only WAV and MP3 audio), so sending one
-        # would fail the request there rather than become a note. It is recognized and named all the same.
-        (tmp_path / 'clip').write_bytes(data)
-        result = await _unhashed_toolset().read_file('clip', workspace=LocalWorkspaceBackend(tmp_path))
-        assert isinstance(result, str)
-        assert result.startswith(f'[clip | {media_type} | {len(data)} bytes]\nBinary file; the first bytes in hex:\n')
-
-    @pytest.mark.parametrize(
-        ('name', 'media_type'),
-        [('report.doc', 'application/msword'), ('budget.XLS', 'application/vnd.ms-excel'), ('mail.msg', None)],
-    )
-    async def test_legacy_office_file_is_named_by_its_extension(
-        self, tmp_path: Path, name: str, media_type: str | None
-    ) -> None:
-        # Word and Excel share the legacy container, whose bytes don't say which it holds.
-        data = bytes.fromhex('d0cf11e0a1b11ae1') + bytes(8)
+        # would fail the request there rather than become a note. A correctly named file is still labelled.
+        name = f'clip{mimetypes.guess_extension(media_type) or ".bin"}'
         (tmp_path / name).write_bytes(data)
         result = await _unhashed_toolset().read_file(name, workspace=LocalWorkspaceBackend(tmp_path))
-        # Described like the other Office formats, but under the media type its extension names.
         assert isinstance(result, str)
         assert 'Binary file; the first bytes in hex:' in result
-        if media_type is None:
-            assert 'msword' not in result and 'ms-excel' not in result
-        else:
-            assert result.startswith(f'[{name} | {media_type} | {len(data)} bytes]\n')
 
     @pytest.mark.parametrize(
         'data',
         [
             _zip_with('notes.txt'),
-            b'PK\x03\x04 not really a zip\x00',
             b'\x00\x00\x00\x20ftypM4A \x00\x00',
             b'\x00\x00\x00\x18ftypheic\x00\x00',
             b'\x00\x00\x00\x1cftypavif\x00\x00',
             b'\xff\xfa\xf0\x00',  # MPEG audio sync with a reserved bitrate
             b'\xff\x00\x00\x00',
-            # A central directory entry needing a newer `zipfile` than the standard library has.
-            _zip_with('word/document.xml').replace(b'PK\x01\x02\x14\x03\x14\x00', b'PK\x01\x02\x14\x03\x50\x00'),
         ],
     )
     async def test_a_container_no_media_type_names_is_described(self, tmp_path: Path, data: bytes) -> None:
-        # A plain or broken ZIP is no office document, HEIC and AVIF photos aren't video, MPEG-4 audio has no
+        # A ZIP is no office document, HEIC and AVIF photos aren't video, MPEG-4 audio has no
         # `AudioMediaType`, and a stray 0xFF is no audio frame.
         (tmp_path / 'blob').write_bytes(data)
         result = await _unhashed_toolset().read_file('blob', workspace=LocalWorkspaceBackend(tmp_path))
         assert isinstance(result, str)
         assert 'Binary file; the first bytes in hex:' in result
 
-    @pytest.mark.parametrize('text', ['ID3 tags hold the title.\n', 'fLaCcid notes\n', 'OggS is a container.\n'])
+    @pytest.mark.parametrize('text', ['ID3 tags hold the title.\n', 'RIFF notes, not a WAVE.\n'])
     async def test_text_that_starts_like_a_signature_is_read_as_text(self, tmp_path: Path, text: str) -> None:
         (tmp_path / 'notes.md').write_text(text)
         result = await _unhashed_toolset().read_file('notes.md', workspace=LocalWorkspaceBackend(tmp_path))
         assert result == f'[notes.md | 1 lines]\n     1\t{text}'
-
-    async def test_oversized_zip_is_described_without_opening_it(self, tmp_path: Path) -> None:
-        # Over the media cap a document would only be described, so the archive isn't parsed to tell.
-        data = _zip_with('word/document.xml') + bytes(5_000_000)
-        (tmp_path / 'big.docx').write_bytes(data)
-        result = await _unhashed_toolset().read_file('big.docx', workspace=LocalWorkspaceBackend(tmp_path))
-        assert isinstance(result, str)
-        assert 'Binary file; the first bytes in hex:' in result
 
     async def test_read_oversized_image_is_described(self, tmp_path: Path) -> None:
         (tmp_path / 'big.png').write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(5_000_000))

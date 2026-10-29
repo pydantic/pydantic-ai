@@ -40,7 +40,6 @@ from pydantic_ai_harness.filesystem._access import AccessPatterns
 from pydantic_ai_harness.filesystem._changes import Change, split_lines
 from pydantic_ai_harness.filesystem._command_search import run_posix_search
 from pydantic_ai_harness.filesystem._content import (
-    DESCRIBED_MEDIA_TYPES,
     MAX_MEDIA_BYTES,
     NOTICE_CHARS,
     Replacement,
@@ -738,7 +737,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     async def _read_file_tool(
         self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 0, limit: int | None = None
     ) -> str | list[str | BinaryContent]:
-        """Read a text file with line numbers, or view an image, PDF, document, audio or video file.
+        """Read a text file with line numbers, or view an image, PDF, WAV or MP3 audio file, or video.
 
         Args:
             ctx: The current agent run context.
@@ -747,9 +746,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             limit: Maximum number of lines to return; defaults to, and is capped at, the configured read limit.
 
         Returns:
-            File content with line numbers, plus metadata header. An image, PDF,
-            document, audio or video file is returned as the file itself; other binary files as their size,
-            media type and leading bytes in hex.
+            File content with line numbers, plus metadata header. An image, PDF, WAV or
+            MP3 audio file, or video is returned as the file itself; other binary files as
+            their size, media type and leading bytes in hex.
         """
         return await self._read_file(
             await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, offset=offset, limit=limit
@@ -784,7 +783,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if len(raw) > _MAX_READ_FILE_BYTES:
             return self._too_large_to_read(path, len(raw))
         content_hash = bytes_hash(raw)
-        media_type = sniff_media_type(raw, path)
+        media_type = sniff_media_type(raw)
         if media_type is not None or is_binary(raw):
             if ctx is not None:
                 await ctx.emit(FileReadEvent(**self._event_location(scope, resolved), content_hash=content_hash))
@@ -807,7 +806,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         hash_suffix = f' | hash:{content_hash}' if self._content_hashes else ''
         shown_type = media_type or mimetypes.guess_type(path)[0] or 'application/octet-stream'
         header = f'[{self._path_label(path)} | {shown_type} | {len(raw)} bytes{hash_suffix}]\n'
-        if media_type is None or media_type in DESCRIBED_MEDIA_TYPES:
+        if media_type is None:
             intro = 'Binary file; the first bytes in hex:\n'
             return header + intro + hex_preview(raw, self._body_budget(header + intro))
         if len(raw) <= MAX_MEDIA_BYTES:

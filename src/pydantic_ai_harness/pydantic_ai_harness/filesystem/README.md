@@ -335,8 +335,7 @@ applies the same rule to absolute symlink targets.
   profile's file-input flags say, the file is replaced by a note naming it, or
   described first by [`FileUnderstanding`](https://pydantic.dev/docs/ai/capabilities/file-understanding/) when that is on the agent
   ([input support by model](https://pydantic.dev/docs/ai/core-concepts/input/)). Word and Excel documents, other audio (OGG,
-  FLAC, AIFF, AAC) and Matroska video are recognized but described rather than
-  sent: a profile says whether a model takes documents, audio or video, not which
+  FLAC, AIFF, AAC) and Matroska video stay described rather than sent: a profile says whether a model takes documents, audio or video, not which
   formats, and some models that take the kind reject these formats (Gemini takes
   no Office documents or Matroska, OpenAI Chat Completions only WAV and MP3
   audio), which would fail the request rather than become a note. A file over 5

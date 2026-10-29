@@ -170,8 +170,9 @@ as under Coder.
 WAV or MP3 audio file, or video (MP4, QuickTime, WebM, FLV, MPEG, WMV, 3GP), detected from its leading
 bytes, not its extension. A model whose profile says it can't take that kind of file gets a note in its
 place, or a description when `FileUnderstanding` is on the agent. Word and Excel documents, other audio
-and Matroska are recognized but described, since some models that take the kind reject the format. Any other binary file gets a text description (size, media type
-and the first 64 bytes in hex); text files come back as a string.
+and Matroska stay described, since some models that take the kind reject the format. Any other binary
+file gets a text description (size, media type and the first 64 bytes in hex); text files come back as a
+string.
 A file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
 
 `read_file` has the tool kind `READ_FILE_KIND` (`file_system.read_file`). `ToolOutputLimits`'
