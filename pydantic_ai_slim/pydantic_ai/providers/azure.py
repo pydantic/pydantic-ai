@@ -10,14 +10,18 @@ from pydantic_ai._json_schema import (
     JsonSchemaTransformerWithOutputOverride,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    _is_computer_use_model,  # pyright: ignore[reportPrivateUsage]
+    openai_model_profile,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.realtime import RealtimeModelProfile
@@ -159,9 +163,7 @@ class AzureProvider(_OpenAISDKProvider):
             # https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/computer-use
             base = merge_profile(
                 base,
-                OpenAIModelProfile(
-                    openai_supports_computer_tool=ToolSearchTool in base.get('supported_native_tools', ())
-                ),
+                OpenAIModelProfile(openai_supports_computer_tool=_is_computer_use_model(base)),
             )
 
         # Azure Chat Completions API doesn't support document input.
