@@ -25,7 +25,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
-from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
@@ -492,9 +492,37 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
 
 
+def _join_text_content_parts(content: object) -> object:
+    """Join a list of content parts into the string the Chat Completions API specifies, keeping only their text.
+
+    Some OpenAI-compatible servers (Mistral models behind a vLLM-style endpoint, for one) return `content` as a
+    list of parts like `[{'type': 'text', 'text': '...'}]`, especially when the answer carries references. Anything
+    that isn't a list is returned unchanged; a list with no text becomes `None`.
+    """
+    if not isinstance(content, list):
+        return content
+    texts: list[str] = []
+    for part in cast(list[object], content):
+        if isinstance(part, str):
+            texts.append(part)
+        elif _utils.is_str_dict(part) and part.get('type') == 'text' and isinstance(text := part.get('text'), str):
+            texts.append(text)
+    return ''.join(texts) or None
+
+
+class _ChatCompletionMessage(chat.ChatCompletionMessage):
+    @field_validator('content', mode='before')
+    @classmethod
+    def _join_content_parts(cls, value: object) -> object:
+        return _join_text_content_parts(value)
+
+
 class _ChatCompletionChoice(chat_completion.Choice):
     finish_reason: Annotated[str, Field(min_length=1)]  # type: ignore[reportIncompatibleVariableOverride]
     """OpenAI-compatible providers can return arbitrary `finish_reason` values (e.g. `"guardrail_intervened"`)."""
+
+    message: _ChatCompletionMessage  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers can return `content` as a list of parts rather than a string."""
 
 
 class _ChatCompletion(chat.ChatCompletion):
@@ -5628,9 +5656,9 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
-        # Handle the text part of the response
-        content = choice.delta.content
-        if content:
+        # Handle the text part of the response. Some OpenAI-compatible servers stream it as a list of parts.
+        content = _join_text_content_parts(choice.delta.content)
+        if isinstance(content, str) and content:
             self._raw_text_content += content
             emitted = False
             for event in self._parts_manager.handle_text_delta(
