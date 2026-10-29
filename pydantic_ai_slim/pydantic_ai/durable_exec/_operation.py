@@ -317,7 +317,8 @@ class StepPolicy:
     recorded its outcome (DBOS after a crash, Prefect when the flow runs again) can still run it a second time."""
 
     timeout: float | None = None
-    """Seconds one attempt may take, when the engine's default for the operation doesn't fit."""
+    """Seconds one attempt may take at least: an engine raises a shorter attempt timeout to this, and keeps a longer
+    one the user configured."""
 
 
 @dataclass(frozen=True, kw_only=True)

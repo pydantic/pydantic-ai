@@ -534,30 +534,30 @@ symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#res
 A backend whose environments can have a graphical display implements
 [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: a `display` property that returns a
 [`Display`][pydantic_ai.workspaces.Display], or `None` for an environment without one, decided without I/O.
-It returns the same object for the backend's lifetime, but two backends attached to one environment may each have their own, so key per-screen state such as a lock on the backend's `ref`. The display can come from elsewhere, such as this
-machine's screen beside a local workspace. A `Display` has `display_size`, `screenshot` (PNG bytes), and `act`,
-which performs one [`ComputerAction`][pydantic_ai.workspaces.ComputerAction] such as a click or a key press.
-Tools reach them as `ctx.workspace.screenshot()` and `ctx.workspace.act(...)`.
+It returns the same object for the backend's lifetime. The display can come from elsewhere, such as this
+machine's screen beside a local workspace.
 
-New action kinds may be added to `ComputerAction`, so `act` must raise
-[`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError] for a kind it
-doesn't know; [`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this. Coordinates are pixels of the screenshot, so a backend
-whose screen is scaled, such as a high-density display, reports the screenshot's size and scales actions to
-match. A model's profile can limit the screenshots it takes, as
-[`computer_use_screenshot_limit`][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_limit]; a computer-use
-tool fits a larger screen to it, so report the screen's real size. The display can also implement
-[`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom], to capture part of the display at full resolution,
-[`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot], to capture the whole display at a
-smaller size for a model with a screenshot limit (durable execution journals it like the other display calls), and
-[`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]. Key names in actions are a fixed set,
-with X keysyms such as `KP_Enter` accepted as aliases; a character key presses whatever the layout needs to type
-it. A left-hand modifier name, such as `Shift_L` or `ControlLeft`, means the modifier; right-hand names, such as
-`Alt_R`, are refused for now, so they can later name keys of their own, such as AltGr. Typed text holds no control characters other than `\n` and `\t`, which press Enter and Tab.
+- A `Display` has `display_size`, `screenshot` (PNG bytes), and `act`, which performs one
+  [`ComputerAction`][pydantic_ai.workspaces.ComputerAction] such as a click or a key press. Tools reach them as
+  `ctx.workspace.screenshot()` and `ctx.workspace.act(...)`.
+- Optional on the display: [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom], to capture part of it at full
+  resolution; [`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot], to capture all of it
+  smaller for a model with a screenshot limit;
+  [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]; and
+  [`SupportsStartCount`][pydantic_ai.workspaces.SupportsStartCount], to say when the screen restarted.
+- Refuse what the display can't do exactly with
+  [`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError], including action
+  kinds added later; [`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this.
+- Coordinates are pixels of the screenshot. Report the screen's real size: a computer-use tool fits a larger screen
+  to the model's
+  [`computer_use_screenshot_limit`][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_limit].
+
+Key names and text limits are on each action; see the [API reference](api/workspaces.md).
 `LocalWorkspace` has no display.
 
 Under [durable execution](durable_execution/overview.md), each display call made in workflow code is its own
 durable step. A look, such as a screenshot, retries under the engine's retry config. An action runs at most once,
-for up to 180 seconds: if it fails, times out or loses its worker, the call raises a
+with a timeout of at least 180 seconds: if it fails, times out or loses its worker, the call raises a
 [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] saying the action may or may not have taken effect,
 instead of running it again. Some engines go further than this:
 

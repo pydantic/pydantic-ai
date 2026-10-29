@@ -18,6 +18,7 @@
             - SupportsZoom
             - SupportsScaledScreenshot
             - SupportsCursorPosition
+            - SupportsStartCount
             - ComputerAction
             - Click
             - MoveMouse

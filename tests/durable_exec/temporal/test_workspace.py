@@ -47,7 +47,7 @@ try:
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec._workspace import WorkspaceCall
+    from pydantic_ai.durable_exec._workspace import WORKSPACE_CALL_POLICIES, WorkspaceCall
     from pydantic_ai.durable_exec.prefect import PrefectDurability
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -55,6 +55,7 @@ try:
         TemporalDurability,
         _workflow_runner,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.durable_exec.temporal._operation_backend import _apply_policy  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import with_non_retryable_errors
     from pydantic_ai.durable_exec.temporal._transports import _WorkspaceCallWire
@@ -290,6 +291,17 @@ async def test_an_action_is_one_attempt_with_its_own_timeouts_and_a_look_is_retr
         if event.HasField('activity_task_started_event_attributes')
     ]
     assert attempts == [1, 1, 2, 1]
+
+
+@pytest.mark.parametrize(('configured', 'expected'), [(None, 180), (60, 180), (600, 600)])
+def test_an_action_raises_a_shorter_configured_timeout_and_keeps_a_longer_one(
+    configured: int | None, expected: int
+) -> None:
+    config = (
+        ActivityConfig() if configured is None else ActivityConfig(start_to_close_timeout=timedelta(seconds=configured))
+    )
+    applied = _apply_policy(config, WORKSPACE_CALL_POLICIES['act'])
+    assert applied.get('start_to_close_timeout') == timedelta(seconds=expected)
 
 
 async def test_workspace_runs_draw_their_run_id_without_the_stable_id_patch(client: Client) -> None:
