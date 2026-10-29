@@ -450,7 +450,7 @@ def _estimate_usage(  # noqa: C901
     response_tokens = 0
     for message in messages:
         if isinstance(message, ModelRequest):
-            for part in _sendable_request_parts(message.parts):
+            for part in _sendable_request_parts(message.parts, ref=None):
                 if isinstance(part, SystemPromptPart | UserPromptPart):
                     request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):

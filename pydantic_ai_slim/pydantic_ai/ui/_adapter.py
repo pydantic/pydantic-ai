@@ -24,6 +24,7 @@ from pydantic_core import to_jsonable_python
 from typing_extensions import TypeVar
 
 from pydantic_ai import CancellationToken, DeferredToolRequests, DeferredToolResults, _instructions
+from pydantic_ai._frame_ref import store_frame_ref, stored_frame_ref
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
@@ -62,7 +63,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream
-from ._utils import get_ui_message_id, set_ui_message_id, without_ui_message_id
+from ._utils import get_ui_message_id, set_ui_message_id, without_adapter_state
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -907,11 +908,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             resolved_tool_call_ids.update(deferred_tool_results.approvals)
             resolved_tool_call_ids.update(deferred_tool_results.calls)
 
-        # The reserved namespace is dropped from client messages, but the UI message id in it is the one
-        # `load_messages` wrote itself, so it's set aside here and put back on whatever message survives.
+        # The reserved namespace is dropped from client messages, but the UI message id and the frame ref in it
+        # are the ones `load_messages` wrote itself, so they're set aside here and put back on whatever survives.
         ui_message_ids = [get_ui_message_id(message) for message in messages]
+        frame_refs = [stored_frame_ref(message) for message in messages]
         sanitized, sources = _sanitize_messages(
-            [without_ui_message_id(message) for message in messages],
+            [without_adapter_state(message) for message in messages],
             strip_system_prompts=self.manage_system_prompt == 'server',
             strip_instructions=self.manage_system_prompt == 'server',
             allowed_file_url_schemes=self.allowed_file_url_schemes,
@@ -923,6 +925,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         for message, source in zip(sanitized, sources):
             if (ui_message_id := ui_message_ids[source]) is not None:
                 set_ui_message_id(message, ui_message_id)
+            if isinstance(message, ModelRequest) and (ref := frame_refs[source]) is not None:
+                store_frame_ref(message, ref)
         return sanitized
 
     def _regenerates(self) -> bool:

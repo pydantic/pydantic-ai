@@ -15,6 +15,7 @@ import httpx2
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_context_input_tokens
+from .._frame_ref import frame_ref
 from .._gateway_cost import fill_gateway_header_cost
 from .._run_context import RunContext
 from ..exceptions import (
@@ -607,6 +608,10 @@ class GoogleModel(Model[Client]):
     """
 
     unsupported_settings = frozenset({'extra_body', 'logit_bias', 'parallel_tool_calls'})
+    # A tool's files that a tool result can't carry here go on the user channel, framed.
+    _relocates_tool_files = True
+    # The API takes a lookalike note ahead of a request's tool results.
+    _lookalike_notes_precede_tool_results = True
 
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
@@ -1426,6 +1431,7 @@ class GoogleModel(Model[Client]):
         )
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
+        ref = frame_ref(messages)
 
         for m in messages:
             if isinstance(m, ModelRequest):
@@ -1435,13 +1441,13 @@ class GoogleModel(Model[Client]):
                 # of the attribution the framing exists to give it.
                 tool_return_media: list[PartDict] = []
 
-                for part in _sendable_request_parts(m.parts):
+                for part in _sendable_request_parts(m.parts, ref=ref):
                     if isinstance(part, SystemPromptPart):
                         system_parts.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        function_response_part, framed_media = await self._map_tool_return(part)
+                        function_response_part, framed_media = await self._map_tool_return(part, ref=ref)
                         message_parts.append(function_response_part)
                         tool_return_media.extend(framed_media)
                     elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
@@ -1506,7 +1512,9 @@ class GoogleModel(Model[Client]):
 
         return system_instruction, contents
 
-    async def _map_tool_return(self, part: ToolReturnPart) -> tuple[PartDict, list[PartDict]]:
+    async def _map_tool_return(
+        self, part: ToolReturnPart, *, ref: str | None = None
+    ) -> tuple[PartDict, list[PartDict]]:
         """Map a `ToolReturnPart` to Google API format, handling multimodal content.
 
         Returns the `function_response` part and, separately, any files this model can't carry
@@ -1529,7 +1537,9 @@ class GoogleModel(Model[Client]):
                 function_response_parts.append(fr_part)
             else:
                 fallback_refs.append(f'See file {file.identifier}.')
-                open_tag, close_tag = _tool_result_provenance_tags(part.tool_name, part.tool_call_id, file.identifier)
+                open_tag, close_tag = _tool_result_provenance_tags(
+                    part.tool_name, part.tool_call_id, file.identifier, ref=ref
+                )
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.extend([{'text': open_tag}, file_part, {'text': close_tag}])
 

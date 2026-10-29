@@ -31,7 +31,7 @@ from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
-from .._framing import neutralize_voice_tag
+from .._frame_ref import frame_ref
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -99,6 +99,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
+    _tool_return_text_and_files,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..native_tools import (
@@ -1447,6 +1448,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     # Chat Completions has no video content part.
     _unsupported_file_inputs = frozenset({'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset({'top_k'})
 
@@ -2124,6 +2127,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         )
         message: ModelResponse | None = field(default=None, init=False)
         """The response being mapped, set by `map_assistant_message`, for deciding which of its stateless data to send back."""
+        frame_ref: str | None = field(default=None, init=False)
+        """The conversation's frame ref, which reasoning carried into a user message is framed with."""
 
         def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam | None:
             self.message = message
@@ -2230,7 +2235,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             return self._model.accepts_stateless_artifacts(self.message, item)
 
         def _map_response_thinking_as_text(self, item: ThinkingPart) -> None:
-            text, carry_in_user_turn = render_replayed_thinking(item.content, self._model.profile)
+            text, carry_in_user_turn = render_replayed_thinking(item.content, self._model.profile, ref=self.frame_ref)
             if not carry_in_user_turn:
                 self.texts.append(text)
             elif item.content:
@@ -2279,7 +2284,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return self._MapModelResponseContext(self).map_assistant_message(message)
 
-    def _map_carried_thinking(self, message: ModelResponse) -> chat.ChatCompletionUserMessageParam | None:
+    def _map_carried_thinking(
+        self, message: ModelResponse, *, ref: str | None = None
+    ) -> chat.ChatCompletionUserMessageParam | None:
         """Build the user message that carries this `ModelResponse`'s reasoning ahead of its assistant message.
 
         That is reasoning that can't be sent natively, for a profile with
@@ -2293,6 +2300,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if not any(isinstance(part, ThinkingPart) for part in message.parts):
             return None
         context = self._MapModelResponseContext(self)
+        context.frame_ref = ref
         context.map_assistant_message(message)
         if not context.carried_thinkings:
             return None
@@ -2341,12 +2349,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
             else None
         )
+        ref = frame_ref(messages)
         for message in messages:
             if isinstance(message, ModelRequest):
-                async for item in self._map_user_message(message):
+                async for item in self._map_user_message(message, ref=ref):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
-                if (carried_thinking := self._map_carried_thinking(message)) is not None:
+                if (carried_thinking := self._map_carried_thinking(message, ref=ref)) is not None:
                     openai_messages.append(carried_thinking)
                 if (mapped := self._map_model_response(message)) is not None:
                     if (
@@ -2473,9 +2482,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             tool_param['function']['strict'] = f.strict
         return tool_param
 
-    async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
+    async def _map_user_message(
+        self, message: ModelRequest, *, ref: str | None = None
+    ) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         file_content: list[UserContent] = []
-        for part in _sendable_request_parts(message.parts):
+        for part in _sendable_request_parts(message.parts, ref=ref):
             if isinstance(part, SystemPromptPart):
                 system_prompt_role = self.profile.get('openai_system_prompt_role', None)
                 if system_prompt_role == 'developer':
@@ -2487,7 +2498,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_file_content = part.model_response_str_and_user_content()
+                tool_text, tool_file_content = _tool_return_text_and_files(part, ref=ref)
                 file_content.extend(tool_file_content)
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
@@ -2698,9 +2709,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _inline_text_file_part(
         self, text: str, *, media_type: str, identifier: str
     ) -> ChatCompletionContentPartTextParam:
-        if not self.profile.get('supports_inline_system_prompts', False):
-            # Inlined as user text, where the framework's own voice is `<system>`-tagged user text too.
-            text = neutralize_voice_tag(text)
         return ChatCompletionContentPartTextParam(
             text=_format_inlined_text_file(text, media_type=media_type, identifier=identifier),
             type='text',
@@ -3002,6 +3010,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     supported_tool_deferral_modes = frozenset({'with_tool_search'})
     supported_tool_addition_modes = frozenset({'with_definitions'})
     _renders_effort_deltas = True
+    # The API takes a lookalike note ahead of a request's tool results.
+    _lookalike_notes_precede_tool_results = True
     # Responses only: `OpenAIChatModel` shares this model family's profile but has no compaction
     # surface, and the Responses API bills replayed pre-boundary items, so the trim is what makes
     # compaction actually compact here.
@@ -4751,9 +4761,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # plus a replayed search return), and one declaration per request is enough.
         rendered_additional_tools: set[str] = set()
         openai_messages: list[responses.ResponseInputItemParam] = []
+        ref = frame_ref(messages)
         for message_index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
-                for part in _sendable_request_parts(message.parts):
+                for part in _sendable_request_parts(message.parts, ref=ref):
                     if isinstance(part, SystemPromptPart):
                         openai_messages.append(
                             responses.EasyInputMessageParam(
@@ -5172,7 +5183,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     ReasoningContent(text=text, type='reasoning_text') for text in raw_content
                                 ]
                         else:
-                            thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile)
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile, ref=ref)
                             if not carry_in_user_turn:
                                 openai_messages.append(
                                     responses.EasyInputMessageParam(role='assistant', content=thinking_text)

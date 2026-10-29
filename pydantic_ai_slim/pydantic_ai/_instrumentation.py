@@ -1129,10 +1129,10 @@ def get_instructions(
     `model_request_parameters` is not available (e.g. OTel span attributes).
     """
     from pydantic_ai.messages import InstructionPart
-    from pydantic_ai.models import Model
+    from pydantic_ai.models import _instruction_parts_of  # pyright: ignore[reportPrivateUsage]
 
     if model_request_parameters:
-        parts = Model._get_instruction_parts(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+        parts = _instruction_parts_of(messages, model_request_parameters)
         return InstructionPart.join(parts) if parts else None
 
     # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)

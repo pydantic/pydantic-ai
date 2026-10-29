@@ -66,9 +66,8 @@ from ._framing import (
     TOOL_RESULT_TAG,
     VALIDATION_ERRORS_TAG,
     FramingTag,
-    close_tag,
-    open_tag,
-    wrap,
+    frame,
+    frame_tags,
 )
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -2036,7 +2035,9 @@ other outcomes (`'denied'`, `'interrupted'`) are ordinary results whose content 
 """
 
 
-def _tool_result_provenance_tags(tool_name: str, tool_call_id: str, file_identifier: str) -> tuple[str, str]:
+def _tool_result_provenance_tags(
+    tool_name: str, tool_call_id: str, file_identifier: str, *, ref: str | None
+) -> tuple[str, str]:
     """The open and close tags framing one tool-produced file that has to travel on the user channel.
 
     A provider whose tool result channel is text-only can only deliver a tool's multimodal output on
@@ -2051,13 +2052,11 @@ def _tool_result_provenance_tags(tool_name: str, tool_call_id: str, file_identif
     could not name.
 
     They identify rather than prove. This is prompt text like any other, so a tool can emit the
-    closing tag and a user can type the opening one; the attribute values are escaped, and a provider
-    that accepts media in its tool result channel sends it there and never renders these at all.
+    closing tag and a user can type the opening one. What sets these apart is `ref`, the conversation's
+    frame ref (see `pydantic_ai._frame_ref`); the attribute values are escaped, and a provider that
+    accepts media in its tool result channel sends it there and never renders these at all.
     """
-    return (
-        open_tag(TOOL_RESULT_TAG, tool_name=tool_name, tool_call_id=tool_call_id, file_id=file_identifier),
-        close_tag(TOOL_RESULT_TAG),
-    )
+    return frame_tags(TOOL_RESULT_TAG, ref=ref, tool_name=tool_name, tool_call_id=tool_call_id, file_id=file_identifier)
 
 
 @dataclass(repr=False)
@@ -2350,6 +2349,9 @@ class BaseToolReturnPart(Generic[ContentT_co]):
                 [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES]) in an `{"error": ...}` object.
                 Set this to `False` when the provider has a native error channel.
         """
+        return self._model_response_str_and_files(ref=None, wrap_if_error=wrap_if_error)
+
+    def _model_response_str_and_files(self, *, ref: str | None, wrap_if_error: bool) -> tuple[str, list[UserContent]]:
         _, files, was_list = self._split_content()
         if not files:
             return self.model_response_str(wrap_if_error=wrap_if_error), []
@@ -2360,7 +2362,9 @@ class BaseToolReturnPart(Generic[ContentT_co]):
         for item in self.content_items(mode='str', wrap_if_error=False):
             if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
-                open_tag, close_tag = _tool_result_provenance_tags(self.tool_name, self.tool_call_id, item.identifier)
+                open_tag, close_tag = _tool_result_provenance_tags(
+                    self.tool_name, self.tool_call_id, item.identifier, ref=ref
+                )
                 file_content.extend([open_tag, item, close_tag])
             elif isinstance(item, str):  # pragma: no branch
                 tool_content_parts.append(item)
@@ -2393,6 +2397,17 @@ class BaseToolReturnPart(Generic[ContentT_co]):
         return self.content is not None  # pragma: no cover
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _tool_return_text_and_files(
+    part: BaseToolReturnPart[Any], *, ref: str | None, wrap_if_error: bool = True
+) -> tuple[str, list[UserContent]]:
+    """[`model_response_str_and_user_content`][pydantic_ai.messages.BaseToolReturnPart.model_response_str_and_user_content], with each file's frame carrying `ref`.
+
+    Adapters pass the conversation's frame ref (`pydantic_ai._frame_ref.frame_ref`), so the frames they put on the
+    user channel are recognizably the framework's.
+    """
+    return part._model_response_str_and_files(ref=ref, wrap_if_error=wrap_if_error)  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass(repr=False)
@@ -2715,15 +2730,11 @@ class RetryFeedbackPart:
         interpolate the output they reject. Only `'no_output'` is left unfenced, as its text is fixed
         and carries nothing the model wrote.
 
-        What `prepare_messages` adds around this is the voice, not the wording: the part type it goes
-        into, and the `<system>` tagging a provider without a mid-conversation system message needs.
+        The content goes in the fence exactly as written. What `prepare_messages` adds around this is the
+        voice, not the wording: the part type it goes into, the `<system>` tagging a provider without a
+        mid-conversation system message needs, and the conversation's frame ref on the fence.
         """
-        content = _retry_feedback_text(self)
-        if _retry_feedback_speaks_for_the_harness(self):
-            return content
-        return _fenced_retry_feedback(
-            content, tag=VALIDATION_ERRORS_TAG if self.retry.cause == 'validation_error' else RETRY_FEEDBACK_TAG
-        )
+        return _retry_feedback_model_text(self, ref=None)
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         """Record the stored feedback as trace content.
@@ -2752,15 +2763,25 @@ def _retry_feedback_text(part: RetryFeedbackPart) -> str:
     return tool_return_ta.dump_json(_dump_error_details(part.content), by_alias=True).decode()
 
 
-def _fenced_retry_feedback(content: str, *, tag: FramingTag) -> str:
+def _retry_feedback_model_text(part: RetryFeedbackPart, *, ref: str | None) -> str:
+    """The text [`RetryFeedbackPart.model_response`][pydantic_ai.messages.RetryFeedbackPart.model_response] describes, with `ref` on the fence."""
+    content = _retry_feedback_text(part)
+    if _retry_feedback_speaks_for_the_harness(part):
+        return content
+    return _fenced_retry_feedback(
+        content, tag=VALIDATION_ERRORS_TAG if part.retry.cause == 'validation_error' else RETRY_FEEDBACK_TAG, ref=ref
+    )
+
+
+def _fenced_retry_feedback(content: str, *, tag: FramingTag, ref: str | None) -> str:
     """Feedback in the user voice: the application attribution line, then the content fenced in `tag`.
 
-    `wrap` neutralizes every framing tag in the content, since it carries the model's own words: a
-    validation error's `loc` is a key it invented for a mapping output, and a `value_error`'s `msg` is
-    whatever a validator raised, commonly with the offending value interpolated in. Without that, the
-    content could end the fence early, or open a `<system>` block of its own.
+    The content carries the model's own words (a validation error's `loc` is a key it invented for a mapping
+    output, a `value_error`'s `msg` is whatever a validator raised, commonly with the offending value interpolated
+    in) and goes in as written. The fence's `ref`, the conversation's frame ref, is what tells it apart from text
+    that only looks like one.
     """
-    fence = wrap(tag, f'\n{content}\n')
+    fence = frame(tag, f'\n{content}\n', ref=ref)
     return f'{_RETRY_FEEDBACK_FRAMING}\n{fence}'
 
 
@@ -3177,10 +3198,10 @@ def _withdrawal_text(*, inline_system: bool) -> str:
 def _context_element(instruction_id: InstructionId | str | None, content: str) -> str:
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
 
-    `wrap` neutralizes every framing tag in the text, including `</system>`: the element is itself
-    `<system>`-wrapped on a model without mid-conversation system messages.
+    The text is the operator's and goes in as written. The element speaks in system voice (a native system
+    message, or inside a `<system ref="...">` block), so it carries no ref of its own.
     """
-    return wrap(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
+    return frame(CONTEXT_TAG, f'\n{content}\n', ref=None, id=_id_attribute(instruction_id))
 
 
 def _id_attribute(instruction_id: InstructionId | str | None) -> str | None:
@@ -3193,7 +3214,7 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
     diff = '\n'.join(
         difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
     )
-    return wrap(CONTEXT_DIFF_TAG, f'\n{diff}\n', id=_id_attribute(instruction_id))
+    return frame(CONTEXT_DIFF_TAG, f'\n{diff}\n', ref=None, id=_id_attribute(instruction_id))
 
 
 _SUPERSESSION_SENTENCE = (
@@ -5816,7 +5837,7 @@ def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
         part = _translate_legacy_retry_part(part)
     if isinstance(part, RetryFeedbackPart) and part.retry.cause == 'no_output':
         return UserPromptPart(
-            content=_fenced_retry_feedback(_retry_feedback_text(part), tag='retry_feedback'),
+            content=_fenced_retry_feedback(_retry_feedback_text(part), tag='retry_feedback', ref=None),
             timestamp=part.timestamp,
         )
     return part

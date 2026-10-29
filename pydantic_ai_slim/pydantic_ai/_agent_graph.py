@@ -87,6 +87,7 @@ from ._deferred_capabilities import (
     parse_loaded_capabilities,
     registered_loaded_capability_ids,
 )
+from ._frame_ref import store_frame_ref, stored_frame_ref
 from ._genai_prices import best_effort_price, fill_response_cost
 from ._history_mirroring import HistoryMirroringMessages
 from ._instructions import (
@@ -1538,6 +1539,20 @@ async def _prepare_request_parameters(
         instruction_visibility={str(part.id): 'via_history' for part in loaded_instruction_parts if part.id is not None}
         or None,
     )
+
+
+def _keep_frame_ref(history: list[_messages.ModelMessage], prepared: list[_messages.ModelMessage]) -> None:
+    """Store the frame ref `prepare_messages` put on the outgoing request on the stored request too.
+
+    `prepare_messages` only changes the copy it sends, so this is what makes the conversation's ref part of its
+    history: every later request, and every later run on that history, reads it back instead of deriving it again.
+    """
+    outgoing = next((m for m in reversed(prepared) if isinstance(m, _messages.ModelRequest)), None)
+    if outgoing is None or (ref := stored_frame_ref(outgoing)) is None:
+        return
+    stored = next((m for m in reversed(history) if isinstance(m, _messages.ModelRequest)), None)
+    if stored is not None and stored_frame_ref(stored) != ref:
+        store_frame_ref(stored, ref)
 
 
 def _keep_default_output_mode(
@@ -3179,6 +3194,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
             request_context.model_request_parameters = model_request_parameters
             prepared = model.prepare_messages(messages, model_request_parameters)
+            _keep_frame_ref(ctx.state.message_history, prepared)
             # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
             # it, behind that request's `CachePoint`, so an inserted message isn't guaranteed to reach the
             # wire as a turn of its own. A rewrite that needs its own turn belongs in the adapter, where

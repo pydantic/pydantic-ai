@@ -11,6 +11,7 @@ from typing import Any, Final, Literal, Required
 
 from typing_extensions import TypedDict
 
+from ..._frame_ref import is_frame_ref
 from ..._utils import is_str_dict
 from ...messages import (
     RetryFeedbackPart,
@@ -369,6 +370,32 @@ def parse_encrypted_retry_feedback(encrypted_value: str | None) -> RetryFeedback
     if namespaced is None:
         return None
     return retry_feedback_from_payload(namespaced.get('retry_feedback'))
+
+
+def with_encrypted_frame_ref(encrypted_value: str | None, ref: str) -> str | None:
+    """`encrypted_value` with the conversation's frame ref added to its `pydantic_ai` namespace.
+
+    A `ModelRequest` stores the ref in its metadata, which AG-UI has no slot for, so it rides the namespaced carrier of
+    the first message dumped from the request, next to whatever claims that message already carries. `None` when the
+    slot holds something other than our namespace, which is then left alone.
+    """
+    if encrypted_value is None:
+        return _namespaced_encrypted_value({'frame_ref': ref})
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    if namespaced is None:
+        return None
+    return _namespaced_encrypted_value({**namespaced, 'frame_ref': ref})
+
+
+def parse_encrypted_frame_ref(encrypted_value: str | None) -> str | None:
+    """Read the conversation's frame ref from the `pydantic_ai` namespace of an `encrypted_value` blob.
+
+    Client-supplied: a client choosing the ref only changes what the application's frames carry, and text that
+    resembles a frame gets a note whatever its ref. Anything but a well-formed ref reads as `None`.
+    """
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    ref = namespaced.get('frame_ref') if namespaced is not None else None
+    return ref if isinstance(ref, str) and is_frame_ref(ref) else None
 
 
 def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:

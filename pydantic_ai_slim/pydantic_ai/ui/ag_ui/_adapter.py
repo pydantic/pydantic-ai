@@ -20,6 +20,7 @@ from typing import (
 from pydantic import TypeAdapter, ValidationError
 
 from ... import ExternalToolset, ToolDefinition
+from ..._frame_ref import store_frame_ref, stored_frame_ref
 from ..._mcp_apps import get_mcp_app_tool_result
 from ..._utils import is_str_dict
 from ...messages import (
@@ -124,6 +125,7 @@ try:
         dump_tool_return_content,
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
+        parse_encrypted_frame_ref,
         parse_encrypted_outcome,
         parse_encrypted_retry_feedback,
         parse_encrypted_structured_content,
@@ -135,6 +137,7 @@ try:
         thinking_encrypted_metadata,
         tool_kind_encrypted_value_kwargs,
         warn_encrypted_value_not_persisted,
+        with_encrypted_frame_ref,
     )
 except ImportError as e:
     raise ImportError(
@@ -822,6 +825,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             )
             if target is not None:
                 set_ui_message_id(target, msg.id)
+            # The conversation's frame ref, which `dump_messages` put on the first message of each request.
+            if (
+                use_encrypted_value
+                and isinstance(msg, UserMessage | SystemMessage | DeveloperMessage | ToolMessage)
+                and (ref := parse_encrypted_frame_ref(msg.encrypted_value)) is not None
+                and isinstance(request := builder.last_modified(checkpoint, of_type=ModelRequest), ModelRequest)
+            ):
+                store_frame_ref(request, ref)
 
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
         # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
@@ -1037,6 +1048,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         flush_system_content()
         flush_user_content()
+        if use_encrypted_value and (ref := stored_frame_ref(msg)) is not None:
+            # The request's metadata has no AG-UI slot, so its frame ref rides the first message's carrier.
+            carrier = next(
+                (m for m in result if isinstance(m, UserMessage | SystemMessage | ToolMessage)),
+                None,
+            )
+            if carrier is not None and (encrypted := with_encrypted_frame_ref(carrier.encrypted_value, ref)):
+                carrier.encrypted_value = encrypted
         return result
 
     @staticmethod

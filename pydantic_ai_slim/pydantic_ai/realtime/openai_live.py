@@ -524,7 +524,7 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
         return 'user', seed_retry_feedback_text(part)
     if isinstance(part, CompactionPart) and part.content:
         # A summary the application or a harness wrote stands in for the history it replaced.
-        return 'user', _conversation_summary_text(part.content)
+        return 'user', _conversation_summary_text(part.content, ref=None)
     return None
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from pydantic_ai import TextPart, ThinkingPart
 
-from ._framing import ASSISTANT_THINKING_TAG, wrap
+from ._framing import ASSISTANT_THINKING_TAG, frame
 from .profiles import DEFAULT_THINKING_TAGS, ModelProfile
 
 REDACTED_THINKING_PART_IDS = frozenset({'redacted_thinking', 'redacted_content'})
@@ -38,7 +38,7 @@ def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str,
     return parts
 
 
-def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, bool]:
+def render_replayed_thinking(content: str, profile: ModelProfile, *, ref: str | None) -> tuple[str, bool]:
     """Render reasoning that can't be replayed through a model's native channel, as tagged text.
 
     The inverse of [`split_content_into_text_and_thinking`][pydantic_ai._thinking_part.split_content_into_text_and_thinking]:
@@ -52,7 +52,8 @@ def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, 
     would have written the reasoning itself. Reasoning carried into a user message can't: attributed to
     the user, it reads as something the user thought, so it gets an `assistant_thinking` wrapper instead.
 
-    The wrapper carries no attributes. Naming the producing model would need `ModelResponse.model_name`,
+    The wrapper carries only the conversation's frame `ref` (see `pydantic_ai._frame_ref`), which says the
+    framework wrote it. Naming the producing model would need `ModelResponse.model_name`,
     which UI adapters deliberately don't send to the client (it can hold an account id or org name, see
     https://github.com/pydantic/pydantic-ai/issues/5174), so a history that went through a UI would render
     differently from the server's copy and miss the prompt cache. And a `provider` attribute on its own makes
@@ -67,10 +68,8 @@ def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, 
     """
     carry_in_user_turn = profile.get('mimics_assistant_message_formatting', False)
     if carry_in_user_turn:
-        # Reasoning that talks about the wrapper would otherwise close it early and spill the rest into
-        # the message as if the user had written it, or open a `<system>` block of its own. `wrap` escapes
-        # only the `<` of each opening or closing framing tag, so the rest goes in exactly as written.
-        text = wrap(ASSISTANT_THINKING_TAG, f'\n{content}\n')
+        # The reasoning goes in as written; the frame's `ref` is what sets the wrapper apart from a lookalike.
+        text = frame(ASSISTANT_THINKING_TAG, f'\n{content}\n', ref=ref)
     else:
         start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
         text = '\n'.join([start_tag, content, end_tag])

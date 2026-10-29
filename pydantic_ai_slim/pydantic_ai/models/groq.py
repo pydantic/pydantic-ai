@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
+from .._frame_ref import frame_ref
 from .._gateway_cost import gateway_reported_cost
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
@@ -46,6 +47,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    _tool_return_text_and_files,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..output import OutputObjectDefinition
@@ -204,6 +206,8 @@ class GroqModel(Model[AsyncGroq]):
 
     # Groq's chat API takes images and no other file.
     _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset({'service_tier', 'top_k'})
 
@@ -613,9 +617,10 @@ class GroqModel(Model[AsyncGroq]):
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         groq_messages: list[chat.ChatCompletionMessageParam] = []
+        ref = frame_ref(messages)
         for message in messages:
             if isinstance(message, ModelRequest):
-                async for item in self._map_user_message(message):
+                async for item in self._map_user_message(message, ref=ref):
                     groq_messages.append(item)
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
@@ -693,15 +698,17 @@ class GroqModel(Model[AsyncGroq]):
             response_format_param['json_schema']['description'] = o.description
         return response_format_param
 
-    async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
+    async def _map_user_message(
+        self, message: ModelRequest, *, ref: str | None = None
+    ) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         file_content: list[UserContent] = []
-        for part in _sendable_request_parts(message.parts):
+        for part in _sendable_request_parts(message.parts, ref=ref):
             if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_file_content = part.model_response_str_and_user_content()
+                tool_text, tool_file_content = _tool_return_text_and_files(part, ref=ref)
                 file_content.extend(tool_file_content)
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',

@@ -10,6 +10,7 @@ from functools import cached_property
 from typing import Any, Literal, assert_never, cast
 
 from .. import _model_errors, _utils
+from .._frame_ref import frame_ref
 from .._run_context import RunContext
 from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
 from ..exceptions import (
@@ -56,6 +57,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
+    _tool_return_text_and_files,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     Model,
@@ -378,6 +380,8 @@ class XaiModel(Model[AsyncClient]):
 
     # The xAI SDK has no audio or video content.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset(
         {'extra_body', 'extra_headers', 'logit_bias', 'max_retries', 'service_tier', 'timeout', 'top_k'}
@@ -451,13 +455,11 @@ class XaiModel(Model[AsyncClient]):
         # Pydantic AI doesn't guarantee tool-result part ordering, so we track
         # tool call order as we walk message history and reorder tool results.
         pending_tool_call_ids: list[str] = []
+        ref = frame_ref(messages)
 
         for message in messages:
             if isinstance(message, ModelRequest):
-                mapped_request_parts = await self._map_request_parts(
-                    message.parts,
-                    pending_tool_call_ids,
-                )
+                mapped_request_parts = await self._map_request_parts(message.parts, pending_tool_call_ids, ref=ref)
                 xai_messages.extend(mapped_request_parts)
             elif isinstance(message, ModelResponse):
                 xai_messages.extend(self._map_response_parts(message))
@@ -481,12 +483,14 @@ class XaiModel(Model[AsyncClient]):
         self,
         parts: Sequence[ModelRequestPart],
         pending_tool_call_ids: list[str],
+        *,
+        ref: str | None = None,
     ) -> list[chat_types.chat_pb2.Message]:
         """Map ModelRequest parts to xAI messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
         tool_results: list[ToolReturnPart] = []
 
-        for part in _sendable_request_parts(parts):
+        for part in _sendable_request_parts(parts, ref=ref):
             if isinstance(part, SystemPromptPart):
                 xai_messages.append(system(part.content))
             elif isinstance(part, UserPromptPart):
@@ -510,7 +514,7 @@ class XaiModel(Model[AsyncClient]):
             tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
             file_content: list[UserContent] = []
             for part in tool_results:
-                text, files = part.model_response_str_and_user_content()
+                text, files = _tool_return_text_and_files(part, ref=ref)
                 xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
                 file_content.extend(files)
             if file_content and (
