@@ -54,6 +54,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
 )
+from pydantic_ai_harness._display import png_size
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -97,8 +98,6 @@ and Anthropic one over 32 MB."""
 
 _SCREENSHOT_REMOVED = '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
 
-_PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
-
 _OBSERVING_ACTIONS = frozenset({'wait', 'screenshot', 'zoom', 'cursor_position'})
 """Action types that change nothing on the screen, so `requires_approval` lets them through."""
 
@@ -109,9 +108,10 @@ another loop, so durable workflows, each on a loop of its own, don't take turns.
 for it."""
 
 _CALL_SPACE = 'pydantic-ai-harness.computer-use.v1'
-"""The `ModelResponse.metadata` key that records the coordinates of the response's `computer` calls: the grid the
-model pointed on and the size of the latest screenshot it saw, so each call is scaled as it was meant, whichever model
-runs it."""
+"""The `ModelResponse.metadata` key that records the coordinates of the response's `computer` calls, so each call is
+scaled as it was meant, whichever model runs it. Both keys are always there: `coordinate_grid`, the grid the model
+pointed on or `None` for pixels, and `screenshot_size`, the latest screenshot it saw or `None` for display pixels. A
+response without the record, such as one from before it existed, is read in the running model's space."""
 
 _ACTIONS = TypeAdapter(list[ComputerToolAction])
 
@@ -207,10 +207,13 @@ def _scale(value: int, to: int, scale_from: int) -> int:
 
 
 def _too_large_zoom(
-    actions: list[ComputerToolAction], pixels: list[ComputerToolAction], call: _Call, limit: tuple[int, int] | None
+    actions: list[ComputerToolAction],
+    pixels: list[ComputerToolAction],
+    display: tuple[int, int],
+    space: tuple[int, int],
+    limit: tuple[int, int] | None,
 ) -> str | None:
     """Why the first zoom into more than the model can see at full resolution is refused, if there is one."""
-    assert call.space is not None and call.display is not None
     for index, (action, scaled) in enumerate(zip(actions, pixels), 1):
         if not (isinstance(action, Zoom) and isinstance(scaled, Zoom)):
             continue
@@ -218,8 +221,8 @@ def _too_large_zoom(
         size = (region.right - region.left, region.bottom - region.top)
         if (fitted := _fit(size, limit)) != size:
             # The largest region of this shape that fits, in the model's coordinates.
-            width = max(1, fitted[0] * call.space[0] // call.display[0])
-            height = max(1, fitted[1] * call.space[1] // call.display[1])
+            width = max(1, fitted[0] * space[0] // display[0])
+            height = max(1, fitted[1] * space[1] // display[1])
             asked = action.region
             return (
                 f'Action {index} (zoom) is {asked.right - asked.left}x{asked.bottom - asked.top}, larger than can be '
@@ -252,13 +255,6 @@ def _to_pixels(action: ComputerToolAction, display: tuple[int, int], space: tupl
             return action
 
 
-def _png_size(png: bytes) -> tuple[int, int] | None:
-    """Width and height from a PNG's header chunk, which the signature puts at bytes 16 to 24."""
-    if len(png) < 24 or not png.startswith(_PNG_SIGNATURE) or png[12:16] != b'IHDR':
-        return None
-    return int.from_bytes(png[16:20], 'big'), int.from_bytes(png[20:24], 'big')
-
-
 @dataclass
 class _Call:
     """One `computer` call's coordinate space and how it maps to the display."""
@@ -273,8 +269,8 @@ class _Call:
     """The display's size in pixels, once read."""
 
     def to_model(self, point: Point) -> Point:
-        if self.space is None or self.display is None:
-            return point
+        # A call that reads the pointer always reads the display size first.
+        assert self.space is not None and self.display is not None
         return Point(
             x=_scale(point.x, self.space[0], self.display[0]), y=_scale(point.y, self.space[1], self.display[1])
         )
@@ -357,7 +353,10 @@ def _the_call(ctx: RunContext[Any]) -> tuple[ModelResponse, ToolCallPart] | None
 
 
 def _recorded_space(response: ModelResponse) -> tuple[int | None, tuple[int, int] | None] | None:
-    """The grid and screenshot size recorded on the response when it was made, if they were."""
+    """The grid and screenshot size recorded on the response when it was made, if they were.
+
+    A screenshot size of `None` means the model had seen no screenshot, so it pointed in display pixels.
+    """
     record: Any = (response.metadata or {}).get(_CALL_SPACE)
     if not isinstance(record, dict):
         return None
@@ -484,11 +483,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     than on a `for_run` copy: a copy would bring a toolset of its own, which durable execution refuses."""
 
     def __post_init__(self) -> None:
-        if not isinstance(self.requires_approval, bool):
-            raise UserError(
-                f'`requires_approval` must be `True` or `False`, not {self.requires_approval!r}: approval is asked '
-                'for a whole call, which can mix several kinds of action.'
-            )
         if self.keep_screenshots is not None and self.keep_screenshots < 1:
             raise UserError('`keep_screenshots` must be at least 1, or `None` to keep every screenshot.')
         tool = Tool[AgentDepsT](
@@ -523,7 +517,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise ApprovalRequired
         made = _the_call(ctx)
         # Scaled the way the model meant it, even when another model runs the call, such as after an approval.
-        grid, seen = (made and _recorded_space(made[0])) or (_grid(ctx.model), None)
+        record = _recorded_space(made[0]) if made else None
+        grid, seen = record if record is not None else (_grid(ctx.model), None)
         call = _Call(grid, changed=actions if made and _changed(made[1], actions) else None)
         limit = _screenshot_limit(ctx.model)
         if acts or any(_points(action) or action.type == 'cursor_position' for action in actions):
@@ -537,7 +532,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             pixels = (
                 actions if call.space == call.display else [_to_pixels(a, call.display, call.space) for a in actions]
             )
-            if refused := _too_large_zoom(actions, pixels, call, limit):
+            if refused := _too_large_zoom(actions, pixels, call.display, call.space, limit):
                 raise ToolFailed(refused)
             actions = pixels
 
@@ -569,8 +564,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
         result = ComputerResult(performed=performed)
         summary: list[str] = []
-        if call.grid is not None:
-            result['coordinate_grid'] = call.grid
         if call.changed is not None:
             result['changed'] = True
             summary.append(f'Before it ran, this call was changed to: {_ACTIONS.dump_json(call.changed).decode()}.')
@@ -588,12 +581,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 summary.append(f'The {_plural(skipped, "action")} after it did not run.')
 
         try:
-            png = await _screenshot(ctx, limit)
+            png = await _screenshot(ctx, limit, call.display)
         except WorkspaceUnavailableError:
             raise
         except WorkspaceError as e:
             raise ToolFailed(' '.join([*summary, f'Taking the screenshot failed: {e}'])) from e
-        size = _png_size(png)
+        size = png_size(png)
         if size is None:
             raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
         result['screenshot_size'] = size
@@ -685,21 +678,22 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], *, request_context: ModelRequestContext, response: ModelResponse
     ) -> ModelResponse:
         """Record the coordinates the response's `computer` calls are in, for when they run."""
-        if not any(isinstance(part, ToolCallPart) and part.tool_name == 'computer' for part in response.parts):
+        tools = request_context.model_request_parameters.function_tools
+        names = {tool.name for tool in tools if tool.tool_kind == COMPUTER_KIND.id}
+        if not any(isinstance(part, ToolCallPart) and part.tool_name in names for part in response.parts):
             return response
-        record: dict[str, Any] = {}
-        if (grid := _grid(request_context.model)) is not None:
-            record['coordinate_grid'] = grid
-        if (seen := _last_screenshot_size(request_context.messages)) is not None:
-            record['screenshot_size'] = seen
-        # Even an empty record says the calls are in pixels, so a grid model running them later doesn't misread them.
+        record = {
+            'coordinate_grid': _grid(request_context.model),
+            'screenshot_size': _last_screenshot_size(request_context.messages),
+        }
         return replace(response, metadata={**(response.metadata or {}), _CALL_SPACE: record})
 
 
-async def _screenshot(ctx: RunContext[Any], limit: tuple[int, int] | None) -> bytes:
-    """The screen, scaled down by the display to what the model takes."""
+async def _screenshot(ctx: RunContext[Any], limit: tuple[int, int] | None, size: tuple[int, int] | None) -> bytes:
+    """The screen, scaled down by the display to what the model takes; `size` is the display's, when the call read it."""
     if limit is not None:
-        size = await ctx.workspace.display_size()
+        if size is None:
+            size = await ctx.workspace.display_size()
         if (fitted := _fit(size, limit)) != size:
             try:
                 return await ctx.workspace.scaled_screenshot(*fitted)

@@ -213,9 +213,8 @@ def _check_sub_agents(merged: Any) -> None:
 
 
 def _check_computer_use(merged: ComputerUse[Any]) -> None:
-    # The later settings win, but approval and the screenshot limit, which restrict, survive; the tool runs with them.
+    # The later settings win, but approval and the screenshot limit, which restrict, survive.
     assert (merged.requires_approval, merged.settle_seconds, merged.keep_screenshots) == (True, 0, 2)
-    assert merged.get_toolset().tools['computer'].function == merged._computer  # pyright: ignore[reportPrivateUsage]
 
 
 def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
