@@ -404,9 +404,9 @@ fallback_durable_agent = Agent(
 @workflow.defn
 class FallbackDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str) -> tuple[str, str | None]:
         result = await fallback_durable_agent.run(prompt)
-        return result.output
+        return result.output, result.response.model_id
 
 
 async def test_durability_fallback_attempts_run_as_activities(client: Client):
@@ -425,7 +425,8 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
         )
         output = await wf.result()
         history = await wf.fetch_history()
-    assert output == 'from fallback'
+    # The response records the candidate that answered, which is what the workflow resumes a continuation on.
+    assert output == ('from fallback', 'fallback_target')
     # The failed attempt on the agent's model and the one on the fallback model.
     assert _scheduled_activity_count(history) == 2
 
@@ -2664,6 +2665,7 @@ async def test_durability_continue_as_new_real_workflow_transition(client: Clien
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=3),
                 model_name='function:_continue_as_new_model_fn:',
+                model_id='function:function:_continue_as_new_model_fn:',
                 timestamp=IsDatetime(),
                 run_id=predecessor_run_id,
                 conversation_id=conversation_id,
@@ -2685,6 +2687,7 @@ async def test_durability_continue_as_new_real_workflow_transition(client: Clien
                 parts=[TextPart(content='successor received: first request completed')],
                 usage=RequestUsage(input_tokens=5, output_tokens=7),
                 model_name='function:_continue_as_new_model_fn:',
+                model_id='function:function:_continue_as_new_model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=conversation_id,
@@ -3939,6 +3942,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
@@ -3989,6 +3993,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
@@ -4031,6 +4036,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
@@ -4826,6 +4832,7 @@ async def test_durability_tool_return_metadata_survives(allow_model_requests: No
                 parts=[ToolCallPart(tool_name='durability_analyze_data', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
                 model_name='function:_durability_tool_return_metadata_model:',
+                model_id='function:function:_durability_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4849,6 +4856,7 @@ async def test_durability_tool_return_metadata_survives(allow_model_requests: No
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
                 model_name='function:_durability_tool_return_metadata_model:',
+                model_id='function:function:_durability_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),

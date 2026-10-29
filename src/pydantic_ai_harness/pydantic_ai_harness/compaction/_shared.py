@@ -46,6 +46,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
+from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -907,14 +908,6 @@ def find_token_cutoff(
 # ---------------------------------------------------------------------------
 
 
-# Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel
-# with an `origin` under this prefix is covered by this one check, without per-capability code. Today that is
-# `BackgroundTools` results, `TrajectoryJudge` feedback, `SubAgents` task reports and `Memory` snapshots (older
-# `Memory` releases marked theirs with a plain string, also recognized). The rule is temporary: once core
-# provenance (`CapabilityPart`) lands, recognize that instead of this metadata convention.
-HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
-"""The prefix of the `origin` metadata harness capabilities put on content they add on the user channel."""
-
 _LEGACY_MEMORY_MARKER = 'pydantic-ai-harness.memory.v1'
 """The plain-string metadata older `Memory` releases put on a snapshot, alone or followed by `:<scope hash>`."""
 
@@ -928,11 +921,7 @@ def harness_data_origin(part: UserPromptPart) -> str | None:
     """
     # TODO: switch to the core provenance field once it exists.
     match part.content:
-        case [TextContent(metadata=metadata), *_] if (
-            is_str_dict(metadata)
-            and isinstance(origin := metadata.get('origin'), str)
-            and origin.startswith(HARNESS_ORIGIN_PREFIX)
-        ):
+        case [TextContent(metadata=metadata), *_] if (origin := harness_origin(metadata)) is not None:
             return origin
         case [item, *_] if _is_legacy_memory(item):
             return _LEGACY_MEMORY_MARKER

@@ -274,8 +274,11 @@ results. When Temporal replays a workflow, approval listeners run again, so make
 idempotent.
 
 **Delegation.** `Coder`'s delegate, `self`, runs in the workflow, so the child's model requests and tools
-become activities of the same agent. Sub-agents read from `agent_folders` are not supported: reading the
-folders at run start adds a toolset at run time, which Temporal refuses, so pass
+become activities of the same agent. A `SubAgents` whose only delegate is `self` does the same, also with a
+`models` menu: register a `Model` instance from the menu with `TemporalDurability(models=...)`. With other
+delegates, a delegation runs in an activity, where the parent run's model is unavailable, so each delegate
+needs a model of its own or a `models` option. Sub-agents read from `agent_folders` are not supported: reading
+the folders at run start adds a toolset at run time, which Temporal refuses, so pass
 `SubAgents(include_self=True, agent_folders=None)` when you compose `SubAgents` yourself.
 
 #### Command timeouts {#harness-command-timeouts}

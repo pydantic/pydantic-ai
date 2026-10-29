@@ -48,7 +48,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
-| `/pr [TITLE]` | Push the branch and open a GitHub pull request with `gh`; the model drafts its description |
+| `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer CLAI is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
 | `/reload` | Reload CLAI's own code without restarting |
 | `/exit` | Quit |
@@ -594,8 +594,9 @@ control say so. Like `/fast`, `/effort` waits for the current turn to finish.
 `/commit [MESSAGE]` stages and commits every change in the session's directory;
 without MESSAGE the session's model drafts one from the changes. `/push` runs
 `git push -u origin BRANCH`; on the default branch it asks for `/push confirm`.
-`/pr [TITLE]` pushes the branch and opens a GitHub pull request with `gh`, the
-model drafting its description (and title, without TITLE). The web UI's git chip
+`/pr` shows a pull request title and description the model drafts from the
+branch; `/pr confirm` then pushes the branch and opens exactly that with `gh`,
+and `/pr TITLE` does so with your title instead. The web UI's git chip
 does the same, with a file list and the drafts to edit first. A plugin's own
 `/commit`, `/push`, or `/pr` replaces these; a skill of the same name is hidden
 by them, and CLAI says so.
@@ -2923,6 +2924,9 @@ leave content out by default, so the team gets UX telemetry and timing; turn on
 
 The plugin owns an isolated Logfire instance. Disable, reload, or exit flushes
 and shuts down that instance without shutting down application-global providers.
+CLAI waits at most three seconds for this, then warns that some telemetry may
+not have been sent and lets cleanup finish in the background. If an export is
+stuck, OpenTelemetry can still delay CLAI's exit.
 The existing global propagator is preserved. Logfire's SDK may install shared
 executor context-propagation helpers; those SDK hooks are not removed on unload.
 The plugin does not mutate a supplied agent. While enabled, its explicit per-run

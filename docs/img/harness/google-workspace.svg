@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="711" viewBox="0 0 880 711" role="img" aria-labelledby="t d">
+<title id="t">Google Workspace: Gmail, Calendar, Drive and more through Google&#x27;s MCP servers</title>
+<desc id="d">Inside your agent, the GoogleWorkspace capability opens one connection per selected product to Google&#x27;s hosted MCP servers, here gmailmcp.googleapis.com and calendarmcp.googleapis.com, with the same OAuth access token. The model sees each server&#x27;s tools under names that start with the product, such as gmail_search_threads. Your auth function returns the token at the start of each run; the capability does not refresh it, and Google access tokens expire after about an hour.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="710" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Google Workspace: Gmail, Calendar, Drive and more through Google&#x27;s MCP servers</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Each product you select is its own hosted MCP server, and one OAuth access token connects to all of them.</text>
+<rect x="32" y="120" width="504" height="222" rx="14" fill="none" stroke="#8FA8A3" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="46" y="112" width="104.7" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="53" y="124" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">YOUR AGENT</text>
+<rect x="46" y="217" width="84" height="36" rx="18" fill="#092224"/>
+<text x="88" y="240" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<line x1="134" y1="227" x2="180" y2="227" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="180" y1="243" x2="134" y2="243" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<rect x="184" y="142" width="336" height="182" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="198" y="166" font-size="14" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">GoogleWorkspace()</text>
+<text letter-spacing="1.3" x="198" y="188" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">THE MODEL SEES</text>
+<rect x="198" y="198" width="158.3" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="277.1" y="214.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">gmail_search_threads</text>
+<rect x="364.3" y="198" width="102.2" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="415.4" y="214.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">gmail_&lt;tool&gt;</text>
+<rect x="198" y="230" width="123.2" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="259.6" y="246.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">calendar_&lt;tool&gt;</text>
+<rect x="198" y="262" width="282.5" height="24" rx="6" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="339.2" y="278.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tools not marked read-only, with read_only=True</text>
+<text x="198" y="302" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Names start with the product; no prefix is added.</text>
+<rect x="636" y="142" width="212" height="84" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="650" y="166" font-size="13.5" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Gmail MCP server</text>
+<text x="650" y="186" font-size="11" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">gmailmcp.googleapis.com</text>
+<text x="650" y="203" font-size="11" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">/mcp/v1, Bearer token</text>
+<line x1="524" y1="177" x2="632" y2="177" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="632" y1="191" x2="524" y2="191" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<rect x="636" y="240" width="212" height="84" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="650" y="264" font-size="13.5" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Calendar MCP server</text>
+<text x="650" y="284" font-size="11" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">calendarmcp.googleapis.com</text>
+<text x="650" y="301" font-size="11" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">/mcp/v1, Bearer token</text>
+<line x1="524" y1="275" x2="632" y2="275" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="632" y1="289" x2="524" y2="289" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text x="578" y="169" font-size="12" fill="#092224" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tools/call</text>
+<text x="578" y="307" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">result</text>
+<rect x="32" y="382" width="350" height="155" rx="10" fill="#092224"/>
+<text x="46" y="406" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#F07CF3">def </tspan><tspan fill="#77FFD8">google_token</tspan><tspan fill="#FBFFEA">(ctx):</tspan></text>
+<text x="46" y="425" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">    </tspan><tspan fill="#F07CF3">return </tspan><tspan fill="#FBFFEA">ctx.deps.google_token</tspan></text>
+<text x="46" y="444" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">GoogleWorkspace(</tspan></text>
+<text x="46" y="463" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">    services=[</tspan><tspan fill="#FFD4E5">&#x27;gmail&#x27;</tspan><tspan fill="#FBFFEA">, </tspan><tspan fill="#FFD4E5">&#x27;calendar&#x27;</tspan><tspan fill="#FBFFEA">],</tspan></text>
+<text x="46" y="482" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">    auth=google_token,</tspan></text>
+<text x="46" y="501" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">    read_only=</tspan><tspan fill="#B9A3FF">True</tspan><tspan fill="#FBFFEA">,</tspan></text>
+<text x="46" y="520" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">)</tspan></text>
+<line x1="248" y1="378" x2="248" y2="327" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<text x="256" y="362" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">token, at the start of each run</text>
+<rect x="408" y="384" width="74.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="445.1" y="400.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">services</text>
+<text x="510" y="400" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">gmail, drive, docs, sheets, slides, calendar, chat or</text>
+<text x="510" y="417.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">people. One server each. id:</text>
+<text x="510" y="435.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">google-workspace-calendar-gmail.</text>
+<rect x="408" y="451.5" width="46.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="431" y="467.6" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">auth</text>
+<text x="510" y="467.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Read once at the start of each run and not refreshed:</text>
+<text x="510" y="485.2" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">access tokens expire after about an hour. Unset:</text>
+<text x="510" y="503" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">GOOGLE_ACCESS_TOKEN. &#x27;oauth&#x27; raises.</text>
+<rect x="408" y="519" width="81.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="448.6" y="535.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">read_only</text>
+<text x="510" y="535" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Keeps only tools the server marks read-only. The token&#x27;s</text>
+<text x="510" y="552.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">scopes still decide access.</text>
+<rect x="32" y="586.8" width="816" height="58" rx="10" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.4"/>
+<text letter-spacing="1.3" x="46" y="609.8" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">UNTRUSTED TEXT</text>
+<text x="190.8" y="609.8" font-size="12.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Email bodies and shared documents are written by other people and can carry instructions aimed at the</text>
+<text x="190.8" y="627.5" font-size="12.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model. Use read_only=True, approval, or Prompt Injection Defender.</text>
+<rect x="32" y="663.8" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="674.8" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="663.8" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="674.8" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by Google Workspace</text>
+<rect x="304.9" y="663.8" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="324.9" y="674.8" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Google MCP servers</text>
+<rect x="462.3" y="663.8" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="482.3" y="674.8" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">rejected or dropped</text>
+</svg>

@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="626" viewBox="0 0 880 626" role="img" aria-labelledby="t d">
+<title id="t">Step Persistence: save a run so you can continue or fork it later</title>
+<desc id="d">An agent run with StepPersistence writes to a step store as it goes: before_run writes a RunRecord, after_model_request appends a model_request_completed event, after_tool_execute marks a tool effect completed, and after_node_run saves a complete snapshot of the message history. When the worker crashes during a second tool call, that tool effect stays at started, so it reads as unknown after the crash. Later, in any process, your code finds the run with list_runs, loads the latest complete snapshot with continue_run, and passes its messages to a new Agent.run.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="625" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Step Persistence: save a run so you can continue or fork it later</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">StepPersistence records each run in a store you choose: a trail of step events, a ledger of tool side effects, and</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">snapshots of the message history. After a crash, your code continues from the last complete snapshot.</text>
+<rect x="32" y="130" width="560" height="98" rx="10" fill="#092224"/>
+<text x="46" y="154" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">store = </tspan><tspan fill="#77FFD8">SqliteStepStore</tspan><tspan fill="#FBFFEA">(database=</tspan><tspan fill="#FFD4E5">&#x27;runs.db&#x27;</tspan><tspan fill="#FBFFEA">)</tspan></text>
+<text x="46" y="173" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">agent = </tspan><tspan fill="#77FFD8">Agent</tspan><tspan fill="#FBFFEA">(model, capabilities=[</tspan></text>
+<text x="46" y="192" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">    </tspan><tspan fill="#77FFD8">StepPersistence</tspan><tspan fill="#FBFFEA">(store=store, agent_name=</tspan><tspan fill="#FFD4E5">&#x27;code_librarian&#x27;</tspan><tspan fill="#FBFFEA">)])</tspan></text>
+<text x="46" y="211" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#F07CF3">await </tspan><tspan fill="#FBFFEA">agent.run(prompt, conversation_id=</tspan><tspan fill="#FFD4E5">&#x27;libr-conv&#x27;</tspan><tspan fill="#FBFFEA">)</tspan></text>
+<text letter-spacing="1.3" x="614" y="144" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">SETUP</text>
+<text x="614" y="168" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Other stores: InMemoryStepStore,</text>
+<text x="614" y="185.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">FileStepStore, MongoStepStore,</text>
+<text x="614" y="203.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">PostgresStepStore, or your own</text>
+<text x="614" y="221.2" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">StepStore.</text>
+<rect x="32" y="262" width="170" height="246" rx="14" fill="none" stroke="#8FA8A3" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="46" y="254" width="95.2" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="53" y="266" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">AGENT RUN</text>
+<rect x="242" y="262" width="400" height="246" rx="14" fill="none" stroke="#7B57E8" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="256" y="254" width="104.7" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="263" y="266" font-size="11" fill="#7B57E8" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">STEP STORE</text>
+<rect x="678" y="262" width="170" height="246" rx="14" fill="none" stroke="#8FA8A3" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="692" y="254" width="172.1" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="699" y="266" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">LATER, ANY PROCESS</text>
+<rect x="44" y="295" width="146" height="40" rx="20" fill="#092224"/>
+<text x="117" y="320" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model request</text>
+<rect x="44" y="362" width="146" height="54" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="117" y="383.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tool call</text>
+<text x="117" y="402.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">returns</text>
+<rect x="44" y="436" width="146" height="54" rx="10" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.4"/>
+<text x="117" y="457.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tool call</text>
+<text x="117" y="476.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">worker crashes</text>
+<line x1="117" y1="335" x2="117" y2="360" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="117" y1="418" x2="117" y2="434" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="256" y="288" width="85.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="298.6" y="304" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">before_run</text>
+<line x1="344.1" y1="300" x2="360.1" y2="300" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="363.1" y="288" width="78.4" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="402.3" y="304" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">RunRecord</text>
+<rect x="256" y="318" width="145.5" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="328.7" y="334" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">after_model_request</text>
+<line x1="404.5" y1="330" x2="420.5" y2="330" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="423.5" y="318" width="219.3" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="533.1" y="334" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">event: model_request_completed</text>
+<rect x="256" y="362" width="138.8" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="325.4" y="378" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">after_tool_execute</text>
+<line x1="397.8" y1="374" x2="413.8" y2="374" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="416.8" y="362" width="165.6" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="499.6" y="378" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">tool effect: completed</text>
+<rect x="256" y="392" width="111.9" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="312" y="408" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">after_node_run</text>
+<line x1="370.9" y1="404" x2="386.9" y2="404" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="389.9" y="392" width="138.8" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="459.3" y="408" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">snapshot: complete</text>
+<rect x="256" y="436" width="145.5" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="328.7" y="452" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">before_tool_execute</text>
+<line x1="404.5" y1="448" x2="420.5" y2="448" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="423.5" y="436" width="152.2" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="499.6" y="452" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">tool effect: started</text>
+<text x="256" y="483" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">no terminal update, so</text>
+<rect x="392" y="466" width="145.5" height="24" rx="6" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="464.7" y="482" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">unknown_after_crash</text>
+<line x1="192" y1="315" x2="252" y2="315" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="192" y1="389" x2="252" y2="389" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="192" y1="463" x2="252" y2="463" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="690" y="288" width="146" height="54" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="763" y="309.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">list_runs</text>
+<text x="763" y="328.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">by conversation_id</text>
+<rect x="690" y="362" width="146" height="54" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="763" y="383.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">continue_run</text>
+<text x="763" y="402.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">its messages</text>
+<rect x="690" y="436" width="146" height="54" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="763" y="457.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">new Agent.run</text>
+<text x="763" y="476.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">message_history=history</text>
+<line x1="763" y1="344" x2="763" y2="360" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="763" y1="418" x2="763" y2="434" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="447.5" y1="300" x2="688" y2="300" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<line x1="534.7" y1="404" x2="688" y2="404" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text x="32" y="538" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Check list_unresolved_tool_effects before continuing: a started effect may or may not have happened, and your code decides whether</text>
+<text x="32" y="555.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">redoing it is safe. fork_run branches into a new run instead.</text>
+<rect x="32" y="578.5" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="589.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model request</text>
+<rect x="153.4" y="578.5" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="173.4" y="589.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your run and code</text>
+<rect x="297" y="578.5" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="317" y="589.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">StepPersistence hooks and helpers</text>
+<rect x="535" y="578.5" width="14" height="14" rx="4" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="555" y="589.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">stored records</text>
+<rect x="662" y="578.5" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="682" y="589.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">crash</text>
+</svg>

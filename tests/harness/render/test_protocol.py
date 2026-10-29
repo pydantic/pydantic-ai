@@ -524,6 +524,7 @@ async def test_run_context_serialization_is_exhaustive() -> None:
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker's agent
         'workspace',  # live facade; only its ref crosses, as `workspace_ref`
         '_run_held_toolsets',  # a child task may run in another process, so it enters its own toolsets
+        '_dispatched_tool_name',  # names a tool in the live `tool_manager`, which a child task doesn't have
     }
     carried_only_when_set = {
         '_tool_name_path',  # set while a name-changing wrapper lists a toolset; defaults to `()` otherwise

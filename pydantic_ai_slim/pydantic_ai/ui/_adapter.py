@@ -63,6 +63,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream
+from ._messages_builder import MessagesBuilder
 from ._utils import get_ui_message_id, set_ui_message_id, without_ui_message_id
 
 if TYPE_CHECKING:
@@ -235,12 +236,13 @@ def enqueued_messages_for_client(
     return kept
 
 
-def compaction_payload(part: CompactionPart) -> dict[str, Any]:
+def compaction_payload(part: CompactionPart, *, canonical_system: str | None = None) -> dict[str, Any]:
     """Serialize a compaction part as a UI payload, omitting fields whose value is `None`.
 
     The payload is faithful — `provider_details` travels verbatim, provenance stamp included.
     Trust is enforced on the load side: client-submitted messages pass through
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages], which strips the stamp.
+    `canonical_system` is the response's, from `part_canonical_system`.
     """
     return {
         key: value
@@ -249,10 +251,45 @@ def compaction_payload(part: CompactionPart) -> dict[str, Any]:
             'id': part.id,
             'provider_name': part.provider_name,
             'provider_details': part.provider_details,
+            'canonical_system': canonical_system,
             'metadata': part.metadata,
         }.items()
         if value is not None
     }
+
+
+def part_canonical_system(response: ModelResponse, provider_name: str | None) -> str | None:
+    """The response's `canonical_system` to carry beside a part from `provider_name`, if it applies to that part.
+
+    [`ModelResponse.canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] applies to the parts
+    whose `provider_name` is the response's. UI protocols have no channel for the response's own provider
+    identity, so it rides with each part's `provider_name` instead, and `restore_canonical_system` puts it
+    back on load.
+    """
+    if provider_name is not None and provider_name == response.provider_name:
+        return response.canonical_system
+    return None
+
+
+def restore_canonical_system(builder: MessagesBuilder, provider_name: object, canonical_system: object) -> None:
+    """Restore the `canonical_system` a part just added to `builder` carried onto the response that holds it.
+
+    The response also gets that part's `provider_name`, which is what makes the stamp apply to the part. The claim
+    is client-echoed, like the part's own `provider_name`, `signature` and `provider_details` it sits beside: it
+    only decides which of the client's parts are sent to which system, never what they hold. Parts from two
+    responses can load into one; a part from another provider than the first claim's keeps being judged by
+    its name, and a conflicting claim for the same provider clears the stamp so its parts are too.
+    """
+    if not isinstance(provider_name, str) or not isinstance(canonical_system, str):
+        return
+    response = builder.messages[-1]
+    # A part with a `provider_name` always goes to a response.
+    assert isinstance(response, ModelResponse)
+    if response.provider_name is None:
+        response.provider_name = provider_name
+        response.canonical_system = canonical_system
+    elif response.provider_name == provider_name and response.canonical_system != canonical_system:
+        response.canonical_system = None
 
 
 def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart | None:
