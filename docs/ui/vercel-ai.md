@@ -54,7 +54,7 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
 
 ### Cancellation
 
-When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()` from a tool, `AgentRun.cancel()`, or a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint — the adapter emits a Vercel `abort` chunk. [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) keeps the partial message and reports `isAbort` to `onFinish` instead of entering an error state. Pass an `on_cancel` callback to persist the resumable message history, as shown in the example below.
+When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()` from a tool, `AgentRun.cancel()`, a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint, or a [`timeout=`](../timeouts.md#bounding-a-whole-run) running out — the adapter emits a Vercel `abort` chunk, whose `reason` says whether the run was cancelled or timed out. [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) keeps the partial message and reports `isAbort` to `onFinish` instead of entering an error state. Pass an `on_cancel` callback to persist the resumable message history, as shown in the example below.
 
 !!! note "Client disconnects are external cancellation"
     Calling `stop()` on the client aborts the browser's request, which the server sees as a *disconnect*, not a first-party cancellation. That tears the run down as an external `asyncio.CancelledError` (see [the two kinds of cancellation](../agent.md#cancelling-a-run)), so no `abort` chunk is emitted and `on_cancel` does not fire — and the client has disconnected anyway. To get the `abort` chunk and run `on_cancel` on a stop gesture, keep the stream connected and cancel the run *first-party*: give the run a [`CancellationToken`][pydantic_ai.CancellationToken] and expose a separate endpoint (e.g. `POST /chat/{id}/cancel`) that calls `token.cancel()`.
@@ -227,11 +227,13 @@ Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool
 
 [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes application keys from [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores the message `timestamp` under a reserved `pydantic_ai` key so it survives the round-trip. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores those application keys and the timestamp on the way back. The framework-reserved `__pydantic_ai__` namespace is excluded in both directions.
 
-`load_messages` also keeps the `UIMessage.id` in that reserved namespace, and `dump_messages` uses it as the id again, so a history the browser sent comes back with the ids the browser assigned. Each `ModelRequest` or `ModelResponse` holds one id, so when consecutive `UIMessage`s merge into one message, such as a system message followed by a user message, only the last id is kept. Pass `generate_message_id` to `dump_messages` to choose ids yourself instead.
+`load_messages` also keeps the `UIMessage.id` in that reserved namespace, and `dump_messages` uses it as the id again, so a history the browser sent comes back with the ids the browser assigned. Each `ModelRequest` or `ModelResponse` holds one id, so when consecutive `UIMessage`s merge into one message, such as a system message followed by a user message, only the last id is kept, and it goes back on the last `UIMessage` dumped from that message, the one it came from. The others get generated ids, so no two messages share one. Pass `generate_message_id` to `dump_messages` to choose ids yourself instead.
 
 If you serialize `dump_messages` output yourself, use `model_dump_json(by_alias=True)` or `model_dump(mode='json', by_alias=True)` so unset fields are omitted, as the AI SDK requires.
 
 When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. Request-side messages have no analogous chunk — frontends rebuilding history purely from streamed chunks see timestamps only on assistant responses, whereas `dump_messages` populates both sides.
+
+`dump_messages` also writes a `UIMessage` wherever a run produced [retry feedback that belongs to no tool call](../retries.md#feedback-that-belongs-to-no-tool-call), including for an agent with no configured `system_prompt` at all. Its `role` is the voice the model was shown the feedback in — `'user'` for a `'validation_error'` or `'model_retry'`, and `'system'` for `'no_output'` feedback in the framework's own words — and it holds the same text, with the [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] itself under a `retry_feedback` claim in the reserved `pydantic_ai` key of that text part's `providerMetadata` (not `UIMessage.metadata`). `load_messages` rebuilds the part from that claim alone, so a message the frontend wrote stays a plain [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. A [`ModelRequest`][pydantic_ai.messages.ModelRequest] that mixes system-voice parts with user content goes out as one `UIMessage` per run of same-role parts, in the order the parts were authored, so feedback authored after a `UserPromptPart` reloads after it and the request re-sends the same bytes. The request's metadata rides on its last `role='user'` message, or on its last message when it has none, and is applied once on reload.
 
 `UIMessage.metadata` is fully client-controlled, so `timestamp` is the only server-owned field that is round-tripped. The `__pydantic_ai__` namespace and fields such as `usage`, `model_name`, and `provider_*` are deliberately excluded — dumping them could leak infrastructure details, and restoring them would trust client-submitted history for values the server owns. Keep framework and provider state in trusted server-side storage instead. Broadening the round-trip behind an explicit user-controlled opt-in is tracked in [issue #5174](https://github.com/pydantic/pydantic-ai/issues/5174).
 
@@ -239,15 +241,52 @@ When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` 
 
 Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), workspace references ([`strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
 
+## Keeping the history on the server
+
+With [`manage_message_history='server'`](./overview.md#keeping-the-history-on-the-server), the adapter uses only the new turn from the messages `useChat` sends, so `useChat` can keep sending its whole history. To send only the last message instead, customize the request in `prepareSendMessagesRequest`. Keep the `messages` array: unlike the request in the AI SDK's own persistence guide, the adapter's request body requires it.
+
+```ts
+import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
+
+const { messages, sendMessage } = useChat({
+  transport: new DefaultChatTransport({
+    api: '/api/chat',
+    prepareSendMessagesRequest: ({ id, messages, trigger, messageId, body }) => ({
+      body: { ...body, id, trigger, messageId, messages: messages.slice(-1) },
+    }),
+  }),
+});
+```
+
+The last message is all a turn needs: the user's new or edited message, the user message a regenerate answers again, or the assistant message carrying a frontend tool's output or a [tool approval](#tool-approval). Assistant message ids don't matter here: `useChat` makes up its own unless you pass `server_message_id`, and the adapter only matches the user message ids, which the stored history keeps.
+
 ## Compaction
 
-[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when a frontend such as `useChat` holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (the [server-side persistence pattern](./overview.md#trust-model-for-client-submitted-messages)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
+[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when a frontend such as `useChat` holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (see [Keeping the history on the server](#keeping-the-history-on-the-server)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
+
+## Structured content
+
+A [`StructuredContent`][pydantic_ai.StructuredContent] item in a user prompt is dumped as a text part of the user message, so `useChat` shows its rendered text like any other user text. Its `value`, and its `tag` and `description` when set, ride the part's `providerMetadata` under `pydantic_ai.structured_content` as a JSON-encoded string, and the item loads back whole from it. It's a string rather than an object so the AI SDK passes it through untouched, since as a JavaScript object a value like `949.0` would come back as `949`; a frontend that wants to read the value, say to show the state, has to `JSON.parse` it. Like the rest of [client-submitted history](#trust-model), an item the client sends back is not re-rendered: the client controls its text and its `value`, which can disagree, and a [decision model](../models/decision.md#structured-input) is sent the `value`. See [Structured input](../input.md#structured-input).
+
+## Citations
+
+[Citations](../citations.md) reach the frontend in two ways:
+
+- Each cited web page is sent once per message as a [`source-url`](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#source-url-part) part, so `useChat` can list the sources. Document sources aren't listed.
+- The full citations are stored in the text part's `providerMetadata`, including excerpts, which can hold text from your own documents. The AI SDK sends it back unchanged, so the citations are still there when the frontend sends the messages back.
+
+A few things to know:
+
+- Consecutive text parts, such as Anthropic's separately cited blocks, are shown as one text part. Read citations from `citations` in the metadata, which match the combined text. When the frontend sends combined text back, its citations stay in the metadata but go to Anthropic as plain text.
+- Anchor positions count characters the way Python does. JavaScript counts some characters, such as emoji, as two, so slice `Array.from(text)` rather than the string itself.
+- Google and OpenAI Chat send citations at the end of the response. When a tool call follows the text, those citations don't reach the frontend, so they're also missing from the history it sends back.
 
 ## Enqueued messages
 
 Messages [injected mid-run](../message-history.md#injecting-messages-mid-run) with [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue], such as a background task's result, are streamed as a `data-enqueued-messages` [data chunk](#data-chunks) with `id` set to the enqueue ID. Its `data.messages` holds the delivered messages in the shape [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] gives them. The AI SDK keeps the data part on the assistant message, and the chat doesn't show it unless your frontend renders that type. A frontend that holds the history sends it back on the next request, and [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores the messages at the position they were delivered in.
 
-An enqueued system prompt, such as a capability's announcement, is only sent when the frontend [owns the system prompt](#system-prompts-and-instructions). Otherwise it would be stripped on the way back in, like any other system prompt the client sends, so it stays on the server. The other messages get the same handling as the rest of the submitted history. They round-trip as `dump_messages` output does, so [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is dropped and the text comes back as plain user text.
+An enqueued system prompt, such as a capability's announcement, is only sent when the frontend [owns the system prompt](#system-prompts-and-instructions). Otherwise it would be stripped on the way back in, like any other system prompt the client sends, so it stays on the server. The other messages get the same handling as the rest of the submitted history. They round-trip as `dump_messages` output does, so [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is dropped and the text comes back as plain user text, except a [`StructuredContent`](#structured-content), which keeps its value.
 
 ## MCP Apps
 
@@ -327,7 +366,7 @@ The rest of this section only matters if you use `system_prompt`. If you only us
 For `system_prompt`, you choose who owns it with the `manage_system_prompt` parameter on [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter]:
 
 - `'server'` (default): the agent's configured `system_prompt` is authoritative. Any system message sent by the frontend is stripped with a warning (a malicious client could otherwise inject arbitrary instructions via crafted API requests), and the agent's own system prompt is reinjected at the head of the first request via the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability.
-- `'client'`: the frontend owns the system prompt. Frontend system messages are preserved as-is, and the agent's configured `system_prompt` is not injected — the caller is fully responsible for sending it on every turn if desired. To opt into fallback-to-configured behavior, add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability to your agent.
+- `'client'`: the frontend owns the system prompt. Frontend system messages are preserved as-is, and the agent's configured `system_prompt` is not injected — the caller is fully responsible for sending it on every turn if desired. To opt into fallback-to-configured behavior, add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability to your agent. [Retry feedback](#message-metadata) is preserved along with them, so a frontend that attaches the `retry_feedback` claim to a system message of its own writing also reaches the model in the system voice. Reach for `'client'` only when the frontend is as trusted as the server.
 
 ```python {title="vercel_ai_client_managed_system_prompt.py"}
 from fastapi import FastAPI

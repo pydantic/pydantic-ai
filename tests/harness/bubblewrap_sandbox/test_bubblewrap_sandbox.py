@@ -8,10 +8,12 @@ from __future__ import annotations
 import base64
 import contextlib
 import os
+import shlex
 import shutil
+import signal
 import socket
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 
 import anyio
@@ -29,6 +31,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
+    WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
@@ -52,7 +55,7 @@ def tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRemoteTools:
 def _sandbox_args(working_dir: str, *, network: bool = False) -> str:
     return ' '.join(
         [
-            '--die-with-parent --new-session --unshare-user --unshare-ipc --unshare-uts --unshare-cgroup-try',
+            '--die-with-parent --unshare-user --unshare-ipc --unshare-uts --unshare-cgroup-try',
             *([] if network else ['--unshare-net --seccomp 3']),
             '--cap-drop ALL',
             '--ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run',
@@ -85,6 +88,10 @@ async def test_commands_run_in_bwrap_on_the_wrapped_host(tools: FakeRemoteTools,
         f'{_sandbox_args(working_dir)} --tmpfs /secrets --chdir {working_dir} --setenv GREETING hi -- '
         'sh -c printf "%s" "$GREETING"',
     ]
+    # Without its own session, the command stays in the backend's process group, so a timeout or
+    # cancellation that kills the group reaches its foreground descendants (`TestRealBubblewrap` checks
+    # that on a host with `bwrap`).
+    assert all('--new-session' not in call.split() for call in tools.bwrap_calls)
 
 
 class _FailedHome:
@@ -395,6 +402,135 @@ async def test_ssh_home_resolution_does_not_run_planted_helpers(tools: FakeRemot
     assert not ran.exists()
 
 
+class _RacedLoginSetup(LocalWorkspaceBackend):
+    """Runs the login-path setup with `races` applied, so another caller acts between a check and a creation."""
+
+    def __init__(self, root: Path, *, races: Mapping[str, str]):
+        super().__init__(root)
+        self._races = races
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        # `set -C` (noclobber) marks the login-path setup script, the one call these tests race.
+        if not isinstance(command, str) and len(command) > 3 and 'set -C' in command[2]:
+            script = command[2]
+            for creation, raced in self._races.items():
+                assert creation in script
+                script = script.replace(creation, raced)
+            command = [*command[:2], script, *command[3:]]
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
+async def test_login_paths_created_by_another_workspace_meanwhile_are_accepted(tools: FakeRemoteTools) -> None:
+    """Each run's workspace sets up on its own, so a concurrent one on the same home may create a path first."""
+    # The first creation stands in for the other workspace; the second, ours, then finds the path there.
+    tcshrc = 'printf \'source ~/.cshrc\\n\' > "$path"'
+    races = {
+        '/bin/mkdir -- "$path" ||': '{ /bin/mkdir -- "$path"; /bin/mkdir -- "$path"; } ||',
+        f'{tcshrc} ||': f'{{ {tcshrc}; {tcshrc}; }} ||',
+        'printf \'\' > "$path" ||': '{ printf \'\' > "$path"; printf \'\' > "$path"; } ||',
+    }
+    workspace = BubblewrapWorkspace(Workspace(_RacedLoginSetup(tools.home, races=races)))
+
+    assert (await workspace.run(['true'])).exit_code == 0
+
+    home = tools.home.resolve()
+    assert (home / '.ssh').is_dir()
+    assert (home / '.config' / 'fish').is_dir()
+    assert (home / '.tcshrc').read_text() == 'source ~/.cshrc\n'
+    assert (home / '.bashrc').read_text() == ''
+    assert f'--ro-bind {home}/.bashrc {home}/.bashrc' in tools.bwrap_calls[0]
+
+
+async def test_a_parent_symlinked_by_another_workspace_meanwhile_is_unavailable(
+    tools: FakeRemoteTools, tmp_path: Path
+) -> None:
+    """A parent that turns out to be a symlink after its creation failed would redirect what is created in it."""
+    home = tools.home.resolve()
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    config = shlex.quote(str(home / '.config'))
+    races = {
+        '/bin/mkdir -- "$path" ||': (
+            f'{{ [ "$path" != {config} ] || /bin/ln -s -- {shlex.quote(str(elsewhere))} "$path"; '
+            '/bin/mkdir -- "$path"; } ||'
+        ),
+    }
+    workspace = BubblewrapWorkspace(Workspace(_RacedLoginSetup(tools.home, races=races)))
+
+    with pytest.raises(WorkspaceUnavailableError, match=r'\.config is a symbolic link'):
+        await workspace.run(['true'])
+
+    assert list(elsewhere.iterdir()) == []
+    assert tools.bwrap_calls == []
+
+
+class _GatedLoginSetup(LocalWorkspaceBackend):
+    """Holds the login-path setup until released, with the probes answered in-process.
+
+    Both callers then deterministically reach the setup or its lock.
+    """
+
+    def __init__(self, home: Path):
+        super().__init__(home)
+        self.home = str(home.resolve())
+        self.setup_started = anyio.Event()
+        self.release_setup = anyio.Event()
+        self.setup_calls = 0
+
+    async def working_dir(self) -> str:
+        return self.home
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert not isinstance(command, str)
+        assert command[:2] == ['/bin/sh', '-c']
+        if len(command) == 3:
+            return CommandResult(exit_code=0, stdout=self.home + '\n' if '$HOME' in command[2] else '', stderr='')
+        if 'set -C' in command[2]:
+            self.setup_calls += 1
+            self.setup_started.set()
+            await self.release_setup.wait()
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
+async def test_concurrent_first_calls_initialize_login_paths_once(tools: FakeRemoteTools) -> None:
+    """Concurrent first commands must not race to create the same missing login files."""
+    backend = _GatedLoginSetup(tools.home)
+    workspace = BubblewrapWorkspace(Workspace(backend))
+    results: list[CommandResult] = []
+
+    async def call() -> None:
+        results.append(await workspace.run(['true']))
+
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            group.start_soon(call)
+            group.start_soon(call)
+            await backend.setup_started.wait()
+            await anyio.wait_all_tasks_blocked()
+            assert backend.setup_calls == 1
+            backend.release_setup.set()
+
+    assert [result.exit_code for result in results] == [0, 0]
+    assert len(tools.bwrap_calls) == 2
+    assert (tools.home / '.bashrc').is_file()
+    assert (await workspace.run(['true'])).exit_code == 0
+    assert backend.setup_calls == 1
+
+
 async def test_an_ssh_path_that_is_not_a_directory_is_unavailable(tmp_path: Path) -> None:
     home = tmp_path / 'home'
     home.mkdir()
@@ -550,17 +686,24 @@ async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp
 
 @pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
 class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
-    async def test_commands_write_only_to_the_working_dir(self, tmp_path: Path) -> None:
+    @pytest.fixture
+    def host_dir(self) -> Iterator[Path]:
+        """A host directory outside `/tmp`, which the sandbox replaces with its own, so only the read-only root guards it."""
+        directory = Path(tempfile.mkdtemp(prefix='pydantic-ai-bwrap-', dir='/var/tmp'))
+        yield directory
+        shutil.rmtree(directory)
+
+    async def test_commands_write_only_to_the_working_dir(self, tmp_path: Path, host_dir: Path) -> None:
         workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path / 'work')))
         (tmp_path / 'work').mkdir()
 
         inside = await workspace.run(['sh', '-c', 'printf ok > inside.txt'])
-        await workspace.run(['sh', '-c', f'printf no > {tmp_path}/outside.txt'])
+        outside = await workspace.run(['sh', '-c', f'printf no > {host_dir}/outside.txt'])
 
         assert inside.exit_code == 0
         assert await workspace.read_text('inside.txt') == 'ok'
-        # Outside the working directory, a write fails or lands in the sandbox's private `/tmp`.
-        assert not (tmp_path / 'outside.txt').exists()
+        assert outside.exit_code != 0
+        assert not (host_dir / 'outside.txt').exists()
 
     async def test_tmp_is_private(self, tmp_path: Path) -> None:
         marker = Path('/tmp') / f'pydantic-ai-bwrap-{os.getpid()}'
@@ -571,15 +714,16 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
         finally:
             marker.unlink()
 
-    async def test_file_methods_cannot_write_through_a_symlink_out_of_the_working_dir(self, tmp_path: Path) -> None:
-        outside = tmp_path / 'outside.txt'
+    async def test_file_methods_cannot_write_through_a_symlink_out_of_the_working_dir(
+        self, tmp_path: Path, host_dir: Path
+    ) -> None:
+        outside = host_dir / 'outside.txt'
         outside.write_text('host')
         (tmp_path / 'work').mkdir()
         (tmp_path / 'work' / 'link').symlink_to(outside)
         workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path / 'work')))
 
-        # The write fails, or lands in the sandbox's private `/tmp`: either way the host file is untouched.
-        with contextlib.suppress(OSError, WorkspaceError):
+        with pytest.raises((OSError, WorkspaceError)):
             await workspace.write_text('link', 'escaped')
 
         assert outside.read_text() == 'host'
@@ -645,11 +789,84 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
 
         assert (await workspace.run(['sh', '-c', 'ls -A /run'])).stdout == ''
 
+    @pytest.mark.parametrize('stop', ['timeout', 'cancel'])
+    async def test_stopping_a_command_kills_its_descendants(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stop: str
+    ) -> None:
+        """A foreground grandchild must stay in the backend's process group, unlike detached Shell jobs."""
+        backend = LocalWorkspaceBackend(tmp_path)
+        workspace = BubblewrapWorkspace(Workspace(backend))
+        await workspace.run(['true'])
+        ready = anyio.Event()
+        finished = anyio.Event()
+        scope = anyio.CancelScope()
+        pid_file = tmp_path / 'child-pid'
+        command = 'sleep 3600 & echo $! > child-pid.tmp; mv child-pid.tmp child-pid; wait'
+
+        # Inject expiry after the grandchild is ready, rather than waiting out a timer or racing startup.
+        async def expired(
+            process: anyio.abc.Process,
+            stdout: bytearray,
+            stderr: bytearray,
+            deadline: float | None,
+        ) -> int:
+            await ready.wait()
+            raise TimeoutError
+
+        if stop == 'timeout':
+            monkeypatch.setattr(backend, '_wait_and_collect_output', expired)
+
+        async def run() -> None:
+            try:
+                with scope:
+                    if stop == 'timeout':
+                        with pytest.raises(WorkspaceTimeoutError):
+                            await workspace.run(command, shell=True, timeout=30)
+                    else:
+                        await workspace.run(command, shell=True)
+            finally:
+                finished.set()
+
+        child_pid: int | None = None
+        try:
+            async with anyio.create_task_group() as group:
+                group.start_soon(run)
+                try:
+                    with anyio.fail_after(10):
+                        while not pid_file.exists():
+                            await anyio.sleep(0.01)
+                        child_pid = int(pid_file.read_text())
+                    ready.set()
+                    if stop == 'cancel':
+                        scope.cancel()
+                    with anyio.fail_after(10):
+                        await finished.wait()
+                        # A killed orphan may remain a zombie until the host's init reaps it.
+                        status = Path(f'/proc/{child_pid}/stat')
+                        while True:
+                            try:
+                                state = status.read_text(encoding='utf-8').rsplit(')', 1)[1].split()[0]
+                            except FileNotFoundError:
+                                break
+                            if state == 'Z':
+                                break
+                            await anyio.sleep(0.01)
+                finally:
+                    group.cancel_scope.cancel()
+        finally:
+            if child_pid is not None:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(child_pid, signal.SIGKILL)
+
     async def test_a_detached_command_outlives_the_call(self, tmp_path: Path) -> None:
         """The harness `Shell` detaches its jobs and checks on them in later calls."""
         workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
 
-        await workspace.run('setsid sh -c "sleep 1; echo alive > out" < /dev/null > /dev/null 2>&1 &', shell=True)
-        await anyio.sleep(3)
+        await workspace.run(
+            'setsid sh -c "sleep 1; echo alive > out.tmp && mv out.tmp out" < /dev/null > /dev/null 2>&1 &', shell=True
+        )
+        with anyio.fail_after(30):
+            while not await workspace.exists('out'):
+                await anyio.sleep(0.1)
 
         assert await workspace.read_text('out') == 'alive\n'

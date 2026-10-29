@@ -8,7 +8,9 @@ record the non-`allow` outcomes as spans.
 
 from __future__ import annotations
 
+import functools
 import inspect
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal, assert_never
@@ -17,6 +19,8 @@ from typing_extensions import TypeIs
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._callable import takes_context
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 
 class _Unset:
@@ -135,32 +139,64 @@ class GuardrailResult:
         return cls(action='approve')
 
 
+TextDetector = Callable[[str], GuardrailResult]
+"""A check over text. Adapt one with `for_text` or `for_tool_result_text` at non-text guard boundaries."""
+
+
 GuardOutcome = bool | GuardrailResult
 """What a guard callable returns: a bare `bool` (`True` = allow), or a `GuardrailResult`."""
 
 
 GuardCallable = Callable[..., object]
-"""A guard as the helpers below handle it. `evaluate` normalizes whatever it returns.
+"""A guard as the helpers below handle it.
 
-The public `*GuardrailFunc` aliases pin down what a guard may return; by the time
-one reaches here it has already been checked against that field type.
+Deliberately loose: whether a guard takes `RunContext` is decided from its signature at call
+time, which no static callable type can express, and `evaluate` checks what it returns at
+runtime. The public `*GuardrailFunc` aliases carry the precise types for users.
 """
 
 
 def takes_ctx(func: Callable[..., object]) -> bool:
     """Return `True` when `func` declares a leading `RunContext` parameter.
 
-    Detected by parameter count, not annotation: a guard always takes the
-    guarded value, so a second parameter means it also wants the run context.
-    This matches pydantic-ai's own optional-`ctx` convention for output
-    validators. A callable whose signature cannot be introspected is treated
-    as taking the value only.
+    Detected from the positional parameters: a guard always takes the guarded
+    value, so a second required positional parameter means it also wants the
+    run context, whether or not it is annotated, as does a `*args` parameter
+    alongside another parameter.
+    Keyword-only parameters are the guard's own options and never count on their own. A
+    second positional parameter with a default is read from the first
+    parameter's annotation: `RunContext` (also in a union or `Annotated`)
+    means the run context, and any other type means the guarded value. A first
+    parameter with no annotation, `Any`, `object`, or a type that cannot be
+    resolved still gets the run context, as it always has, with a
+    `HarnessDeprecationWarning`, unless the unresolved annotation names
+    `RunContext`, which needs no warning. A callable whose signature cannot be
+    introspected is treated as taking the value only.
     """
     try:
-        parameters = inspect.signature(func).parameters
+        parameters = tuple(inspect.signature(func).parameters.values())
     except ValueError:  # pragma: no cover - callable without an introspectable signature
         return False
-    return len(parameters) > 1
+    positional = [
+        parameter
+        for parameter in parameters
+        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    if len(positional) < 2:
+        has_args = any(parameter.kind is inspect.Parameter.VAR_POSITIONAL for parameter in parameters)
+        return has_args and len(parameters) > 1
+    decision = takes_context(func, parameters=parameters)
+    if decision is None:
+        warnings.warn(
+            f'Guard {_guard_name(func)} has a second positional parameter with a default and a first parameter '
+            'that is unannotated, `Any`, `object` or unresolvable, so it is passed the RunContext first, as before. '
+            "Annotate the first parameter, with `RunContext[...]` or with the guarded value's type: a future "
+            'release will pass the guarded value to it.',
+            HarnessDeprecationWarning,
+            stacklevel=2,
+        )
+        return True
+    return decision
 
 
 async def evaluate(
@@ -174,7 +210,24 @@ async def evaluate(
         outcome = await outcome
     if isinstance(outcome, GuardrailResult):
         return outcome
+    if not isinstance(outcome, bool):
+        # Still read for truthiness, as before, but flagged: a classifier label such as `'unsafe'`
+        # is truthy and lets the value through.
+        warnings.warn(
+            f'A guard should return True, False, or a GuardrailResult; {_guard_name(guard)} returned '
+            f"{type(outcome).__name__}, which is read for truthiness, so a truthy label such as 'unsafe' "
+            'allows the value. A future release will raise UserError instead. Return bool(...) or a '
+            'GuardrailResult.',
+            HarnessDeprecationWarning,
+            stacklevel=2,
+        )
     return GuardrailResult.allow() if outcome else GuardrailResult.block()
+
+
+def _guard_name(guard: GuardCallable) -> str:
+    """A guard's name for a message, without its `repr`, which can show bound arguments such as keys."""
+    target: object = guard.func if isinstance(guard, functools.partial) else guard
+    return getattr(target, '__qualname__', None) or type(target).__name__
 
 
 def is_guard_chain(guard: object) -> TypeIs[Sequence[GuardCallable]]:
@@ -224,7 +277,7 @@ async def evaluate_all(
     ctx: RunContext[AgentDepsT],
     value: object,
     *,
-    check_replacement: Callable[[object, int], None] | None = None,
+    check_replacement: Callable[[object, int], object] | None = None,
 ) -> tuple[GuardrailResult, int]:
     """Run each guard in order over the value, threading replacements through.
 
@@ -287,19 +340,18 @@ def trace_redaction(
     ctx: RunContext[AgentDepsT],
     *,
     direction: str,
-    original: object,
     replacement: object,
     tool_name: str | None = None,
 ) -> None:
     """Record a zero-duration span marking a guardrail redaction.
 
-    The original and replacement values are attached only when
-    `ctx.trace_include_content` is set, since a redacted value is often the
-    sensitive content the guard exists to keep out of traces.
+    The replacement value is attached only when `ctx.trace_include_content` is
+    set. The original value never is: it is the content the guard removed, and
+    recording it would put a redacted secret into the trace that core's own
+    spans, which see the rewritten value, keep out.
     """
     attributes = direction_attributes(direction, 'replace', tool_name)
     if ctx.trace_include_content:
-        attributes['guardrail.original'] = str(original)
         attributes['guardrail.replacement'] = str(replacement)
     ctx.tracer.start_span(f'guardrail redacted {direction}', attributes=attributes).end()
 

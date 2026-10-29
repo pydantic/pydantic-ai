@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.text import Text
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import ModelMessage, RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_clai2 import Session, StreamRenderer
@@ -18,7 +18,7 @@ from pydantic_clai2 import Session, StreamRenderer
 
 def write_model(content: str) -> FunctionModel:
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-        if any(isinstance(part, (ToolReturnPart, RetryPromptPart)) for message in messages for part in message.parts):
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
             yield 'done'
         else:
             yield {0: DeltaToolCall(name='write_file', json_args=json.dumps({'path': 'file.txt', 'content': content}))}

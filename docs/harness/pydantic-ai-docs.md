@@ -11,6 +11,8 @@ description: Give an agent a tool that locates and returns Pydantic AI documenta
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls read_pyai_docs with one of six topics. The tool first looks for the page in a docs checkout inside the run workspace, and otherwise fetches it from the main branch on GitHub. It then replaces model aliases using model_aliases/aliases.json and returns the full page to the model. If neither source has the page, the tool returns an error naming the path and URL it tried.](../img/harness/pydantic-ai-docs.svg)
+
 ## The problem
 
 An agent that authors Pydantic AI capabilities, hooks, tools, or toolsets needs the current docs for those APIs. Preloading the docs into the system prompt spends context the agent rarely needs in full, and pins a snapshot that drifts from `main`.
@@ -67,6 +69,17 @@ The capability never runs git. Keep the local checkout current yourself; the rem
 | `cache` | `True` | Memoize each returned doc for one agent run, so repeated reads within that run do not repeat workspace or network I/O. |
 
 Caching is isolated per run so content read from one workspace is not reused in another. Set `cache=False` to re-read or re-fetch on every call within a run.
+
+## Two of them
+
+`PydanticAIDocs` declares the default `id` `'pydantic_ai_docs'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `PydanticAIDocs`s on one agent that
+share it are one docs source stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
+in [PrefixTools](../capabilities/prefix-tools.md), since both register `read_pyai_docs`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
 
 ## Agent spec (YAML/JSON)
 

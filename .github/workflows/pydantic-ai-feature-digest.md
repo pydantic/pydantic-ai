@@ -149,6 +149,8 @@ pre-agent-steps:
       path: feature-candidates.json
       retention-days: 1
       overwrite: true
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
+max-daily-ai-credits: -1
 imports:
   - shared/otel-logfire.md
   - shared/tool-hints.md

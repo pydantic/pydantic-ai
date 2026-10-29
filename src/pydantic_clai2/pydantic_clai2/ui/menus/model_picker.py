@@ -6,6 +6,7 @@ from functools import partial
 from textwrap import fill
 
 from anyio import to_thread
+from rich.console import Console
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu, MenuResult
 
@@ -17,7 +18,7 @@ from pydantic_clai2.ui.menus.chain_menu import ChainChange, chain_details, edit_
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldRow, Runners, first_error, shown
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import KeyHandler
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 
 class ModelPickerAction(Enum):
@@ -208,10 +209,13 @@ def _remove(context: CommandContext, name: str) -> tuple[bool, str]:
     return True, f'Deleted {name}.'
 
 
-async def model_command(context: CommandContext, args: list[str], *, runners: Runners = TERMINAL) -> str:
+async def model_command(
+    context: CommandContext, args: list[str], *, console: Console, runners: Runners = TERMINAL
+) -> str:
     """Select a model by name or through the picker, or run the `add`, `settings`, and `chains` subcommands.
 
-    A name not yet in the saved list is added; an unknown model fails on the next request.
+    A name not yet in the saved list is added; an unknown model fails on the next request. `console` is
+    the shell's, which a provider sign-in from `/model add` prints through.
     """
     if args[:1] == ['settings']:
         from pydantic_clai2.ui.menus.model_menu import model_settings_command
@@ -220,7 +224,7 @@ async def model_command(context: CommandContext, args: list[str], *, runners: Ru
     if args == ['add']:
         from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
 
-        return await open_add_model_menu(context, runners=runners)
+        return await open_add_model_menu(context, console=console, runners=runners)
     focus: object = None
     if args[:1] == ['chains']:
         # Opens the picker on its fallback chains: the first one, or the row that creates one.
@@ -243,7 +247,7 @@ async def model_command(context: CommandContext, args: list[str], *, runners: Ru
         if result.item.value is ModelPickerAction.ADD:
             from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
 
-            messages.append(await open_add_model_menu(context, runners=runners))
+            messages.append(await open_add_model_menu(context, console=console, runners=runners))
             return '\n'.join(messages)
         if not isinstance(result.item.value, str):
             return '\n'.join(messages) or 'No changes.'

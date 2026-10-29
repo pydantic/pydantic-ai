@@ -37,7 +37,7 @@ from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.prompt import line_input
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 CODEX = 'openai-codex'
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
@@ -107,7 +107,7 @@ async def _sign_in(
     from pydantic_clai2.models import key_profiles
 
     if key_profiles.supports(name, profile=profile):
-        return await key_profiles.login(provider=name, profile=profile, dialogs=dialogs)
+        return await key_profiles.login(provider=name, profile=profile, console=codex.console, dialogs=dialogs)
     raise ValueError(_login_usage(plugins))
 
 
@@ -199,15 +199,25 @@ class CodexCredentials(OpenAICodexCredentialSource):
 
 
 class CodexAuth:
-    """Conversation-owned login command and one cached native Codex provider per profile."""
+    """One session's Codex login command, over the native Codex provider cached per profile."""
 
-    def __init__(self, console: Console, *, read_line: ReadLine | None = None, login_timeout: float = 300) -> None:
-        """Defer all credential access until login or a Codex request; `read_line` defaults to one under `console`."""
+    def __init__(
+        self,
+        console: Console,
+        *,
+        read_line: ReadLine | None = None,
+        login_timeout: float = 300,
+        providers: dict[str, OpenAICodexProvider] | None = None,
+    ) -> None:
+        """Defer all credential access until login or a Codex request; `read_line` defaults to one under `console`.
+
+        `providers` is the cache the process's sessions share, so each account refreshes its tokens once.
+        """
         self.console = console
         self.read_line = read_line or partial(line_input.read_line, console=console, hidden=True)
         self.login_timeout = login_timeout
         self.source = CodexCredentials()
-        self._providers: dict[str, OpenAICodexProvider] = {}
+        self._providers: dict[str, OpenAICodexProvider] = {} if providers is None else providers
 
     @property
     def provider(self) -> OpenAICodexProvider | None:

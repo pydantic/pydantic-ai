@@ -10,6 +10,8 @@ if TYPE_CHECKING:
     from .approval_reviewer import ApprovalReviewer
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
+    from .boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
+    from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
     from .browser_use import BrowserUse
     from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
@@ -18,8 +20,10 @@ if TYPE_CHECKING:
     from .compaction import (
         ClampOversizedMessages,
         ClearToolResults,
+        CompactOnRequest,
         DeduplicateFileReads,
         FallbackCompaction,
+        RelevanceCompaction,
         ReportContextUsage,
         SlidingWindowCompaction,
         SummarizingCompaction,
@@ -28,6 +32,9 @@ if TYPE_CHECKING:
     )
     from .conversation_search import ConversationSearch
     from .day_ai import DayAI
+    from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
+    from .detect_loops import DetectLoops
+    from .docker_sandbox import DockerSandbox, DockerSandboxBackend
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
@@ -44,6 +51,7 @@ if TYPE_CHECKING:
         OutputGuardrailFunc,
         ToolGuardrail,
     )
+    from .ipython_code_mode import IPythonCodeMode
     from .kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
@@ -62,6 +70,7 @@ if TYPE_CHECKING:
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
+    from .smart_search import SmartSearch
     from .smol_sandbox import SmolSandbox, SmolSandboxBackend
     from .spend import SpendLimits
     from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
@@ -82,6 +91,10 @@ __all__ = [
     'ApprovalReviewer',
     'AskUser',
     'BackgroundTools',
+    'BoxdSandbox',
+    'BoxdSandboxBackend',
+    'BoxLiteSandbox',
+    'BoxLiteSandboxBackend',
     'BrowserUse',
     'BubblewrapSandbox',
     'BubblewrapWorkspace',
@@ -90,10 +103,16 @@ __all__ = [
     'ClearToolResults',
     'CodeMode',
     'Coder',
+    'CompactOnRequest',
     'ConversationSearch',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DayAI',
+    'DaytonaSandbox',
+    'DaytonaSandboxBackend',
     'DeduplicateFileReads',
+    'DetectLoops',
+    'DockerSandbox',
+    'DockerSandboxBackend',
     'DynamicWorkflow',
     'E2BSandbox',
     'E2BSandboxBackend',
@@ -105,6 +124,7 @@ __all__ = [
     'GuardrailError',
     'GuardrailResult',
     'HarnessDeprecationWarning',
+    'IPythonCodeMode',
     'InputBlocked',
     'InputGuardrail',
     'InputGuardrailFunc',
@@ -129,6 +149,7 @@ __all__ = [
     'PydanticAIDocs',
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
+    'RelevanceCompaction',
     'RenderWorkflows',
     'ReportContextUsage',
     'RepoContext',
@@ -138,6 +159,7 @@ __all__ = [
     'Shell',
     'Skills',
     'SlidingWindowCompaction',
+    'SmartSearch',
     'SmolSandbox',
     'SmolSandboxBackend',
     'SpendLimits',
@@ -166,6 +188,8 @@ _CAPABILITY_EXPORTS = {
     'ApprovalReviewer': 'approval_reviewer',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
+    'BoxdSandbox': 'boxd_sandbox',
+    'BoxLiteSandbox': 'boxlite_sandbox',
     'BrowserUse': 'browser_use',
     'BubblewrapSandbox': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
@@ -173,9 +197,13 @@ _CAPABILITY_EXPORTS = {
     'ClearToolResults': 'compaction',
     'CodeMode': 'code_mode',
     'Coder': 'coder',
+    'CompactOnRequest': 'compaction',
     'ConversationSearch': 'conversation_search',
     'DayAI': 'day_ai',
+    'DaytonaSandbox': 'daytona_sandbox',
+    'DockerSandbox': 'docker_sandbox',
     'DeduplicateFileReads': 'compaction',
+    'DetectLoops': 'detect_loops',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
     'ExaAgent': 'exa',
@@ -183,6 +211,7 @@ _CAPABILITY_EXPORTS = {
     'FallbackCompaction': 'compaction',
     'FileSystem': 'filesystem',
     'Grain': 'grain',
+    'IPythonCodeMode': 'ipython_code_mode',
     'KubernetesSandbox': 'kubernetes_sandbox',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
@@ -196,6 +225,7 @@ _CAPABILITY_EXPORTS = {
     'PromptInjectionDefender': 'prompt_injection_defender',
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
+    'RelevanceCompaction': 'compaction',
     'RenderWorkflows': 'render',
     'ReportContextUsage': 'compaction',
     'RepoContext': 'repo_context',
@@ -203,6 +233,7 @@ _CAPABILITY_EXPORTS = {
     'Shell': 'shell',
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
+    'SmartSearch': 'smart_search',
     'SmolSandbox': 'smol_sandbox',
     'SpendLimits': 'spend',
     'SpritesSandbox': 'sprites_sandbox',
@@ -224,8 +255,12 @@ _CAPABILITY_EXPORTS = {
 }
 
 _CONSTANT_EXPORTS = {
+    'BoxdSandboxBackend': 'boxd_sandbox',
+    'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
+    'DaytonaSandboxBackend': 'daytona_sandbox',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
+    'DockerSandboxBackend': 'docker_sandbox',
     'E2BSandboxBackend': 'e2b_sandbox',
     'KubernetesSandboxBackend': 'kubernetes_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',

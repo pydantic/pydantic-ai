@@ -36,6 +36,7 @@ from pydantic_clai2.config.api_keys import save_key
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, TurnEnd, load_plugin
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.plugins.process_plugins import ProcessPlugins
 from pydantic_clai2.runtime import agent_instrumentation
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus import dialogs
@@ -980,3 +981,42 @@ def test_project_row_names_the_chosen_key_and_resets_to_the_environment() -> Non
     assert source.reset(project) == 'Reset Logfire project.'
     saved = host.settings(logfire_plugin.LogfireSettings)
     assert (saved.token, saved.base_url, saved.account, saved.ui_events) == (None, None, None, True)
+
+
+async def test_one_configuration_serves_every_live_session_with_a_root_each(tmp_path: Path, recorder: Recorder) -> None:
+    """Observability is process-scoped: Logfire is configured once, and each session records under its own root."""
+    store = SettingsStore(tmp_path / 'config.db')
+    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'observability')
+    process = ProcessPlugins[None](store=store, builtin=(builtin,))
+
+    def session(name: str) -> PluginLoader[None]:
+        return PluginLoader(
+            process=process,
+            console=Console(file=io.StringIO()),
+            commands=Commands(),
+            session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+            session_id=lambda: f'conversation-{name}',
+            live_id=name,
+        )
+
+    a, b = session('a'), session('b')
+    await a.load_all()
+    await b.load_all()
+    assert len(recorder.instances) == 1
+    await b.fire(TurnEnd(text='hi', outcome='completed'))
+    await a.fire(TurnEnd(text='hi', outcome='completed'))
+    await a.close('exit')
+    assert not recorder.exporters[0].closed, 'the other session still records'
+    await b.close('exit')
+    assert recorder.exporters[0].closed
+    roots = {
+        root.context.span_id: (root.attributes or {})['agent_session_id']
+        for root in recorder.spans()
+        if root.name == 'CLAI session' and root.context is not None
+    }
+    assert set(roots.values()) == {'conversation-a', 'conversation-b'}
+    turns = [span for span in recorder.spans() if span.name == 'turn {outcome}']
+    assert [roots[span.parent.span_id] for span in turns if span.parent is not None] == [
+        'conversation-b',
+        'conversation-a',
+    ]

@@ -23,7 +23,7 @@ from pydantic_clai2.ui.menus.custom_params import edit_custom_params
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldRow, Runners, first_error, shown
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 _HINT = 'type to filter - Enter add and use model - Ctrl+S settings - Esc close'
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
@@ -323,9 +323,16 @@ def _run_provider(menu: ModelMenu, runners: Runners, messages: list[str], *, foc
 
 
 async def open_add_model_menu(
-    context: CommandContext, *, run: Callable[[ModelMenu], list[str]] | None = None, runners: Runners = TERMINAL
+    context: CommandContext,
+    *,
+    console: Console,
+    run: Callable[[ModelMenu], list[str]] | None = None,
+    runners: Runners = TERMINAL,
 ) -> str:
-    """Show the menu in a thread; the pick and any settings edits apply to the next prompt."""
+    """Show the menu in a thread; the pick and any settings edits apply to the next prompt.
+
+    A provider sign-in prints through `console`, the shell's, so its URL stays in the transcript.
+    """
 
     def flow(menu: ModelMenu) -> list[str]:
         return run_model_flow(menu, runners, connect_provider=True)
@@ -342,14 +349,16 @@ async def open_add_model_menu(
         except _ConnectProvider as request:
             accumulated.extend(request.messages)
             if request.provider == 'github-copilot':
-                await github_copilot.ensure_login(console=Console())
+                await github_copilot.ensure_login(console=console)
                 models = await github_copilot_models()
                 provider_menu = ModelMenu(context, provider='github-copilot', discovered=models)
                 if await _browse(provider_menu, runners, accumulated):
                     return '\n'.join(accumulated) or 'No changes.'
                 continue
-            connector = openrouter.connect if request.provider == 'openrouter' else vllm.connect
-            result = await connector(context, [])
+            if request.provider == 'openrouter':
+                result = await openrouter.connect(context, [], console=console)
+            else:
+                result = await vllm.connect(context, [])
             if result == 'Connection cancelled.':
                 continue
             return '\n'.join([*accumulated, result])

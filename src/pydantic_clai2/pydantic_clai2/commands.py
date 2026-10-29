@@ -121,9 +121,10 @@ class Command:
 class Commands(Completer):
     """Instance-owned registry, based on Code Puppy's registry/completer pattern."""
 
-    def __init__(self) -> None:
-        """Create an empty registry and filesystem completer."""
+    def __init__(self, *, workspace: Callable[[], Path] = Path.cwd) -> None:
+        """Create an empty registry and filesystem completer; relative `@` paths complete in `workspace()`."""
         self._commands: dict[str, Command] = {}
+        self._workspace = workspace
 
     def register(self, command: Command) -> None:
         """Register one command, rejecting ambiguous duplicate names."""
@@ -223,9 +224,9 @@ class Commands(Completer):
             try:
                 result = self.execute(text)
                 return result if isinstance(result, str) else await result
-            except Exception as error:
-                if not isinstance(error, ValueError | UserError):
-                    telemetry.handled_error('command /{command} failed', error, command=command)
+            except Exception as exc:
+                if not isinstance(exc, ValueError | UserError):
+                    telemetry.handled_error('command /{command} failed', exc, command=command)
                 raise
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:
@@ -238,7 +239,7 @@ class Commands(Completer):
                 directory = path if word.endswith('/') else path.parent
                 prefix = '' if word.endswith('/') else path.name
                 try:
-                    for child in sorted(directory.iterdir()):
+                    for child in sorted((self._workspace() / directory).iterdir()):
                         if prefix in child.name:
                             yield Completion(child.name + ('/' if child.is_dir() else ''), start_position=-len(prefix))
                 except OSError:

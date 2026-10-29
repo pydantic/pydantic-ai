@@ -1,0 +1,24 @@
+--- expected
++++ actual
+@@ -37,9 +37 @@
+-   "content": ""
+-  },
+-  {
+-   "role": "system",
+-   "content": "Please return text."
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "Sorry, here is the answer."
++   "content": "\n\nSorry, here is the answer."
+@@ -62,9 +54 @@
+-   "content": ""
+-  },
+-  {
+-   "role": "system",
+-   "content": "Please return text."
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "Sorry, here is the answer."
++   "content": "\n\nSorry, here is the answer."

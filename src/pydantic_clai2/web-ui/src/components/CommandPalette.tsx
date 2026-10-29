@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { api } from '../api'
+import { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { SessionContext } from '../api'
 import type { CompletionInfo } from '../protocol'
 import { SearchIcon } from './icons'
 
@@ -51,17 +51,19 @@ export function CommandPalette({
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
   const list = useRef<HTMLDivElement>(null)
+  // The shown session's commands: its plugins' and skills' come from its own folder.
+  const session = useContext(SessionContext)
 
   useEffect(() => {
     let current = true
-    api
+    session
       .complete('/')
       .then((found) => current && setCommands(found.map(entry).sort((a, b) => a.name.localeCompare(b.name))))
       .catch((error: unknown) => current && onError(message(error)))
     return () => {
       current = false
     }
-  }, [onError])
+  }, [session, onError])
 
   const needle = query.trim().toLowerCase().replace(/^\//, '')
   const shown = useMemo(() => {

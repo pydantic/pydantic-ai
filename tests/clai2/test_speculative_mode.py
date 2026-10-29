@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -46,13 +46,14 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
 from pydantic_clai2 import Session, StreamRenderer
-from pydantic_clai2._app import create_shell, create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.runtime.eager_timing import EagerExecutionCompletedEvent
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.speculation import Speculation, SpeculationCounters
 from pydantic_clai2.runtime.speculative_mode import (
     NATIVE_TOOLS,
@@ -159,7 +160,7 @@ async def test_stock_delegates_keep_speculative_plugins_and_workspace(tmp_path: 
     prompts: list[str] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file'}
+        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file', 'load_capability'}
         assert guidance('read-only').strip() in (info.instructions or '')
         if len(messages) == 1:
             [request] = messages
@@ -228,7 +229,8 @@ class TestFold:
         [info] = seen
         tools = {tool.name: tool for tool in info.function_tools}
         assert sorted(tools) == ['edit_file', 'run_code', 'run_workflow', 'write_file']
-        assert 'async def shell(' in (tools['run_code'].description or '')
+        # The functions `run_code` can call are listed in its catalog, in the instructions.
+        assert 'async def shell(' in (info.instructions or '')
 
     async def test_writes_stay_native_and_guidance_rides_along(self, tmp_path: Path) -> None:
         seen: list[AgentInfo] = []
@@ -669,13 +671,7 @@ class TestSandboxCallDisplay:
         assert all(re.fullmatch(r'.+__\d+', call.tool_call_id) for call in started)
         # A missing file is a plain result, not a retry; failed speculative launches are
         # still claimed and shown, like cold failures.
-        assert [type(result).__name__ for result in finished] == [
-            'ToolReturnPart',
-            'ToolReturnPart',
-            'ToolReturnPart',
-            'RetryPromptPart',
-            'RetryPromptPart',
-        ]
+        assert [result.outcome for result in finished] == ['success', 'success', 'success', 'retried', 'retried']
         headers = [line for line in output.getvalue().splitlines() if line.startswith('\u25cf')]
         # Eager execution can announce `run_code` before its `code` argument has finished streaming.
         assert headers[0] in (
@@ -754,4 +750,8 @@ async def test_run_code_multiline_shell_command_keyword_raw_string_runs(tmp_path
     assert 'one' in content
     assert "it's fine" in content
     assert 'two' in content
-    assert not any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+    assert not any(
+        isinstance(part, RetryFeedbackPart) or isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        for message in messages
+        for part in message.parts
+    )

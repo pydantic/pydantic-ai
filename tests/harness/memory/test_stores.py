@@ -8,12 +8,13 @@ import os
 import sqlite3
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import TracebackType
 from typing import Protocol
 
 import anyio
+import anyio.lowlevel
 import pytest
 
 from pydantic_ai.capabilities import LocalWorkspace
@@ -34,9 +35,11 @@ from pydantic_ai_harness.memory import (
     FileStore,
     InMemoryStore,
     MemoryConflictError,
+    MemoryFile,
     MemoryOperation,
     MemoryOperationConflictError,
     MemoryStore,
+    MetadataMemoryStore,
     PostgresConnection,
     PostgresMemoryStore,
     PostgresPool,
@@ -86,6 +89,103 @@ async def test_local_store_compare_and_set_contract(tmp_path: Path, index: int) 
     assert await store.read('notes/main.md', max_chars=1_000) is None
 
 
+async def _assert_write_metadata_contract(store: MetadataMemoryStore) -> None:
+    async def metadata() -> Mapping[str, str] | None:
+        file = await store.read('notes/main.md', max_chars=1_000)
+        assert file is not None
+        return file.metadata
+
+    ui = {'updated_by': 'ui', 'actor_id': 'user-1'}
+    agent = {'updated_by': 'agent'}
+    created = await store.write_with_metadata('notes/main.md', 'one', expected_version=None, metadata=ui)
+    assert await metadata() == ui
+
+    # A write records only itself: one without metadata leaves none, not the previous writer's.
+    plain = await store.write('notes/main.md', 'two', expected_version=created.version)
+    assert await metadata() is None
+
+    operation = MemoryOperation(id='run-1:call-1', fingerprint='write:notes/main.md:three')
+    written = await store.write_with_metadata(
+        'notes/main.md', 'three', expected_version=plain.version, operation=operation, metadata=agent
+    )
+    assert await metadata() == agent
+    with pytest.raises(MemoryConflictError):
+        await store.write_with_metadata('notes/main.md', 'stale', expected_version=plain.version, metadata=ui)
+    file = await store.read('notes/main.md', max_chars=1_000)
+    assert file is not None
+    assert (file.content, file.metadata) == ('three', agent)
+
+    # A replay returns the receipt and keeps the metadata of the write it replays.
+    replay = await store.write_with_metadata(
+        'notes/main.md', 'three', expected_version=plain.version, operation=operation, metadata=ui
+    )
+    assert (replay.replayed, replay.version) == (True, written.version)
+    assert await store.get_operation(operation) == replay
+    assert await metadata() == agent
+
+    # An empty mapping is no metadata.
+    emptied = await store.write_with_metadata('notes/main.md', 'four', expected_version=written.version, metadata={})
+    assert await metadata() is None
+
+    # A delete removes the metadata with the file, so a recreated file does not inherit it.
+    tagged = await store.write_with_metadata('notes/main.md', 'five', expected_version=emptied.version, metadata=ui)
+    await store.delete('notes/main.md', expected_version=tagged.version)
+    assert await store.read('notes/main.md', max_chars=1_000) is None
+    await store.write('notes/main.md', 'six', expected_version=None)
+    assert await metadata() is None
+
+
+@pytest.mark.parametrize('index', (0, 2))
+async def test_local_store_write_metadata_contract(tmp_path: Path, index: int) -> None:
+    store = _local_stores(tmp_path)[index]
+    assert isinstance(store, MetadataMemoryStore)
+    await _assert_write_metadata_contract(store)
+
+
+@pytest.mark.parametrize('index', (0, 2))
+@pytest.mark.parametrize(
+    ('metadata', 'error', 'message'),
+    [
+        ({'updated_by': 1}, TypeError, 'must be strings'),
+        ({'note': 'x' * 4_096}, ValueError, 'the limit is 4096'),
+        ({'updated_by': 'u\x00i'}, ValueError, 'NUL'),
+    ],
+)
+async def test_local_store_rejects_invalid_metadata_before_writing(
+    tmp_path: Path, index: int, metadata: dict[str, object], error: type[Exception], message: str
+) -> None:
+    store = _local_stores(tmp_path)[index]
+    assert isinstance(store, MetadataMemoryStore)
+    created = await store.write_with_metadata('main.md', 'kept', expected_version=None, metadata={'updated_by': 'ui'})
+
+    with pytest.raises(error, match=message):
+        await store.write_with_metadata(
+            'main.md',
+            'replaced',
+            expected_version=created.version,
+            metadata=metadata,  # pyright: ignore[reportArgumentType]
+        )
+
+    file = await store.read('main.md', max_chars=100)
+    assert file is not None
+    assert (file.content, file.metadata) == ('kept', {'updated_by': 'ui'})
+
+
+async def test_file_store_does_not_record_metadata(tmp_path: Path) -> None:
+    """Its sidecar files could not be written in one atomic step with the Markdown, nor kept from the model."""
+    store = FileStore('.', workspace=LocalWorkspaceBackend(tmp_path))
+    assert not isinstance(store, MetadataMemoryStore)
+    await store.write('main.md', 'content', expected_version=None)
+    file = await store.read('main.md', max_chars=100)
+    assert file is not None
+    assert file.metadata is None
+
+
+def test_memory_file_with_metadata_stays_hashable() -> None:
+    file = MemoryFile(content='a', version='1', operation_id=None, truncated=False, metadata={'updated_by': 'ui'})
+    assert hash(file) == hash(MemoryFile(content='a', version='1', operation_id=None, truncated=False))
+
+
 @pytest.mark.parametrize('index', (0, 2))  # `FileStore` versions are content hashes; see below.
 async def test_local_store_versions_do_not_repeat_after_delete_and_recreate(tmp_path: Path, index: int) -> None:
     store = _local_stores(tmp_path)[index]
@@ -98,6 +198,92 @@ async def test_local_store_versions_do_not_repeat_after_delete_and_recreate(tmp_
         await store.write('main.md', 'stale', expected_version=first.version)
     with pytest.raises(MemoryConflictError):
         await store.delete('main.md', expected_version=first.version)
+
+
+@pytest.mark.parametrize('index', range(3))
+async def test_local_store_search_skips_nested_scopes(tmp_path: Path, index: int) -> None:
+    store = _local_stores(tmp_path)[index]
+    await store.write('acme/main/MEMORY.md', 'tea', expected_version=None)
+    await store.write('acme/main/main/MEMORY.md', 'tea tea', expected_version=None)
+    await store.write('acme/main/main/notes.md', 'tea tea tea', expected_version=None)
+    await store.write('acme/main/notes.md', 'more tea', expected_version=None)
+
+    result = await store.search('acme/main/', 'tea', limit=10, max_files=2, max_chars=100, max_file_chars=100)
+    assert [match.path for match in result.matches] == ['acme/main/MEMORY.md', 'acme/main/notes.md']
+    assert result.scanned == 2
+    assert not result.truncated
+    # A prefix that ends mid-name matches the direct children it begins.
+    partial = await store.search('acme/main/no', 'tea', limit=10, max_files=10, max_chars=100, max_file_chars=100)
+    assert [match.path for match in partial.matches] == ['acme/main/notes.md']
+    assert await store.list_paths('acme/main/', limit=10) == [
+        'acme/main/MEMORY.md',
+        'acme/main/main/MEMORY.md',
+        'acme/main/main/notes.md',
+        'acme/main/notes.md',
+    ]
+
+
+async def test_search_yields_to_the_event_loop_between_files() -> None:
+    store = InMemoryStore()
+    for index in range(20):
+        await store.write(f'main/topic-{index:02}.md', 'tea', expected_version=None)
+    ticks = 0
+    searched = anyio.Event()
+
+    async def tick() -> None:
+        nonlocal ticks
+        while not searched.is_set():
+            ticks += 1
+            await anyio.lowlevel.checkpoint()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(tick)
+        await anyio.lowlevel.checkpoint()
+        before = ticks
+        result = await store.search('main/', 'tea', limit=20, max_files=20, max_chars=1_000, max_file_chars=100)
+        during = ticks - before
+        searched.set()
+        assert len(result.matches) == 20
+        # Scoring yields once per file, so other tasks keep running during a long scan.
+        assert during >= 20
+
+
+async def test_sqlite_store_prefix_queries_seek_the_path_index(tmp_path: Path) -> None:
+    connection = sqlite3.connect(tmp_path / 'memory.sqlite3', check_same_thread=False)
+    try:
+        store = SqliteMemoryStore(connection=connection)
+        await store.write('acme/main/MEMORY.md', 'tea', expected_version=None)
+        statements: list[str] = []
+        connection.set_trace_callback(statements.append)
+        await store.list_paths('acme/main/', limit=10)
+        await store.search('acme/main/', 'tea', limit=10, max_files=10, max_chars=100, max_file_chars=100)
+        connection.set_trace_callback(None)
+
+        queries = [query for query in statements if query.startswith('SELECT') and 'FROM memory_files' in query]
+        assert len(queries) == 2
+        for query in queries:
+            plan = ' '.join(str(row[3]) for row in connection.execute(f'EXPLAIN QUERY PLAN {query}'))
+            assert plan.startswith('SEARCH memory_files USING'), plan
+    finally:
+        connection.close()
+
+
+async def test_in_memory_store_keeps_the_most_recent_receipts() -> None:
+    store = InMemoryStore()
+    version = None
+    operations = [MemoryOperation(id=f'op-{index}', fingerprint='write') for index in range(1_025)]
+    for operation in operations:
+        version = (await store.write('main.md', operation.id, expected_version=version, operation=operation)).version
+
+    assert await store.get_operation(operations[0]) is None
+    assert await store.get_operation(operations[1]) is not None
+    assert await store.get_operation(operations[-1]) is not None
+
+
+@pytest.mark.parametrize('path', ['./main.md', 'tenant/./main.md', 'tenant/.'])
+async def test_store_paths_reject_dot_segments(path: str) -> None:
+    with pytest.raises(ValueError, match='invalid memory path'):
+        await InMemoryStore().write(path, 'content', expected_version=None)
 
 
 @pytest.mark.parametrize('index', range(3))
@@ -245,6 +431,10 @@ async def test_in_memory_store_copies_and_indexes_initial_files() -> None:
     assert await store.list_paths('a', limit=10) == ['a.md']
     assert await store.read('c.md', max_chars=10) is None
     assert await store.list_paths(limit=10) == ['a.md', 'b.md']
+
+
+def test_in_memory_store_repr_omits_content() -> None:
+    assert repr(InMemoryStore({'main/MEMORY.md': 'secret'})) == 'InMemoryStore()'
 
 
 def test_in_memory_store_files_view_is_read_only() -> None:
@@ -607,7 +797,97 @@ async def test_sqlite_store_migrates_legacy_schema_concurrently(tmp_path: Path, 
         columns = {str(row[1]) for row in connection.execute('PRAGMA table_info(memory_files)').fetchall()}
     finally:
         connection.close()
-    assert {'version', 'last_operation_id'} <= columns
+    assert {'version', 'last_operation_id', 'write_metadata'} <= columns
+
+
+def _previous_release_sqlite_schema(database: Path) -> None:
+    """The tables `SqliteMemoryStore` created before it recorded write metadata, with one file."""
+    connection = sqlite3.connect(database)
+    try:
+        connection.executescript(
+            'CREATE TABLE memory_files ('
+            'path TEXT PRIMARY KEY, content TEXT NOT NULL, version INTEGER NOT NULL, last_operation_id TEXT);'
+            'CREATE TABLE memory_operations ('
+            'id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, version TEXT, existed INTEGER NOT NULL);'
+            'CREATE TABLE memory_metadata (id INTEGER PRIMARY KEY CHECK (id = 1), generation INTEGER NOT NULL);'
+            "INSERT INTO memory_files VALUES ('main.md', 'written before metadata', 7, 'op-0');"
+            'INSERT INTO memory_metadata VALUES (1, 7);'
+        )
+    finally:
+        connection.close()
+
+
+async def test_sqlite_store_migrates_a_previous_release_database_to_metadata(tmp_path: Path) -> None:
+    database = tmp_path / 'previous.sqlite3'
+    _previous_release_sqlite_schema(database)
+
+    store = SqliteMemoryStore(database=database)
+    file = await store.read('main.md', max_chars=100)
+    assert file is not None
+    assert (file.content, file.version, file.operation_id, file.metadata) == (
+        'written before metadata',
+        '7',
+        'op-0',
+        None,
+    )
+    written = await store.write_with_metadata(
+        'main.md', 'written by the UI', expected_version=file.version, metadata={'updated_by': 'ui'}
+    )
+    assert written.version == '8'
+
+    # A second store, as after a restart, finds the column and migrates nothing twice.
+    reopened = await SqliteMemoryStore(database=database).read('main.md', max_chars=100)
+    assert reopened is not None
+    assert reopened.metadata == {'updated_by': 'ui'}
+
+
+async def test_sqlite_store_rolls_back_content_and_metadata_together(tmp_path: Path) -> None:
+    database = tmp_path / 'memory.sqlite3'
+    store = SqliteMemoryStore(database=database)
+    created = await store.write_with_metadata('main.md', 'typed', expected_version=None, metadata={'updated_by': 'ui'})
+    connection = sqlite3.connect(database)
+    try:
+        # Fails the write's last statement, after its content and metadata are in the row.
+        connection.execute(
+            "CREATE TRIGGER fail_receipt BEFORE INSERT ON memory_operations BEGIN SELECT RAISE(ABORT, 'boom'); END"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(sqlite3.IntegrityError, match='boom'):
+        await store.write_with_metadata(
+            'main.md',
+            'inferred',
+            expected_version=created.version,
+            operation=MemoryOperation(id='op', fingerprint='write'),
+            metadata={'updated_by': 'agent'},
+        )
+
+    file = await store.read('main.md', max_chars=100)
+    assert file is not None
+    assert (file.content, file.version, file.metadata) == ('typed', created.version, {'updated_by': 'ui'})
+
+
+@pytest.mark.parametrize('stored', ['not json', '["ui"]', '{"updated_by": 1}', b'{}'])
+async def test_sqlite_store_reads_metadata_written_outside_it_as_none(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, stored: str | bytes
+) -> None:
+    database = tmp_path / 'memory.sqlite3'
+    store = SqliteMemoryStore(database=database)
+    await store.write_with_metadata('main.md', 'content', expected_version=None, metadata={'updated_by': 'ui'})
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute('UPDATE memory_files SET write_metadata = ?', (stored,))
+        connection.commit()
+    finally:
+        connection.close()
+
+    file = await store.read('main.md', max_chars=100)
+
+    assert file is not None
+    assert (file.content, file.metadata) == ('content', None)
+    assert 'not a JSON object of strings' in caplog.text
 
 
 async def test_sqlite_store_serializes_cas_across_instances(tmp_path: Path) -> None:
@@ -637,6 +917,7 @@ class FakePostgresFile:
     content: str
     version: int
     operation_id: str | None
+    metadata: object = None
 
 
 @dataclass(frozen=True)
@@ -709,9 +990,7 @@ class FakePostgresConnection:
         elif query.startswith('UPDATE agent_memory SET version'):
             for path, file in self._database.files.items():
                 self._database.generation += 1
-                self._database.files[path] = FakePostgresFile(
-                    file.content, self._database.generation, file.operation_id
-                )
+                self._database.files[path] = replace(file, version=self._database.generation)
         return 'OK'
 
     async def fetchval(self, query: str, *args: object) -> object:
@@ -748,7 +1027,7 @@ class FakePostgresConnection:
             if file is None:
                 return None
             max_chars = int(str(args[1]))
-            return file.content[:max_chars], file.version, file.operation_id, len(file.content)
+            return file.content[:max_chars], file.version, file.operation_id, len(file.content), file.metadata
         if query.startswith('INSERT INTO agent_memory '):
             path, content = str(args[0]), str(args[1])
             if path in self._database.files:
@@ -756,7 +1035,7 @@ class FakePostgresConnection:
             self._database.generation += 1
             version = self._database.generation
             self._database.files[path] = FakePostgresFile(
-                content, version, str(args[2]) if args[2] is not None else None
+                content, version, str(args[2]) if args[2] is not None else None, args[3]
             )
             return (version,)
         if query.startswith('UPDATE agent_memory SET'):
@@ -767,7 +1046,7 @@ class FakePostgresConnection:
             self._database.generation += 1
             version = self._database.generation
             self._database.files[path] = FakePostgresFile(
-                content, version, str(args[2]) if args[2] is not None else None
+                content, version, str(args[2]) if args[2] is not None else None, args[4]
             )
             return (version,)
         if query.startswith('DELETE FROM agent_memory '):
@@ -784,9 +1063,11 @@ class FakePostgresConnection:
         prefix = str(args[0])
         files = sorted((path, file) for path, file in self._database.files.items() if path.startswith(prefix))
         if query.startswith('SELECT path, left(content'):
+            assert "strpos(substr(path, length($1) + 1), '/') = 0" in query
+            direct = [(path, file) for path, file in files if '/' not in path.removeprefix(prefix)]
             max_chars = int(str(args[1]))
             limit = int(str(args[2]))
-            return [(path, file.content[:max_chars], len(file.content)) for path, file in files[:limit]]
+            return [(path, file.content[:max_chars], len(file.content)) for path, file in direct[:limit]]
         if query.startswith('SELECT path'):
             limit = int(str(args[1]))
             return [(path,) for path, _ in files[:limit]]
@@ -841,18 +1122,40 @@ async def test_postgres_store_contract_schema_and_parameterization() -> None:
     with pytest.raises(MemoryConflictError):
         await store.write('tenant/main.md', 'stale', expected_version=file.version)
     await store.write('other/private.md', 'alpha alpha alpha', expected_version=None)
+    await store.write('tenant/nested/deep.md', 'alpha', expected_version=None)
     result = await store.search('tenant/', 'alpha', limit=10, max_files=10, max_chars=100, max_file_chars=1_000)
     assert [match.path for match in result.matches] == ['tenant/main.md']
-    assert await store.list_paths('tenant/', limit=100) == ['tenant/main.md']
+    assert await store.list_paths('tenant/', limit=100) == ['tenant/main.md', 'tenant/nested/deep.md']
 
-    assert pool.database.transactions == 7
+    assert pool.database.transactions == 8
     assert len([query for query in pool.database.statements if query.startswith('CREATE TABLE')]) == 3
-    assert len([query for query in pool.database.statements if query.startswith('ALTER TABLE')]) == 2
+    assert [query for query in pool.database.statements if query.startswith('ALTER TABLE')] == [
+        'ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1',
+        'ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS last_operation_id TEXT',
+        'ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS write_metadata JSONB',
+    ]
     for query in pool.database.statements:
         if query.startswith(('SELECT', 'INSERT', 'UPDATE', 'DELETE')):
             assert '$' in query or query.startswith(
                 ('INSERT INTO agent_memory_metadata', 'UPDATE agent_memory SET version')
             )
+
+
+async def test_postgres_store_write_metadata_contract() -> None:
+    pool = FakePostgresPool()
+    await _assert_write_metadata_contract(PostgresMemoryStore(pool))
+    # Bound as JSON text, not interpolated into the statement.
+    assert all('updated_by' not in statement for statement in pool.database.statements)
+
+
+async def test_postgres_store_reads_rows_written_before_metadata_as_none() -> None:
+    pool = FakePostgresPool()
+    pool.database.files['legacy.md'] = FakePostgresFile('legacy', 1, None)
+
+    file = await PostgresMemoryStore(pool).read('legacy.md', max_chars=1_000)
+
+    assert file is not None
+    assert (file.content, file.metadata) == ('legacy', None)
 
 
 async def test_postgres_store_concurrent_schema_initialization() -> None:

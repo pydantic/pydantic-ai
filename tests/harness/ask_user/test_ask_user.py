@@ -2,25 +2,31 @@
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
 import re
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
+from functools import partial
+from typing import Literal
 
 import anyio
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
-from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.capabilities import AbstractCapability, PrefixTools, on_event
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -29,16 +35,19 @@ from pydantic_ai_harness.ask_user import (
     DECLINED,
     TIMED_OUT,
     TOOL_NAME,
+    AnyAnswerer,
     AskUserAnswer,
     AskUserAnsweredEvent,
     AskUserRequest,
     AskUserRequestedEvent,
     AskUserResponse,
+    ContextAnswerer,
     Question,
     QuestionOption,
     ask_user_result,
     check_response,
 )
+from pydantic_ai_harness.subagents import SubAgent, SubAgents
 
 
 def question(header: str = 'Approach', *, multi_select: bool = False, labels: Sequence[str] = ('A', 'B')) -> Question:
@@ -107,10 +116,10 @@ def calling(arguments: object) -> FunctionModel:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart(TOOL_NAME, {'questions': arguments}, tool_call_id='c1')])
         part = messages[-1].parts[-1]
-        if isinstance(part, ToolReturnPart):
-            return ModelResponse(parts=[TextPart(part.model_response_str())])
-        assert isinstance(part, RetryPromptPart)
-        return ModelResponse(parts=[TextPart(part.model_response())])
+        assert isinstance(part, ToolReturnPart)
+        if part.outcome == 'retried':
+            return ModelResponse(parts=[TextPart(part.model_response_str(wrap_if_error=False))])
+        return ModelResponse(parts=[TextPart(part.model_response_str())])
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
         (part,) = respond(messages, info).parts
@@ -178,6 +187,28 @@ class TestAskUser:
         await agent.run('go')
         assert order == ['requested', 'answerer']
 
+    @pytest.mark.parametrize('context', [False, True])
+    async def test_a_raising_answerer_fails_the_run_but_still_releases_observers(self, context: bool) -> None:
+        async def disconnected(request: AskUserRequest) -> AskUserResponse:
+            raise ConnectionError('client went away')
+
+        async def disconnected_with_context(ctx: RunContext[None], request: AskUserRequest) -> AskUserResponse:
+            return await disconnected(request)
+
+        observer = Observer()
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=disconnected_with_context if context else disconnected), observer],
+        )
+        with pytest.raises(ConnectionError, match='client went away'):
+            await agent.run('go')
+        (requested,) = observer.requested
+        (answered,) = observer.answered
+        assert answered.request_id == requested.request.id
+        assert answered.failed and not answered.timed_out
+        assert answered.response == AskUserResponse(cancelled=True)
+
     @pytest.mark.parametrize(
         ('arguments', 'complaint'),
         [
@@ -241,6 +272,261 @@ class TestAskUser:
         assert first.instructions is not None and TOOL_NAME in first.instructions
 
 
+class TestContextAnswerer:
+    @pytest.mark.parametrize('shape', ['function', 'callable', 'bound', 'partial'])
+    async def test_receives_asking_context(self, shape: Literal['function', 'callable', 'bound', 'partial']) -> None:
+        seen: list[RunContext[str]] = []
+
+        async def answer(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+            assert ctx.deps == 'session owner'
+            assert ctx.model is model
+            assert ctx.tool_call_id == 'c1'
+            assert ctx.tool_name == TOOL_NAME
+            assert ctx.messages[0] == history[0]
+            last = ctx.messages[-1]
+            assert isinstance(last, ModelResponse)
+            assert last.parts == [
+                ThinkingPart('Compare approaches before asking'),
+                ToolCallPart(TOOL_NAME, {'questions': raw_questions()}, tool_call_id='c1'),
+            ]
+            assert request.questions[0].header == 'Approach'
+            # Neither the request nor its event carries live context or dependency objects.
+            serialized = json.loads(
+                TypeAdapter(AskUserRequestedEvent).dump_json(AskUserRequestedEvent(request=request))
+            )
+            assert serialized['request'] == {
+                'id': request.id,
+                'questions': [q.model_dump(mode='json') for q in request.questions],
+            }
+            seen.append(ctx)
+            return await ScriptedAnswerer()(request)
+
+        class Answering:
+            async def __call__(self, ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+                return await answer(ctx, request)
+
+            async def answer(self, ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+                return await answer(ctx, request)
+
+        answerer: ContextAnswerer[str]
+        if shape == 'callable':
+            answerer = Answering()
+        elif shape == 'bound':
+            answerer = Answering().answer
+        elif shape == 'partial':
+            answerer = partial(answer)
+        else:
+            answerer = answer
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if isinstance(messages[-1].parts[-1], ToolReturnPart):
+                return ModelResponse(parts=[TextPart('answered')])
+            return ModelResponse(
+                parts=[
+                    ThinkingPart('Compare approaches before asking'),
+                    ToolCallPart(TOOL_NAME, {'questions': raw_questions()}, tool_call_id='c1'),
+                ]
+            )
+
+        model = FunctionModel(respond)
+        history = [ModelRequest(parts=[UserPromptPart('Earlier context')]), ModelResponse(parts=[TextPart('Noted')])]
+        stored: AnyAnswerer[str] = answerer
+        agent = Agent(
+            model,
+            deps_type=str,
+            capabilities=[AskUser(answerer=stored)],
+        )
+        result = await agent.run('go', deps='session owner', message_history=history)
+        assert result.output == 'answered'
+        assert len(seen) == 1
+        assert seen[0].agent is agent
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert returns[0].content == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    async def test_uninspectable_request_only_callable_still_works(self) -> None:
+        class WithoutSignature:
+            @property
+            def __signature__(self) -> inspect.Signature:
+                raise ValueError('signature unavailable')
+
+            async def __call__(self, request: AskUserRequest) -> AskUserResponse:
+                return await ScriptedAnswerer()(request)
+
+        agent = Agent(calling(raw_questions()), capabilities=[AskUser(answerer=WithoutSignature())])
+        result = await agent.run('go')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    async def test_unannotated_request_only_answerer_still_works(self) -> None:
+        scripted = ScriptedAnswerer()
+        agent = Agent(calling(raw_questions()), capabilities=[AskUser(answerer=lambda request: scripted(request))])
+        result = await agent.run('go')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+        assert len(scripted.requests) == 1
+
+    async def test_unannotated_context_lambda_receives_two_arguments(self) -> None:
+        async def answer(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+            assert ctx.deps == 'owner'
+            return await ScriptedAnswerer()(request)
+
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=str,
+            capabilities=[AskUser(answerer=lambda ctx, request: answer(ctx, request))],
+        )
+        result = await agent.run('go', deps='owner')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    @pytest.mark.parametrize('context', [False, True])
+    @pytest.mark.parametrize('typing_only', [False, True])
+    async def test_annotation_disambiguates_optional_second_argument(self, context: bool, typing_only: bool) -> None:
+        async def context_answer(ctx: RunContext[str], request: AskUserRequest | None = None) -> AskUserResponse:
+            assert ctx.deps == 'owner'
+            assert request is not None
+            return await ScriptedAnswerer()(request)
+
+        async def plain_answer(request: AskUserRequest, extra: str | None = None) -> AskUserResponse:
+            assert extra is None
+            return await ScriptedAnswerer()(request)
+
+        if typing_only:
+            context_answer.__annotations__.update(ctx='RunContext[TypingOnlyDeps]', request='TypingOnlyRequest | None')
+            plain_answer.__annotations__['extra'] = 'ImportedOnlyForTyping'
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=str,
+            capabilities=[AskUser(answerer=context_answer if context else plain_answer)],
+        )
+        result = await agent.run('go', deps='owner')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    @pytest.mark.parametrize('variadic_only', [False, True])
+    async def test_variadic_request_only_callbacks_keep_one_argument(self, variadic_only: bool) -> None:
+        async def variadic(*requests: AskUserRequest) -> AskUserResponse:
+            assert len(requests) == 1
+            return await ScriptedAnswerer()(requests[0])
+
+        async def with_first(request: AskUserRequest, *extra: object) -> AskUserResponse:
+            assert not extra
+            return await ScriptedAnswerer()(request)
+
+        agent = Agent(
+            calling(raw_questions()), capabilities=[AskUser(answerer=variadic if variadic_only else with_first)]
+        )
+        result = await agent.run('go')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    async def test_unannotated_optional_argument_preserves_request_only_call(self) -> None:
+        async def answer(request: AskUserRequest, extra: object = None) -> AskUserResponse:
+            assert extra is None
+            return await ScriptedAnswerer()(request)
+
+        del answer.__annotations__['request']
+        agent = Agent(calling(raw_questions()), capabilities=[AskUser(answerer=answer)])
+        result = await agent.run('go')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    async def test_request_only_annotations_need_not_resolve_at_runtime(self) -> None:
+        async def answer(request: AskUserRequest) -> AskUserResponse:
+            return await ScriptedAnswerer()(request)
+
+        # A previously valid answerer can import its annotation only under TYPE_CHECKING.
+        answer.__annotations__['request'] = 'NotImportedAtRuntime'
+        agent = Agent(calling(raw_questions()), capabilities=[AskUser(answerer=answer)])
+        result = await agent.run('go')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    def test_typing_constructor_signatures_match_dataclass(self) -> None:
+        parameters = inspect.signature(AskUser).parameters
+        assert all(parameter.kind is inspect.Parameter.KEYWORD_ONLY for parameter in parameters.values())
+        expected = {name: parameter.default for name, parameter in parameters.items()}
+        constructors = [
+            node
+            for node in ast.walk(ast.parse(inspect.getsource(AskUser)))
+            if isinstance(node, ast.FunctionDef) and node.name == '__init__'
+        ]
+        assert len(constructors) == 3
+        for constructor in constructors:
+            assert not constructor.args.posonlyargs
+            assert [argument.arg for argument in constructor.args.args] == ['self']
+            assert constructor.args.vararg is constructor.args.kwarg is None
+            defaults = {
+                argument.arg: inspect.Parameter.empty if default is None else ast.literal_eval(default)
+                for argument, default in zip(constructor.args.kwonlyargs, constructor.args.kw_defaults)
+            }
+            assert defaults == expected
+            for argument in constructor.args.kwonlyargs:
+                if argument.arg != 'answerer':
+                    assert argument.annotation is not None
+                    assert ast.unparse(argument.annotation) == parameters[argument.arg].annotation
+
+    async def test_inherited_options_and_dataclass_replace_are_preserved(self) -> None:
+        async def answer(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+            return AskUserResponse(cancelled=True)
+
+        capability = AskUser(answerer=answer, description='Ask the session owner', defer_loading=True)
+        updated = replace(capability, timeout=5)
+        assert updated.answerer is answer
+        assert updated.description == 'Ask the session owner'
+        assert updated.defer_loading
+        assert updated.id == 'ask_user'
+        assert updated.timeout == 5
+        agent = Agent(calling(raw_questions()), deps_type=str, capabilities=[replace(updated, defer_loading=False)])
+        assert (await agent.run('go', deps='owner')).output == DECLINED
+
+    async def test_delegated_question_receives_child_context(self) -> None:
+        seen: list[RunContext[None]] = []
+
+        async def answer(ctx: RunContext[None], request: AskUserRequest) -> AskUserResponse:
+            seen.append(ctx)
+            return await ScriptedAnswerer()(request)
+
+        child = Agent[None, str](
+            calling(raw_questions()), deps_type=type(None), name='child', capabilities=[AskUser(answerer=answer)]
+        )
+
+        def delegate(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if isinstance(messages[-1].parts[-1], ToolReturnPart):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'child', 'task': 'child task'})])
+
+        parent = Agent[None, str](
+            FunctionModel(delegate), deps_type=type(None), capabilities=[SubAgents(agents=[SubAgent(child)])]
+        )
+        await parent.run('parent prompt')
+        (ctx,) = seen
+        assert ctx.agent is child
+        prompts = [p.content for m in ctx.messages for p in m.parts if isinstance(p, UserPromptPart)]
+        assert 'parent prompt' not in prompts
+
+
+class TestTwoOfThem:
+    async def test_two_that_agree_become_one(self) -> None:
+        answerer = ScriptedAnswerer()
+        model = TestModel(call_tools=[])
+        agent = Agent(model, capabilities=[AskUser(answerer=answerer), AskUser(answerer=answerer)])
+        await agent.run('hello')
+        parameters = model.last_model_request_parameters
+        assert parameters is not None
+        assert [tool.name for tool in parameters.function_tools] == [TOOL_NAME]
+        assert [str(part.id) for part in parameters.instruction_parts or ()] == ['capability:ask_user']
+
+    def test_two_that_differ_raise_when_the_agent_is_built(self) -> None:
+        with pytest.raises(
+            UserError,
+            match="Capability id 'ask_user' is used by multiple AskUser capabilities that disagree on 'answerer'",
+        ):
+            Agent(TestModel(), capabilities=[AskUser(answerer=ScriptedAnswerer()), AskUser(answerer=None)])
+
+    async def test_distinct_ids_and_prefixed_tools_keep_two_apart(self) -> None:
+        model = TestModel(call_tools=[])
+        second = AskUser(answerer=None, id='deferred_ask_user')
+        agent = Agent(model, capabilities=[AskUser(answerer=ScriptedAnswerer()), PrefixTools(second, prefix='later')])
+        await agent.run('hello')
+        parameters = model.last_model_request_parameters
+        assert parameters is not None
+        assert sorted(tool.name for tool in parameters.function_tools) == [TOOL_NAME, f'later_{TOOL_NAME}']
+
+
 class TestDeferred:
     async def test_the_run_pauses_and_the_host_answers_on_resume(self) -> None:
         observer = Observer()
@@ -270,6 +556,11 @@ class TestDeferred:
         )
         assert json.loads(str(resumed.output)) == {'Approach': ['Patch'], 'Targets': ['all of them']}
 
+    def test_rebuilding_a_call_to_another_tool_is_an_error(self) -> None:
+        call = ToolCallPart('run_shell', {'questions': raw_questions()}, tool_call_id='c1')
+        with pytest.raises(ValueError, match="expected an 'ask_user_question' call, got 'run_shell'"):
+            AskUserRequest.from_tool_call(call)
+
     def test_a_declined_or_misfit_answer_is_rendered_like_an_inline_one(self) -> None:
         request = AskUserRequest(questions=(question(),))
         assert ask_user_result(request, AskUserResponse(cancelled=True)) == DECLINED
@@ -287,7 +578,8 @@ class TestDeferred:
 
 
 class TestTimeout:
-    async def test_a_slow_answerer_is_cancelled_and_the_model_told(self) -> None:
+    @pytest.mark.parametrize('context', [False, True])
+    async def test_a_slow_answerer_is_cancelled_and_the_model_told(self, context: bool) -> None:
         cancelled = False
 
         async def never(request: AskUserRequest) -> AskUserResponse:
@@ -298,11 +590,14 @@ class TestTimeout:
                 cancelled = True
             raise AssertionError('unreachable')  # pragma: no cover
 
+        async def never_with_context(ctx: RunContext[None], request: AskUserRequest) -> AskUserResponse:
+            return await never(request)
+
         observer = Observer()
         agent = Agent(
             calling(raw_questions()),
             deps_type=type(None),
-            capabilities=[AskUser(answerer=never, timeout=0.01), observer],
+            capabilities=[AskUser(answerer=never_with_context if context else never, timeout=0.01), observer],
         )
         result = await agent.run('go')
         assert result.output == TIMED_OUT
@@ -421,6 +716,59 @@ class TestSchema:
         with pytest.raises(ValidationError, match='control characters'):
             QuestionOption(label='A', description='tab\there')
 
+    @pytest.mark.parametrize(
+        'text',
+        [
+            pytest.param('Use\u00a0tabs?', id='no-break space'),
+            pytest.param('\u3069\u3061\u3089\u3000\u306b\u3059\u308b\uff1f', id='ideographic space'),
+            pytest.param('Ship \U0001f680?', id='emoji'),
+        ],
+    )
+    def test_ordinary_unicode_text_is_accepted(self, text: str) -> None:
+        asked = Question(header=text, question=text, options=(QuestionOption(label=text), QuestionOption(label='B')))
+        assert asked.header == asked.question == asked.options[0].label == text
+        check_response(
+            AskUserRequest(questions=(question(),)),
+            AskUserResponse(answers=(AskUserAnswer(header='Approach', custom_answer=text),)),
+        )
+
+    @pytest.mark.parametrize(
+        'label',
+        [
+            pytest.param('A\u202eB', id='bidi override'),
+            pytest.param('A\u2028B', id='line separator'),
+            pytest.param('A\u200bB', id='zero-width space'),
+            pytest.param('A\u200dB', id='zero-width joiner'),
+        ],
+    )
+    def test_invisible_formatting_is_rejected(self, label: str) -> None:
+        with pytest.raises(ValidationError, match='invisible formatting'):
+            QuestionOption(label=label)
+
+    # U+1680 (Ogham space mark) is the one space separator NFKC leaves as it is.
+    @pytest.mark.parametrize('space', ['\u00a0', '\u3000', '\u1680'])
+    def test_labels_that_only_differ_in_space_width_are_duplicates(self, space: str) -> None:
+        with pytest.raises(ValidationError, match='option labels must be unique'):
+            Question(
+                header='Cleanup',
+                question='What now?',
+                options=(QuestionOption(label='Delete all'), QuestionOption(label=f'Delete{space}all')),
+            )
+
+    # Only NFKC makes these equal: casefolding and the space mapping leave them distinct.
+    @pytest.mark.parametrize(
+        ('label', 'lookalike'),
+        [('A', '\uff21'), ('a', '\uff41')],
+        ids=['full-width-upper', 'full-width-lower'],
+    )
+    def test_labels_that_only_differ_in_compatibility_form_are_duplicates(self, label: str, lookalike: str) -> None:
+        with pytest.raises(ValidationError, match='option labels must be unique'):
+            Question(
+                header='Cleanup',
+                question='What now?',
+                options=(QuestionOption(label=label), QuestionOption(label=lookalike)),
+            )
+
     def test_whitespace_is_stripped(self) -> None:
         option = QuestionOption(label='  Keep  ')
         assert option.label == 'Keep' and option.description is None
@@ -472,6 +820,7 @@ class TestCustomAnswers:
             ('custom', ('A',), 'cannot also select'),
             ('bad\x1b[31m', (), 'control characters'),
             ('bad\ttext', (), 'control characters'),
+            ('bad\u202etext', (), 'invisible formatting'),
         ],
     )
     def test_invalid_custom_answers(self, custom: str, selected: tuple[str, ...], message: str) -> None:

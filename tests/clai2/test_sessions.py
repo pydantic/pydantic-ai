@@ -1,10 +1,13 @@
 """Saved sessions restore context, never tool execution or executable configuration."""
 
+import logging
 import os
+import sqlite3
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from typing import Any
 
 import anyio
 import pytest
@@ -26,7 +29,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -37,7 +39,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness import Coder
-from pydantic_ai_harness.step_persistence import ContinuableSnapshot, StepPersistence
+from pydantic_ai_harness.step_persistence import ContinuableSnapshot, SqliteStepStore, StepEvent, StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
@@ -45,9 +47,9 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
 )
 from pydantic_clai2 import DEFAULT_PLUGINS, create_agent
-from pydantic_clai2._app import STOCK_PLUGINS, create_stock_agent
+from pydantic_clai2.app import STOCK_PLUGINS, create_stock_agent
 from pydantic_clai2.plugins import PluginHost, load_plugin
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session, SessionStepStore
 from pydantic_clai2.runtime.sessions import PersistencePlugin
 from tests.clai2.test_session_browser import repository
 
@@ -193,6 +195,60 @@ async def test_busy_session_resumes_as_a_fork_of_its_latest_step(tmp_path: Path)
     assert original.messages == first.messages
 
 
+async def test_busy_session_resumes_in_its_existing_fork(tmp_path: Path) -> None:
+    """A later resume continues the fork an earlier one saved, unless another process runs that fork too."""
+    first = saved_session(tmp_path)
+    await first.prompt('first')
+    store = first.conversations
+    assert store is not None
+    head = await store.save(
+        summary=replace(first.summary, outcome='running', run_id='live', owner_pid=os.getpid()), messages=first.messages
+    )
+    second = saved_session(tmp_path)
+    await second.resume(head.id)
+    fork = second.summary
+    assert fork.forked_from == head.id
+    await second.prompt('continue in the fork')
+
+    third = saved_session(tmp_path)
+    notice = await third.resume(head.id)
+    assert notice == (
+        f'Session is busy in process {os.getpid()}. Resumed its existing fork instead: first (fork) ({fork.id}). '
+        'The original keeps running there and may still change files.'
+    )
+    assert third.summary.id == fork.id
+    assert third.messages == second.messages
+    assert len(await store.listing()) == 2
+
+    # Another process runs the fork too, so a new fork is the only way to continue here.
+    await store.save(summary=replace(third.summary, outcome='running', owner_pid=os.getppid()), messages=[])
+    fourth = saved_session(tmp_path)
+    assert 'Resumed a fork of it instead' in await fourth.resume(head.id)
+    assert fourth.summary.id not in (head.id, fork.id)
+    assert fourth.summary.forked_from == head.id
+
+
+async def test_a_fork_this_process_left_running_is_continued_not_forked_again(tmp_path: Path) -> None:
+    """A turn in the fork cut off without saving its end leaves this process's mark, which no live session holds."""
+    first = saved_session(tmp_path)
+    await first.prompt('first')
+    store = first.conversations
+    assert store is not None
+    head = await store.save(
+        summary=replace(first.summary, outcome='running', owner_pid=os.getpid()), messages=first.messages
+    )
+    second = saved_session(tmp_path)
+    await second.resume(head.id)
+    fork = await store.save(
+        summary=replace(second.summary, outcome='running', owner_pid=os.getpid()), messages=second.messages
+    )
+    third = saved_session(tmp_path)
+    notice = await third.resume(head.id)
+    assert third.summary.id == fork.id
+    assert notice.endswith('Interrupted session: inspect external effects before continuing. No tools were replayed.')
+    assert len(await store.listing()) == 2
+
+
 async def test_failed_fork_save_leaves_session_unchanged(tmp_path: Path) -> None:
     class FullDisk(SqliteConversationStore):
         async def save(self, *, summary: ConversationSummary, messages: Sequence[ModelMessage]) -> ConversationSummary:
@@ -261,6 +317,82 @@ async def test_persistence_plugin_uses_session_store(tmp_path: Path) -> None:
     assert snapshot.conversation_id == session.summary.id
     bare = PluginHost(name='persistence', console=Console(file=StringIO()), settings={})
     assert not load_plugin(PersistencePlugin, bare).capabilities
+
+
+async def test_step_records_another_writer_locks_out_do_not_fail_the_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    database = tmp_path / 'sessions.db'
+    other = sqlite3.connect(database, isolation_level=None, check_same_thread=False)
+    connect = sqlite3.connect
+
+    def connect_without_waiting(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        # Give up on the lock at once instead of waiting out the stores' busy timeout.
+        return connect(*args, **{**kwargs, 'timeout': 0.01})
+
+    monkeypatch.setattr(sqlite3, 'connect', connect_without_waiting)
+    caplog.set_level(logging.INFO, logger='pydantic_clai2.runtime.session')
+
+    def run_command() -> str:
+        # Another CLAI sharing `sessions.db` starts a long write while the tool runs.
+        other.execute('BEGIN IMMEDIATE')
+        return 'done'
+
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='run_command', json_args='{}', tool_call_id='call')}
+        else:
+            other.execute('COMMIT')
+            yield 'finished'
+
+    session = Session(
+        Agent(FunctionModel(stream_function=model), tools=[run_command]),
+        deps=None,
+        conversations=SqliteConversationStore(database=database),
+        workspace=tmp_path,
+    )
+    steps = session.step_store
+    assert isinstance(steps, SessionStepStore)
+    session.plugins = [StepPersistence(store=steps, capture_frontier=True)]
+    try:
+        result = await session.prompt('run it')
+    finally:
+        other.close()
+
+    assert result.output == 'finished'
+    assert session.conversations is not None and session.summary.run_id is not None
+    saved = await session.conversations.get(conversation_id=session.summary.id)
+    assert saved.summary.outcome == 'completed' and saved.messages == session.messages
+    skipped = {
+        record.getMessage(): record.levelno
+        for record in caplog.records
+        if record.name == 'pydantic_clai2.runtime.session'
+    }
+    # Below `WARNING`, which `logging` would print over the live display.
+    assert skipped.get('Skipped saving a tool effect: database is locked') == logging.INFO
+    assert skipped.get('Skipped saving a step checkpoint: database is locked') == logging.INFO
+    # The tool's completion was not recorded, so its effect still reads as started.
+    assert [
+        effect.tool_call_id for effect in await steps.list_unresolved_tool_effects(run_id=session.summary.run_id)
+    ] == ['call']
+
+
+async def test_step_store_still_raises_errors_other_than_a_lock(tmp_path: Path) -> None:
+    store = SessionStepStore(database=tmp_path)
+    with pytest.raises(sqlite3.OperationalError, match='unable to open database file'):
+        await store.append_event(StepEvent(run_id='r1', kind='run_started', step_index=0))
+
+
+async def test_step_store_still_raises_an_operational_error_sqlite_did_not_raise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail(self: SqliteStepStore, event: StepEvent) -> None:
+        raise sqlite3.OperationalError('raised by hand')
+
+    monkeypatch.setattr(SqliteStepStore, 'append_event', fail)
+    store = SessionStepStore(database=tmp_path / 'sessions.db')
+    with pytest.raises(sqlite3.OperationalError, match='raised by hand'):
+        await store.append_event(StepEvent(run_id='r1', kind='run_started', step_index=0))
 
 
 async def test_cancellation_still_propagates_when_saving_fails(
@@ -593,7 +725,7 @@ async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrai
                 for message in messages
                 if isinstance(message, ModelRequest)
                 for part in message.parts
-                if isinstance(part, (ToolReturnPart, RetryPromptPart))
+                if isinstance(part, ToolReturnPart)
             ]
             assert any('workspace content' in str(part.content) for part in returns)
             assert any(('Denied by plugin' if deny else 'plugin result') in str(part.content) for part in returns)
@@ -645,6 +777,9 @@ async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrai
     assert agent is not session.agent
 
 
+@pytest.mark.moves_cache_prefix(
+    reason='a changed plugin snapshot rebuilds the agent with other tools and instructions, which the test exercises'
+)
 async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: Path) -> None:
     model = TestModel(call_tools=[], custom_output_text='answer')
     agent = create_stock_agent(model)
@@ -669,9 +804,7 @@ async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: 
     assert 'delegate_task' not in {tool.name for tool in model.last_model_request_parameters.function_tools}
     session.plugins = []
     await session.prompt('disabled')
-    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {
-        'read_clai_customization_guide'
-    }
+    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {'load_capability'}
     assert session.summary.id
     assert (
         sum(
@@ -683,9 +816,7 @@ async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: 
         == 5
     )
     await agent.run('original remains unchanged')
-    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {
-        'read_clai_customization_guide'
-    }
+    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {'load_capability'}
 
 
 @pytest.mark.parametrize('base_clai_agent', [False, True])

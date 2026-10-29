@@ -63,10 +63,11 @@ class QuestionMenu:
         """Show the available actions without a separate Space-key convention."""
         if self.editing_custom:
             return 'Enter submits - Esc back - Ctrl-C decline'
+        move = 'Up/Down or Tab/Shift+Tab move'
         if self.cursor == self.other:
-            return 'Up/Down move - type your answer - Esc decline'
+            return f'{move} - type your answer - Esc decline'
         action = 'toggle; Done submits' if self.question.multi_select else 'select'
-        return f'Up/Down move - number/Enter {action} - Esc decline'
+        return f'{move} - number/Enter {action} - Esc decline'
 
     @property
     def other(self) -> int:
@@ -97,8 +98,8 @@ class QuestionMenu:
             return None
         count = len(self.question.options)
         rows = self.other + 1
-        if key in ('up', 'down', 'tab'):
-            self.cursor = (self.cursor + (-1 if key == 'up' else 1)) % rows
+        if key in ('up', 'down', 'tab', 'backtab'):
+            self.cursor = (self.cursor + (-1 if key in ('up', 'backtab') else 1)) % rows
         elif key == 'enter' or key in tuple(str(i) for i in range(1, rows + 1)):
             if key != 'enter':
                 self.cursor = int(key) - 1
@@ -146,8 +147,9 @@ class QuestionMenu:
                 focus = len(lines)
             for line_index, line in enumerate(_wrap(choice, width=width - 2)):
                 prefix = '> ' if index == self.cursor and line_index == 0 else '  '
-                role = theme.ACCENT if index == self.cursor else theme.INFO
-                lines.append(theme.sgr(role) + truncate(prefix + line, width) + '\x1b[0m')
+                row = truncate(prefix + line, width)
+                # Unhighlighted choices keep the terminal's foreground, readable on light and dark backgrounds alike.
+                lines.append(theme.sgr(theme.ACCENT) + row + '\x1b[0m' if index == self.cursor else row)
         visible = max(1, budget - 2 - len(question))
         start = min(focus, max(0, len(lines) - visible))
         title = truncate(self.title, width)
@@ -175,10 +177,10 @@ class QuestionMenu:
         try:
             with raw_mode():
                 while True:
-                    surface.paint(self.frame(width=console.width, height=console.height))
+                    surface.paint(self.frame(width=console.width, height=console.height), select_pinned=True)
                     key = key_source()
                     if isinstance(key, TranscriptKey):
-                        # Reading back through or copying the transcript must not answer or edit the question.
+                        # Scrolling the transcript or copying painted text must not answer or edit the question.
                         surface.transcript_key(key.key, key.data)
                         continue
                     if key == 'ctrl-c' or (key == 'escape' and not self.editing_custom):
@@ -271,6 +273,9 @@ def render_call(event: FunctionToolCallEvent) -> RenderableType:
 def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
     """Leave a record of what was picked in the transcript, since the menu itself is gone."""
     text = Text()
+    if event.failed:
+        text.append('● The question failed', style=theme.color(theme.MUTED))
+        return text
     if event.response.cancelled:
         text.append('● You declined to answer', style=theme.color(theme.MUTED))
         return text
@@ -295,6 +300,9 @@ class AskUserPlugin(Plugin):
     """`AskUser` with the terminal answerer, a readable call header, and a transcript line per answer."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        # The picker needs a terminal; a session without one, such as one the browser runs, gets no question tool.
+        if not self.host.console.is_terminal:
+            return ()
         return (AskUser(answerer=TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)),)
 
     def render(self, event: AgentStreamEvent) -> RenderableType | None:

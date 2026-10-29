@@ -368,8 +368,27 @@ pre {
   border-radius: 6px;
 }
 
+.worktree-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.worktree-head > .worktree-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.worktree-head > .session-more {
+  height: 22px;
+}
+
+.worktree-head:hover > .session-more {
+  display: grid;
+}
+
 .worktree-title:hover,
-.worktree.current > .worktree-title {
+.worktree.current > .worktree-head > .worktree-title {
   color: var(--text-soft);
 }
 
@@ -507,6 +526,22 @@ pre {
   background: var(--amber);
 }
 
+/* A running session with input queued behind its turn: the running dot, ringed. */
+.state.queued {
+  background: var(--lithium);
+  outline: 1.5px solid var(--lithium);
+  outline-offset: 1.5px;
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--lithium) 60%, transparent);
+  animation: pulse 1.6s ease-out infinite;
+}
+
+/* A question or dialog waits for the user: amber, and pulsing, unlike a cancelled turn's. */
+.state.asking {
+  background: var(--amber);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber) 60%, transparent);
+  animation: pulse 1.6s ease-out infinite;
+}
+
 @keyframes pulse {
   70% {
     box-shadow: 0 0 0 6px transparent;
@@ -634,6 +669,130 @@ pre {
 
 .activity.busy {
   color: var(--text-soft);
+}
+
+/* The git chip: the session's branch and its uncommitted and unpushed counts, opening the git dialog. */
+.git-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.git-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.git-branch {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-soft);
+}
+
+.git-counts {
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.git-dialog .dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.git-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.git-view[hidden] {
+  display: none;
+}
+
+.git-section + .git-section {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.git-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.git-file,
+.git-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: 12.5px;
+}
+
+.git-file-status {
+  width: 14px;
+  color: var(--muted);
+  font-weight: 600;
+  text-align: center;
+}
+
+.git-file-status.status-new,
+.git-file-status.status-A {
+  color: var(--green);
+}
+
+.git-file-status.status-D {
+  color: var(--red);
+}
+
+.git-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-message-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.git-message {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.git-problem {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.git-done {
+  margin: 0;
+  color: var(--green);
+  font-size: 12.5px;
+}
+
+.git-remote-actions {
+  justify-content: flex-start;
 }
 
 /* Shown only when opening a session takes long enough to notice; a quick switch never flashes it. */
@@ -795,6 +954,22 @@ pre {
   background: var(--surface);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* A sent prompt's images, as the composer showed them, above its text. */
+.user-images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.user-images.captioned {
+  margin-bottom: 8px;
+}
+
+.attachment.missing {
+  border-style: dashed;
 }
 
 .markdown {
@@ -1057,8 +1232,17 @@ pre {
   color: var(--red);
 }
 
-.tool-body,
-.tool-diffs {
+.tool-row .error-summary {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--red);
+  font: 12px ui-monospace, 'SF Mono', monospace;
+}
+
+.tool-body {
   margin: 6px 0 10px 22px;
   display: flex;
   flex-direction: column;
@@ -1089,6 +1273,17 @@ pre {
 
 .result.error {
   color: var(--red);
+}
+
+.traceback summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.traceback[open] summary {
+  margin-bottom: 6px;
 }
 
 .diff {
@@ -1151,6 +1346,10 @@ pre {
   padding: 6px 10px;
   color: var(--faint);
   font-family: inherit;
+}
+
+.diff-more:hover {
+  color: var(--text-soft);
 }
 
 .notice {
@@ -1275,6 +1474,59 @@ pre {
   font-size: 14.5px;
 }
 
+/* Images pasted or dropped for the next prompt, above the text they go with. */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 14px 0;
+}
+
+.attachment {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.attachment img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachment-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.attachment:hover .attachment-remove,
+.attachment-remove:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .attachment-remove {
+    opacity: 1;
+  }
+}
+
 .composer textarea::placeholder {
   color: var(--faint);
 }
@@ -1352,6 +1604,105 @@ pre {
 
 .send.stop:hover {
   background: var(--text-soft);
+}
+
+.send.steer {
+  background: transparent;
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.send.steer:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* What waits for the running turn, as the terminal lists it above its prompt. */
+.queue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 12px 6px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  font-size: 13px;
+}
+
+.queue-head {
+  display: flex;
+  gap: 8px;
+  padding: 2px 6px 4px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.queue-hint {
+  margin-left: auto;
+}
+
+.queued {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 8px;
+}
+
+.queued:hover {
+  background: var(--hover);
+}
+
+.queued-label {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.queued-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queued-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.queued.editing {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  background: var(--hover);
+}
+
+.queued.editing textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  outline: 0;
+  padding: 4px 8px;
+  background: var(--composer);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.queued.editing textarea:focus {
+  border-color: var(--focus);
+}
+
+.queued-keys {
+  flex-basis: 100%;
+  color: var(--faint);
+  font-size: 11.5px;
 }
 
 .suggestions {
@@ -3060,47 +3411,6 @@ textarea.setting-input {
   flex: none;
   color: var(--muted);
 }
-/* The Workspaces section: the workspaces plugin's checkouts, each opening its own CLAI's page. */
-.workspace {
-  gap: 8px;
-  padding: 5px 6px 5px 12px;
-}
-
-.workspace-main {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.workspace-meta {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  overflow: hidden;
-  color: var(--faint);
-  font-size: 11.5px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.workspace-open {
-  flex: none;
-  padding: 2px 9px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-soft);
-  font-size: 12px;
-}
-
-.workspace-open:hover:not(:disabled) {
-  border-color: var(--lithium);
-  color: var(--text);
-}
-
-.workspace-open:disabled {
-  opacity: 0.5;
-}
 
 /* The orchestrator: its sidebar entry, below New session, and its chat */
 
@@ -3714,6 +4024,45 @@ textarea.setting-input {
   font-weight: 600;
 }
 
+.forks-table td,
+.forks-table th {
+  text-align: left;
+}
+
+.forks-table .fork-prompt {
+  display: block;
+  max-width: 32em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fork-status.running {
+  color: var(--amber);
+}
+
+.fork-status.done {
+  color: var(--green);
+}
+
+.fork-status.failed,
+.fork-result.failed .fork-error {
+  color: var(--red);
+}
+
+.fork-status.cancelled {
+  color: var(--muted);
+}
+
+.fork-result.failed {
+  border-color: color-mix(in srgb, var(--red) 35%, transparent);
+}
+
+.fork-error {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+
 .palette-overlay {
   place-items: start center;
   padding-top: 14vh;
@@ -3839,4 +4188,166 @@ textarea.setting-input {
   margin-right: auto;
   color: var(--faint);
   font-size: 11.5px;
+}
+
+/* The Changes panel, in the side panel's column */
+
+.changes-toggle {
+  position: relative;
+}
+
+.changes-count {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--lithium);
+  color: var(--bg);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+}
+
+.side-panel.changes .changes-refresh {
+  margin-left: auto;
+}
+
+.changes-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.changes-scopes button {
+  padding: 3px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.changes-scopes button:hover {
+  color: var(--text);
+}
+
+.changes-scopes button.active {
+  border-color: var(--border);
+  background: var(--active);
+  color: var(--lithium);
+}
+
+.changes-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 12px 20px;
+}
+
+.changes-empty {
+  padding: 24px 4px;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.changes-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 8px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.changes-files {
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.changes-files button,
+.changes-file-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  background: none;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.changes-files li + li {
+  border-top: 1px solid var(--border);
+}
+
+.changes-files button:hover,
+.changes-file-head:hover {
+  background: var(--hover);
+}
+
+.changes-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.changes-status {
+  flex: none;
+  width: 14px;
+  font: 600 11px ui-monospace, 'SF Mono', monospace;
+  text-align: center;
+}
+
+.changes-status.status-A {
+  color: var(--green);
+}
+
+.changes-status.status-D {
+  color: var(--red);
+}
+
+.changes-status.status-M {
+  color: var(--lithium);
+}
+
+.changes-file {
+  margin-bottom: 10px;
+  scroll-margin-top: 8px;
+}
+
+.changes-file-head {
+  padding: 4px 2px;
+}
+
+.changes-chevron {
+  flex: none;
+  transition: transform 0.12s;
+}
+
+.changes-chevron.open {
+  transform: rotate(90deg);
+}
+
+.changes-note {
+  padding: 6px 10px;
+  color: var(--faint);
+  font-size: 12.5px;
 }

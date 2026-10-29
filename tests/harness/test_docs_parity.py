@@ -120,7 +120,16 @@ _EXPERIMENTAL_MARKERS = ('HarnessExperimentalWarning', 'removed in any release',
 # Lifecycle hook names must not lead a page -- mechanism goes below the purpose.
 _LEAD_HOOK_NAMES = ('before_model_request', 'after_model_request', 'before_tool_execute', 'after_tool_execute')
 # ClassName-style headings are a smell, except where the class name IS the name.
-_ALLOWED_CLASSNAME_HEADINGS = {'FileSystem', 'GitHub', 'Linear', 'LocalStack', 'Notion', 'PostHog', 'StackOne'}
+_ALLOWED_CLASSNAME_HEADINGS = {
+    'BoxLite',
+    'FileSystem',
+    'GitHub',
+    'Linear',
+    'LocalStack',
+    'Notion',
+    'PostHog',
+    'StackOne',
+}
 _FORBIDDEN_HEADINGS = {'overflow', 'authoring', 'overflow capability', 'compaction capabilities'}
 
 
@@ -142,17 +151,23 @@ _CAPABILITY_PAGE_META = {
     'pgtask.md': ('pgtask', 'pgtask Durability'),
     'background-tools.md': ('background_tools', 'Background Tools'),
     'code-mode.md': ('code_mode', 'Code Mode'),
+    'ipython-code-mode.md': ('ipython_code_mode', 'IPython Code Mode'),
     'coder.md': ('coder', 'Coder'),
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('filesystem', 'FileSystem'),
     'shell.md': ('shell', 'Shell'),
+    'smart-search.md': ('smart_search', 'Smart Search'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
+    'docker-sandbox.md': ('docker_sandbox', 'Docker Sandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
     'kubernetes-sandbox.md': ('kubernetes_sandbox', 'Kubernetes Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
+    'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
+    'boxd-sandbox.md': ('boxd_sandbox', 'boxd Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
+    'boxlite-sandbox.md': ('boxlite_sandbox', 'BoxLite Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
     'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrap Sandbox'),
     'repo-context.md': ('repo_context', 'Repo Context'),
@@ -176,6 +191,7 @@ _CAPABILITY_PAGE_META = {
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
     'system-reminders.md': ('system_reminders', 'System Reminders'),
+    'detect-loops.md': ('detect_loops', 'Detect Loops'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),

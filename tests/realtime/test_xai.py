@@ -320,6 +320,7 @@ def test_profile() -> None:
         supports_output_truncation=False,
         supports_text_output=False,  # Grok Voice always speaks
         supports_session_seeding=True,
+        supports_system_messages=False,
         supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
@@ -329,6 +330,7 @@ def test_profile() -> None:
         supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_tool_return_schema=False,
         emits_input_speech_events=True,
+        output_speech_timestamp_granularity=None,
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=False,
@@ -1666,8 +1668,6 @@ async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> 
 
     ws = _FailingSend([], sends=2)
     conn = _manual(ws, dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1})
-    commits_announced: list[None] = []
-    conn._set_audio_commit_listener(lambda: commits_announced.append(None))  # pyright: ignore[reportPrivateUsage]
     await conn.send(_AUDIO)
     await conn.send(CommitAudio())
     await conn.send(_OTHER_AUDIO)
@@ -1685,8 +1685,6 @@ async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> 
         'response.create',
     ]
     assert _appended(replacement) == [_AUDIO.data, _OTHER_AUDIO.data]
-    # The session placed the turn when the commit first started going out; sending it again doesn't move it.
-    assert len(commits_announced) == 1
 
 
 async def test_audio_kept_back_during_a_reply_is_the_latest_input_once_sent() -> None:
@@ -2279,8 +2277,20 @@ async def test_a_request_that_fails_to_commit_the_buffer_places_nothing_ahead_of
     await conn.send(_AUDIO)
     with pytest.raises(OSError):
         await conn.send(CreateResponse())
-    assert conn._lifecycle._sent_before_commits == deque()  # pyright: ignore[reportPrivateUsage]
+    assert conn._lifecycle._commits == deque()  # pyright: ignore[reportPrivateUsage]
     # A request committing nothing has no snapshot to drop.
     with pytest.raises(OSError):
         await conn.send(CreateResponse())
-    assert conn._lifecycle._sent_before_commits == deque()  # pyright: ignore[reportPrivateUsage]
+    assert conn._lifecycle._commits == deque()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_commit_under_server_vad_goes_out_but_is_not_waited_for() -> None:
+    """Under server VAD, xAI ignores a commit altogether (no acknowledgement, no error; checked live): it still goes out,
+    and nothing waits for its acknowledgement, so it makes no turn of its own when the session ends."""
+    ws = FakeWebSocket([])
+    conn = XaiRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    assert json.loads(ws.sent[-1]) == {'type': 'input_audio_buffer.commit', 'event_id': 'pydantic_ai.commit.1'}
+    assert conn._lifecycle._commits == deque()  # pyright: ignore[reportPrivateUsage]
+    assert conn._stop_reading() == []  # pyright: ignore[reportPrivateUsage]

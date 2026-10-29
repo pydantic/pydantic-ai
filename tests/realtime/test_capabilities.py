@@ -14,33 +14,59 @@ import asyncio
 import contextvars
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from typing import Any
 
 import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
-from pydantic_ai.capabilities import Hooks, NativeTool, ProcessEventStream, WebSearch
-from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
+from pydantic_ai.capabilities import (
+    BatchModelRequests,
+    CombinedCapability,
+    Hooks,
+    Instrumentation,
+    NativeTool,
+    PrefixTools,
+    ProcessEventStream,
+    WebSearch,
+    WrapperCapability,
+)
+from pydantic_ai.capabilities.abstract import (
+    AbstractCapability,
+    AgentNode,
+    NodeResult,
+    ValidatedToolArgs,
+    WrapModelRequestHandler,
+    WrapOutputProcessHandler,
+    WrapRunHandler,
+)
 from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    CapabilityEvent,
+    CustomEvent,
+    FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     SpeechPart,
     SpeechPartDelta,
+    TextPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
+from pydantic_ai.output import OutputContext
 from pydantic_ai.realtime import (
     RealtimeEvent,
     RealtimeModel,
@@ -307,6 +333,66 @@ async def test_deferred_instruction_capability_loads_through_the_tool() -> None:
     assert 'Speak like a pirate at all times.' in str(result_part.content)
 
 
+async def test_deferred_capability_without_instructions_loads_with_only_the_message() -> None:
+    """A deferred capability with nothing to say still loads in a session, with no `instructions` in the return."""
+
+    class Quiet(AbstractCapability[None]):
+        id = 'quiet'
+        defer_loading = True
+
+        def get_description(self) -> str:
+            return 'Says nothing.'
+
+    model = _RecordingModel(
+        connection_events=[
+            ToolCall(tool_call_id='tc_1', tool_name='load_capability', args='{"id": "quiet"}'),
+            ResponseDone(),
+        ],
+    )
+    events = await _drain(Agent(), model, capabilities=[Quiet()])
+
+    result_part = next(e for e in events if isinstance(e, FunctionToolResultEvent)).part
+    assert isinstance(result_part, ToolReturnPart)
+    assert result_part.content == {'message': "Capability 'quiet' loaded. Its instructions, if any, follow."}
+
+
+async def test_seeded_history_keeps_a_loaded_capabilitys_instructions() -> None:
+    """A capability a standard run loaded keeps its instructions in a session seeded with that run's history.
+
+    The run states them in an `InstructionDeltaPart`, which seeding skips, and its load return only confirms the
+    load, so the session states them with its own instructions. A capability the agent no longer has is dropped,
+    as a standard run withdraws it.
+    """
+
+    class Pirate(AbstractCapability[None]):
+        id = 'pirate'
+        defer_loading = True
+
+        def get_description(self) -> str:
+            return 'Talk like a pirate.'
+
+        def get_instructions(self) -> str | None:
+            return 'Speak like a pirate at all times.'
+
+    def load_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'pirate'})])
+        return ModelResponse(parts=[TextPart('Arr.')])
+
+    result = await Agent(FunctionModel(load_then_answer), deps_type=type(None), capabilities=[Pirate()]).run('Hello.')
+    history = result.all_messages()
+
+    model = _RecordingModel()
+    await _drain(Agent(instructions='Be helpful.'), model, capabilities=[Pirate()], message_history=history)
+    assert model.instructions is not None
+    assert model.instructions.endswith('\n\nSpeak like a pirate at all times.')
+    assert model.instructions.count('Speak like a pirate') == 1
+
+    model = _RecordingModel()
+    await _drain(Agent(instructions='Be helpful.'), model, message_history=history)
+    assert model.instructions == 'Be helpful.'
+
+
 async def test_capability_native_tool_survives_native_tools_override() -> None:
     """A per-call capability's native tool is preserved on top of `override(native_tools=...)`.
 
@@ -466,6 +552,38 @@ async def test_run_lifecycle_hooks_fire_for_a_session() -> None:
     assert session.result is not None
     assert session.result.output == 'final answer'
     assert session.result.new_messages() == session.new_messages()
+
+
+async def test_closing_generator_that_owns_a_session_drains_wrap_run() -> None:
+    """Closing a generator suspended inside a session cancels `wrap_run` and finishes its cleanup first."""
+    calls: list[str] = []
+
+    class LifecycleCapability(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+            try:
+                return await handler()
+            except asyncio.CancelledError:
+                calls.append('wrap_run:cancelled')
+                raise
+            finally:
+                await asyncio.sleep(0)
+                calls.append('wrap_run:finally')
+
+    agent = Agent(capabilities=[LifecycleCapability()], deps_type=type(None))
+    sessions: list[RealtimeSession] = []
+
+    async def session_owner() -> AsyncGenerator[None]:
+        async with agent.realtime(_RecordingModel(connection_events=[])).session() as session:
+            sessions.append(session)
+            yield
+
+    generator = session_owner()
+    await anext(generator)
+    await generator.aclose()
+    calls.append('closed')
+
+    assert calls == ['wrap_run:cancelled', 'wrap_run:finally', 'closed']
+    assert sessions[0].result is None
 
 
 async def test_wrap_run_recovers_session_error() -> None:
@@ -755,6 +873,80 @@ async def test_on_event_hook_receives_session_events() -> None:
 
     assert any(isinstance(event, PartStartEvent) for event in observed)
     assert any(isinstance(event, RealtimeTurnCompleteEvent) for event in observed)
+
+
+@dataclass
+class _Booked(CustomEvent):
+    where: str = ''
+
+
+@dataclass
+class _SnapshotSaved(CapabilityEvent, namespace='realtime_test_snapshots'):
+    pass
+
+
+async def test_emitted_events_reach_the_session_stream() -> None:
+    """`ctx.emit` from run hooks and tools works in a session as in `iter()`: events emitted before the
+    session connects lead its stream, a tool's land between its call and result events, and both reach
+    `on_event`. An event emitted from `after_run`, once the stream has ended, is accepted but not
+    delivered, also as in `iter()`."""
+    hooks = Hooks()
+    observed: list[str] = []
+    after_run_emitted: list[_Booked] = []
+
+    @hooks.on.before_run
+    async def before_run(ctx: RunContext[None]) -> None:
+        await ctx.emit(_Booked(where='before_run'))
+
+    @hooks.on.after_run
+    async def after_run(ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        after_run_emitted.append(await ctx.emit(_Booked(where='after_run')))
+        return result
+
+    @hooks.on.event
+    def observe(ctx: RunContext[None], event: AgentStreamEvent) -> AgentStreamEvent:
+        if isinstance(event, _Booked):
+            observed.append(event.where)
+        return event
+
+    agent = Agent(capabilities=[hooks], deps_type=type(None))
+
+    @agent.tool
+    async def book(ctx: RunContext[None]) -> str:
+        await ctx.emit(_Booked(where='tool'))
+        return 'booked'
+
+    events = await _drain(
+        agent,
+        _RecordingModel(connection_events=[ToolCall(tool_call_id='tc_1', tool_name='book', args='{}'), ResponseDone()]),
+    )
+
+    assert [type(event) for event in events] == [
+        _Booked,
+        PartStartEvent,
+        PartEndEvent,
+        FunctionToolCallEvent,
+        _Booked,
+        FunctionToolResultEvent,
+    ]
+    assert [event.where for event in events if isinstance(event, _Booked)] == ['before_run', 'tool']
+    tool_event = events[4]
+    assert isinstance(tool_event, _Booked)
+    assert (tool_event.tool_call_id, tool_event.tool_name) == ('tc_1', 'book')
+    assert observed == ['before_run', 'tool']
+    assert [event.where for event in after_run_emitted] == ['after_run']
+
+
+async def test_capability_event_emitted_from_after_run_closes_session_cleanly() -> None:
+    """A capability that records a final snapshot in `after_run` and emits an event about it (as Harness
+    `StepPersistence` does) no longer makes every normal session close raise."""
+
+    class Snapshotting(AbstractCapability[None]):
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            await ctx.emit(_SnapshotSaved())
+            return result
+
+    assert await _drain(Agent(capabilities=[Snapshotting()], deps_type=type(None)), _RecordingModel()) == []
 
 
 async def test_session_stream_wrapper_closes_after_early_break() -> None:
@@ -1080,3 +1272,162 @@ async def test_session_tool_reveal_is_a_no_op_like_a_standard_run() -> None:
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.content == 'done'
     assert result.part.outcome == 'success'
+
+
+# --- Hooks a session never calls ---------------------------------------------------------------
+
+
+class _ModelRequestCap(AbstractCapability[None]):
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        return request_context  # pragma: no cover
+
+
+class _GraphCap(AbstractCapability[None]):
+    async def after_node_run(
+        self, ctx: RunContext[None], *, node: AgentNode[None], result: NodeResult[None]
+    ) -> NodeResult[None]:
+        return result  # pragma: no cover
+
+    async def wrap_output_process(
+        self, ctx: RunContext[None], *, output_context: OutputContext, output: Any, handler: WrapOutputProcessHandler
+    ) -> Any:
+        return await handler(output)  # pragma: no cover
+
+
+class _ToolHookCap(AbstractCapability[None]):
+    def get_instructions(self) -> str:
+        return 'Be brief.'
+
+    async def before_tool_execute(
+        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        return args  # pragma: no cover
+
+
+class _ModelRequestWrapper(WrapperCapability[None]):
+    async def wrap_model_request(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        return await handler(request_context)  # pragma: no cover
+
+
+async def _on_model_request_error(
+    ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+) -> ModelResponse:
+    raise error  # pragma: no cover
+
+
+async def _before_tool_execute(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+) -> dict[str, Any]:
+    return args  # pragma: no cover
+
+
+def _uncalled_hooks_warning(name: str, hooks: str) -> str:
+    return (
+        f'Capability {name} implements {hooks}, which realtime sessions never call, so it may not work as '
+        'intended in this session. See https://pydantic.dev/docs/ai/realtime/capabilities/ for the hooks a '
+        'session runs.'
+    )
+
+
+async def test_capability_with_uncalled_hook_warns() -> None:
+    """A capability relying on `before_model_request` does nothing in a session, so opening one says so."""
+    with pytest.warns(UserWarning) as record:
+        await _drain(Agent[None, str](capabilities=[_ModelRequestCap()], deps_type=type(None)), _RecordingModel())
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning('`_ModelRequestCap`', '`before_model_request`')
+    ]
+
+
+async def test_prepare_model_request_hook_warns() -> None:
+    """A session makes no model request attempts, so a `prepare_model_request` hook never runs."""
+
+    async def prepare(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        return request_context  # pragma: no cover
+
+    with pytest.warns(UserWarning) as record:
+        await _drain(
+            Agent[None, str](capabilities=[Hooks(prepare_model_request=prepare)], deps_type=type(None)),
+            _RecordingModel(),
+        )
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning('`Hooks`', '`prepare_model_request`')
+    ]
+
+
+async def test_batching_warns_that_a_session_sends_no_model_requests() -> None:
+    """A session sends no model requests, so `BatchModelRequests`' `get_wrapper_model` has nothing to wrap."""
+    with pytest.warns(UserWarning) as record:
+        await _drain(Agent[None, str](capabilities=[BatchModelRequests()], deps_type=type(None)), _RecordingModel())
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning('`BatchModelRequests`', '`get_wrapper_model`')
+    ]
+
+
+async def test_one_uncalled_hooks_warning_per_capability() -> None:
+    """Each capability warns once per session, naming all of its uncalled hooks; nested ones are reached too."""
+    graph_cap = _GraphCap()
+    agent = Agent[None, str](
+        capabilities=[
+            graph_cap,
+            CombinedCapability([graph_cap, Hooks(model_request_error=_on_model_request_error, id='errors')]),
+            PrefixTools(wrapped=_ModelRequestCap(), prefix='x'),
+            _ModelRequestWrapper(wrapped=_ToolHookCap()),
+        ],
+        deps_type=type(None),
+    )
+    for _ in range(2):
+        with pytest.warns(UserWarning) as record:
+            await _drain(agent, _RecordingModel())
+        assert sorted(str(warning.message) for warning in record) == sorted(
+            [
+                _uncalled_hooks_warning('`_GraphCap`', '`after_node_run`, `wrap_output_process`'),
+                _uncalled_hooks_warning("`Hooks` (id='errors')", '`on_model_request_error`'),
+                _uncalled_hooks_warning('`_ModelRequestCap`', '`before_model_request`'),
+                _uncalled_hooks_warning('`_ModelRequestWrapper`', '`wrap_model_request`'),
+            ]
+        )
+
+
+class _ModelRequestInstrumentation(Instrumentation):
+    async def after_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        return response  # pragma: no cover
+
+
+async def test_subclass_of_exempt_built_in_warns_for_its_own_hooks() -> None:
+    """An exempt built-in is measured against its own class, so hooks a subclass adds still warn."""
+    with pytest.warns(UserWarning) as record:
+        await _drain(
+            Agent[None, str](capabilities=[_ModelRequestInstrumentation()], deps_type=type(None)), _RecordingModel()
+        )
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning("`_ModelRequestInstrumentation` (id='instrumentation')", '`after_model_request`')
+    ]
+
+
+@pytest.mark.parametrize(
+    'capabilities',
+    [
+        pytest.param([], id='default-agent'),
+        pytest.param([Instrumentation()], id='instrumentation'),
+        pytest.param([_ToolHookCap()], id='supported-hooks'),
+        pytest.param([Hooks(before_tool_execute=_before_tool_execute)], id='hooks-supported'),
+        pytest.param([PrefixTools(wrapped=_ToolHookCap(), prefix='x')], id='wrapper-supported'),
+        pytest.param(
+            [PrefixTools(wrapped=CombinedCapability([_ToolHookCap(), Instrumentation()]), prefix='x')],
+            id='wrapper-over-combined-supported',
+        ),
+    ],
+)
+async def test_capability_with_only_session_hooks_does_not_warn(capabilities: list[AbstractCapability[None]]) -> None:
+    """Built-ins a session handles another way, and capabilities using only session hooks, open silently.
+
+    The default agent auto-injects `ToolSearch` and the pending-message drain, which both implement
+    `before_model_request`; `filterwarnings = error` turns any warning into a failure here.
+    """
+    await _drain(Agent[None, str](capabilities=capabilities, deps_type=type(None)), _RecordingModel())

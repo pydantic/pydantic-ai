@@ -15,13 +15,13 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import BinaryContent, ModelRequest, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
-from pydantic_clai2.ui.rendering._rendering import StreamRenderer
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 from tests.clai2.test_live_prompt import editor
 
 
@@ -241,12 +241,14 @@ async def test_steering_reaches_running_agent_and_is_cleared() -> None:
         return 'done'
 
     session = Session(agent, deps=None)
+    image = BinaryContent(data=b'alone', media_type='image/png')
     assert not session.steer('idle')
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(session.prompt, 'start')
         await started.wait()
         assert session.steer('change direction')
         assert session.steer('image direction', images=[BinaryContent(data=b'image', media_type='image/png')])
+        assert session.steer('', images=[image])
         release.set()
     prompts = [
         part.content
@@ -256,6 +258,7 @@ async def test_steering_reaches_running_agent_and_is_cleared() -> None:
         if isinstance(part, UserPromptPart)
     ]
     assert 'change direction' in prompts
+    assert [image] in prompts, 'no empty text block beside an image alone'
     assert not session.steer('finished')
 
 

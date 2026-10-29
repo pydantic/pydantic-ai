@@ -193,6 +193,7 @@ def test_openapi_schema_transformer_prunes_map_schemas_before_traversal():
         'properties': {'kept': {'type': 'string'}},
         'additionalProperties': {'type': 'integer'},
         'patternProperties': {'^x': {'type': 'boolean'}},
+        'propertyNames': {'type': 'string', 'pattern': '^[a-z]+$'},
     }
     visited_types: list[str] = []
 
@@ -207,6 +208,26 @@ def test_openapi_schema_transformer_prunes_map_schemas_before_traversal():
 
     assert transformed == snapshot({'type': 'object', 'properties': {'kept': {'type': 'string'}}})
     assert visited_types == ['string', 'object']
+
+
+def test_openapi_schema_transformer_prunes_contains_before_traversal():
+    """`Schema` has no `contains`, so a recursive one is dropped instead of refused.
+
+    A recording can't check this: cassettes match on method and URI, not the request body.
+    """
+    schema: JsonSchema = {
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'properties': {'children': {'type': 'array', 'contains': {'$ref': '#/$defs/Node'}}},
+            }
+        },
+        '$ref': '#/$defs/Node',
+    }
+
+    assert GoogleOpenAPISchemaTransformer(schema).walk() == snapshot(
+        {'type': 'object', 'properties': {'children': {'type': 'array'}}}
+    )
 
 
 # =============================================================================
@@ -252,7 +273,7 @@ def test_model_profile_thinking_defaults():
         assert profile.get('google_supports_thinking_level') is True, f'{name} should support thinking_level'
 
     # Gemini 2.5: supports thinking, but uses budget (thinking_level=False)
-    for name in ('gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-image'):
+    for name in ('gemini-2.5-flash', 'gemini-2.5-pro'):
         profile = google_model_profile(name)
         assert profile is not None, f'{name} should have a profile'
         assert profile.get('supports_thinking') is True, f'{name} should support thinking'
@@ -266,6 +287,8 @@ def test_model_profile_thinking_defaults():
         'gemini-1.5-pro',
         'gemini-pro',
         'gemma-3-27b-it',
+        # The Gemini API and Vertex both reject a thinking config for this 2.5 image model.
+        'gemini-2.5-flash-image',
     ):
         profile = google_model_profile(name)
         assert profile is not None, f'{name} should have a profile'

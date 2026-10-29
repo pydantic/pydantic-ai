@@ -143,8 +143,8 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
     # --- Subclass hooks (not abstract — direct use is supported) ---
 
-    def _default_native(self) -> AbstractNativeTool | None:
-        """Create the default native tool instance.
+    def _default_native(self) -> AgentNativeTool[AgentDepsT] | None:
+        """Create the default native tool instance, or a function that creates it for each run.
 
         Override in subclasses. Returns None by default (direct use requires
         passing an explicit `AbstractNativeTool` instance as `native`).

@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { api } from '../api'
+import { useContext, useState } from 'react'
+import { SessionContext } from '../api'
 import type { AnswerBody, Questions } from '../protocol'
 import { CheckIcon, QuestionIcon } from './icons'
 
@@ -7,13 +7,15 @@ interface Props {
   request: Questions
   /** Who asks when the request names no one: CLAI, or the orchestrator. */
   asker?: string
-  /** Where the answer goes: the session's questions by default. */
+  /** Where the answer goes: the shown session's questions by default. */
   onAnswer?: (id: string, answers: AnswerBody[] | null) => Promise<void>
   onError: (message: string) => void
 }
 
 /** The model's multiple-choice questions, answerable here or in the terminal, whichever comes first. */
-export function QuestionCard({ request, asker = 'CLAI', onAnswer = api.answer, onError }: Props) {
+export function QuestionCard({ request, asker = 'CLAI', onAnswer, onError }: Props) {
+  const session = useContext(SessionContext)
+  const answer = onAnswer ?? session.answer
   const [picked, setPicked] = useState<Record<string, string[]>>({})
   const [custom, setCustom] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -37,7 +39,7 @@ export function QuestionCard({ request, asker = 'CLAI', onAnswer = api.answer, o
           return { header: q.header, selected: typed ? [] : (picked[q.header] ?? []), custom: typed || null }
         })
     try {
-      await onAnswer(request.id, answers)
+      await answer(request.id, answers)
     } catch (error) {
       onError(String(error instanceof Error ? error.message : error))
       setBusy(false)

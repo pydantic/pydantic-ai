@@ -32,7 +32,7 @@ capability, or `@on_event` on your own capability); `get_commands` for
 `/commands`; `render` for custom output; `get_status_segments`, `get_spinners`,
 `get_model_providers`, and `get_side_panels` (pages the web UI shows beside the
 chat); `configure` for a settings menu; `on_session_start`,
-`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, and `on_update_progress` for CLAI's own moments;
+`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_fork_end`, and `on_install_progress` for CLAI's own moments;
 `prepare` for async reads the `get_*` methods depend on. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
@@ -68,7 +68,7 @@ they agree in the same PR.
   capability function might return a sandbox, so `local_workspace()` attaches the
   launch directory only after every `for_run`, and harness `Skills` (which reads its
   libraries in `for_run`) fails the turn. Wrap a function that never returns a
-  workspace in `runtime/_session.py`'s `WorkspacelessCapability`.
+  workspace in `runtime/session.py`'s `WorkspacelessCapability`.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -78,8 +78,8 @@ they agree in the same PR.
   returned the thing from a `get_*` method or it did not; `has_configure` and
   `has_render` compare against the base-class default.
 - **Only shell-owned moments.** `on_session_start`, `on_session_end`,
-  `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`,
-  `on_update_progress`.
+  `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`,
+  `on_fork_end`, `on_install_progress`.
   Startup load failures happen before an agent run, so core's `before_run` cannot
   observe them. The loader reports them after trying every enabled plugin so
   observability can receive failures that preceded its own load. Which conversation
@@ -90,9 +90,11 @@ they agree in the same PR.
   Esc cancels: a refused `/plugins` fires its refusal instead, and a cancelled command
   fires nothing. A delegated task's own events never enter the parent run's stream, and a
   background task outlives that run, so no hook of the parent sees them; `Tasks.observe`,
-  the harness owner's one observer, fires `TaskEvent`. `/update` is a command, so no core
+  the harness owner's one observer, fires `TaskProgress`. A `/fork` runs a separate session in the
+  background, so its run's hooks belong to that session and nothing of the parent sees it end;
+  `Forks._run` fires `ForkEnd`. `/update now` is a command, so no core
   hook sees its install either, and `CommandEnd` comes only once uv has finished; `Updates.command`
-  fires `UpdateProgress` as it goes. Additional moments need the same
+  fires `InstallProgress` as it goes. Additional moments need the same
   justification: say which core hook you checked and why it does not fit.
 
 ## Loading and unloading
@@ -104,10 +106,74 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `callback -> owner` map, no scanning registries for a plugin's name.
 - **A running agent run never changes its plugins.** Core binds capabilities once
   per run, so `/plugins` (an `args_during_turn` command) may load and unload
-  mid-turn, but the run keeps the snapshot `run_turn` bound. `PluginLoader.turn()`
+  mid-turn, but the run keeps the snapshot `run_turn` bound. `SessionPlugins.turn()`
   defers `on_session_end` of plugins unloaded meanwhile until the run is over,
   shielded from cancellation. Do not swap capabilities inside a run; that needs
   core support.
+- **Plugins are per live session; declarations are per process.** Each live
+  session's `SessionPlugins` (`plugins/loader.py`) holds its loaded instances,
+  guards, and deferred ends, and is its `host.plugins`. They all join the
+  process's `ProcessPlugins` (`plugins/process_plugins.py`, held by `ClaiProcess`):
+  declarations, staged `/plugins add` settings, open settings menus, the change
+  lock, and imports. `enable`, `disable`, `remove`, and `reload` run in the session
+  they came from under that lock (`ProcessPlugins.change`), then every other live
+  session `follow`s them, also when the origin failed; `/plugins add` and settings
+  edits are followed once saved. Each session follows under the `turn()` rule above.
+  `PluginLoader` is the former name of `SessionPlugins`, kept for tests; built with
+  `store=` and no `process=`, it gets a process of its own, as one-session hosts do.
+- **`Plugin.scope = 'process'` builds a plugin once per process.** `observability`,
+  `workspaces`, and `web` are. The first session to load one builds it and fires
+  `on_session_start`; it then joins every live session (capabilities, commands, and
+  each moment, dispatched per session with `host.live.current()` naming it). It ends
+  once, when unloaded (after every running turn that bound it) or when the last
+  session closes; sessions load a name one at a time, so it is built once.
+  Its host's `session_id`, `workspace`, `tasks`, `plugins`, `setting`, `send_input`,
+  `submit_prompt`, and `interrupt` follow the session being handled (moments,
+  commands, and runs set it); its other attributes are the loading session's.
+  `restart` keeps it. A process plugin that includes a session plugin (`web` and
+  `ask_user`) keeps it off in every session. `Plugin.scope`, `host.live`, and the
+  `LiveSession`/`LiveSessions` protocols are public: `PLUGINS.md`'s "Several live
+  sessions" is their contract, with the six rules every plugin follows. Change them
+  as public API, and update that section in the same PR.
+- **A process holds many live sessions; a conversation is live in one.**
+  `ClaiProcess.live` (`runtime/live_runtimes.py`) is `host.live`. `create_shell`
+  adds each `SessionRuntime` and `SessionRuntime.close` removes it; close a
+  runtime with `close`, never with `loader.close` alone. `open` returns the session
+  already holding a conversation, and `Session.resume` refuses one another session
+  holds or is resuming (`LiveRuntimes.claim`). Sessions `open` and `new` start run as tasks of
+  `serving`, in their own directory, with `Interrupts(signals=False)`, refuse
+  `/reload` and `/update now` unless the terminal shows them (only that session, or the one
+  CLAI started with, restarts it, never from another folder or while another session runs a
+  turn, and a failed `/reload` continues the shown session's conversation), and close
+  after `IDLE_AFTER` (an hour) with no turn, command, queued input, fork, task,
+  watcher, or terminal focus. `/set` of anything but `model` and `run.*` reaches
+  every live session (`CommandContext.adopt`) unless its project file sets it.
+  There is no turn cap.
+- **Per session on `SessionRuntime`, per process on `ClaiProcess`; never the other
+  way.** `ClaiProcess` (`runtime/process.py`) holds what exists once: the stores,
+  `ProcessPlugins`, the task owner and router, the namer, the Codex providers, and
+  `live`. `SessionRuntime` (`runtime/session_runtime.py`) holds what each live session
+  has: its `Session`, commands, `SessionPlugins`, status, interrupts, input queue,
+  forks, and folder (`Session.workspace`, which plugins read as `host.workspace`).
+  `Terminal` holds what only the terminal has, whichever session it shows.
+  A per-session value on `ClaiProcess` leaks between sessions; a process value on a
+  runtime is built twice or closes with one session. Module-level mutable state is
+  process state too, so keep it off modules. Never call `os.chdir` or read
+  `Path.cwd()` for a session's folder after startup: pass `Session.workspace` (or
+  `host.workspace`). `Path.cwd` stays only as the default of hosts built outside the
+  shell, and for `--worktree` setup and cleanup around the session.
+- **The terminal shows one live session at a time.** `Terminal` (`ui/prompt/terminal.py`)
+  owns the terminal console, the `LivePrompt`, the line prompt, the transcript, input
+  history, and pasted images. Only the session shown (`SessionRuntime.terminal`,
+  `LiveRuntimes.focused`) reads the editor, prints to the console, and takes Ctrl-C
+  (`Interrupts.focus`); the others print nowhere (`Terminal.session_console`) and read
+  their inbox. `chat` sets `live.build`, so the web UI opens sessions beside the
+  terminal's. `/resume` of a conversation another live session holds shows that one
+  (`Sessions.show_live`), mid-turn too, and never forks it; the one shown before stays
+  live, and the session CLAI started with is closed for idleness like any other while
+  hidden. Prompts queued for a session stay its own when the terminal shows another.
+  `clai2 --web` keeps its terminal on the session it started with. With one live
+  session nothing changes, and the toolbar adds `N live` only for more.
 - **Load runs `on_session_start` for that plugin; unload runs `on_session_end`.** A
   plugin cannot tell whether it was loaded at startup or later, and must not
   need to.
@@ -126,20 +192,24 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 - **Shipped plugins register first, in declared order.** The menu's alphabetical
   order is for scanning only. Registration order is the order instructions,
   renderers, and status segments are consulted in, so `coder`'s guidance leads
-  the prompt. `customization_guide()` orders itself after the guidance plugins
-  contribute and before harness `RepoContext`, so the CLAI hint never leads.
+  the prompt.
+- **Integrations are deferred.** Only the coding loop and run plumbing are eager.
+  The customization guide (`clai_customization`) and every hosted integration
+  plugin pass `defer_loading=True` on the capability they build (on the one a
+  `for_run` function returns, never on the `DynamicCapability`), so each costs one
+  catalog line until the model calls `load_capability`. A new integration does the same.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
-  `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
+  `config/builtins.py` lists the library's built-ins (re-exported by `app.py`,
   kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
   agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
-  `compaction`, `persistence`, `observability`). The loader treats them like drop-ins with the lowest
+  `compaction`, `persistence`, `observability`, `hooks`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
   persists an override, `remove` resets it. Do not special-case `Coder`
   anywhere else; the agent from `create_agent()` has no coding tools of its
   own. `coder` is declared with `repo_context: false` because `repo_context`
   binds harness `RepoContext` itself; keep it that way or `AGENTS.md` reaches
   the model twice. When a built-in takes the id of a row the former harness
-  catalog offered, add that old row to `_RETIRED_BUILTINS` in `plugins/loader.py`, so a
+  catalog offered, add that old row to `RETIRED_BUILTINS` in `plugins/process_plugins.py`, so a
   user's saved toggle of it maps to the built-in instead of outranking it.
 - **`open_stock_agent` loads `coder`, `repo_context`, and `compaction` only.** Add a
   built-in to that list only when it needs no terminal and reads nothing from the
@@ -151,6 +221,11 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   must not run code as the user on launch. `/plugins enable` is the approval
   and persists the approved declaration in the store. Precedence is store,
   drop-in folder, project, built-in. CLAI never writes the project file.
+  The exception is a factory in `APPROVED_AS_WRITTEN` (`plugins/process_plugins.py`),
+  such as the `hooks` table's `project_hooks`: its declaration is what runs, so
+  a stored approval with the same id and factory that differs from the
+  project's is stale and the project's, off, replaces it. A drop-in or a user's
+  own plugin under that id is never replaced.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
   approval. [Environment variables](docs/reference.md#environment-variables) documents the
@@ -181,9 +256,20 @@ when harness `estimate_message_tokens` (provider-reported usage) says it shrank,
 and passes `runtime/agent_instrumentation.tracer()` so it is traced. Only `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` select truncation after a
 summary failure; other exceptions propagate. Its `configure` is a `FieldMenu`
-over `CompactionSettings`; the loader's reload builds the new chain. The status
+over `CompactionSettings`; the loader's reload builds the new chain. Background
+compaction is harness `FallbackCompaction(background_start=...)`, not CLAI code: the plugin
+only passes the setting, closes the chain in `on_session_end`, discards the summaries of
+conversations other than the shown one and its running tasks at each turn end and conversation
+change (not per task event, which would build one for every streamed event), and has `/compact` try the
+chain's `take_background_compaction` (without a focus) or `discard_background_compaction`
+(with one) before the capped chain. The status
 row's window does not depend on it: `Session.on_context_window` reports each
 streamed request model's window, and the shell fills it in when no gauge has.
+Until a turn on the selected model runs in the conversation, `show_model` sets
+`Status.model_window` from its profile (`infer_model_profile`; a plugin model's from
+its `settings_from` provider's), which the row and web UI show while `context_window`
+is `None`; after one, an unresolved window stays `?`. A conversation without a figure
+yet, such as a resumed one, reads its last response's `context_tokens`.
 
 ## Adding or changing a CLAI moment or contribution
 
@@ -289,7 +375,7 @@ from the palette.
 
 ## Source layout
 
-The package root composes the shell (`_app.py`, `__main__.py`) and keeps the
+The package root composes the shell (`app.py`, `__main__.py`) and keeps the
 plugin-author imports `pydantic_clai2.plugins` and `pydantic_clai2.commands`
 stable. Other code is grouped by responsibility:
 
@@ -316,6 +402,15 @@ is kept out of this file because this file is sent with every request.
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.
 
+## Windows-only CLI operations
+
+Check whether an existing interactive command already completes the operation on Windows.
+If a new non-interactive path cannot observe completion because CLAI must exit first,
+fail early with a non-zero status and name the working command. Do not report success
+for a detached operation or add a process trampoline just to make the new path work.
+Add Windows-specific orchestration only when a concrete requirement cannot use the
+existing path. For updates, `/update now` is the working interactive path.
+
 ## Testing
 
 - When adding or modifying a CLAI2 CLI UX feature, test every affected UX feature
@@ -336,6 +431,9 @@ Before adding, removing, or renaming a setting, changing its type, meaning, or
 default, or changing the SQL schema, consider upgrades, downgrades, and branch
 switches. Different versions can share the same settings database.
 
+- Adding a setting needs no API compatibility waiver: `SETTING_FIELDS` and
+  `STRING_SETTINGS` are `growing_collections` in `.github/api-compatibility-allowlist.json`.
+  Removing or renaming one still needs a deprecation and a waiver.
 - Add regression cases to `tests/test_settings_compatibility.py` and affected CLI
   tests using the previous stored format. Keep historical fixtures unchanged;
   do not regenerate them with current models or rewrite them to make a change pass.
@@ -403,9 +501,12 @@ Wheel and drag reports arrive in bursts, so they paint once after the input
 callback (`PromptSurface._paint_soon`), never once per report.
 An idle session must cost next to no CPU, since users keep dozens open. The
 editor's timed repaint (`LivePrompt.tick`) runs ten times a second only while a
-turn runs or the panel animates, and once a second (`IDLE_REPAINT`) otherwise;
+turn runs or the panel animates, and once a second (`IDLE_REPAINT`) otherwise,
+sleeping in between; a read wakes it, since the work it starts animates.
 `PromptSurface.paint` skips a frame identical to the last one. Input, output,
-and resizes paint at once. Do not add a timer that repaints unconditionally.
+and resizes paint at once; output inside a frame interval paints when it ends
+(`PromptSurface.changed`), without waiting for a tick. Do not add a timer that
+repaints unconditionally, or one that wakes an idle editor more than once a second.
 Mouse reporting stops most terminals from selecting text, so a left-button drag
 selects painted cells in `PromptSurface` and its release copies them through
 `text_clipboard.copy_text`. Do not drop the drag modes (`?1002h`) or copy-out breaks.

@@ -802,11 +802,56 @@ class TestSpawnFailures:
         self, toolset: ShellToolset[None], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         # E2BIG does not identify whether the model's command or the
-        # application's environment crossed the combined platform limit. An
+        # application's environment crossed the combined platform limit. When a
+        # short command can't start either, it is the environment, and an
         # application configuration error must not become an unwinnable retry.
         monkeypatch.setattr(anyio, 'open_process', _raise_oserror(errno.E2BIG, 'Argument list too long'))
         with pytest.raises(OSError, match='Argument list too long'):
             await toolset.run_command(_ctx(tmp_path), 'echo hello')
+
+    @pytest.mark.parametrize('tool', ['run_command', 'shell'])
+    async def test_a_command_too_long_to_start_goes_back_to_the_model(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tool: str
+    ) -> None:
+        # Only the model's long command is refused, so a short one starts and the model is asked to send less;
+        # `call_tool` finishing the run shows the run goes on.
+        long_command = 'echo ' + 'a' * 100_000
+        spawn = anyio.open_process
+
+        async def refuse_long(command: str | Sequence[str], **kwargs: Any) -> anyio.abc.Process:
+            if long_command in (command if isinstance(command, str) else command[-1]):
+                raise OSError(errno.E2BIG, 'Argument list too long')
+            return await spawn(command, **kwargs)
+
+        monkeypatch.setattr(anyio, 'open_process', refuse_long)
+        output = await call_tool(
+            [Shell[None](tools=[tool])], tool, {'command': long_command}, workspace=LocalWorkspaceBackend(tmp_path)
+        )
+
+        assert output == (
+            'The command is too long to start; write the script to a file, with a file tool or in several shorter '
+            'commands, then run the file.'
+        )
+
+    async def test_a_launch_too_long_without_the_models_command_propagates(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # The toolset's own launcher crosses the limit (here, any argument over 1000 characters), so any
+        # command would fail: the application has to fix it, and the model must not be sent into retries.
+
+        async def refuse_long_arguments(command: Sequence[str], **kwargs: Any) -> NoReturn:
+            # The launch and the probe that follows it both carry the launcher script.
+            assert any(len(part) > 1000 for part in command)
+            raise OSError(errno.E2BIG, 'Argument list too long')
+
+        monkeypatch.setattr(anyio, 'open_process', refuse_long_arguments)
+        with pytest.raises(OSError, match='Argument list too long'):
+            await call_tool(
+                [Shell[None](tools=['shell'])],
+                'shell',
+                {'command': 'echo hi'},
+                workspace=LocalWorkspaceBackend(tmp_path),
+            )
 
     async def test_non_recoverable_errno_propagates(
         self, toolset: ShellToolset[None], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1546,12 +1591,17 @@ class TestShellCapability:
             await agent.run('run echo hello')
 
 
-async def _tools_offered_to_model(cwd: Path, *, shell_first: bool) -> dict[str, str | None]:
-    """Run an agent with Shell and CodeMode and return the tools the model was offered."""
+async def _tools_offered_to_model(cwd: Path, *, shell_first: bool) -> tuple[dict[str, str | None], str]:
+    """Run an agent with Shell and CodeMode and return the tools the model was offered and its instructions.
+
+    `CodeMode` sends the catalog of sandboxed functions in the instructions (`dynamic_catalog=True`).
+    """
     offered: dict[str, str | None] = {}
+    instructions: list[str] = []
 
     def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         offered.update({tool.name: tool.description for tool in info.function_tools})
+        instructions.append(info.instructions or '')
         return ModelResponse(parts=[TextPart('done')])
 
     shell = Shell[object]()
@@ -1559,7 +1609,7 @@ async def _tools_offered_to_model(cwd: Path, *, shell_first: bool) -> dict[str, 
     capabilities: list[AbstractCapability[object]] = [shell, code_mode] if shell_first else [code_mode, shell]
     agent: Agent[None, str] = Agent(FunctionModel(capture), capabilities=capabilities)
     await agent.run('go', workspace=LocalWorkspaceBackend(cwd))
-    return offered
+    return offered, instructions[-1]
 
 
 class TestCodeModeInterop:
@@ -1575,28 +1625,26 @@ class TestCodeModeInterop:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
             pytest.skip('Agent.run() requires asyncio')
-        tools = await _tools_offered_to_model(tmp_path, shell_first=shell_first)
+        tools, catalog = await _tools_offered_to_model(tmp_path, shell_first=shell_first)
 
         assert 'run_command' in tools
         assert 'start_command' in tools
-        run_code_description = tools['run_code']
-        assert run_code_description is not None
-        assert 'async def run_command' not in run_code_description
-        assert 'async def start_command' not in run_code_description
+        assert 'async def check_command' in catalog
+        assert 'async def run_command' not in catalog
+        assert 'async def start_command' not in catalog
 
     @pytest.mark.parametrize('shell_first', [True, False], ids=['shell-first', 'code-mode-first'])
     async def test_command_id_tools_are_still_sandboxed(self, tmp_path: Path, shell_first: bool) -> None:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
             pytest.skip('Agent.run() requires asyncio')
-        tools = await _tools_offered_to_model(tmp_path, shell_first=shell_first)
+        tools, catalog = await _tools_offered_to_model(tmp_path, shell_first=shell_first)
 
         assert 'check_command' not in tools
         assert 'stop_command' not in tools
-        run_code_description = tools['run_code']
-        assert run_code_description is not None
-        assert 'async def check_command' in run_code_description
-        assert 'async def stop_command' in run_code_description
+        assert 'run_code' in tools
+        assert 'async def check_command' in catalog
+        assert 'async def stop_command' in catalog
 
 
 class TestStopEscalation:
@@ -1705,10 +1753,11 @@ class _NeverReady(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        if isinstance(command, str):
-            command = command.replace(': > "$dir/launch.ready"\n', '')
-            if self.launcher_alive:
-                command = command.replace('"$limit" $$ <', f'"$limit" {os.getpid()} <')
+        assert not isinstance(command, str)  # the launch and the signals, each `sh -c <script> ...`
+        script = command[2].replace(': > "$dir/launch.ready"\n', '')
+        if self.launcher_alive:
+            script = script.replace('"$limit" $$ <', f'"$limit" {os.getpid()} <')
+        command = [*command[:2], script, *command[3:]]
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
@@ -1863,9 +1912,8 @@ class _KillGroupOnExit(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str) and shell
         async with await anyio.open_process(
-            ['/bin/sh', '-c', command],
+            ['/bin/sh', '-c', command] if isinstance(command, str) else command,
             cwd=await self.working_dir(),
             env={**self._env, **(env or {})},
             start_new_session=True,
@@ -1948,8 +1996,8 @@ class _RemovesFileOnReadCheck(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str)
-        command = 'test() { if [ "$1" = -r ]; then rm -f "$2"; fi; command test "$@"; }\n' + command
+        if isinstance(command, str):  # the log reads; the launch is an argv
+            command = 'test() { if [ "$1" = -r ]; then rm -f "$2"; fi; command test "$@"; }\n' + command
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 

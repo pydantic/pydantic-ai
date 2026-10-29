@@ -36,7 +36,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
   Agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.
 </p>
 
-**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), in [GitHub Actions](https://pydantic.dev/docs/ai/harness/gh-aw/), or as a plain object you call [`run()`](agent.md#running-agents) on. [Image generation](image-generation.md) and [embeddings](embeddings.md) come in the same box.
+**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away, and [another one to fall back to](capabilities/model-fallback.md) when a provider fails. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), in [GitHub Actions](https://pydantic.dev/docs/ai/harness/gh-aw/), or as a plain object you call [`run()`](agent.md#running-agents) on. [Image generation](image-generation.md) and [embeddings](embeddings.md) come in the same box.
 
 **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) to [planning](https://pydantic.dev/docs/ai/harness/planning/), [context management](https://pydantic.dev/docs/ai/harness/compaction/), and [persistence](persistence.md), up to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
@@ -53,7 +53,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](capabilities/web-search.md) and a second-opinion [advisor](https://pydantic.dev/docs/ai/harness/advisor/) snapped on alongside:
 
     ```bash
-    pip/uv-add pydantic-ai pydantic-ai-harness
+    pip/uv-add pydantic-ai "pydantic-ai-harness[coder]"
     ```
 
     ```python {test="skip" lint="skip"}
@@ -84,7 +84,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/#api-reference) with [`clai`](cli.md#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
     ```bash
-    uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:xlarge }}
+    uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:xlarge }}
     ```
 
     **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
@@ -163,7 +163,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
             return result.output
     ```
 
-    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, Airflow, Absurd, and pgtask](durable_execution/overview.md) integrations besides.
+    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Airflow, Absurd, and pgtask](durable_execution/overview.md) integrations besides.
 
     Saving, resuming, and forking a run need no engine: [`StepPersistence`](harness/step-persistence.md) from Pydantic AI Harness snapshots every settled step to a store you choose, the way a checkpointer does (see [Persistence](persistence.md)). The engine is for recovering a run that crashes partway through a step.
 
@@ -227,7 +227,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     **Build this →** [Image Generation](image-generation.md)
 
 !!! tip "See your first run in Logfire"
-    Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire). Logfire has a [free tier](https://pydantic.dev/pricing/) that needs no credit card, and you can sign up with just a GitHub account. Run `uvx logfire auth` and `uvx logfire projects new` once first, or point your coding agent at the [Logfire setup skill](https://pydantic.dev/ai-setup.md) to do it for you. The [Logfire guide](logfire.md#using-logfire) has the details, and [any OpenTelemetry backend](logfire.md#using-opentelemetry) works instead.
+    Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire). Logfire has a [free tier](https://pydantic.dev/pricing/) that needs no credit card, and you can sign up with just a GitHub account, so you can use it while you develop even if your team uses another tool in production. Run `uvx logfire auth` and `uvx logfire projects new` once first, or point your coding agent at the [Logfire setup skill](https://pydantic.dev/ai-setup.md) to do it for you. The [Logfire guide](logfire.md#using-logfire) has the details, and [any OpenTelemetry backend](logfire.md#using-opentelemetry) works instead.
 
     ```python
     import logfire
@@ -251,7 +251,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 - **[Every interface](interfaces.md).** One agent definition runs as a [CLI](cli.md), a [built-in web chat](web.md), or [realtime speech](realtime/overview.md); [UI event streams](ui/overview.md) (AG-UI, Vercel AI) connect it to your own frontend or anything else; [ACP](https://pydantic.dev/docs/ai/harness/acp/) serves it as an editor agent; and [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs it headless on issues, pull requests or a schedule.
 
-- **Durable execution.** [Durable execution](durable_execution/overview.md) on nine engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Kitaru, Airflow, Absurd, and pgtask, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
+- **Durable execution.** [Durable execution](durable_execution/overview.md) on eight engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Airflow, Absurd, and pgtask, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
 
 - **Coming from another framework?** The [comparisons](comparisons/index.md) show where Pydantic AI differs from LangChain, Google ADK, the Claude Agent SDK and seven more, and the [migration skills](framework-migration.md) let your coding agent port an existing application over.
 
@@ -463,12 +463,14 @@ As of today, these files are not automatically leveraged by IDEs or coding agent
 **Run something right now.** One command puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
 
 ```bash
-uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:xlarge }}
+uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:xlarge }}
 ```
 
 Or [install Pydantic AI](install.md), pick a [model](models/overview.md) (the [Pydantic AI Gateway](gateway.md) is one key for all of them), and put your own coding agent to work: install the [Pydantic AI skill](coding-agent-skills.md) to give it up-to-date framework knowledge, point it at the [examples](examples/setup.md) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build.
 
 **See what your agent did.** [Instrument it](logfire.md): one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire), which has a [free tier](https://pydantic.dev/pricing/) (no credit card; sign up with just a GitHub account), is the easiest way to look, any OTLP backend works.
+
+**Ship it.** [Going to Production](production.md) answers what teams ask before shipping an agent, from crash recovery and human approval to cost limits, tracing and deployment.
 
 **Put it to work on a repository.** That same agent, or one you write yourself, runs on issues, pull requests or a schedule as a [GitHub Agentic Workflow](https://pydantic.dev/docs/ai/harness/gh-aw/): headless, in a sandbox, writing back through safe outputs.
 

@@ -1,0 +1,388 @@
+version: 1
+interactions:
+- request_stream:
+    json:
+      messages:
+      - content:
+        - text: 'Run exactly this Python with the code execution tool and nothing
+            else: `while True: pass`. Then say what happened in one line.'
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - code_execution: {}
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CoUBCoABCn5SdW4gZXhhY3RseSB0aGlzIFB5dGhvbiB3aXRoIHRoZSBjb2RlIGV4ZWN1dGlvbiB0
+      b29sIGFuZCBub3RoaW5nIGVsc2U6IGB3aGlsZSBUcnVlOiBwYXNzYC4gVGhlbiBzYXkgd2hhdCBo
+      YXBwZW5lZCBpbiBvbmUgbGluZS4QARIVZ3Jvay00LWZhc3QtcmVhc29uaW5nigECKgCSAQIIAQ==
+  response_stream:
+    chunks_json:
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            reasoning_content: 'Running `while True:'
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          prompt_tokens: 477
+          prompt_text_tokens: 477
+          reasoning_tokens: 75
+          cached_prompt_text_tokens: 128
+          cost_in_usd_ticks: '6493500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            reasoning_content: ' pass` in the code execution'
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          prompt_tokens: 477
+          prompt_text_tokens: 477
+          reasoning_tokens: 88
+          cached_prompt_text_tokens: 128
+          cost_in_usd_ticks: '6818500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            reasoning_content: ' tool.'
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          prompt_tokens: 477
+          prompt_text_tokens: 477
+          reasoning_tokens: 97
+          cached_prompt_text_tokens: 128
+          cost_in_usd_ticks: '7043500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            reasoning_content: '
+
+
+              The loop will hang'
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          prompt_tokens: 477
+          prompt_text_tokens: 477
+          reasoning_tokens: 189
+          cached_prompt_text_tokens: 128
+          cost_in_usd_ticks: '9343500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            reasoning_content: ' or time out.'
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          prompt_tokens: 477
+          prompt_text_tokens: 477
+          reasoning_tokens: 213
+          cached_prompt_text_tokens: 128
+          cost_in_usd_ticks: '9943500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            tool_calls:
+            - id: call-50c97124-f299-4613-bd98-ae83847925a9-0
+              type: TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
+              function:
+                name: code_execution
+                arguments: '{"code":"while True: pass"}'
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 13
+          prompt_tokens: 477
+          prompt_text_tokens: 477
+          reasoning_tokens: 345
+          cached_prompt_text_tokens: 128
+          cost_in_usd_ticks: '13568500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            role: ROLE_TOOL
+            tool_calls:
+            - id: call-50c97124-f299-4613-bd98-ae83847925a9-0
+              type: TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
+              status: TOOL_CALL_STATUS_FAILED
+              error_message: The code execution timed out. Try simplifying the computation
+                or breaking it into smaller steps.
+              function:
+                name: code_execution
+                arguments: '{"code":"while True: pass"}'
+          index: 1
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 13
+          prompt_tokens: 477
+          prompt_text_tokens: 477
+          reasoning_tokens: 345
+          cached_prompt_text_tokens: 128
+          cost_in_usd_ticks: '13568500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            content: Code
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 14
+          prompt_tokens: 1337
+          prompt_text_tokens: 1337
+          reasoning_tokens: 397
+          cached_prompt_text_tokens: 512
+          cost_in_usd_ticks: '21611500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            content: ' execution'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 15
+          prompt_tokens: 1337
+          prompt_text_tokens: 1337
+          reasoning_tokens: 397
+          cached_prompt_text_tokens: 512
+          cost_in_usd_ticks: '21636500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            content: ' timed'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 16
+          prompt_tokens: 1337
+          prompt_text_tokens: 1337
+          reasoning_tokens: 397
+          cached_prompt_text_tokens: 512
+          cost_in_usd_ticks: '21661500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            content: ' out'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 17
+          prompt_tokens: 1337
+          prompt_text_tokens: 1337
+          reasoning_tokens: 397
+          cached_prompt_text_tokens: 512
+          cost_in_usd_ticks: '21686500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            content: ' due'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 18
+          prompt_tokens: 1337
+          prompt_text_tokens: 1337
+          reasoning_tokens: 397
+          cached_prompt_text_tokens: 512
+          cost_in_usd_ticks: '21711500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            content: ' to'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 19
+          prompt_tokens: 1337
+          prompt_text_tokens: 1337
+          reasoning_tokens: 397
+          cached_prompt_text_tokens: 512
+          cost_in_usd_ticks: '21736500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            content: ' infinite'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 20
+          prompt_tokens: 1337
+          prompt_text_tokens: 1337
+          reasoning_tokens: 397
+          cached_prompt_text_tokens: 512
+          cost_in_usd_ticks: '21761500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            content: ' loop'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 21
+          prompt_tokens: 1337
+          prompt_text_tokens: 1337
+          reasoning_tokens: 397
+          cached_prompt_text_tokens: 512
+          cost_in_usd_ticks: '21786500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            content: .
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 22
+          prompt_tokens: 1337
+          prompt_text_tokens: 1337
+          reasoning_tokens: 397
+          cached_prompt_text_tokens: 512
+          cost_in_usd_ticks: '21811500'
+    - chunk:
+        id: b2cfb9f9-ca8b-9840-8c89-8d3a8f4e0553
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+          finish_reason: REASON_STOP
+          index: 2
+        created: '2026-10-23T04:12:53.872352190Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 22
+          prompt_tokens: 1337
+          total_tokens: 1756
+          prompt_text_tokens: 1337
+          reasoning_tokens: 397
+          cached_prompt_text_tokens: 512
+          cost_in_usd_ticks: '21811500'
+    chunks_raw:
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSHAoaEAIiFFJ1bm5pbmcgYHdo
+      aWxlIFRydWU6OAEaDAjFvevWBhC+k/yfAyIIZ3Jvay00LjMqE2ZwX2ViM2MwMDNmYzY2YzE0ZWQy
+      FxDdAyDdAzBLOIABWLyqjAOQAd0DmAFL
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSJAoiEAIiHCBwYXNzYCBpbiB0
+      aGUgY29kZSBleGVjdXRpb244ARoMCMW969YGEL6T/J8DIghncm9rLTQuMyoTZnBfZWIzYzAwM2Zj
+      NjZjMTRlZDIXEN0DIN0DMFg4gAFYxJWgA5AB3QOYAVg=
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSDgoMEAIiBiB0b29sLjgBGgwI
+      xb3r1gYQvpP8nwMiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhcQ3QMg3QMwYTiAAVis
+      860DkAHdA5gBYQ==
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSHAoaEAIiFAoKVGhlIGxvb3Ag
+      d2lsbCBoYW5nOAEaDAjFvevWBhC+k/yfAyIIZ3Jvay00LjMqE2ZwX2ViM2MwMDNmYzY2YzE0ZWQy
+      GRDdAyDdAzC9ATiAAViMpLoEkAHdA5gBvQE=
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSFQoTEAIiDSBvciB0aW1lIG91
+      dC44ARoMCMW969YGEL6T/J8DIghncm9rLTQuMyoTZnBfZWIzYzAwM2ZjNjZjMTRlZDIZEN0DIN0D
+      MNUBOIABWMzz3gSQAd0DmAHVAQ==
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSZgpkEAIaXgorY2FsbC01MGM5
+      NzEyNC1mMjk5LTQ2MTMtYmQ5OC1hZTgzODQ3OTI1YTktMBAEUi0KDmNvZGVfZXhlY3V0aW9uEht7
+      ImNvZGUiOiJ3aGlsZSBUcnVlOiBwYXNzIn04ARoMCMW969YGEL6T/J8DIghncm9rLTQuMyoTZnBf
+      ZWIzYzAwM2ZjNjZjMTRlZDIbCA0Q3QMg3QMw2QI4gAFY9JO8BpAB3QOYAekC
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSzgEKyQEQBRrCAQorY2FsbC01
+      MGM5NzEyNC1mMjk5LTQ2MTMtYmQ5OC1hZTgzODQ3OTI1YTktMBAEGAMiYFRoZSBjb2RlIGV4ZWN1
+      dGlvbiB0aW1lZCBvdXQuIFRyeSBzaW1wbGlmeWluZyB0aGUgY29tcHV0YXRpb24gb3IgYnJlYWtp
+      bmcgaXQgaW50byBzbWFsbGVyIHN0ZXBzLlItCg5jb2RlX2V4ZWN1dGlvbhIbeyJjb2RlIjoid2hp
+      bGUgVHJ1ZTogcGFzcyJ9OAEgARoMCMW969YGEL6T/J8DIghncm9rLTQuMyoTZnBfZWIzYzAwM2Zj
+      NjZjMTRlZDIbCA0Q3QMg3QMw2QI4gAFY9JO8BpAB3QOYAekC
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSDgoKCgRDb2RlEAI4ASACGgwI
+      xb3r1gYQvpP8nwMiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIDhC5CiC5CjCNAziA
+      BFjsh6cKkAHcBpgBNQ==
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSFAoQCgogZXhlY3V0aW9uEAI4
+      ASACGgwIxb3r1gYQvpP8nwMiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIDxC5CiC5
+      CjCNAziABFiUy6gKkAHcBpgBNg==
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSEAoMCgYgdGltZWQQAjgBIAIa
+      DAjFvevWBhC+k/yfAyIIZ3Jvay00LjMqE2ZwX2ViM2MwMDNmYzY2YzE0ZWQyGggQELkKILkKMI0D
+      OIAEWLyOqgqQAdwGmAE3
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSDgoKCgQgb3V0EAI4ASACGgwI
+      xb3r1gYQvpP8nwMiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIERC5CiC5CjCNAziA
+      BFjk0asKkAHcBpgBOA==
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSDgoKCgQgZHVlEAI4ASACGgwI
+      xb3r1gYQvpP8nwMiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIEhC5CiC5CjCNAziA
+      BFiMla0KkAHcBpgBOQ==
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSDQoJCgMgdG8QAjgBIAIaDAjF
+      vevWBhC+k/yfAyIIZ3Jvay00LjMqE2ZwX2ViM2MwMDNmYzY2YzE0ZWQyGggTELkKILkKMI0DOIAE
+      WLTYrgqQAdwGmAE6
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSEwoPCgkgaW5maW5pdGUQAjgB
+      IAIaDAjFvevWBhC+k/yfAyIIZ3Jvay00LjMqE2ZwX2ViM2MwMDNmYzY2YzE0ZWQyGggUELkKILkK
+      MI0DOIAEWNybsAqQAdwGmAE7
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSDwoLCgUgbG9vcBACOAEgAhoM
+      CMW969YGEL6T/J8DIghncm9rLTQuMyoTZnBfZWIzYzAwM2ZjNjZjMTRlZDIaCBUQuQoguQowjQM4
+      gARYhN+xCpAB3AaYATw=
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSCwoHCgEuEAI4ASACGgwIxb3r
+      1gYQvpP8nwMiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIFhC5CiC5CjCNAziABFis
+      orMKkAHcBpgBPQ==
+    - !!binary |
+      CiRiMmNmYjlmOS1jYThiLTk4NDAtOGM4OS04ZDNhOGY0ZTA1NTMSCgoEEAI4ARgDIAIaDAjFvevW
+      BhC+k/yfAyIIZ3Jvay00LjMqE2ZwX2ViM2MwMDNmYzY2YzE0ZWQyHQgWELkKGNwNILkKMI0DOIAE
+      WKyiswqQAdwGmAFF
