@@ -510,8 +510,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
     ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
     ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
-    # Building browser-use's `Agent` imports its LLM adapters, reads its prompt templates, and sets up its scratch
-    # file system and screenshot directory, once per `browse_web` call.
+    # Each `browse_web` call builds browser-use's `Agent`, which imports its LLM adapters, reads its prompt
+    # templates, and sets up a scratch file system and screenshot directory. The build stays on the event loop
+    # because it goes through `BrowserAgentFactory`, which users can replace and which may need the running loop.
     *(
         (func, 'browser_use/agent/service.py', '__init__')
         for func in (

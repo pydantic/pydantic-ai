@@ -419,7 +419,6 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         rather than only at dispatch, so a durable record of the command is
         bounded too.
         """
-        # The directory is created and removed off the event loop.
         work_dir = await anyio.to_thread.run_sync(partial(tempfile.mkdtemp, prefix='harness_aws_'))
         try:
             with (
