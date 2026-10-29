@@ -5,7 +5,6 @@ from __future__ import annotations
 import errno
 import hashlib
 import io
-import mimetypes
 import os
 import posixpath
 import re
@@ -839,8 +838,8 @@ class TestReadFile:
     async def test_a_format_some_models_reject_is_described(self, tmp_path: Path, data: bytes, media_type: str) -> None:
         # Some models whose profile admits the kind reject the format (Gemini takes no Office documents or
         # Matroska, and OpenAI-compatible endpoints report audio input for models that reject it), so sending one
-        # would fail the request there rather than become a note. A correctly named file is still labelled.
-        name = f'clip{mimetypes.guess_extension(media_type) or ".bin"}'
+        # would fail the request there rather than become a note.
+        name = 'clip'
         (tmp_path / name).write_bytes(data)
         result = await _unhashed_toolset().read_file(name, workspace=LocalWorkspaceBackend(tmp_path))
         assert isinstance(result, str)
