@@ -1213,8 +1213,11 @@ ends with &lt;/tool_result
     async def test_fully_deferred_pause_leaves_its_calls_pending(self) -> None:
         release = asyncio.Event()
         slow_done = asyncio.Event()
+        model_calls = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal model_calls
+            model_calls += 1
             if len(messages) == 1:
                 return ModelResponse(parts=[ToolCallPart(tool_name='slow', args='{}')])
             # The second step's only call defers, so the step leaves no request of its own.
@@ -1241,6 +1244,7 @@ ends with &lt;/tool_result
         result = await agent.run('go')
 
         assert isinstance(result.output, DeferredToolRequests)
+        assert model_calls == 2
         # A request after the response would make a resumed run treat its deferred call as interrupted.
         last = result.all_messages()[-1]
         assert isinstance(last, ModelResponse)
@@ -1307,7 +1311,8 @@ ends with &lt;/tool_result
 
         @agent.tool_plain(requires_approval=True)
         def needs_approval() -> str:
-            return 'approved'  # pragma: no cover -- never approved in this test
+            # Never approved in this test.
+            return 'approved'  # pragma: no cover
 
         result = await agent.run('go')
 

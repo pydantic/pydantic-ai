@@ -2207,7 +2207,8 @@ async def test_enqueue_at_deferred_tool_pause_is_recorded_without_another_model_
 
     @agent.tool_plain(requires_approval=True)
     def gated() -> str:
-        return 'approved'  # pragma: no cover -- never approved in this test
+        # Never approved in this test.
+        return 'approved'  # pragma: no cover
 
     result = await agent.run('Hello')
 
@@ -2221,6 +2222,58 @@ async def test_enqueue_at_deferred_tool_pause_is_recorded_without_another_model_
             conversation_id=IsStr(),
         )
     )
+
+
+@pytest.mark.parametrize('case', ['all_calls_deferred', 'queued_response'])
+async def test_enqueue_at_deferred_tool_pause_redirects_when_history_cannot_record_it(case: str):
+    """The pause redirects as before when recording would change how the paused history resumes.
+
+    After a step whose calls all deferred, a trailing request would read as interrupting them; a queued
+    `ModelResponse` would read as the paused response.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count > 1:
+            return ModelResponse(parts=[TextPart(content='done')])
+        calls = [ToolCallPart(tool_name='gated')]
+        if case == 'queued_response':
+            calls.insert(0, ToolCallPart(tool_name='lookup'))
+        return ModelResponse(parts=calls)
+
+    @dataclass
+    class LateContentCap(AbstractCapability[Any]):
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if call_count == 1:
+                if case == 'queued_response':
+                    ctx.enqueue(ModelResponse(parts=[TextPart(content='synthetic turn')]), 'late content')
+                else:
+                    ctx.enqueue('late content')
+            return response
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[LateContentCap()])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:
+        # Never approved in this test.
+        return 'approved'  # pragma: no cover
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'done'
+    assert call_count == 2
 
 
 async def test_enqueue_when_idle_drains_after_leftover_asap():

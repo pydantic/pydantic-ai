@@ -85,12 +85,28 @@ def drain_pending_messages_at_end(
     [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s request; any
     earlier ones are appended to `ctx.messages` so they appear in history before the
     redirect. When the run pauses for deferred tools and the step's own request ends the
-    history, every resulting message is appended to `ctx.messages` instead, and the run ends.
-    Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]
+    history, every resulting message is appended to `ctx.messages` instead and the run ends,
+    unless a queued message is a `ModelResponse`. Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]
     per drained [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order.
     """
     if not isinstance(result, End):
         return result
+
+    # A run pausing for deferred tools hands control back to the caller, so queued messages are recorded
+    # instead of redirecting it, as long as the step's own request ends the history: after a response
+    # whose calls all deferred, a request would read as interrupting those calls on resume.
+    if isinstance(result.data.output, DeferredToolRequests) and isinstance(ctx.messages[-1], ModelRequest):
+        recorded = run_queue(ctx).drain_at_pause()
+        if recorded is not None:
+            for pending in recorded:
+                pending_messages = stamped_messages(
+                    pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
+                )
+                ctx.messages.extend(pending_messages)
+                ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
+                    EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
+                )
+            return result
 
     # Pi-mono parity: drain `'asap'` first so anything that arrived during the
     # final step (e.g. a background task completing while the model produced
@@ -122,18 +138,11 @@ def drain_pending_messages_at_end(
             'Enqueued content must end with a `ModelRequest` so the agent has a request to respond to, '
             f'but the last queued message is a `{type(final).__name__}`.'
         )
-    # A run pausing for deferred tools hands control back to the caller, so the drained messages are
-    # recorded instead of redirected, as long as the step's own request ends the history: after a
-    # response whose calls all deferred, a request would read as interrupting those calls on resume.
-    record = isinstance(result.data.output, DeferredToolRequests) and isinstance(ctx.messages[-1], ModelRequest)
     for pending, pending_messages in stamped:
         for message in pending_messages:
-            if record or message is not final:
+            if message is not final:
                 ctx.messages.append(message)
         ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
             EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
         )
-    if record:
-        run_queue(ctx).close()
-        return result
     return ModelRequestNode(request=final)
