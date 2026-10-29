@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, TypeGuard, TypeVar
 
@@ -289,6 +289,5 @@ def _workspace_telemetry(params: object) -> AbstractContextManager[None]:
     The same ones its tools trace with, so a task's workspace and tool spans agree on content.
     """
     ctx = operation_run_context(params)
-    if ctx is None:  # pragma: no cover - every installed operation carries a context
-        return nullcontext()
+    assert ctx is not None, 'every installed operation carries a run context'
     return workspace_telemetry_scope(ctx.tracer, include_content=ctx.trace_include_content)

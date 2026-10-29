@@ -39,7 +39,6 @@ __all__ = (
 Operation: TypeAlias = Literal[
     'working_dir',
     'run',
-    'stop',
     'read_bytes',
     'write_bytes',
     'stat',
@@ -49,7 +48,8 @@ Operation: TypeAlias = Literal[
     'exists',
     'realpath',
 ]
-Lifecycle: TypeAlias = Literal['create', 'attach', 'destroy']
+Lifecycle: TypeAlias = Literal['create', 'attach', 'stop', 'destroy']
+"""What a backend does to its environment or a running command, apart from the facade's operations."""
 Step: TypeAlias = Literal[
     'probe',
     'read_chunk',

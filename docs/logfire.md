@@ -471,7 +471,7 @@ The `gen_ai.tool.definitions` attribute (tool name, description, and parameters)
 
 A [decision model][pydantic_ai.models.decision.DecisionModel], such as [TypeSafe's Jev](models/typesafe.md), answers typed questions about the conversation instead of generating text. With more than one route on offer, such as a union `output_type` or tools, one request asks which route the text calls for, and asks the fields of every route it can fill beside it. When those questions would cost more than a second request, the route is picked first and its fields are filled in a second request instead. The model request span shows the agent-level request and response, so each request gets a `decide {model}` span of its own underneath it, recording exactly what was asked and answered.
 
-A `decide` span is only emitted inside an instrumented model request, and only for a request that is actually sent: when there is one route left and nothing to fill in, the model takes it without asking, and there is no span. Under [durable execution](durable_execution/overview.md), it sits inside the engine's step, task or activity span for the model request. With Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) to carry the trace into the activity, and the agent's own instrumentation (`Agent.instrument_all()`, or an `Instrumentation` capability on the agent) to say how to record it.
+A `decide` span is only emitted inside an instrumented model request, and only for a request that is actually sent: when there is one route left and nothing to fill in, the model takes it without asking, and there is no span. Under [durable execution](durable_execution/overview.md), it sits inside the engine's step, task or activity span for the model request. With Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) to carry the trace into the activity, and the agent's own instrumentation ([`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all], or an [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability on the agent) to say how to record it.
 
 | Attribute | Value |
 |-----------|-------|
@@ -514,7 +514,7 @@ An instrumented run traces each call it makes on its [workspace](workspace.md): 
 
 The [Pydantic AI Harness](harness/index.md) sandboxes also trace their lifecycle: `workspace create` or `workspace attach` when the first call starts or reconnects to the sandbox, under that call's span, and `workspace destroy` from the capability's `destroy(ref)` when a tool or hook calls it. A command stopped after a timeout, cancellation or failure gets a `workspace stop` span under its `workspace run`. A provider SDK's own spans, such as Daytona's or E2B's HTTP requests, nest under these. Some SDKs mark an expected not-found answer as an error; the workspace span above them shows the outcome the caller got.
 
-The run's own instrumentation decides. Calls outside a run, such as those on `result.workspace` or a `destroy(ref)` after the run, are not traced.
+The run's own instrumentation decides. Calls outside a run, such as those on [`result.workspace`][pydantic_ai.run.AgentRunResult.workspace] or a `destroy(ref)` after the run, are not traced.
 
 | Attribute | Value |
 |-----------|-------|
@@ -525,7 +525,7 @@ The run's own instrumentation decides. Calls outside a run, such as those on `re
 | `file.path` | On file operations: the absolute path. Only with `include_content=True` |
 | `file.size` | On `read_bytes` and `write_bytes`: the bytes read or written |
 
-A call that raises records the exception and an error status, except a missing file, which is often the answer the caller asked for and leaves the status unset. Under [durable execution](durable_execution/overview.md), calls from a tool or step are traced where they run. With Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) to carry the trace into the activity, and the agent's own instrumentation (`Agent.instrument_all()`, or an `Instrumentation` capability on the agent) to say how to record it.
+A call that raises records the exception and an error status, except a missing file, which is often the answer the caller asked for and leaves the status unset. Under [durable execution](durable_execution/overview.md), calls from a tool or step are traced where they run. With Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) to carry the trace into the activity, and the agent's own instrumentation ([`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all], or an [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability on the agent) to say how to record it.
 
 ### Adding Custom Metadata
 
