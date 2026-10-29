@@ -8,12 +8,14 @@ import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from hashlib import sha256
+from itertools import takewhile
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import AgentRunError
-from pydantic_ai.messages import ModelMessage, ModelResponse, SystemPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 if TYPE_CHECKING:
@@ -106,6 +108,9 @@ class _Call:
 class _Step:
     """What one model response in the run did."""
 
+    timestamp: datetime
+    """The response's timestamp, which finds it in history even after a capability replaced its parts."""
+
     calls: tuple[_Call, ...]
     text: str | None
     """The normalized text of a response without tool calls, or `None`."""
@@ -116,16 +121,17 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     """Detect when an agent repeats the same actions without making progress, and interrupt it.
 
     Each model response's tool calls and text are recorded as it arrives, and each call's result from the
-    request that follows it. Before each model request, the run so far is checked for four patterns: the same tool call
-    made `repeated_call_threshold` times within the last `window` tool calls, the same tool call
-    returning the same result `repeated_result_threshold` times in a row, two tool calls alternating
-    for `alternating_calls_threshold` cycles, and `repeated_text_threshold` consecutive responses
-    without tool calls whose text is the same. Set a threshold to `None` to turn that check off.
+    request that follows it. Before each model request, the run so far is checked for four patterns: the
+    same tool call made `repeated_call_threshold` times within the last `window` tool calls, the same
+    tool call returning the same result `repeated_result_threshold` times in a row, two tool calls
+    alternating for `alternating_calls_threshold` cycles, and `repeated_text_threshold` consecutive
+    responses without tool calls whose text is the same. Set a threshold to `None` to turn that check off.
 
-    On detection, `action` runs: `'nudge'` (the default) adds a system prompt to the request asking the
-    model to change its approach, `'error'` raises `LoopDetectedError`, and a `LoopHandler` is called
-    with the `DetectedLoop`. The calls that formed the loop are then not counted again, so the same loop
-    has to build up again before it is reported a second time.
+    On detection, `action` runs: `'nudge'` (the default) adds a system prompt to the conversation, from
+    the current request on, asking the model to change its approach; `'error'` raises
+    `LoopDetectedError`; and a `LoopHandler` is called with the `DetectedLoop`. The calls that formed the
+    loop are then not counted again, so the same loop has to build up again before it is reported a
+    second time.
 
     ```python
     from pydantic_ai import Agent
@@ -159,8 +165,9 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     action: Literal['nudge', 'error'] | LoopHandler[AgentDepsT] = 'nudge'
     """What to do when a loop is detected.
 
-    - `'nudge'`: add a system prompt to the current request telling the model which loop it is in and
-      asking it to change its approach.
+    - `'nudge'`: enqueue a system prompt telling the model which loop it is in and asking it to change
+      its approach. It joins the current request and keeps the default conversation scope, so it keeps
+      applying on later requests instead of being shown once.
     - `'error'`: raise `LoopDetectedError`, ending the run.
     - a `LoopHandler`: call it with the run context and the `DetectedLoop`.
     """
@@ -168,8 +175,8 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     _steps: list[_Step] = field(default_factory=list[_Step], init=False, repr=False, compare=False)
     """What each of this run's model responses did, in order."""
 
-    _awaiting_results: bool = field(default=False, init=False, repr=False, compare=False)
-    """Whether the last recorded response's results are still to be read from the next request."""
+    _results_pending: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether the last recorded response's results are still to be read."""
 
     _counted_steps: int = field(default=0, init=False, repr=False, compare=False)
     """How many of `_steps` a reported loop already used up."""
@@ -212,25 +219,21 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         """Record the response's tool calls, or its text when it has none."""
         calls = tuple(
-            _Call(
-                tool_name=part.tool_name,
-                tool_call_id=part.tool_call_id,
-                fingerprint=_digest(_canonical([part.tool_name, part.args_as_dict()])),
-            )
-            for part in response.tool_calls
+            _Call(tool_name=tool_name, tool_call_id=tool_call_id, fingerprint=fingerprint)
+            for tool_name, tool_call_id, fingerprint in _call_keys(response)
         )
         text = None if calls else ' '.join((response.text or '').split()).lower() or None
-        self._steps.append(_Step(calls=calls, text=text))
-        self._awaiting_results = True
+        self._steps.append(_Step(timestamp=response.timestamp, calls=calls, text=text))
+        self._results_pending = True
         return response
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         """Record the results of the previous response's tool calls, then act on the first loop found."""
-        if self._awaiting_results:
+        if self._results_pending:
             _record_results(self._steps[-1], request_context.messages)
-            self._awaiting_results = False
+            self._results_pending = False
         loop = self._detect(self._steps[self._counted_steps :])
         if loop is not None:
             self._counted_steps = len(self._steps)
@@ -365,16 +368,33 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
             ctx.enqueue(SystemPromptPart(loop.message, metadata=metadata))
 
 
-def _record_results(step: _Step, messages: Sequence[ModelMessage]) -> None:
-    """Fill in the results of `step`'s calls from the requests after the last response in `messages`.
+def _call_keys(response: ModelResponse) -> list[tuple[str, str, str]]:
+    """The tool name, tool call id, and fingerprint of each tool call in `response`."""
+    return [
+        (part.tool_name, part.tool_call_id, _digest(_canonical([part.tool_name, part.args_as_dict()])))
+        for part in response.tool_calls
+    ]
 
-    Results are matched only there, because some models reuse tool call ids across responses.
+
+def _record_results(step: _Step, messages: Sequence[ModelMessage]) -> None:
+    """Fill in the results of `step`'s calls from the requests that follow its response in `messages`.
+
+    The response is the last one with the step's timestamp and tool call ids, because a capability that
+    short-circuits a model request can put a response DetectLoops never recorded after it, and some models
+    reuse tool call ids across responses. If none matches, the last response is used. Only the requests up
+    to the next response are read.
     """
-    last_response = max(
-        (index for index, message in enumerate(messages) if isinstance(message, ModelResponse)), default=-1
+    ids = [(call.tool_name, call.tool_call_id) for call in step.calls]
+    responses = [(index, message) for index, message in enumerate(messages) if isinstance(message, ModelResponse)]
+    matching = (
+        index
+        for index, response in reversed(responses)
+        if response.timestamp == step.timestamp
+        and [(part.tool_name, part.tool_call_id) for part in response.tool_calls] == ids
     )
+    start = next(matching, responses[-1][0] if responses else len(messages)) + 1
     digests: dict[str, list[str]] = {}
-    for message in messages[last_response + 1 :]:
+    for message in takewhile(lambda message: isinstance(message, ModelRequest), messages[start:]):
         for part in message.parts:
             if isinstance(part, ToolReturnPart):
                 digests.setdefault(part.tool_call_id, []).append(_result_digest(part))
