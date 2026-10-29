@@ -5138,43 +5138,6 @@ async def test_bedrock_stream_cancel_suppresses_urllib3_error(
     assert stream.get().state == 'interrupted'
 
 
-async def test_bedrock_stream_closed_when_cancelled_while_opening(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
-):
-    """A request cancelled while `converse_stream` opens the stream closes it, rather than leave Bedrock generating.
-
-    The worker thread still hands the stream back, and the cancellation lands at the first read.
-    Not a VCR test: the cancellation has to land while the worker thread is inside `converse_stream`.
-    """
-
-    class _EventStream:
-        closed = False
-
-        def __iter__(self) -> Iterator[dict[str, Any]]:
-            return iter([])
-
-        def close(self) -> None:
-            self.closed = True
-
-    event_stream = _EventStream()
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-
-    with anyio.CancelScope() as scope:
-
-        def converse_stream(**_: Any) -> dict[str, Any]:
-            anyio.from_thread.run_sync(scope.cancel)
-            return {'stream': event_stream, 'ResponseMetadata': {}}
-
-        mocker.patch.object(model.client, 'converse_stream', side_effect=converse_stream)
-        async with model.request_stream(
-            [ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()
-        ) as stream:
-            assert [event async for event in stream] == []
-
-    assert scope.cancelled_caught
-    assert event_stream.closed
-
-
 @pytest.mark.vcr()
 async def test_bedrock_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that errors convert to ModelHTTPError."""

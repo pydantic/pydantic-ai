@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import functools
+import socket
+import threading
 import typing
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Iterator, Mapping, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -345,14 +347,52 @@ async def _call_bedrock(
     _register_extra_headers(client)
     headers = dict(extra_headers or {})
 
+    # botocore blocks its thread until the provider answers or its `read_timeout` passes, so a request that's
+    # cancelled, like one its `request_timeout` ran out on, gives up on the thread rather than wait for it. What the
+    # thread then gets, like a `ConverseStream` response's open event stream, is closed rather than left open: by the
+    # thread when it sees the request was given up on, or by the request when the thread had already finished. Both
+    # may close it, which is harmless; neither can miss it.
+    abandoned = threading.Event()
+    results: list[_BedrockCallResult] = []
+
     def call() -> _BedrockCallResult:
         context_token = _extra_headers_var.set(_ExtraHeadersState(id(client), headers))
         try:
-            return method(**params)
+            result = method(**params)
         finally:
             _extra_headers_var.reset(context_token)
+        results.append(result)
+        if abandoned.is_set():
+            _close_abandoned_result(cast(Mapping[str, Any], result))
+        return result
 
-    return await anyio.to_thread.run_sync(call)
+    try:
+        return await anyio.to_thread.run_sync(call, abandon_on_cancel=True)
+    except BaseException:
+        abandoned.set()
+        # Only when the thread finished just as the request was cancelled, which a test can't arrange reliably.
+        for result in results:  # pragma: lax no cover
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(_close_abandoned_result, cast(Mapping[str, Any], result))
+        raise
+
+
+def _interrupt_reads(event_stream: EventStream[Any]) -> None:
+    """Shut down the connection an event stream reads from, so a read still blocked on it returns.
+
+    A read a cancellation gave up on keeps its thread blocked until botocore's `read_timeout` passes, and holds the
+    response's lock meanwhile, so closing the stream would wait for it too. Shutting down the socket wakes it.
+    Best effort: a stream whose connection is already released, or closed, has nothing to interrupt.
+    """
+    with suppress(Exception):
+        # botocore's `urllib3` response, whose connection is `None` once the stream was read through and released.
+        event_stream._raw_stream.connection.sock.shutdown(socket.SHUT_RDWR)  # pyright: ignore[reportPrivateUsage]
+
+
+def _close_abandoned_result(result: Mapping[str, Any]) -> None:
+    """Close the event stream of a response nothing will read, which keeps its connection open otherwise."""
+    if (stream := result.get('stream')) is not None:
+        cast('EventStream[Any]', stream).close()
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
@@ -2393,6 +2433,7 @@ class BedrockStreamedResponse(StreamedResponse):
         return (BotoCoreError, ClientError, Urllib3HTTPError)
 
     async def close_stream(self) -> None:
+        _interrupt_reads(self._event_stream)
         await anyio.to_thread.run_sync(self._event_stream.close)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
@@ -2593,7 +2634,9 @@ class _AsyncIteratorWrapper(Generic[T]):
 
     async def __anext__(self) -> T:
         try:
-            return await anyio.to_thread.run_sync(next, self.sync_iterator)
+            # Given up on when the read is cancelled, rather than waited for until botocore's `read_timeout` passes;
+            # closing the stream, as `BedrockStreamedResponse.close_stream` does on the way out, ends the read.
+            return await anyio.to_thread.run_sync(next, self.sync_iterator, abandon_on_cancel=True)
         except RuntimeError as e:
             if type(e.__cause__) is StopIteration:
                 raise StopAsyncIteration
