@@ -98,6 +98,33 @@ def completed_response(response_id: str, *, store: bool | None = None, output: l
     return response
 
 
+def function_call_item(call_id: str, item_id: str = 'fc_test') -> Frame:
+    return {
+        'type': 'function_call',
+        'id': item_id,
+        'status': 'completed',
+        'arguments': '{}',
+        'call_id': call_id,
+        'name': 'step',
+    }
+
+
+def tool_call_events(response_id: str, call_id: str) -> list[Frame]:
+    item = function_call_item(call_id)
+    response = completed_response(response_id, output=[item])
+    return [
+        {'type': 'response.created', 'sequence_number': 0, 'response': {**response, 'status': 'in_progress'}},
+        {
+            'type': 'response.output_item.added',
+            'sequence_number': 1,
+            'output_index': 0,
+            'item': {**item, 'status': 'in_progress', 'arguments': ''},
+        },
+        {'type': 'response.output_item.done', 'sequence_number': 2, 'output_index': 0, 'item': item},
+        {'type': 'response.completed', 'sequence_number': 3, 'response': response},
+    ]
+
+
 def text_events(text: str = 'ready', response_id: str = 'resp_test', *, store: bool | None = None) -> list[Frame]:
     response = completed_response(response_id, store=store)
     return [

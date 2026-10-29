@@ -610,10 +610,10 @@ all at once when it arrives.
 
 ## Responses WebSockets
 
-A run that makes many requests, such as one with a tool loop, can send them over one [Responses WebSocket](https://developers.openai.com/api/docs/guides/websocket-mode) instead of a new HTTP request each time. Install the separate WebSocket extra:
+A run that makes many requests, such as one with a tool loop, can send them over one [Responses WebSocket](https://developers.openai.com/api/docs/guides/websocket-mode) instead of a new HTTP request each time. Install the existing OpenAI WebSocket dependencies:
 
 ```bash
-pip/uv-add "pydantic-ai-slim[openai-responses-websocket]"
+pip/uv-add "pydantic-ai-slim[openai-realtime]"
 ```
 
 Then set [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport] on the model, the agent or a run. Other models ignore the setting, so code that takes a model string from configuration doesn't change:
@@ -630,7 +630,7 @@ agent = Agent(
 result = agent.run_sync('Triage the open tickets.')
 ```
 
-Each run opens a socket on its first request and closes it when the run ends. Requests in WebSocket mode, including HTTP overflow, default [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] to `'auto'`, unless you set it or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id], so each one sends only the messages after the response the socket has cached, not the whole history. That is where the socket saves time: in a run that makes many tool calls, each tool result goes out on the open socket without the conversation before it. A run that makes a single request pays for the handshake and gains nothing.
+Each run opens a socket on its first request and closes it when the run ends. Requests in WebSocket mode, including HTTP overflow, default [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] to `'auto'`, unless you set it or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id]. When the earlier response is stored or still cached on the request's lane, the request sends only the messages after it; otherwise it replays the retained history. That is where the socket saves time: in a run that makes many tool calls, each tool result goes out on the open socket without the conversation before it. A run that makes a single request pays for the handshake and gains nothing.
 
 To keep one socket for back-to-back runs, or for the lifetime of an app, enter the agent or the model. The socket closes once the last run or context using it ends:
 
@@ -652,14 +652,13 @@ The socket belongs to the [`OpenAIResponsesModel`][pydantic_ai.models.openai.Ope
 - Concurrent requests run on separate [`stream_id` lanes](https://developers.openai.com/api/docs/guides/websocket-mode) of the socket. A request continues on the lane that holds its previous response, and one without earlier messages starts a new conversation on a free lane. OpenAI runs up to 16 responses at once on a socket and accepts 32 named lanes; past 32, a request reuses the least recently used free lane, and the conversation that lane cached replays its history on its next request.
 - A request that finds no free lane, or the 16 responses already running, goes over HTTP instead of waiting.
 - Lanes run by default only when the SDK client's WebSocket host is `api.openai.com`. On any other host, including xAI or Azure's `/openai/v1` endpoint reached through `OpenAIProvider`, and a proxy in front of OpenAI, the socket runs one request at a time and sends the others over HTTP. For a host that supports lanes, set [`openai_responses_supports_websocket_stream_id`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_websocket_stream_id] to `True` with `profile=OpenAIModelProfile(openai_responses_supports_websocket_stream_id=True)` on `OpenAIResponsesModel`; `False` turns lanes off on OpenAI's host.
-- A provider error, a failed or incomplete response, or a stream closed early ends only that request; the socket stays open. A transport failure during a request closes the socket and raises [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError], as over HTTP, so a [`FallbackModel`](overview.md#fallback-model) can take over. The request after it opens a new socket. Pydantic AI doesn't resend a request after a disconnect, since the provider may have acted on it.
+- A provider error, a failed or incomplete response, or a stream closed early ends only that request; the socket stays open. A transport failure during a request closes the socket and raises [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError], as over HTTP, so [`ModelFallback`](../capabilities/model-fallback.md) can take over. The request after it opens a new socket. Pydantic AI doesn't resend a request after a disconnect, since the provider may have acted on it.
 - OpenAI closes a socket after 60 minutes. Ten minutes before that, new requests open a new socket, and the old one closes once its responses finish. If the server closed the socket while it was idle, the request hadn't been sent, so it moves to a new socket once.
 
 These requests use HTTP instead, without a warning. The `pydantic_ai.transport` attribute, which is `'websocket'` on the `chat` span of a request sent over the socket, shows which transport each request used:
 
 - a request outside an agent run, `async with agent:` or `async with model:`, such as a direct [`model.request()`][pydantic_ai.models.Model.request], which has nothing to keep a socket open for
 - a request in a [durable execution](../durable_execution/overview.md) activity, step or task without an explicit model or agent context that outlives the unit on its event loop; see [worker-owned Temporal connections](../durable_execution/temporal.md#responses-websocket-connections)
-- a request after one of several overlapping `async with model:` contexts exits, when those contexts were entered on different event loops or both inside and outside durable activities; HTTP is used until all remaining model contexts exit. Using `async with agent:` for those contexts avoids this fallback
 - a [background](#background-mode) request, or one that resumes a suspended response
 - a request when no lane is free, as described above
 - a request whose headers differ from those the socket opened with, from model settings' [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] and the SDK client's default headers

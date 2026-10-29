@@ -53,6 +53,7 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
+from ..durable_exec._operation_backend import in_durable_unit
 from ..exceptions import (
     ModelConnectionError,
     ModelRequestRejectedError,
@@ -161,7 +162,6 @@ from . import (
     get_user_agent,
 )
 from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
-from ._model_context import model_context_key
 from ._openai_auth import non_static_auth_source
 from ._prompt_cache import split_cache_setting
 from ._sdk_retries import with_max_retries
@@ -1329,7 +1329,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     `async with model:` or `async with agent:` is using it, so the requests of a tool-calling run go over one
     connection and send only their new input. Requests the socket can't take use HTTP; see
     [Responses WebSockets](../../models/openai.md#responses-websockets) for which, and for the
-    `pydantic-ai-slim[openai-responses-websocket]` install. Other models ignore this setting.
+    `pydantic-ai-slim[openai-realtime]` install. Other models ignore this setting.
     """
 
     openai_prompt_cache_diagnostics: bool
@@ -3024,8 +3024,9 @@ class _ResponsesWebSocketState:
 
     loop: asyncio.AbstractEventLoop
     leases: int = 0
-    external_leases: int = 0
-    external_ownership_known: bool = True
+    contexts: int = 0
+    reusable: bool = False
+    """A scope outside a durable unit has held this state open for reuse across requests."""
     in_flight: int = 0
     socket: ResponsesWebSocket | None = None
     open_lock: anyio.Lock | None = None
@@ -3062,11 +3063,6 @@ class _ResponsesWebSocketState:
         return socket.reserve(response_id)
 
 
-_ResponsesWebSocketLease = tuple[_ResponsesWebSocketState, bool]
-# Context teardown can run on another task or loop. Never hold this lock during network I/O.
-_WEBSOCKET_LIFECYCLE_LOCK = threading.RLock()
-
-
 @dataclass(eq=False)
 class _ResponsesWebSocketHolder:
     """Loop-local sockets shared by a model and its request copies.
@@ -3078,74 +3074,65 @@ class _ResponsesWebSocketHolder:
     states: dict[asyncio.AbstractEventLoop, _ResponsesWebSocketState] = field(
         default_factory=dict[asyncio.AbstractEventLoop, _ResponsesWebSocketState]
     )
-    contexts: dict[object | None, list[_ResponsesWebSocketLease | None]] = field(
-        default_factory=dict[object | None, list['_ResponsesWebSocketLease | None']]
-    )
-    active_contexts: int = 0
+    # A context can exit on another thread. Never hold this lock during network I/O.
+    lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
-    def acquire(self, *, external: bool = False) -> _ResponsesWebSocketLease | None:
+    def acquire(self, *, context: bool = False, reusable: bool = True) -> _ResponsesWebSocketState | None:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return None
-        with _WEBSOCKET_LIFECYCLE_LOCK:
+        with self.lock:
             if (state := self.states.get(loop)) is None:
                 state = self.states[loop] = _ResponsesWebSocketState(loop)
             state.leases += 1
-            state.external_leases += external
-            return state, external
+            state.contexts += context
+            state.reusable |= reusable
+            return state
 
-    def enter(self, key: object | None, *, external: bool) -> None:
-        with _WEBSOCKET_LIFECYCLE_LOCK:
-            self.contexts.setdefault(key, []).append(self.acquire(external=external))
-            self.active_contexts += 1
+    async def exit(self) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        with self.lock:
+            state = self.states.get(loop) if loop is not None else None
+            if state is None or not state.contexts:
+                # A context closed on another loop has no scope identity. Release an entered loop's lease;
+                # in-flight requests keep its socket alive, and response provenance stays with that socket.
+                state = next((state for state in self.states.values() if state.contexts), None)
+            if state is not None:
+                state.contexts -= 1
+                state.leases -= 1
+        if state is not None:
+            await self.close_if_unused(state)
 
-    async def exit(self, key: object | None) -> None:
-        with _WEBSOCKET_LIFECYCLE_LOCK:
-            self.active_contexts -= 1
-            acquired: list[_ResponsesWebSocketLease | None] = []
-            contexts = self.contexts.get(key)
-            if contexts and (key is not None or len(set(contexts)) == 1):
-                acquired.append(contexts.pop())
-                if not contexts:
-                    self.contexts.pop(key)
-            elif self.active_contexts:
-                # Direct contexts can close in any task/order. Distinct receipts cannot identify the exiting
-                # owner, so retain them until the last exit and suspend borrowing in the meantime.
-                for state in self.states.values():
-                    state.external_ownership_known = False
-            if not self.active_contexts:
-                acquired.extend(lease for contexts in self.contexts.values() for lease in contexts)
-                self.contexts.clear()
-        for lease in acquired:
-            if lease is not None:
-                await self.release(lease)
-
-    async def release(self, lease: _ResponsesWebSocketLease) -> None:
-        state, external = lease
-        with _WEBSOCKET_LIFECYCLE_LOCK:
+    async def release(self, state: _ResponsesWebSocketState) -> None:
+        with self.lock:
             state.leases -= 1
-            state.external_leases -= external
         await self.close_if_unused(state)
 
     @asynccontextmanager
     async def lease(self) -> AsyncGenerator[None]:
-        acquired = self.acquire()
+        state = self.acquire()
         try:
             yield
         finally:
-            if acquired is not None:
-                await self.release(acquired)
+            if state is not None:
+                await self.release(state)
 
     async def close_if_unused(self, state: _ResponsesWebSocketState) -> None:
-        with _WEBSOCKET_LIFECYCLE_LOCK:
+        with self.lock:
             if state.leases or state.in_flight or self.states.get(state.loop) is not state:
                 return
             self.states.pop(state.loop)
             socket, state.socket = state.socket, None
             state.open_lock = None
         if socket is not None:
-            if state.loop is not asyncio.get_running_loop() and state.loop.is_running():
+            if not state.loop.is_running():
+                # Its asyncio transport belongs to a stopped loop and cannot be awaited from another one.
+                return
+            if state.loop is not asyncio.get_running_loop():
                 future = asyncio.run_coroutine_threadsafe(socket.close(), state.loop)
                 await anyio.to_thread.run_sync(future.result)
             else:
@@ -3196,9 +3183,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     async def __aenter__(self) -> Self:
         await super().__aenter__()
         # A Responses WebSocket a request opens stays open until the model exits, so later runs reuse it.
-        from ..durable_exec._operation_backend import in_durable_unit
-
-        self._websocket.enter(model_context_key(), external=not in_durable_unit())
+        # Engines enter freshly resolved models inside individual units. That scope cannot amortize a socket.
+        self._websocket.acquire(context=True, reusable=not in_durable_unit())
         return self
 
     async def __aexit__(
@@ -3207,7 +3193,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool | None:
-        await self._websocket.exit(model_context_key())
+        await self._websocket.exit()
         return await super().__aexit__(exc_type, exc_val, exc_tb)
 
     def _run_scope(self) -> AbstractAsyncContextManager[None]:
@@ -3370,7 +3356,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         try:
             importlib.import_module('pydantic_ai.models._openai_responses_websocket')
         except ImportError:
-            return 'install `pydantic-ai-slim[openai-responses-websocket]` to use Responses WebSockets.'
+            return 'install `pydantic-ai-slim[openai-realtime]` to use Responses WebSockets.'
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -3399,8 +3385,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if settings.get('openai_transport') != 'websocket':
             yield None
             return
-        from ..durable_exec._operation_backend import in_durable_unit
-
         if (reason := self._websocket_unsupported_reason()) is not None:
             self._warn_websocket_unsupported(reason)
             yield None
@@ -3408,13 +3392,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         loop = asyncio.get_running_loop()
         holder = self._websocket
         extra_body = settings.get('extra_body')
-        with _WEBSOCKET_LIFECYCLE_LOCK:
+        with holder.lock:
             state = holder.states.get(loop)
-            if (
-                state is not None
-                and state.external_ownership_known
-                and (not in_durable_unit() or state.external_leases)
-            ):
+            if state is not None and state.leases and state.reusable:
                 state.in_flight += 1
             else:
                 state = None
@@ -3437,7 +3417,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             async with response:
                 yield _utils.replace_no_init(self, _websocket_stream=response)
         finally:
-            with _WEBSOCKET_LIFECYCLE_LOCK:
+            with holder.lock:
                 state.in_flight -= 1
             await holder.close_if_unused(state)
 
@@ -4538,7 +4518,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 )
                 retry = await self._reserve_websocket_lane(asyncio.get_running_loop(), messages, given_settings)
                 if retry is None:
-                    raise
+                    http_settings: OpenAIResponsesModelSettings = {
+                        **given_settings,
+                        'max_retries': max_retries - websocket_stream.rejection_retries - 1,
+                    }
+                    return await _utils.replace_no_init(self, _websocket_stream=None)._responses_create(
+                        messages, stream, http_settings, model_request_parameters
+                    )
                 retry.rejection_retries = websocket_stream.rejection_retries + 1
                 return await self._create_on_websocket_lane(
                     retry, messages, stream, given_settings, model_request_parameters

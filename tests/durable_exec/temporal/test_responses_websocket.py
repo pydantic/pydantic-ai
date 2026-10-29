@@ -15,6 +15,7 @@ import httpx2
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import ModelFallback
 from pydantic_ai.durable_exec._operation_backend import durable_unit_scope
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
@@ -35,7 +36,14 @@ try:
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from ..responses_websocket import FRAME_ADAPTER, Frame, ScriptedSocket, completed_response, text_events
+    from ..responses_websocket import (
+        FRAME_ADAPTER,
+        Frame,
+        ScriptedSocket,
+        completed_response,
+        text_events,
+        tool_call_events,
+    )
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
@@ -351,3 +359,50 @@ async def test_temporal_worker_owns_responses_websocket(client: Client, allow_mo
     await overflow(client)
     await rejection_retry(client)
     await interrupted_response(client)
+
+
+async def test_temporal_model_fallback_reuses_second_socket(client: Client, allow_model_requests: None):
+    """Fallback attempts run in activities, borrowing each registered model's worker-owned socket."""
+    global _agent
+    first = ObservedSocket(responses=deque([]), disconnect_after_send=1)
+    retried_primary = ObservedSocket(responses=deque([]), disconnect_after_send=1)
+    second = ObservedSocket(
+        responses=deque([tool_call_events('resp_tool', 'call_1'), text_events(response_id='resp_final', store=False)])
+    )
+    network = Network(pending=deque([first, second, retried_primary]))
+    primary, primary_http = create_model(network)
+    secondary, secondary_http = create_model(network)
+    models: dict[str, OpenAIResponsesModel] = {'secondary': secondary}
+    durability = TemporalDurability(
+        models=models,
+        activity_config={
+            'start_to_close_timeout': timedelta(seconds=15),
+            'retry_policy': RetryPolicy(maximum_attempts=1),
+        },
+    )
+
+    def step() -> str:
+        return 'done'
+
+    _agent = Agent(
+        primary,
+        name='websocket_fallback_probe',
+        tools=[step],
+        capabilities=[ModelFallback('secondary'), durability],
+    )
+    queue = f'fallback-{uuid4()}'
+    with patch('openai.lib._websocket._WebSocketConnect', network.connect):
+        async with primary_http, secondary_http, primary, secondary, worker(client, queue, _agent):
+            handle = await client.start_workflow(OneTurn.run, 'hello', id=f'fallback-{uuid4()}', task_queue=queue)
+            assert await handle.result() == 'ready'
+            history = await handle.fetch_history()
+            assert second.close_count == 0
+        assert network.opened == [first, second, retried_primary]
+        assert [socket.attempts for socket in network.opened] == [[1], [1, 1], [1]]
+        assert [len(socket.sent) for socket in network.opened] == [1, 2, 1]
+        assert not network.http_frames
+        assert second.sent[1]['previous_response_id'] == 'resp_tool'
+        assert second.sent[1]['input'] == [{'type': 'function_call_output', 'call_id': 'call_1', 'output': 'done'}]
+        assert_closed(primary, [first, retried_primary])
+        assert_closed(secondary, [second])
+        await replay(client, _agent, history, network)

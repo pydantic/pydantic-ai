@@ -359,6 +359,23 @@ async def test_batch_requires_a_static_api_key() -> None:
         await model.batch_encode(_request())
 
 
+async def test_batch_keeps_azure_ad_token_provider_support() -> None:
+    def token() -> str:
+        raise AssertionError('Encoding a batch must not resolve the token.')
+
+    client = AsyncAzureOpenAI(
+        azure_endpoint='https://example.openai.azure.com',
+        api_version='2024-10-21',
+        azure_ad_token_provider=token,
+    )
+    model = OpenAIResponsesModel(
+        'gpt-4.1-nano',
+        provider=AzureProvider(openai_client=client),
+        profile=OpenAIModelProfile(openai_supports_batch_api=True),
+    )
+    assert openai_batch._batch_client(model) is client  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_batch_rejects_a_workload_identity() -> None:
     """Clients of different workload identities have the same headers, so their requests would share a batch group."""
     identity: WorkloadIdentity = {

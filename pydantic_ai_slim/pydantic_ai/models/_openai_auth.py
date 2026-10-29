@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 def non_static_auth_source(client: AsyncOpenAI) -> Literal['sdk', 'http'] | None:
     """Where credentials absent from the client's static headers are resolved.
 
-    The SDK socket client bypasses HTTP authentication, and a batch group cannot identify these credentials.
+    The SDK socket client bypasses HTTP authentication.
     The optional SDK attributes also cover Azure clients, which don't initialize every OpenAI client field.
     """
     if (

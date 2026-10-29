@@ -705,7 +705,7 @@ Carrying `usage` and `usage_limits` across the boundary keeps [usage limits](../
 ### Responses WebSocket connections
 
 An OpenAI Responses model can reuse a [Responses WebSocket](../models/openai.md#responses-websockets) across model
-activities when the worker holds the registered model open. Install `pydantic-ai-slim[openai-responses-websocket]`,
+activities when the worker holds the registered model open. Install `pydantic-ai-slim[openai-realtime]`,
 set `openai_transport='websocket'`, and enter the model around the worker's lifetime:
 
 ```python {test="skip" gateway_toggle="skip"}
@@ -747,7 +747,8 @@ async def main():
 
 Each activity still checkpoints its result independently. Activities borrow the socket only on the event loop
 where an outer model context holds it; without that owner, or for a model created only inside an activity, requests
-use HTTP. Capacity overflow also uses HTTP. Keep transport retries at zero when Temporal owns the retry budget.
+use HTTP. Capacity overflow also uses HTTP. Set `max_retries=0` when Temporal owns the retry budget;
+this disables transport retries for both WebSocket requests and HTTP overflow, compaction and token counting.
 
 Connections are worker-local resources. A replacement worker uses its own model and connection; it can resend the
 retained conversation when a previous response is unavailable on that connection. Keep the full message history,

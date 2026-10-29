@@ -131,7 +131,7 @@ class FallbackModel(Model):
             if self._entered_count == 0:
                 async with AsyncExitStack() as exit_stack:
                     for model in self.models:
-                        await exit_stack.enter_async_context(model._context())
+                        await exit_stack.enter_async_context(model)
                     self._exit_stack = exit_stack.pop_all()
             self._entered_count += 1
         return self

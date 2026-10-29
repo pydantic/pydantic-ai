@@ -37,7 +37,6 @@ from ._batch_codec import (
     shared_group,
     unrun_error,
 )
-from ._openai_auth import non_static_auth_source
 from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, BatchStatus, EncodedBatchRequest
 from .openai import (
     OpenAIResponsesModel,
@@ -367,11 +366,9 @@ def _batch_client(model: OpenAIResponsesModel) -> AsyncOpenAI:
     # A batch is grouped, submitted and polled with one credential, which an API key callback could vary per request,
     # and which a workload identity keeps out of the client's headers, so clients of different identities would share
     # a group.
-    auth_source = non_static_auth_source(client)
-    if auth_source == 'sdk':
+    if getattr(client, '_api_key_provider', None) is not None or getattr(client, 'workload_identity', None) is not None:
         raise UserError(
             'The OpenAI Batch API requires a static API key on the client, not an API key callback or workload identity.'
         )
-    elif auth_source == 'http':
-        refuse_http_client_auth(client._client, 'OpenAI')  # pyright: ignore[reportPrivateUsage]
+    refuse_http_client_auth(client._client, 'OpenAI')  # pyright: ignore[reportPrivateUsage]
     return client

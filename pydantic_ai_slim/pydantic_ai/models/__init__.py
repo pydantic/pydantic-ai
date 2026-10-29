@@ -171,7 +171,6 @@ from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
-from ._model_context import ModelContext
 from ._prompt_cache import snap_cache_setting, split_cache_setting
 from ._request_timeout import RequestDeadline
 from ._speech import assistant_speech_text
@@ -975,10 +974,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def settings(self) -> ModelSettings | None:
         """Get the model settings."""
         return self._settings
-
-    def _context(self) -> AbstractAsyncContextManager[Model]:
-        """Bind lifecycle calls to one scope, even when an exit stack closes it from another task."""
-        return ModelContext(self)
 
     def _run_scope(self) -> AbstractAsyncContextManager[None]:
         """The context an agent run holds around its requests to this model, unless it runs in a durable workflow.

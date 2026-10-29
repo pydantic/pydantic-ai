@@ -38,7 +38,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import Hooks, SelectModel
+from pydantic_ai.capabilities import Hooks, ModelFallback, ResolveModelId, SelectModel
 from pydantic_ai.durable_exec._operation_backend import durable_unit_scope
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -54,7 +54,14 @@ from pydantic_ai.exceptions import (
     UnsupportedSettingWarning,
     UserError,
 )
-from pydantic_ai.models import AbstractModel, Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
+from pydantic_ai.models import (
+    AbstractModel,
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    ModelSelectionContext,
+)
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import NativeOutput
@@ -68,8 +75,10 @@ from ..durable_exec.responses_websocket import (
     Frame,
     ScriptedSocket,
     completed_response,
+    function_call_item,
     on_lane,
     text_events,
+    tool_call_events,
 )
 from ..durable_exec.test_durable_operation import (
     JournalDurability,
@@ -415,33 +424,6 @@ async def test_cross_socket_continuation_replays_history(
     assert isinstance(first_input, list) and isinstance(second_input, list)
     assert len(second_input) > len(first_input)
     assert 'amber' in str(second_input).lower()
-
-
-def function_call_item(call_id: str, item_id: str = 'fc_test') -> Frame:
-    return {
-        'type': 'function_call',
-        'id': item_id,
-        'status': 'completed',
-        'arguments': '{}',
-        'call_id': call_id,
-        'name': 'step',
-    }
-
-
-def tool_call_events(response_id: str, call_id: str) -> list[Frame]:
-    item = function_call_item(call_id)
-    response = completed_response(response_id, output=[item])
-    return [
-        {'type': 'response.created', 'sequence_number': 0, 'response': {**response, 'status': 'in_progress'}},
-        {
-            'type': 'response.output_item.added',
-            'sequence_number': 1,
-            'output_index': 0,
-            'item': {**item, 'status': 'in_progress', 'arguments': ''},
-        },
-        {'type': 'response.output_item.done', 'sequence_number': 2, 'output_index': 0, 'item': item},
-        {'type': 'response.completed', 'sequence_number': 3, 'response': response},
-    ]
 
 
 def http_reply(response_id: str, *output: Frame) -> httpx2.Response:
@@ -1608,6 +1590,28 @@ async def test_durable_units_borrow_an_external_socket(
     assert len(http.requests) == 0
 
 
+@pytest.mark.parametrize('durability', [JournalDurability, _RegisteredDurability])
+async def test_durable_units_do_not_open_sockets_on_freshly_resolved_models(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, durability: type[JournalDurability]
+):
+    def resolve_model(_ctx: ModelResolutionContext[None], _model_id: str) -> OpenAIResponsesModel:
+        return websocket_model(http.provider())
+
+    agent = Agent(
+        'responses-owned',
+        name='durable_owned_responses',
+        deps_type=None,
+        model_settings=WEBSOCKET,
+        capabilities=[ResolveModelId(resolve_model), durability()],
+    )
+    result = await agent.run('hello')
+    assert result.output == 'from HTTP'
+    assert sockets.connect_count == 0
+    assert len(http.requests) == 1
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse) and response.history_digest is not None
+
+
 @asynccontextmanager
 async def local_server(handler: Callable[[ServerConnection], Awaitable[None]]) -> AsyncGenerator[OpenAIResponsesModel]:
     """Serve `handler` from a real `websockets` server on localhost and yield an entered model pointed at it.
@@ -1804,6 +1808,37 @@ async def test_fallback_on_connection_errors_takes_over_from_a_failed_socket(
     assert len(socket.sent) == 1
     assert len(next_socket.sent) == 1
     assert len(http.requests) == 1
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_model_fallback_reuses_second_websocket_after_transport_failure(
+    allow_model_requests: None, sockets: SocketHarness, stream: bool
+):
+    first = sockets.pending[0]
+    retried_primary = ScriptedSocket()
+    for socket in (first, retried_primary):
+        socket.responses.clear()
+        socket.push(ConnectionClosedError(None, None))
+    second = ScriptedSocket(
+        responses=deque([tool_call_events('resp_tool', 'call_1'), text_events(response_id='resp_final')])
+    )
+    sockets.pending.extend([second, retried_primary])
+    agent = Agent(websocket_model(), capabilities=[ModelFallback(websocket_model())])
+
+    @agent.tool_plain
+    def step() -> str:
+        return 'done'
+
+    if stream:
+        async with agent.run_stream('hello') as result:
+            assert await result.get_output() == 'ready'
+    else:
+        assert (await agent.run('hello')).output == 'ready'
+    assert sockets.opened == [first, second, retried_primary]
+    assert [len(socket.sent) for socket in sockets.opened] == [1, 2, 1]
+    assert [socket.close_count for socket in sockets.opened] == [1, 1, 1]
+    assert second.sent[1]['previous_response_id'] == 'resp_tool'
+    assert second.sent[1]['input'] == [{'type': 'function_call_output', 'call_id': 'call_1', 'output': 'done'}]
 
 
 @pytest.mark.parametrize('retry_closed', [False, True])
@@ -2408,7 +2443,7 @@ async def test_missing_websocket_dependency_warns_and_uses_http(
 ):
     monkeypatch.setitem(sys.modules, 'pydantic_ai.models._openai_responses_websocket', None)
     agent = Agent(websocket_model(http.provider()))
-    with pytest.warns(UnsupportedSettingWarning, match=r'install `pydantic-ai-slim\[openai-responses-websocket\]`'):
+    with pytest.warns(UnsupportedSettingWarning, match=r'install `pydantic-ai-slim\[openai-realtime\]`'):
         assert (await agent.run('hello')).output == 'from HTTP'
     assert sockets.connect_count == 0
 
@@ -2676,7 +2711,9 @@ async def test_socket_error_after_response_starts_is_not_retried(allow_model_req
     assert len(socket.sent) == 1
 
 
-async def test_model_exit_uses_the_captured_lease_kind(allow_model_requests: None, sockets: SocketHarness):
+async def test_nested_agent_context_keeps_outer_socket_across_durable_flags(
+    allow_model_requests: None, sockets: SocketHarness
+):
     model = websocket_model()
     async with model:
         socket = sockets.pending[0]
@@ -2693,11 +2730,12 @@ async def test_model_exit_uses_the_captured_lease_kind(allow_model_requests: Non
     assert socket.close_count == 1
 
 
-async def test_overlapping_model_contexts_release_their_own_lease(
+async def test_overlapping_model_contexts_keep_the_socket_until_the_last_exit(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
 ):
-    """An external owner exiting first cannot leave its ownership attached to another task's durable scope."""
+    """An overlapping scope keeps the socket open even when the first scope exits."""
     model = websocket_model(http.provider())
+    sockets.pending[0].responses.append(text_events('borrowed', 'resp_borrowed'))
     external_entered = anyio.Event()
     durable_entered = anyio.Event()
     external_exited = anyio.Event()
@@ -2715,15 +2753,15 @@ async def test_overlapping_model_contexts_release_their_own_lease(
             async with model:
                 durable_entered.set()
                 await external_exited.wait()
-                assert (await model.request(user_prompt('durable'), None, ModelRequestParameters())).text == 'from HTTP'
+                assert (await model.request(user_prompt('durable'), None, ModelRequestParameters())).text == 'borrowed'
 
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(external_owner)
             tasks.start_soon(durable_owner)
-    assert len(sockets.opened[0].sent) == 1
+    assert len(sockets.opened[0].sent) == 2
     assert sockets.opened[0].close_count == 1
-    assert len(http.requests) == 1
+    assert http.requests == []
 
 
 async def test_overlapping_agents_keep_fallback_child_contexts(
@@ -2759,10 +2797,11 @@ async def test_overlapping_agents_keep_fallback_child_contexts(
     assert sockets.opened[0].close_count == 1
 
 
-async def test_task_spawned_during_wrapper_entry_has_its_own_model_context(
+async def test_task_spawned_during_wrapper_entry_keeps_its_model_lease(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
 ):
     model = websocket_model(http.provider())
+    sockets.pending[0].responses.append(text_events('borrowed', 'resp_borrowed'))
     entered = anyio.Event()
     exited = anyio.Event()
 
@@ -2771,7 +2810,7 @@ async def test_task_spawned_during_wrapper_entry_has_its_own_model_context(
             async with model:
                 entered.set()
                 await exited.wait()
-                assert (await model.request(user_prompt('durable'), None, ModelRequestParameters())).text == 'from HTTP'
+                assert (await model.request(user_prompt('durable'), None, ModelRequestParameters())).text == 'borrowed'
 
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with anyio.create_task_group() as tasks:
@@ -2786,9 +2825,9 @@ async def test_task_spawned_during_wrapper_entry_has_its_own_model_context(
             async with Agent(SpawnWrapper(model)) as agent:
                 await agent.run('first')
             exited.set()
-    assert len(sockets.opened[0].sent) == 1
+    assert len(sockets.opened[0].sent) == 2
     assert sockets.opened[0].close_count == 1
-    assert len(http.requests) == 1
+    assert http.requests == []
 
 
 @pytest.mark.parametrize('status', [408, 409, 429, 500, 503])
@@ -2840,7 +2879,7 @@ async def test_early_rejection_retry_budget(
     assert socket.close_count == 1
 
 
-async def test_rejected_request_preserves_its_error_when_retry_capacity_is_busy(
+async def test_rejected_request_overflows_to_http_when_retry_capacity_is_busy(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr('pydantic_ai.models._openai_responses_websocket.ACTIVE_RESPONSE_LIMIT', 1)
@@ -2862,12 +2901,13 @@ async def test_rejected_request_preserves_its_error_when_retry_capacity_is_busy(
 
     monkeypatch.setattr(anyio, 'sleep', sleep)
     agent = Agent(websocket_model(http.provider(), settings=OpenAIResponsesModelSettings(max_retries=1)))
+    http_events = text_events('from HTTP', 'resp_http')
+    body = ''.join(f'event: {e["type"]}\ndata: {FRAME_ADAPTER.dump_json(e).decode()}\n\n' for e in http_events)
+    http.replies.append(httpx2.Response(200, content=body.encode(), headers={'content-type': 'text/event-stream'}))
     outputs: list[str] = []
 
     async def first() -> None:
-        with pytest.raises(ModelHTTPError) as error:
-            await agent.run('rejected')
-        assert error.value.status_code == 503
+        assert (await agent.run('rejected')).output == 'from HTTP'
         rejected.set()
 
     async def second() -> None:
@@ -2888,8 +2928,34 @@ async def test_rejected_request_preserves_its_error_when_retry_capacity_is_busy(
 
     assert outputs == ['sibling finished']
     assert len(socket.sent) == 2
+    assert len(http.requests) == 1
     assert socket.close_count == 1
-    assert http.requests == []
+
+
+async def test_context_closed_after_its_loop_stops_drops_the_socket(
+    allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch
+):
+    socket = sockets.pending[0]
+    closed_on: list[asyncio.AbstractEventLoop] = []
+    original_close = ScriptedSocket.close
+
+    async def close(self: ScriptedSocket, *, code: int = 1000, reason: str = '') -> None:
+        closed_on.append(asyncio.get_running_loop())
+        await original_close(self, code=code, reason=reason)
+
+    monkeypatch.setattr(ScriptedSocket, 'close', close)
+    model = websocket_model()
+    stack = AsyncExitStack()
+
+    async def enter() -> None:
+        await stack.enter_async_context(model)
+        assert (await model.request(user_prompt('first'), None, ModelRequestParameters())).text == 'ready'
+
+    await anyio.to_thread.run_sync(lambda: asyncio.run(enter()))
+    await stack.aclose()
+    assert closed_on == []
+    assert socket.close_count == 0
+    assert not model._websocket.states  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_request_settings(allow_model_requests: None, sockets: SocketHarness):
@@ -2965,40 +3031,26 @@ async def test_http_model_context_can_exit_from_another_task(
     assert sockets.opened[0].close_count == 1
 
 
-@pytest.mark.parametrize('closer', ['unrelated', 'borrower'])
-async def test_unidentified_context_exit_does_not_preserve_durable_borrowing(
-    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, closer: str
+async def test_context_closed_from_another_task_keeps_remaining_lease(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
 ):
     model = websocket_model(http.provider())
-    internal, external = AsyncExitStack(), AsyncExitStack()
-    sockets.pending[0].responses.append(text_events('unexpected socket'))
-
-    async def enter_internal() -> None:
-        with durable_unit_scope():
-            await internal.enter_async_context(model)
-            if closer == 'borrower':
-                await external.aclose()
-                assert (await model.request(user_prompt('durable'), None, ModelRequestParameters())).text == 'from HTTP'
-
-    async def enter_external() -> None:
-        await external.enter_async_context(model)
-        await model.request(user_prompt('external'), None, ModelRequestParameters())
-
-    await asyncio.create_task(enter_external())
-    await asyncio.create_task(enter_internal())
-    if closer == 'unrelated':
-        await external.aclose()
-        with durable_unit_scope():
-            assert (await model.request(user_prompt('durable'), None, ModelRequestParameters())).text == 'from HTTP'
+    first, second = AsyncExitStack(), AsyncExitStack()
+    socket = sockets.pending[0]
+    socket.responses.append(text_events('borrowed', 'resp_borrowed'))
+    await asyncio.create_task(first.enter_async_context(model))
+    with durable_unit_scope():
+        await asyncio.create_task(second.enter_async_context(model))
+    await model.request(user_prompt('first'), None, ModelRequestParameters())
+    await asyncio.create_task(first.aclose())
+    with durable_unit_scope():
+        assert (await model.request(user_prompt('borrowed'), None, ModelRequestParameters())).text == 'borrowed'
+    assert socket.close_count == 0
+    await asyncio.create_task(second.aclose())
+    assert socket.close_count == 1
     assert (await model.request(user_prompt('unowned'), None, ModelRequestParameters())).text == 'from HTTP'
-    await internal.aclose()
-    assert len(sockets.opened[0].sent) == 1
-    assert sockets.opened[0].close_count == 1
-    sockets.pending.append(ScriptedSocket())
-    async with model:
-        with durable_unit_scope():
-            assert (await model.request(user_prompt('fresh'), None, ModelRequestParameters())).text == 'ready'
-    assert [socket.close_count for socket in sockets.opened] == [1, 1]
+    assert len(socket.sent) == 2
+    assert len(http.requests) == 1
 
 
 async def test_context_closed_on_another_loop_closes_socket_on_its_own_loop(
@@ -3037,6 +3089,29 @@ async def test_nested_direct_model_contexts_keep_the_socket_until_the_outer_exit
     assert sockets.opened == [socket]
     assert len(socket.sent) == 2
     assert socket.close_count == 1
+
+
+async def test_cross_loop_context_exit_does_not_release_another_loops_run_lease(
+    allow_model_requests: None, sockets: SocketHarness
+):
+    model = websocket_model()
+    first_socket = sockets.pending[0]
+    second_socket = ScriptedSocket()
+    sockets.pending.append(second_socket)
+    context = AsyncExitStack()
+
+    async def enter() -> None:
+        await context.enter_async_context(model)
+        await model.request(user_prompt('other loop'), None, ModelRequestParameters())
+
+    await anyio.to_thread.run_sync(lambda: asyncio.run(enter()))
+    async with model._run_scope():  # pyright: ignore[reportPrivateUsage]
+        await model.request(user_prompt('this run'), None, ModelRequestParameters())
+        await context.aclose()
+        assert second_socket.close_count == 0
+    assert first_socket.close_count == 0
+    assert second_socket.close_count == 1
+    assert not model._websocket.states  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize('profile', [None, WEBSOCKET_PROFILE])

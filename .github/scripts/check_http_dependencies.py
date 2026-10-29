@@ -38,7 +38,6 @@ openai_extras = {
     'crusoe',
     'cerebras',
     'openai-realtime',
-    'openai-responses-websocket',
     'xai-realtime',
     'elevenlabs-realtime',
 }

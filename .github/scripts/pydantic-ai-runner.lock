@@ -1264,7 +1264,6 @@ requires-dist = [
     { name = "openai", marker = "extra == 'elevenlabs-realtime'", specifier = ">=3.31.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=3.31.0" },
     { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.31.0" },
-    { name = "openai", marker = "extra == 'openai-responses-websocket'", specifier = ">=3.31.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.31.0" },
     { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.31.0" },
     { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.31.0" },
@@ -1291,7 +1290,6 @@ requires-dist = [
     { name = "tiktoken", marker = "extra == 'elevenlabs-realtime'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'openai-realtime'", specifier = ">=0.12.0" },
-    { name = "tiktoken", marker = "extra == 'openai-responses-websocket'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'xai-realtime'", specifier = ">=0.12.0" },
     { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.6.0" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
@@ -1301,13 +1299,12 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'elevenlabs-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'google-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'openai-realtime'", specifier = ">=14.0" },
-    { name = "websockets", marker = "extra == 'openai-responses-websocket'", specifier = ">=14.0,<16" },
     { name = "websockets", marker = "extra == 'realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'xai-realtime'", specifier = ">=14.0" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.16.0" },
     { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.16.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openai-responses-websocket", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 
 [[package]]
 name = "pydantic-core"
