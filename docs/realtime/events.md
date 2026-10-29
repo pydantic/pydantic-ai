@@ -22,7 +22,7 @@ never discarded.
 | Event | Meaning |
 | --- | --- |
 | [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] | A speech, text, or tool part started. |
-| [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | Incremental speech audio/transcript or text content. |
+| [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | Incremental speech audio/transcript or text content, and [speech timestamps](audio.md#speech-timestamps). |
 | [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | A finalized part; retained speech audio appears here, not at part start. |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | A local function tool began executing. |
 | [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool produced a result — a return, a failure, or a retry. |

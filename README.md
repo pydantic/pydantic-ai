@@ -42,7 +42,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](https://pydantic.dev/docs/ai/capabilities/web-search/) and a second-opinion [advisor](https://pydantic.dev/docs/ai/harness/advisor/) snapped on alongside:
 
 ```bash
-uv add pydantic-ai pydantic-ai-harness
+uv add pydantic-ai "pydantic-ai-harness[coder]"
 ```
 
 ```python
@@ -73,7 +73,7 @@ capabilities = [
 Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/) with [`clai`](https://pydantic.dev/docs/ai/integrations/cli/#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
 ```bash
-uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5-1
+uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5-1
 ```
 
 **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
@@ -217,7 +217,7 @@ That [standalone image API](https://pydantic.dev/docs/ai/guides/image-generation
 
 ### See your first run in Logfire
 
-> **Tip:** Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai). Logfire has a [free tier](https://pydantic.dev/pricing/) that needs no credit card, and you can sign up with just a GitHub account. Run `uvx logfire auth` and `uvx logfire projects new` once first, or point your coding agent at the [Logfire setup skill](https://pydantic.dev/ai-setup.md) to do it for you. The [Logfire guide](https://pydantic.dev/docs/ai/integrations/logfire/#using-logfire) has the details, and [any OpenTelemetry backend](https://pydantic.dev/docs/ai/integrations/logfire/#using-opentelemetry) works instead.
+> **Tip:** Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai). Logfire has a [free tier](https://pydantic.dev/pricing/) that needs no credit card, and you can sign up with just a GitHub account, so you can use it while you develop even if your team uses another tool in production. Run `uvx logfire-cli wizard --task pydantic-ai` once from your project: it signs you in, picks or creates a project, and has your coding agent add the instrumentation. The [Logfire guide](https://pydantic.dev/docs/ai/integrations/logfire/#using-logfire) has the details, and [any OpenTelemetry backend](https://pydantic.dev/docs/ai/integrations/logfire/#using-opentelemetry) works instead.
 >
 > ```python
 > import logfire
@@ -242,7 +242,7 @@ That [standalone image API](https://pydantic.dev/docs/ai/guides/image-generation
 
 - **Coming from another framework?** The [comparisons](https://pydantic.dev/docs/ai/comparisons/overview/) show where Pydantic AI differs from LangChain, Google ADK, the Claude Agent SDK and seven more, and the [migration skills](https://pydantic.dev/docs/ai/comparisons/migrate-from-other-frameworks/) let your coding agent port an existing application over.
 
-Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents.
+Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents. [Built with Pydantic AI](https://pydantic.dev/docs/ai/overview/built-with/) lists open source projects and organizations that run on it.
 
 ## Putting it together: a bank support agent
 

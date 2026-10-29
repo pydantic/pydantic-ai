@@ -392,7 +392,7 @@ async def test_recording_truncates_elevenlabs_audio() -> None:
     """Unit test: both ElevenLabs audio shapes are truncated when recorded.
 
     The outbound microphone chunk is the one client message without a `type` field, and the inbound
-    `audio` event also drops the per-character `alignment` timing block the session never reads.
+    `audio` event keeps the per-character `alignment` the session times words by.
     """
     long_audio = 'A' * 400  # far longer than the retained byte budget
     inbound = {
@@ -412,7 +412,7 @@ async def test_recording_truncates_elevenlabs_audio() -> None:
     audio_event = inbound_stored.data['audio_event']
     assert 0 < len(audio_event['audio_base_64']) < len(long_audio)
     assert audio_event['event_id'] == 7
-    assert 'alignment' not in audio_event
+    assert audio_event['alignment'] == {'chars': ['H', 'i']}
 
 
 async def test_recording_records_clean_close_while_iterating() -> None:
