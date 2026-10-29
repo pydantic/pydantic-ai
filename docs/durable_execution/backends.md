@@ -243,7 +243,14 @@ not inspect an operation's parameter object.
 
 A durable unit can run more than once when a worker fails after its side effect but before the
 checkpoint commits. Tools and decorated capability operations should therefore be idempotent unless the
-engine provides a suitable at-most-once mode. Test replay and recovery, resource teardown,
+engine provides a suitable at-most-once mode.
+
+An operation can declare a [`StepPolicy`][pydantic_ai.durable_exec.StepPolicy] for some kinds of
+invocation: its `policies`, keyed by what its `policy_key` returns for an invocation, and read with
+`operation.policy(params)`. The workspace operation uses them to run an action at most once with its own
+timeout. Map `repeatable=False` onto the engine's at-most-once mode and `timeout` onto its attempt
+timeout, on top of the operation's config; a `CallableOperationBackend` overrides `apply_policy`, and an
+engine whose options are fixed at registration registers a unit per kind with a policy. Test replay and recovery, resource teardown,
 control-flow exceptions, persisted-output upgrades, and ordinary execution outside the durable
 runtime before publishing an integration.
 
