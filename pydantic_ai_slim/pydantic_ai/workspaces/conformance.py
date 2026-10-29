@@ -649,7 +649,8 @@ class WorkspaceBackendSuite:
         # A size that isn't an exact ratio of the display's, so a display that scales by a ratio has to round.
         size = (max(1, width * 2 // 3), max(1, height * 2 // 3))
         scaled_width, scaled_height = _png_size(await display.scaled_screenshot(*size))
-        assert abs(scaled_width - size[0]) <= 1 and abs(scaled_height - size[1]) <= 1
+        # Never larger, so the screenshot stays within what the model takes; rounding down loses at most a pixel.
+        assert 0 <= size[0] - scaled_width <= 1 and 0 <= size[1] - scaled_height <= 1
 
     async def test_the_cursor_position_is_on_the_screen(self, backend: WorkspaceBackend) -> None:
         display = _display(backend)

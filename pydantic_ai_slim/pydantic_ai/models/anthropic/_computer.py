@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any, TypeGuard, cast, get_args
+from typing import Any, TypeGuard, cast
 
 from anthropic.types.beta import (
     BetaComputerToolset20260801Param,
@@ -18,7 +18,6 @@ from ...computer_use import DISPLAY_SIZE
 from ...messages import ToolCallPart
 from ...profiles.anthropic import AnthropicComputerToolVersion
 from ...tools import ToolDefinition
-from ...workspaces import ComputerAction
 
 COMPUTER_TOOL_BETAS: dict[str, str] = {
     'computer_20251124': 'computer-use-2025-11-24',
@@ -64,8 +63,14 @@ class NativeComputer:
 
     def call_part(self, blocks: list[dict[str, Any]], provider_name: str) -> ToolCallPart:
         """Calls of the computer use tool as one `computer` call, keeping them to send back as they were."""
-        actions = [action for block in blocks for action in map_computer_member(*computer_member(block, self.version))]
-        provider_details: dict[str, Any] = {'computer_blocks': blocks, 'computer_tool': self.version}
+        member_actions = [map_computer_member(*computer_member(block, self.version)) for block in blocks]
+        actions = [action for member in member_actions for action in member]
+        provider_details: dict[str, Any] = {
+            'computer_blocks': blocks,
+            'computer_tool': self.version,
+            # How many actions each call became, so results are matched to calls without mapping them again.
+            COMPUTER_ACTION_COUNTS: [len(member) for member in member_actions],
+        }
         return ToolCallPart(
             self.name,
             # A field Claude left out takes the `computer` tool's default.
@@ -84,9 +89,11 @@ def computer_member(block: dict[str, Any], version: AnthropicComputerToolVersion
     return block['input'].get('action', ''), input
 
 
-RETURN_NOTHING = frozenset({*(action.type for action in get_args(get_args(ComputerAction)[0])), 'wait', 'screenshot'})
-"""Action types whose result content has nothing of their own: every display action, which only acts, plus waiting
-and the screenshot every result ends with. Any other action, such as a zoom, returned something."""
+COMPUTER_ACTION_COUNTS = 'computer_action_counts'
+"""The `provider_details` key with how many `computer` tool actions each computer use call became."""
+
+RETURNS_OUTPUT = frozenset({'zoom', 'cursor_position'})
+"""The calls whose result has content of its own, before the screenshot every result ends with; each is one action."""
 
 COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 """The result Anthropic asks for on each member call after one that failed."""

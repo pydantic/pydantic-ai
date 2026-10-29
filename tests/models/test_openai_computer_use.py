@@ -35,11 +35,9 @@ with try_import() as imports_successful:
     from openai.types.responses.response import Conversation
 
     from pydantic_ai.models.openai import (
-        _BLANK_SCREENSHOT,  # pyright: ignore[reportPrivateUsage]
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         _map_computer_action,  # pyright: ignore[reportPrivateUsage]
-        _map_computer_call_output,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -163,8 +161,8 @@ async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them
     )
     assert resumed.output == 'done'
     _, second = get_mock_responses_kwargs(client)
-    # The flagged call is sent again rather than continued from, so its output can acknowledge or refuse it.
-    assert 'previous_response_id' not in second
+    # The flagged call stays in the stored response; its output alone acknowledges or refuses it.
+    assert second['previous_response_id'] == 'resp_1'
     (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
     if approve:
         assert output['acknowledged_safety_checks'] == [CHECK]
@@ -288,43 +286,81 @@ async def test_a_call_with_a_single_action_runs_it(allow_model_requests: None) -
     assert provider.actions == [Click(x=5, y=6)]
 
 
-def test_a_result_without_its_screenshot_gets_a_blank_image_and_a_note() -> None:
-    # As after `keep_screenshots` dropped the screenshot from this request: the output still needs an image.
-    note = '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
-    part = ToolReturnPart('computer', ['Ran 1 action.', note], tool_call_id='call_1', metadata={'performed': 1})
-    output, message = cast(list[dict[str, Any]], _map_computer_call_output(part, 'call_1', None))
-    assert output['output']['image_url'] == _BLANK_SCREENSHOT
-    assert message == {'role': 'user', 'content': f'Ran 1 action. {note}'}
-
-
-def test_the_last_image_goes_out_as_the_screen_at_full_detail() -> None:
-    zoomed = BinaryImage(data=b'zoomed', media_type='image/png')
-    screen = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
-    part = ToolReturnPart(
-        'computer', ['Ran 1 action.', zoomed, screen], tool_call_id='call_1', metadata={'performed': 1}
-    )
-    (output,) = cast(list[dict[str, Any]], _map_computer_call_output(part, 'call_1', None))
-    assert output['output'] == {'type': 'computer_screenshot', 'image_url': screen.data_uri, 'detail': 'original'}
+_DROPPED = '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
+_SCREEN = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
 
 
 @pytest.mark.parametrize(
-    'text,metadata',
+    'content,metadata,image_url,note',
     [
+        # As after `keep_screenshots` dropped the screenshot from this request: the output still needs an image.
+        pytest.param(['Ran 1 action.', _DROPPED], {'performed': 1}, None, f'Ran 1 action. {_DROPPED}', id='dropped'),
+        # The last image is the screen; one before it, such as a zoom, is not.
+        pytest.param(
+            ['Ran 1 action.', BinaryImage(data=b'zoomed', media_type='image/png'), _SCREEN],
+            {'performed': 1},
+            _SCREEN.data_uri,
+            None,
+            id='last-image-is-the-screen',
+        ),
         # As from a UI that rebuilt the result: its text may say an action failed.
-        pytest.param('Action 1 of 1 (click) failed: busy.', None, id='no-metadata'),
+        pytest.param(
+            ['Action 1 of 1 (click) failed: busy.', _SCREEN],
+            None,
+            _SCREEN.data_uri,
+            'Action 1 of 1 (click) failed: busy.',
+            id='no-metadata',
+        ),
         # Otherwise the model would take its own actions to have run.
         pytest.param(
-            'Before it ran, this call was changed to: [...]. Ran 1 action.',
+            ['Before it ran, this call was changed to: [...]. Ran 1 action.', _SCREEN],
             {'performed': 1, 'changed': True},
+            _SCREEN.data_uri,
+            'Before it ran, this call was changed to: [...]. Ran 1 action.',
             id='changed-before-it-ran',
         ),
     ],
 )
-def test_a_result_the_screenshot_does_not_tell_also_sends_its_text(text: str, metadata: dict[str, Any] | None) -> None:
-    screen = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
-    part = ToolReturnPart('computer', [text, screen], tool_call_id='call_1', metadata=metadata)
-    _, message = cast(list[dict[str, Any]], _map_computer_call_output(part, 'call_1', None))
-    assert message == {'role': 'user', 'content': text}
+async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_screenshot_does_not_tell(
+    allow_model_requests: None,
+    content: list[Any],
+    metadata: dict[str, Any] | None,
+    image_url: str | None,
+    note: str | None,
+) -> None:
+    client = MockOpenAIResponses.create_mock(_done())
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    computer_call: dict[str, Any] = {
+        'type': 'computer_call',
+        'id': 'cu_1',
+        'call_id': 'call_1',
+        'status': 'completed',
+        'actions': [],
+    }
+    call = ToolCallPart(
+        'computer',
+        {'actions': [{'type': 'screenshot'}]},
+        tool_call_id='call_1',
+        provider_name='openai',
+        provider_details={'computer_call': computer_call},
+    )
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Look.'),
+        ModelResponse(parts=[call], provider_name='openai'),
+        ModelRequest(
+            parts=[ToolReturnPart('computer', content, tool_call_id='call_1', metadata=metadata, tool_kind='computer')]
+        ),
+    ]
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind='computer')
+    await model.request(history, None, ModelRequestParameters(function_tools=[computer], allow_text_output=True))
+
+    (request,) = get_mock_responses_kwargs(client)
+    output = next(item for item in request['input'] if item.get('type') == 'computer_call_output')
+    sent = output['output']['image_url']
+    assert sent == image_url if image_url else _is_a_valid_png(sent)
+    assert output['output']['detail'] == 'original'
+    after = request['input'][request['input'].index(output) + 1 :]
+    assert after == ([{'role': 'user', 'content': note}] if note else [])
 
 
 async def test_an_incomplete_call_runs_nothing(allow_model_requests: None) -> None:
@@ -338,7 +374,8 @@ async def test_an_incomplete_call_runs_nothing(allow_model_requests: None) -> No
     assert provider.actions == []
     _, second = get_mock_responses_kwargs(client)
     (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
-    assert output['output']['image_url'] == _BLANK_SCREENSHOT
+    # OpenAI rejects an image whose chunk checksums don't match, failing the whole request.
+    assert _is_a_valid_png(output['output']['image_url'])
 
 
 async def test_an_action_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
@@ -353,18 +390,6 @@ async def test_an_action_with_a_field_that_does_not_map_runs_nothing(allow_model
     assert provider.actions == []
     call = next(part for part in result.all_messages()[1].parts if isinstance(part, ToolCallPart))
     assert call.args_as_dict() == {'actions': [{'type': 'click', 'unsupported_fields': ['duration_ms']}]}
-
-
-def test_the_blank_screenshot_is_a_valid_png() -> None:
-    # OpenAI rejects an image whose chunk checksums don't match, failing the whole request.
-    data = base64.b64decode(_BLANK_SCREENSHOT.split(',', 1)[1])
-    position, chunk = 8, b''
-    while position < len(data):
-        (length,) = struct.unpack('>I', data[position : position + 4])
-        chunk = data[position + 4 : position + 8 + length]
-        assert struct.unpack('>I', data[position + 8 + length : position + 12 + length])[0] == zlib.crc32(chunk)
-        position += 12 + length
-    assert chunk == b'IEND'
 
 
 async def test_a_refused_action_is_explained_after_its_screenshot(allow_model_requests: None) -> None:
@@ -395,7 +420,7 @@ async def test_a_failed_call_sends_a_blank_screenshot_and_says_why(allow_model_r
 
     _, second = get_mock_responses_kwargs(client)
     (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
-    assert output['output']['image_url'] == _BLANK_SCREENSHOT
+    assert _is_a_valid_png(output['output']['image_url'])
     note = second['input'][second['input'].index(output) + 1]
     assert note == {'role': 'user', 'content': 'Taking the screenshot failed: scrot: not found'}
 
@@ -460,6 +485,14 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
             {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 200, 'scroll_y': 0},
             {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'right', 'amount': 2, 'modifiers': []},
         ),
+        # A diagonal scroll scrolls both ways.
+        (
+            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': -9000, 'scroll_y': 10},
+            [
+                {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'left', 'amount': 50, 'modifiers': cast(list[str], [])},
+                {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 1, 'modifiers': cast(list[str], [])},
+            ],
+        ),
         ({'type': 'keypress', 'keys': ['CTRL', 'S']}, {'type': 'keypress', 'keys': ['CTRL', 'S']}),
         ({'type': 'type', 'text': 'hi'}, {'type': 'type', 'text': 'hi'}),
         ({'type': 'wait'}, {'type': 'wait'}),
@@ -475,13 +508,20 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
         ),
     ],
 )
-def test_openai_actions_map_onto_the_computer_tool(action: dict[str, Any], mapped: dict[str, Any]) -> None:
-    assert _map_computer_action(action) == [mapped]
+def test_openai_actions_map_onto_the_computer_tool(
+    action: dict[str, Any], mapped: dict[str, Any] | list[dict[str, Any]]
+) -> None:
+    assert _map_computer_action(action) == (mapped if isinstance(mapped, list) else [mapped])
 
 
-def test_a_diagonal_scroll_scrolls_both_ways() -> None:
-    action = {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': -9000, 'scroll_y': 10}
-    assert _map_computer_action(action) == [
-        {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'left', 'amount': 50, 'modifiers': []},
-        {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 1, 'modifiers': []},
-    ]
+def _is_a_valid_png(data_uri: str) -> bool:
+    """Whether the data URI holds a PNG whose every chunk checksum matches, ending in `IEND`."""
+    data = base64.b64decode(data_uri.removeprefix('data:image/png;base64,'))
+    position, chunk = 8, b''
+    while position < len(data):
+        (length,) = struct.unpack('>I', data[position : position + 4])
+        chunk = data[position + 4 : position + 8 + length]
+        if struct.unpack('>I', data[position + 8 + length : position + 12 + length])[0] != zlib.crc32(chunk):
+            return False
+        position += 12 + length
+    return data.startswith(b'\x89PNG') and chunk == b'IEND'
