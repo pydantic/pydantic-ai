@@ -348,32 +348,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert len(computer_returns) == 28
         assert all(part.content_items()[1] == SCREENSHOT for part in computer_returns)
 
-    async def test_agents_sharing_a_display_take_turns_a_whole_call_at_a_time(self) -> None:
-        provider = InMemoryProvider()
-        turns = _Turns()
-        screen = turns.backend(provider, None)
-
-        class OnTheScreen(ProviderBackend):
-            @property
-            def display(self) -> ProviderBackend:
-                return screen
-
-        agents = [
-            Agent(
-                _scripted([{'type': 'click', 'x': x, 'y': 1}, {'type': 'type', 'text': text}]),
-                capabilities=[ComputerUse(settle_seconds=0), turns.capability],
-            )
-            for x, text in [(1, 'first'), (2, 'second')]
-        ]
-
-        async def run(agent: Agent[None, str]) -> None:
-            # Each agent has its own backend; the display they share is the screen.
-            await agent.run('Go.', workspace=OnTheScreen(provider, None))
-
-        await turns.run(lambda: run(agents[0]), lambda: run(agents[1]))
-
-        assert provider.actions == [Click(x=1, y=1), TypeText(text='first'), Click(x=2, y=1), TypeText(text='second')]
-
     @pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
     @pytest.mark.parametrize(
         'after',
@@ -662,33 +636,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         await agent.run('Go.')
         assert seen == [cache]
 
-    async def test_runs_attached_to_one_environment_take_turns_on_its_screen(self) -> None:
-        turns = _Turns()
-
-        class Provider(InMemoryProvider):
-            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
-                return turns.backend(self, ref)
-
-        provider = Provider()
-        backend = provider.backend(None)
-        await backend.display_size()
-        assert backend.ref is not None
-        agents = [
-            Agent(
-                _scripted([{'type': 'click', 'x': x, 'y': 1}, {'type': 'type', 'text': text}]),
-                capabilities=[provider.capability(), ComputerUse(settle_seconds=0), turns.capability],
-            )
-            for x, text in [(1, 'first'), (2, 'second')]
-        ]
-
-        async def run(agent: Agent[None, str]) -> None:
-            # Each run builds its own backend, with its own display object, for the one environment.
-            await agent.run('Go.', workspace=backend.ref)
-
-        await turns.run(lambda: run(agents[0]), lambda: run(agents[1]))
-
-        assert provider.actions == [Click(x=1, y=1), TypeText(text='first'), Click(x=2, y=1), TypeText(text='second')]
-
     async def test_an_approved_call_runs_on_the_grid_it_was_made_on_whichever_model_resumes(self) -> None:
         provider = InMemoryProvider()
         agent = Agent(
@@ -762,6 +709,57 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         with pytest.raises(UserError, match=r'The screen is 1280x800, larger than .* Start the display at 1000x625'):
             await agent.run('Go.', workspace=DisplayOnlyBackend(InMemoryProvider().backend(None)))
 
+    @pytest.mark.parametrize('shared', ['display-object', 'ref', 'screen-key'])
+    async def test_agents_on_one_screen_take_turns_a_whole_call_at_a_time(self, shared: str) -> None:
+        """However the runs reach the screen: one display object, one environment's ref, or displays naming the screen."""
+        turns = _Turns()
+        provider = InMemoryProvider()
+        capabilities: list[AbstractCapability[Any]] = [turns.capability]
+        # What each run is given as its workspace; `None` lets the provider's capability supply it.
+        workspaces: list[Any] = [None, None]
+        if shared == 'display-object':
+            screen = turns.backend(provider, None)
+
+            class OnTheScreen(ProviderBackend):
+                @property
+                def display(self) -> ProviderBackend:
+                    return screen
+
+            workspaces = [OnTheScreen(provider, None), OnTheScreen(provider, None)]  # a backend each
+        else:
+
+            class OneScreen(turns.backend):
+                @property
+                def screen_key(self) -> object | None:
+                    return 'the-screen' if shared == 'screen-key' else None
+
+            class Provider(InMemoryProvider):
+                def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
+                    return OneScreen(self, ref)
+
+            provider = Provider()
+            capabilities.append(provider.capability())
+            if shared == 'ref':
+                backend = provider.backend(None)
+                await backend.display_size()
+                workspaces = [backend.ref, backend.ref]  # each run builds its own backend for the environment
+
+        agents = [
+            Agent(
+                _scripted([{'type': 'click', 'x': x, 'y': 1}, {'type': 'type', 'text': text}]),
+                capabilities=[*capabilities, ComputerUse(settle_seconds=0)],
+            )
+            for x, text in [(1, 'first'), (2, 'second')]
+        ]
+
+        await turns.run(
+            lambda: agents[0].run('Go.', workspace=workspaces[0]), lambda: agents[1].run('Go.', workspace=workspaces[1])
+        )
+
+        assert provider.actions == [Click(x=1, y=1), TypeText(text='first'), Click(x=2, y=1), TypeText(text='second')]
+        if shared == 'screen-key':
+            assert len(provider.environments) == 2
+
     async def test_the_model_is_told_once_when_the_display_restarted_since_its_last_screenshot(self) -> None:
         class Restarts(ProviderBackend):
             starts = 1
@@ -777,40 +775,19 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         model = _scripted([{'type': 'screenshot'}], [{'type': 'keypress', 'keys': ['a']}], [{'type': 'screenshot'}])
         computer_use = ComputerUse(settle_seconds=0)
         agent = Agent(model, capabilities=[Provider().capability(), computer_use])
-        summaries = [part.content_items()[0] for part in _returns((await agent.run('Go.')).all_messages())]
-        assert computer_use._shown_starts == {}  # pyright: ignore[reportPrivateUsage]  # forgotten once the run ends
+        returns = _returns((await agent.run('Go.')).all_messages())
+        assert [part.metadata for part in returns] == [
+            {'performed': 1, 'screenshot_size': (1280, 800)},
+            {'performed': 1, 'restarted': True, 'screenshot_size': (1280, 800)},
+            {'performed': 1, 'screenshot_size': (1280, 800)},
+        ]
+        summaries = [part.content_items()[0] for part in returns]
         assert summaries == [
             'Ran 1 action. Screenshot attached (1280x800).',
             'Ran 1 action. The display restarted since your last screenshot, so the windows that were open are gone. '
             'Screenshot attached (1280x800).',
             'Ran 1 action. Screenshot attached (1280x800).',
         ]
-
-    async def test_workspaces_showing_one_screen_take_turns_on_it(self) -> None:
-        """Separate environments whose displays name the same screen, such as one X `DISPLAY`, share its lock."""
-        turns = _Turns()
-
-        class OneScreen(turns.backend):
-            @property
-            def screen_key(self) -> object:
-                return 'the-screen'
-
-        class Provider(InMemoryProvider):
-            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
-                return OneScreen(self, ref)
-
-        provider = Provider()
-        agents = [
-            Agent(
-                _scripted([{'type': 'click', 'x': x, 'y': 1}, {'type': 'type', 'text': text}]),
-                capabilities=[provider.capability(), ComputerUse(settle_seconds=0), turns.capability],
-            )
-            for x, text in [(1, 'first'), (2, 'second')]
-        ]
-        await turns.run(lambda: agents[0].run('Go.'), lambda: agents[1].run('Go.'))
-
-        assert len(provider.environments) == 2
-        assert provider.actions == [Click(x=1, y=1), TypeText(text='first'), Click(x=2, y=1), TypeText(text='second')]
 
     async def test_in_workflow_code_a_large_screen_is_scaled_through_the_workspace(self) -> None:
         """Durable workflow code can't reach the backend, so the scaled screenshot goes through the workspace."""
@@ -856,7 +833,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             'The display restarted since your last screenshot, so the windows that were open are gone. No action ran, '
             'so check this screenshot before acting. Screenshot attached (1280x800).'
         )
-        assert second.metadata == {'performed': 0, 'screenshot_size': (1280, 800)}
+        assert second.metadata == {'performed': 0, 'restarted': True, 'screenshot_size': (1280, 800)}
 
     async def test_a_batch_stops_before_acting_on_a_display_that_restarted_during_it(self) -> None:
         class Restarts(ProviderBackend):
@@ -881,6 +858,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             'The display restarted since your last screenshot, so the windows that were open are gone. Only 2 of 3 '
             'actions ran, so check this screenshot before acting. Screenshot attached (1280x800).'
         )
+        assert tool_return.metadata == {'performed': 2, 'restarted': True, 'screenshot_size': (1280, 800)}
 
     async def test_every_agent_on_a_restarted_display_is_told_of_it(self) -> None:
         provider = InMemoryProvider()
@@ -1083,4 +1061,3 @@ def _images_sent(calls: int) -> tuple[FunctionModel, list[int]]:
 
 def _unchanged(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages
-
