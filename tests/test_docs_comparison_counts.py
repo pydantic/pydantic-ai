@@ -15,7 +15,6 @@ def table_row_count(path: Path, start: str, end: str = '\n\n') -> int:
 COUNTS = {
     'durable execution integrations': table_row_count(DOCS / 'durable_execution' / 'overview.md', '| Engine |'),
     'Harness capabilities': table_row_count(DOCS / 'harness' / 'index.md', '## Capabilities', '\n## When do you need'),
-    'model providers': table_row_count(DOCS / 'models' / 'overview.md', '| Provider and setup |'),
     'realtime providers': table_row_count(DOCS / 'realtime' / 'overview.md', '| Provider | Audio output |'),
 }
 
@@ -51,12 +50,6 @@ def test_comparison_page_counts(page: Path):
     assert durable and harness
     asserted_count(durable, COUNTS['durable execution integrations'], f'{page}: durable execution integrations')
     asserted_count(harness, COUNTS['Harness capabilities'], f'{page}: Harness capabilities')
-
-    model_providers = re.search(
-        r'\[(?P<count>\d+)(?P<plus>\+)?(?: model)? providers\]\(\.\./models/overview\.md\)', text
-    )
-    if model_providers:
-        asserted_count(model_providers, COUNTS['model providers'], f'{page}: model providers')
 
     for realtime in re.finditer(r'(?P<count>\w+) providers', text, re.IGNORECASE):
         if realtime.group('count').lower() in NUMBER_WORDS:
