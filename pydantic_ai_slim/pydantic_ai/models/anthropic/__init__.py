@@ -294,6 +294,7 @@ try:
     from ._message_passes import (
         anchor_system_messages,
         drop_unpaired_native_tool_calls,
+        end_tool_results_before_system_messages,
         place_system_messages_before_generation,
     )
     from ._native_tools import (
@@ -2654,6 +2655,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         place_system_messages_before_generation(anthropic_messages)
         anchor_system_messages(anthropic_messages)
         self._add_container_uploads(anthropic_messages, model_request_parameters)
+        # After the container uploads, which skip turns of only tool results, so the block doesn't move them.
+        if self.profile.get('anthropic_distrusts_system_after_tool_result', False):
+            end_tool_results_before_system_messages(anthropic_messages)
         check_citations_tool_choice(
             model_settings, model_request_parameters, anthropic_messages, map_context.include_citations
         )
