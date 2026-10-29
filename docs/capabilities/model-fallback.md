@@ -25,6 +25,8 @@ agent = Agent(capabilities=[ModelFallback('{{ openai:medium }}', '{{ anthropic:m
 
 A model that was already attempted in the step is skipped, whichever capability attempted it, so listing the agent's own model among the candidates doesn't cause a duplicate request.
 
+Falling back is not retrying: the next model usually can't use the prompt cache that earlier requests built on the first one, and can answer differently and at a different price. Leave a transient failure, like a dropped connection, to a retry of the same model, with a budget small enough that it doesn't hold up the fallback when the model stays down. See [Recovery scopes compared](../retries.md#recovery-scopes) and [Choosing one retry owner](../retries.md#choosing-one-retry-owner).
+
 ## When to fall back
 
 By default, `ModelFallback` moves on when a request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], the error a model raises when the provider's API fails, such as a 4xx or 5xx response. The `fallback_on` parameter takes the same forms as [`FallbackModel`'s](../models/overview.md#fallback-model):

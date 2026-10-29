@@ -443,7 +443,7 @@ from pydantic_ai.capabilities import ModelFallback
 agent = Agent('{{ openai:medium }}', capabilities=[ModelFallback('{{ anthropic:medium }}')])
 ```
 
-`ModelFallback` makes each attempt within the agent's own request loop, so capabilities see the model that will serve each attempt and prepare the request for it, each attempt is [batched](../batch.md) on its own model, and under [durable execution](../durable_execution/overview.md) each attempt is a durable model operation of its own. See [Model Fallback](../capabilities/model-fallback.md) for how it works, and [Migrating from `FallbackModel`](../capabilities/model-fallback.md#migrating-from-fallbackmodel) to move an agent over.
+`ModelFallback` makes each attempt within the agent's own request loop, so capabilities see the model that will serve each attempt and prepare the request for it, each attempt is [batched](../batch.md) on its own model, and under [durable execution](../durable_execution/overview.md) each attempt is a durable model operation of its own. See [Model Fallback](../capabilities/model-fallback.md) for how it works, and [Migrating from `FallbackModel`](../capabilities/model-fallback.md#migrating-from-fallbackmodel) to move an agent over. [Recovery scopes compared](../retries.md#recovery-scopes) sets fallback beside retrying the same model and the other ways a request is attempted again.
 
 The rest of this section covers [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], which remains the way to fall back with [direct model requests](../direct.md) or a standalone model, outside an agent. Its `fallback_on` policies, failed attempts and telemetry work the same way under `ModelFallback`, so the handler examples below apply to both.
 
