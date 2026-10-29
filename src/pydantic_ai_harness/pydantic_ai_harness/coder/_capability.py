@@ -11,7 +11,12 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
-from pydantic_ai_harness.coder._instructions import INSTRUCTIONS, project_instructions
+from pydantic_ai_harness.coder._instructions import (
+    INSTRUCTIONS,
+    REPO_INSTRUCTIONS,
+    project_instructions,
+    sub_agent_instructions,
+)
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -158,6 +163,11 @@ class Coder(CombinedCapability[AgentDepsT]):
                 f'`LocalWorkspace({str(workspace)!r})` (or a sandbox) alongside `Coder()`.',
                 stacklevel=3,
             )
+        delegation = (
+            SubAgents[AgentDepsT](include_self=True, agent_folders=agent_folders, task_control=task_control)
+            if sub_agents
+            else None
+        )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
             # The id also names its (empty) function toolset, which durable execution requires.
@@ -167,7 +177,12 @@ class Coder(CombinedCapability[AgentDepsT]):
                     INSTRUCTIONS + ('\n' + instructions if instructions else ''),
                     # Naming the directory creates a lazily created sandbox, so it comes only with
                     # `RepoContext`, which reads the workspace at run start anyway.
-                    *([project_instructions(unrestricted=unrestricted_filesystem)] if repo_context else []),
+                    *(
+                        [project_instructions(unrestricted=unrestricted_filesystem), REPO_INSTRUCTIONS]
+                        if repo_context
+                        else []
+                    ),
+                    *([sub_agent_instructions(delegation.tool_name)] if delegation is not None else []),
                 ],
             ),
             _file_system(unrestricted=unrestricted_filesystem),
@@ -182,10 +197,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         if repo_context:
             capabilities.append(RepoContext[AgentDepsT](expose_inventory_tool=False))
         tool_names = {*FILE_TOOL_NAMES, 'shell'}
-        if sub_agents:
-            delegation = SubAgents[AgentDepsT](
-                include_self=True, agent_folders=agent_folders, task_control=task_control
-            )
+        if delegation is not None:
             capabilities.append(delegation)
             tool_names.add(delegation.tool_name)
             if task_control is not None:

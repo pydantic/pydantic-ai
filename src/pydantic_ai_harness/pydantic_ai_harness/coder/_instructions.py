@@ -17,7 +17,12 @@ cohesive code beats abstractions without a present need.
 Work autonomously until complete. Ask only for missing requirements, credentials,
 consequential ambiguity, or approval for irreversible actions. Use reasonable
 defaults for minor ambiguities. Run focused tests and appropriate lint/type checks;
-report what you actually verified, assumptions, and remaining limitations.
+once the relevant tests pass, run more only when new changes or failures call for
+it. Report what you actually verified, assumptions, and remaining limitations.
+
+Batch independent reads and searches into one shell call (e.g. `cat a.py b.py;
+rg -n pattern src`), prefer `rg` and `rg --files`, and don't re-read a file you
+already have unless it changed.
 
 Leave only the requested change in the project. Check behavior with inline shell
 scripts (e.g. a heredoc) rather than new files, add tests only where the project
@@ -27,6 +32,25 @@ Finish required long-running work before responding: do other useful work, then
 poll status and output until complete or blocked. Servers may remain running once
 readiness is verified; shut them down when no longer needed.
 """
+
+REPO_INSTRUCTIONS = """\
+`AGENTS.md` and `CLAUDE.md` from the project directory and its parent directories
+are already in your context, so don't search for or re-read them.\
+"""
+"""Added with `RepoContext`, which loads those files: models otherwise spend shell calls looking for them."""
+
+
+def sub_agent_instructions(tool_name: str) -> str:
+    """The rule Codex gives its models for `spawn_agent`, for `Coder`'s `delegate_task`.
+
+    A delegate starts from a fresh context and re-explores the project, so unrequested delegation
+    multiplies tool calls and cost on tasks the agent could finish itself.
+    """
+    return (
+        f'Do not use `{tool_name}` unless the user or applicable AGENTS.md/skill instructions explicitly '
+        'ask for sub-agents, delegation, or parallel agent work. Requests for depth, thoroughness, '
+        'research, or investigation are not such a request.'
+    )
 
 
 def project_instructions(*, unrestricted: bool) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]:

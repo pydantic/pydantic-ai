@@ -173,6 +173,11 @@ everything the agent has -- the same model, workspace, instructions, and capabil
 gate, guardrail, or audit hook bound next to `Coder`, so those see the commands a delegate runs too. A
 delegate can delegate in turn, up to three levels counting the top-level run (`SubAgents.max_depth`).
 
+`Coder`'s instructions tell the agent to use `delegate_task` only when the user or applicable `AGENTS.md`/skill
+instructions explicitly ask for sub-agents, delegation, or parallel agent work, the rule Codex gives its models for
+`spawn_agent`. A delegate explores the project again from a fresh context, so delegation the user did not ask for
+multiplies tool calls and cost. To have the agent delegate, ask for it in the prompt, in `AGENTS.md`, or in `instructions=`.
+
 Only what is bound to the `Agent` carries over to a delegate; capabilities, toolsets, instructions, and model
 settings passed to `run()` do not. So bind `Coder` with `Agent(capabilities=[...])`: passing it to `run()`
 raises a `UserError` unless you also pass `sub_agents=False`. Disk agent definitions load only with `agent_folders=`. Pass
