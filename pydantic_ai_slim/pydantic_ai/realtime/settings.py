@@ -177,7 +177,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     a model that reports none emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]
     when the session opens.
 
-    Supported by: Azure AI Voice Live (per word, with an Azure voice) and xAI Grok Voice (per segment).
+    Supported by: Azure AI Voice Live (per word, with an Azure voice), ElevenLabs Agents (per word), and xAI Grok
+    Voice (per segment).
     """
 
     thinking: ThinkingLevel

@@ -2,7 +2,7 @@ from copy import deepcopy
 from typing import Annotated, Literal, cast, get_args
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pytest_mock import MockerFixture
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
@@ -779,6 +779,63 @@ def test_strict_true_strips_array_max_items():
                 'tags': {'type': 'array', 'items': {'type': 'string'}, 'description': 'maxItems=5'},
             },
             'required': ['tags'],
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_strict_true_strips_unsupported_regex_patterns():
+    """With strict=True, patterns using lookaround or backreferences are stripped and noted in description."""
+
+    class Codes(BaseModel):
+        # `python-re`, since Pydantic's default Rust regex engine rejects lookaround and backreferences.
+        model_config = ConfigDict(regex_engine='python-re')
+
+        lookahead: Annotated[str, Field(pattern=r'\d+(?=USD)')]
+        negative_lookahead: Annotated[str, Field(pattern=r'\d+(?!USD)')]
+        lookbehind: Annotated[str, Field(pattern=r'(?<=USD)\d+')]
+        negative_lookbehind: Annotated[str, Field(pattern=r'(?<!USD)\d+')]
+        backreference: Annotated[str, Field(pattern=r'^(a)\1$')]
+        named_backreference: Annotated[str, Field(pattern=r'^(?P<x>a)(?P=x)$')]
+        octal: Annotated[str, Field(pattern=r'^\123+$')]
+        escaped_zero: Annotated[str, Field(pattern=r'^a\0?$')]
+        escaped: Annotated[str, Field(pattern=r'^\(?=\\1$')]
+        character_class: Annotated[str, Field(pattern=r'^[A-Za-z(?=]+$')]
+        plain: Annotated[str, Field(pattern=r'^[A-Z]{3}$')]
+
+    transformer = BedrockJsonSchemaTransformer(Codes.model_json_schema(), strict=True)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is True
+    assert transformed == snapshot(
+        {
+            'properties': {
+                'lookahead': {'type': 'string', 'description': 'pattern=\\d+(?=USD)'},
+                'negative_lookahead': {'type': 'string', 'description': 'pattern=\\d+(?!USD)'},
+                'lookbehind': {'type': 'string', 'description': 'pattern=(?<=USD)\\d+'},
+                'negative_lookbehind': {'type': 'string', 'description': 'pattern=(?<!USD)\\d+'},
+                'backreference': {'type': 'string', 'description': 'pattern=^(a)\\1$'},
+                'named_backreference': {'type': 'string', 'description': 'pattern=^(?P<x>a)(?P=x)$'},
+                'octal': {'type': 'string', 'description': 'pattern=^\\123+$'},
+                'escaped_zero': {'type': 'string', 'description': 'pattern=^a\\0?$'},
+                'escaped': {'pattern': '^\\(?=\\\\1$', 'type': 'string'},
+                'character_class': {'pattern': '^[A-Za-z(?=]+$', 'type': 'string'},
+                'plain': {'pattern': '^[A-Z]{3}$', 'type': 'string'},
+            },
+            'required': [
+                'lookahead',
+                'negative_lookahead',
+                'lookbehind',
+                'negative_lookbehind',
+                'backreference',
+                'named_backreference',
+                'octal',
+                'escaped_zero',
+                'escaped',
+                'character_class',
+                'plain',
+            ],
+            'type': 'object',
             'additionalProperties': False,
         }
     )

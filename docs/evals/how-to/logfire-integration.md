@@ -69,6 +69,9 @@ When you run an evaluation, Logfire receives:
     1. All OpenTelemetry spans from your task function
     1. Tool calls (for Pydantic AI agents)
     1. API calls, database queries, etc.
+5. **[CI provenance](#ci-provenance)**
+    1. Commit, branch or tag, and pull request
+    1. Repository and CI run URLs
 
 For the exact spans and attributes, see the [span reference](#span-reference).
 
@@ -135,6 +138,46 @@ report2 = dataset.evaluate_sync(improved_task)
 
 # Compare in Logfire by filtering by timestamp or attributes
 ```
+
+### CI Provenance
+
+To let a run be compared with an earlier run of the same experiment, such as the latest run on a pull request's base branch, [`Dataset.evaluate`][pydantic_evals.dataset.Dataset.evaluate] records where the run came from. When it runs in GitHub Actions or GitLab CI, the experiment span (`evaluate {name}`) gets these [OpenTelemetry VCS and CI/CD attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/vcs/), each only when its value is known:
+
+| Attribute | Value |
+|---|---|
+| `vcs.ref.head.revision` | The commit under test. For a pull request or merge request, the head commit of its source branch |
+| `vcs.ref.head.name` | The branch or tag under test |
+| `vcs.ref.head.type` | `branch` or `tag` |
+| `vcs.ref.base.name` | The target branch of the pull request or merge request |
+| `vcs.ref.base.revision` | The target branch's commit when the run started. On GitLab, only in merged results and merge train pipelines |
+| `vcs.change.id` | The pull request number or merge request IID |
+| `vcs.provider.name` | `github` or `gitlab` |
+| `vcs.repository.url.full` | The repository URL |
+| `cicd.pipeline.run.url.full` | The URL of the CI run (on GitHub Actions, of the run attempt) |
+
+Detection reads the CI's environment variables and, for GitHub Actions pull request events, the event payload file at `GITHUB_EVENT_PATH`. If the payload can't be read, the commit is left out rather than reported as the merge commit that the workflow builds. Detection runs only when the experiment span is recording, and it never fails the evaluation.
+
+On GitHub Actions, the commit and branch are recorded for `push`, `schedule`, `workflow_dispatch`, `release`, and pull request events. Other events, such as `issue_comment`, `workflow_run`, and `pull_request_target`, point `GITHUB_SHA` at the default branch (for `pull_request_target` on older GitHub Enterprise Server versions, at the pull request's base branch), while the workflow usually checks out a pull request, so their commit and branch are left out. If your workflow checks out the pull request head on such an event, set the commit and branch yourself. On `pull_request_target`, take them from the event payload:
+
+```yaml
+env:
+  PYDANTIC_EVALS_GIT_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+  PYDANTIC_EVALS_GIT_BRANCH: ${{ github.event.pull_request.head.ref }}
+```
+
+On other events, the payload has no `pull_request` object. Set the commit from the checkout in a step after `actions/checkout`, and set `PYDANTIC_EVALS_GIT_BRANCH` the same way if your workflow knows the branch:
+
+```yaml
+- run: echo "PYDANTIC_EVALS_GIT_COMMIT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+```
+
+These environment variables control the provenance attributes:
+
+| Environment variable | Effect |
+|---|---|
+| `PYDANTIC_EVALS_CI_PROVENANCE=false` (or `0`, `no`, `off`) | Disables the provenance attributes, including the two overrides below |
+| `PYDANTIC_EVALS_GIT_COMMIT_SHA` | Sets `vcs.ref.head.revision`, overriding what was detected. It also works on other CI systems |
+| `PYDANTIC_EVALS_GIT_BRANCH` | Sets `vcs.ref.head.name`, overriding what was detected, and sets `vcs.ref.head.type` to `branch`. It also works on other CI systems |
 
 ### Debugging Failed Cases
 
