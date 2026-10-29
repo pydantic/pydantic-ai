@@ -79,6 +79,8 @@ class _BlockingBedrockClient:
         """Called on the event loop once the call or read is blocked, to cancel the request from there."""
         self.release = threading.Event()
         self.unblocked = threading.Event()
+        self.called = threading.Event()
+        """Set once the call is made: a thread the request gave up on before it started doesn't make it at all."""
         self.stream = _BlockingEventStream(self)
 
     def block(self) -> None:
@@ -88,10 +90,12 @@ class _BlockingBedrockClient:
         self.unblocked.set()
 
     def converse(self, **_: Any) -> dict[str, Any]:
+        self.called.set()
         self.block()
         return {'output': {'message': {'role': 'assistant', 'content': [{'text': 'late'}]}}, 'stopReason': 'end_turn'}
 
     def converse_stream(self, **_: Any) -> dict[str, Any]:
+        self.called.set()
         if self.blocks == 'converse_stream':
             self.block()
         return {'stream': self.stream, 'ResponseMetadata': {}}
@@ -124,7 +128,7 @@ def _assert_ended_while_blocked(client: _BlockingBedrockClient, blocks: Blocks) 
 async def _assert_cleaned_up(client: _BlockingBedrockClient, blocks: Blocks) -> None:
     """Release the blocked thread, and check that what it got is closed."""
     client.release.set()
-    if blocks != 'converse':
+    if blocks != 'converse' and client.called.is_set():
         assert await anyio.to_thread.run_sync(client.stream.closed.wait, RELEASE_TIMEOUT)
 
 
