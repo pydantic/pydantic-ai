@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
 import platform
 import re
@@ -220,8 +221,10 @@ _INSTALLED_PACKAGE_DIRS = frozenset({'site-packages', 'dist-packages'})
 
 _UI_ADAPTER_PACKAGE = 'pydantic_ai.ui.'
 
-_EVENT_LOOP_PACKAGES = frozenset({'asyncio', 'anyio', 'trio'})
-"""Packages whose frames sit between an event loop, or a task it runs, and the code the task runs."""
+_TASK_RUNNER_PACKAGES = frozenset({'anyio', 'trio'})
+"""Installed packages that start a task through a coroutine of their own, wrapping the one it runs."""
+
+_COROUTINE_FLAGS = inspect.CO_COROUTINE | inspect.CO_ITERABLE_COROUTINE | inspect.CO_ASYNC_GENERATOR
 
 
 def started_by_installed_package(frame: FrameType | None) -> bool:
@@ -233,9 +236,10 @@ def started_by_installed_package(frame: FrameType | None) -> bool:
     while an installed package runs from `site-packages`, so the first frame outside Pydantic AI and
     the standard library says which of the two started the run.
 
-    Below an event loop, or a task an `asyncio`, `anyio` or `trio` runner starts, the frames belong to
-    whatever drives the loop (`uvicorn`, `ipykernel`), not to whoever started the run, unless Pydantic
-    AI's own sync methods drive it. A run whose starter lies past such a boundary is not attributed
+    Where a chain of coroutines ends in a frame that isn't one, an event loop is stepping a task, and
+    the frames below belong to whatever drives the loop (`uvicorn`, `ipykernel`), not to whoever
+    started the run, unless Pydantic AI's own sync methods drive it. `anyio` and `trio` start a task
+    through a coroutine of their own, so their frames mark the same boundary. A run whose starter lies past such a boundary is not attributed
     to a package: it keeps the banner, as before. So does a run a UI adapter streams: the web
     framework pulling the stream is installed, but the app that handed it the adapter's response is
     the user's.
@@ -245,7 +249,12 @@ def started_by_installed_package(frame: FrameType | None) -> bool:
     """
     stdlib_dirs = _stdlib_dirs()
     below_event_loop = False
+    in_coroutine = False
     while frame is not None:
+        is_coroutine = bool(frame.f_code.co_flags & _COROUTINE_FLAGS)
+        if in_coroutine and not is_coroutine:
+            below_event_loop = True
+        in_coroutine = is_coroutine
         filename = frame.f_code.co_filename
         module = frame.f_globals.get('__name__')
         package = module.partition('.')[0] if isinstance(module, str) else None
@@ -254,7 +263,7 @@ def started_by_installed_package(frame: FrameType | None) -> bool:
         if package in _OWN_PACKAGES:
             # `run_sync()` and friends drive the loop themselves, so their caller started the run.
             below_event_loop = False
-        elif package in _EVENT_LOOP_PACKAGES:
+        elif package in _TASK_RUNNER_PACKAGES:
             below_event_loop = True
         # Checked before the standard library, which a system Python's `site-packages` sits inside.
         elif not _INSTALLED_PACKAGE_DIRS.isdisjoint(PurePath(filename).parts):

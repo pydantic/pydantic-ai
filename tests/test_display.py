@@ -860,6 +860,7 @@ _LIBRARY_FILE = '/venv/lib/python3.13/site-packages/some_library/runner.py'
 
 _RUN_SYNC_SOURCE = 'def run(agent):\n    return agent.run_sync("hello")\n'
 _RUN_SOURCE = 'async def run(agent):\n    return await agent.run("hello")\n'
+_WAIT_FOR_SOURCE = 'import asyncio\nasync def run(agent):\n    return await asyncio.wait_for(agent.run("hello"), 10)\n'
 _STREAM_EVENTS_SOURCE = (
     'async def run(agent):\n'
     '    async with agent.run_stream_events("hello") as events:\n'
@@ -903,6 +904,8 @@ def test_banner_is_not_shown_for_a_run_an_installed_package_started(
     'source',
     [
         pytest.param(_RUN_SOURCE, id='run'),
+        # `wait_for` awaits the run in a coroutine of its own, which is part of the caller's chain.
+        pytest.param(_WAIT_FOR_SOURCE, id='wait_for'),
         # `run_stream_events()` runs the agent in its own task, so the caller's stack is read before it starts.
         pytest.param(_STREAM_EVENTS_SOURCE, id='run_stream_events'),
     ],
