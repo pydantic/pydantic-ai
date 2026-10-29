@@ -287,7 +287,7 @@ class SystemPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
-        return [_otel_messages.TextPart(type='text', **{'content': self.content} if settings.include_content else {})]
+        return [_otel_messages.text_part(self.content, include_content=settings.include_content)]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1375,11 +1375,7 @@ class UserPromptPart:
         for part in content:
             if isinstance(part, str | TextContent):
                 content_str = part if isinstance(part, str) else part.content
-                parts.append(
-                    _otel_messages.TextPart(
-                        type='text', **({'content': content_str} if settings.include_content else {})
-                    )
-                )
+                parts.append(_otel_messages.text_part(content_str, include_content=settings.include_content))
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 if settings.version >= 4:
                     uri_part = _otel_messages.UriPart(type='uri')
@@ -2631,11 +2627,7 @@ class RetryPromptPart:
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         if self.tool_name is None:
-            return [
-                _otel_messages.TextPart(
-                    type='text', **({'content': self.model_response()} if settings.include_content else {})
-                )
-            ]
+            return [_otel_messages.text_part(self.model_response(), include_content=settings.include_content)]
         else:
             part = _otel_messages.ToolCallResponsePart(
                 type='tool_call_response',
@@ -2737,11 +2729,7 @@ class RetryFeedbackPart:
         `prepare_messages` has already replaced this part with the part its `retry.cause` calls for, so it
         shows the same text at every instrumentation version.
         """
-        return [
-            _otel_messages.TextPart(
-                type='text', **{'content': self.model_response()} if settings.include_content else {}
-            )
-        ]
+        return [_otel_messages.text_part(self.model_response(), include_content=settings.include_content)]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -3941,11 +3929,7 @@ class SpeechPart:
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
         if self.transcript is not None:
-            parts.append(
-                _otel_messages.TextPart(
-                    type='text', **({'content': self.transcript} if settings.include_content else {})
-                )
-            )
+            parts.append(_otel_messages.text_part(self.transcript, include_content=settings.include_content))
         if (audio := self.audio) is not None:
             parts.append(_convert_binary_to_otel_part(audio.media_type, lambda: audio.base64, settings))
         return parts
@@ -4808,12 +4792,7 @@ class ModelResponse:
         parts: list[_otel_messages.MessagePart] = []
         for part in self.parts:
             if isinstance(part, TextPart):
-                parts.append(
-                    _otel_messages.TextPart(
-                        type='text',
-                        **({'content': part.content} if settings.include_content else {}),
-                    )
-                )
+                parts.append(_otel_messages.text_part(part.content, include_content=settings.include_content))
             elif isinstance(part, ThinkingPart):
                 parts.append(
                     _otel_messages.ThinkingPart(

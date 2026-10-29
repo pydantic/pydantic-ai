@@ -123,6 +123,13 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_supports_prompt_cache_diagnostics=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # Only OpenAI's audio models (`gpt-audio*`, `gpt-4o-audio-preview`, `gpt-4o-mini-audio-preview`) take
+                # `input_audio` on Chat Completions; the others reject it with a 400, so a tool-returned audio file
+                # would end the run instead of becoming a note. Responses takes no audio input on any model, which
+                # `OpenAIResponsesModel` already declares. Set here rather than in `openai_model_profile`, which is
+                # the fallback for unknown models on OpenAI-compatible endpoints, some of which serve audio models.
+                # https://developers.openai.com/api/docs/guides/audio
+                supports_audio_file_input='audio' in model_name,
                 # Measured live: every model from `gpt-4o-mini` through `gpt-5.5` rejects a `tool_choice` naming a tool
                 # that only an `additional_tools` item declares, and GPT-5.6 and GPT-6 accept it. Those are the models
                 # with explicit cache breakpoints. Set here with `tool_addition_mode`, since the item is first-party.

@@ -76,6 +76,12 @@ When `deps_type` is passed, [template strings](#template-strings) in the spec's 
 
 For more control over spec loading, use [`AgentSpec.from_file`][pydantic_ai.agent.AgentSpec.from_file] to load the spec separately before passing it to `Agent.from_spec`.
 
+### Where specs come from
+
+A spec has the same authority as the code that builds the agent. It chooses the model and provider, the instructions, and every capability with its arguments, including the endpoints the agent connects to. For example, an [`MCP`](capabilities/mcp.md) capability connects to the server URL the spec names, `localhost` and private addresses included, with the network access of the machine the agent runs on.
+
+Load specs only from sources you trust. If your application accepts specs from its users, load each one with [`AgentSpec.from_file`][pydantic_ai.agent.AgentSpec.from_file] or `AgentSpec.model_validate`, and check every entry in `spec.capabilities` (its `name`, and its `kwargs` such as an `MCP` `url`) against what that user may use before passing it to `Agent.from_spec`.
+
 ## Template strings
 
 [`TemplateStr`][pydantic_ai.template.TemplateStr] provides Handlebars-style templates (`{{variable}}`) that are rendered against the agent's [dependencies](dependencies.md) at runtime. In spec files, strings containing `{{` are automatically converted to template strings:
