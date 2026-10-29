@@ -51,7 +51,7 @@ Pydantic AI's license, documentation, releases, issue tracker, and community sup
 
 <Collapsible title="Is Logfire required?">
 
-No. Commercial support is available for the open-source Pydantic AI framework itself. Logfire traces can make an investigation faster, but Logfire is not required.
+No. Commercial support is available for the open-source Pydantic AI framework itself, as its own agreement: it is separate from any Logfire support tier, and a Logfire plan does not include it. Logfire traces can make an investigation faster, but Logfire is not required.
 
 </Collapsible>
 

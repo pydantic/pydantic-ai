@@ -19,7 +19,7 @@ This page answers the questions security, platform and procurement teams ask bef
 | [How do we keep a person in control?](#control) | Tool approval, guardrails, and a sandbox for model-written code |
 | [Can we audit what an agent did?](#audit) | With instrumentation on, every run, model request and tool call as an OpenTelemetry trace, in [Logfire](logfire.md) or your own backend |
 | [How do we know quality holds in production?](#evals) | [Pydantic Evals](evals.md) on datasets before a release and on live traffic after it, with results in Logfire |
-| [Which compliance certifications apply?](#compliance) | The library runs in your process; Logfire is SOC 2 Type II audited and supports HIPAA under a BAA |
+| [Which compliance certifications apply?](#compliance) | The library runs in your process; for Logfire and the Gateway, see the [Pydantic Trust Center](https://pydantic.dev/security) |
 | [How do we standardize across teams?](#governance) | Agent specs, shared capabilities, [Pydantic AI Harness](harness/index.md) and Gateway policies |
 | [Who do we call when it breaks?](#support) | Pydantic AI engineers, under a commercial agreement with an SLA |
 
@@ -73,7 +73,7 @@ With [instrumentation](logfire.md#using-logfire) turned on, Pydantic AI records 
 
 ## Which compliance certifications apply? {#compliance}
 
-Pydantic AI, Harness, Evals and Graph run in your environment, under the security controls you apply to the rest of your application; the library holds no certifications of its own. For the Pydantic services: Logfire is SOC 2 Type II audited and supports HIPAA workloads under a signed BAA, with EU and US data regions and a GDPR data processing agreement on every plan. The SOC 2 report and penetration test results are available through the [Pydantic Trust Center](https://pydantic.dev/security). SOC 2 Type II covers Logfire Cloud and Dedicated; a self-hosted deployment runs under your own controls. [Logfire for platform and security teams](https://pydantic.dev/docs/logfire/get-started/for-platform-and-security/) covers regions, scrubbing and self-hosting in more detail.
+Pydantic AI, Harness, Evals and Graph run in your environment, under the security controls you apply to the rest of your application; the library holds no certifications of its own. For Logfire and the Gateway, the [Pydantic Trust Center](https://pydantic.dev/security) has the certifications and reports, and [Logfire for platform and security teams](https://pydantic.dev/docs/logfire/get-started/for-platform-and-security/) covers regions, scrubbing and self-hosting.
 
 ## How do we standardize across teams? {#governance}
 
@@ -85,4 +85,4 @@ Pydantic AI, Harness, Evals and Graph run in your environment, under the securit
 
 ## Who do we call when it breaks? {#support}
 
-[Enterprise support](enterprise-support.md) gives your team direct access to Pydantic AI engineers, with an SLA defined in your agreement; that page lists what it covers. Support for the open-source framework does not require a Logfire or Gateway subscription. [Enterprise plans](https://pydantic.dev/enterprise) for Logfire and the Gateway include 24/7 priority support and setup assistance. Pydantic AI follows a [version policy](version-policy.md), vulnerabilities are reported through its [security policy](https://github.com/pydantic/pydantic-ai/security/policy), and the docs, issue tracker and [community help](help.md) stay open to everyone. Open-source projects that run on it are listed on [Built with Pydantic AI](built-with.md).
+[Enterprise support](enterprise-support.md) gives your team direct access to Pydantic AI engineers, with an SLA defined in your agreement; that page lists what it covers. It is its own agreement, separate from Logfire support: it does not require a Logfire or Gateway subscription, and a Logfire plan, at any tier, does not include it. [Logfire's Enterprise plans](https://pydantic.dev/enterprise) include their own support for Logfire and the Gateway. Pydantic AI follows a [version policy](version-policy.md), vulnerabilities are reported through its [security policy](https://github.com/pydantic/pydantic-ai/security/policy), and the docs, issue tracker and [community help](help.md) stay open to everyone. Open-source projects that run on it are listed on [Built with Pydantic AI](built-with.md).
