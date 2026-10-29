@@ -9,7 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from importlib.util import find_spec
@@ -82,6 +82,7 @@ assert 'PixeltableMemoryStore' not in namespace
     assert result.returncode == 0, result.stderr
 
 
+_PIXELTABLE_DIRECTORIES: list[str] = []
 _PIXELTABLE_AVAILABLE = find_spec('pixeltable') is not None
 _STORE_INDEXES = (
     0,
@@ -96,6 +97,18 @@ _VERSION_INDEXES = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _pixeltable_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setenv('PIXELTABLE_HOME', str(tmp_path / 'pixeltable'))
+    yield
+    if _PIXELTABLE_DIRECTORIES:
+        import pixeltable as pxt
+
+        for directory in _PIXELTABLE_DIRECTORIES:
+            pxt.drop_dir(directory, force=True)
+        _PIXELTABLE_DIRECTORIES.clear()
+
+
 def _local_stores(tmp_path: Path) -> list[Store]:
     return [
         InMemoryStore(),
@@ -107,10 +120,11 @@ def _local_stores(tmp_path: Path) -> list[Store]:
 def _local_store(tmp_path: Path, index: int) -> Store:
     if index < 3:
         return _local_stores(tmp_path)[index]
-    os.environ.setdefault('PIXELTABLE_HOME', str(tmp_path / 'pixeltable'))
     from pydantic_ai_harness.memory import PixeltableMemoryStore
 
-    return PixeltableMemoryStore(table_name=f'harness_contract_{uuid.uuid4().hex[:8]}.memory')
+    directory = f'harness_contract_{uuid.uuid4().hex[:8]}'
+    _PIXELTABLE_DIRECTORIES.append(directory)
+    return PixeltableMemoryStore(table_name=f'{directory}.memory')
 
 
 @pytest.mark.parametrize('index', _STORE_INDEXES)

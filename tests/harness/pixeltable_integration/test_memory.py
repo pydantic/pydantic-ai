@@ -16,7 +16,12 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import MemoryConflictError, MemoryOperation, PixeltableMemoryStore
+from tests.conftest import try_import
+
+with try_import() as imports_successful:
+    from pydantic_ai_harness.memory import MemoryConflictError, MemoryOperation, PixeltableMemoryStore
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='pixeltable not installed')
 
 
 def _memory_context(messages: list[ModelMessage]) -> str:

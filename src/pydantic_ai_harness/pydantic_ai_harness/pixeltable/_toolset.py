@@ -412,8 +412,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
                 pred = clause if pred is None else pred & clause
             except (pxt.Error, TypeError, ValueError) as exc:
                 _retry_or_raise(exc, f'Cannot filter {name!r} by {value!r}: ')
-        if pred is None:  # pragma: no cover - `where` is non-empty here
-            return query
+        assert pred is not None
         try:
             filtered = query.where(pred)
             assert isinstance(filtered, pxt.Query)

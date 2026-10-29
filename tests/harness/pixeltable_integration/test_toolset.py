@@ -7,15 +7,21 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-import numpy as np
-import pixeltable as pxt
 import pytest
-from PIL import Image
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai_harness.pixeltable import Pixeltable, PixeltableToolset
+from tests.conftest import try_import
 
-from .support import DIM, create_table, get_table, insert_rows, tiny_embed, tiny_image_embed
+with try_import() as imports_successful:
+    import numpy as np
+    import pixeltable as pxt
+    from PIL import Image
+
+    from pydantic_ai_harness.pixeltable import Pixeltable, PixeltableToolset
+
+    from .support import DIM, create_table, get_table, insert_rows, tiny_embed, tiny_image_embed
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='pixeltable not installed')
 
 
 @pytest.fixture
@@ -128,8 +134,10 @@ class TestPixeltableToolsetQuery:
         [
             pxt.RequestError(pxt.ErrorCode.INVALID_ARGUMENT, 'synthetic failure'),
             pxt.ServiceUnavailableError(pxt.ErrorCode.DATABASE_UNAVAILABLE, 'synthetic failure'),
-        ],
-        ids=['request', 'infrastructure'],
+        ]
+        if imports_successful()
+        else [],
+        ids=['request', 'infrastructure'] if imports_successful() else [],
     )
     def test_query_errors_retry_or_propagate(
         self, catalog: str, monkeypatch: pytest.MonkeyPatch, boundary: str, error: pxt.Error

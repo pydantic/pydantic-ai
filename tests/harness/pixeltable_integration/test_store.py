@@ -15,33 +15,41 @@ from typing import Literal, NoReturn
 
 import anyio
 import anyio.from_thread
-import pixeltable as pxt
 import pytest
-from pixeltable.exprs.expr import Expr
-from sqlalchemy import Engine, event
 
-from pydantic_ai_harness.memory import (
-    MemoryConflictError,
-    MemoryMutation,
-    MemoryOperation,
-    PixeltableMemoryStore,
-)
+from tests.conftest import try_import
 
-from .support import create_table, insert_rows
+with try_import() as imports_successful:
+    import pixeltable as pxt
+    from pixeltable.exprs.expr import Expr
+    from sqlalchemy import Engine, event
+
+    from pydantic_ai_harness.memory import (
+        MemoryConflictError,
+        MemoryMutation,
+        MemoryOperation,
+        PixeltableMemoryStore,
+    )
+
+    from .support import create_table, insert_rows
+
+    MEMORY_COLUMNS: dict[str, object] = {
+        'path': pxt.String,
+        'kind': pxt.String,
+        'content': pxt.String | None,
+        'version': pxt.String | None,
+        'last_operation_id': pxt.String | None,
+        'fingerprint': pxt.String | None,
+        'existed': pxt.Bool | None,
+    }
+
+    Around = Callable[[Callable[[], pxt.UpdateStatus]], pxt.UpdateStatus]
+    """Runs around one intercepted table call; receives the real call as a thunk."""
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='pixeltable not installed')
+
 
 RECEIPT_PREFIX = '__op__/'
-MEMORY_COLUMNS: dict[str, object] = {
-    'path': pxt.String,
-    'kind': pxt.String,
-    'content': pxt.String | None,
-    'version': pxt.String | None,
-    'last_operation_id': pxt.String | None,
-    'fingerprint': pxt.String | None,
-    'existed': pxt.Bool | None,
-}
-
-Around = Callable[[Callable[[], pxt.UpdateStatus]], pxt.UpdateStatus]
-"""Runs around one intercepted table call; receives the real call as a thunk."""
 
 
 @pytest.fixture
@@ -241,7 +249,9 @@ class TestPixeltableMemoryStoreSchema:
             ({**MEMORY_COLUMNS, 'content': pxt.String}, 'path', "column 'content' is not nullable"),
             # Inserts never set an extra column, so a non-nullable one rejects them.
             ({**MEMORY_COLUMNS, 'extra': pxt.String}, 'path', 'inserts never set'),
-        ],
+        ]
+        if imports_successful()
+        else [],
     )
     def test_incompatible_existing_table_rejected(
         self, root: str, schema: dict[str, object], primary_key: str | None, message: str

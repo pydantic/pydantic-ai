@@ -6,9 +6,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import pixeltable as pxt
 import pytest
-from pixeltable.functions import openai
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent
@@ -23,23 +21,29 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from tests.conftest import try_import
 
-from .support import get_table, tiny_embed
+with try_import() as imports_successful:
+    import pixeltable as pxt
+    from pixeltable.functions import openai
+
+    from .support import get_table, tiny_embed
+
+    @pxt.udf  # pyright: ignore[reportUnknownMemberType]
+    def transcribe(audio: pxt.Audio, *, model: str) -> dict[str, str]:
+        _PROVIDER_CALLS.append('transcribe')
+        return {'text': _POLICY}
+
+    @pxt.udf  # pyright: ignore[reportUnknownMemberType]
+    def caption(messages: list[dict[str, object]], *, model: str) -> dict[str, object]:
+        _PROVIDER_CALLS.append('caption')
+        return {'choices': [{'message': {'content': _POLICY}}]}
+
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='pixeltable not installed')
 
 _PROVIDER_CALLS: list[str] = []
 _POLICY = 'Meals during business travel are reimbursed up to 35 EUR per day.'
-
-
-@pxt.udf  # pyright: ignore[reportUnknownMemberType]
-def transcribe(audio: pxt.Audio, *, model: str) -> dict[str, str]:
-    _PROVIDER_CALLS.append('transcribe')
-    return {'text': _POLICY}
-
-
-@pxt.udf  # pyright: ignore[reportUnknownMemberType]
-def caption(messages: list[dict[str, object]], *, model: str) -> dict[str, object]:
-    _PROVIDER_CALLS.append('caption')
-    return {'choices': [{'message': {'content': _POLICY}}]}
 
 
 def test_video_example_reuses_ingestion_and_recalls_memory(monkeypatch: pytest.MonkeyPatch) -> None:

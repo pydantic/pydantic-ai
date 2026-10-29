@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pixeltable as pxt
 import pytest
 
 from pydantic_ai import Agent
@@ -17,9 +16,16 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.pixeltable import Pixeltable, PixeltableToolset
+from tests.conftest import try_import
 
-from .support import create_table, insert_rows
+with try_import() as imports_successful:
+    import pixeltable as pxt
+
+    from pydantic_ai_harness.pixeltable import Pixeltable, PixeltableToolset
+
+    from .support import create_table, insert_rows
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='pixeltable not installed')
 
 
 def _loaded(agent: Agent[None, str]) -> list[Pixeltable[None]]:

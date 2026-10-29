@@ -6,28 +6,17 @@ The folder is not named `tests/pixeltable`: Pyright treats `tests` as a root, an
 
 from __future__ import annotations
 
-import importlib.util
-import os
-import tempfile
 import uuid
 from collections.abc import Iterator
 
 import pytest
 
-# Tests run in their own Pixeltable catalog, never `~/.pixeltable`. Set the home
-# before any test module imports Pixeltable, and use a fresh directory so an
-# interrupted local run cannot leave a partial PostgreSQL cluster for the next.
-os.environ['PIXELTABLE_HOME'] = tempfile.mkdtemp(prefix='pydantic-ai-pixeltable-tests-')
 
-# The `pixeltable` dependency is gated on the `pixeltable` extra (and needs Python 3.11+), so
-# slim CI runs can't import these modules. Ignore them at collection. A conditional expression
-# rather than an `if` statement: branch coverage traces statement arcs, and no single
-# environment can take both arms of an install-dependent branch.
-collect_ignore = (
-    ['test_capability.py', 'test_memory.py', 'test_store.py', 'test_toolset.py', 'test_video.py']
-    if importlib.util.find_spec('pixeltable') is None
-    else []
-)
+@pytest.fixture(scope='session', autouse=True)
+def pixeltable_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv('PIXELTABLE_HOME', str(tmp_path_factory.mktemp('pixeltable')))
+        yield
 
 
 @pytest.fixture
