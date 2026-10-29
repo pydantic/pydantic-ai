@@ -86,7 +86,7 @@ def fresh_rich_styles() -> None:
 @pytest.fixture(scope='session')
 def runtime_root() -> Iterator[Path]:
     """Clean up after test-scoped OS monkeypatches have been restored."""
-    with TemporaryDirectory(prefix='c2-runtime-', dir='/tmp') as root:
+    with TemporaryDirectory(prefix='c2-runtime-', dir='/tmp' if os.name == 'posix' else None) as root:
         yield Path(root)
 
 

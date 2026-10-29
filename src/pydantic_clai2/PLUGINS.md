@@ -3894,7 +3894,7 @@ A `LiveSession` is one live session:
 | `tasks` | its delegated tasks, or `None` |
 | `forks` | its background `/fork` runs, oldest first, each a `ForkInfo` as `/forks` lists it |
 | `running` | whether a turn runs in it now |
-| `waiting_for` | the most recent open user wait's reason, or an empty string when none is open; CLAI tracks `ask_user` questions automatically |
+| `waiting_for` | the most recent open user wait's reason, or `None` when none is open; CLAI tracks `ask_user` questions automatically |
 | `wait_for_user(reason)` | mark a user wait, such as an approval dialog, until you call the idempotent function it returns; pair the call with `finally` so cancellation cannot leave a stale wait |
 | `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
@@ -3907,6 +3907,29 @@ A `LiveSession` is one live session:
 | `send_input(text, images=())` | enter `text` at its prompt, with `images` attached, as its `host.send_input` does |
 | `interrupt()` | cancel its running turn or command; `False` when nothing was running |
 | `await complete(text)` | what Tab offers at its prompt for `text` |
+
+Process-scoped plugins can read `waiting_for` through `host.live.listing()`, `get(id)`, or
+`current()`. `host.live.subscribe()` notifies them when a wait starts or ends. CLAI reports
+`ask_user` waits automatically; a plugin can mark another user interaction without depending
+on a concrete runtime class:
+
+```python
+from collections.abc import Awaitable, Callable
+
+from pydantic_clai2.plugins import LiveSession
+
+
+async def confirm_with_status(session: LiveSession, *, confirm: Callable[[], Awaitable[bool]]) -> bool:
+    finished = session.wait_for_user('an approval')
+    try:
+        return await confirm()
+    finally:
+        finished()
+```
+
+The callback ends only its own wait, even if another interaction starts meanwhile. Call it
+in `finally`, including when the interaction is cancelled. `waiting_for` becomes `None` once
+all waits have ended.
 
 With one session, as in a terminal where the web UI opened no other, `host.live`
 lists just that one. `open` and `new` raise `RuntimeError` only where CLAI opens no

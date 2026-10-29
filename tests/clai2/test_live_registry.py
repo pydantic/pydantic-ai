@@ -63,7 +63,7 @@ async def test_control_lifecycle_and_bounded_frames(private_runtime: Path) -> No
         assert set(TypeAdapter(dict[str, object]).validate_json(record.read_bytes())) == {'pid', 'instance', 'socket'}
         reply = await request(path, HelloRequest())
         assert reply.instance == registry.instance and reply.sessions == []
-        assert (await request(path, HelloRequest(protocol=2))).protocol == 1
+        assert reply.protocol == 1
         reader, writer = await asyncio.open_unix_connection(str(path))
         writer.write(b'x' * 70_000 + b'\n')
         await writer.drain()
@@ -75,7 +75,9 @@ async def test_control_lifecycle_and_bounded_frames(private_runtime: Path) -> No
     assert not path.exists() and not record.exists()
 
 
-@pytest.mark.parametrize('frame', [b'{\n', b'[]\n', b'{"op":"list"}\n', b'{"op":"unknown"}\n'])
+@pytest.mark.parametrize(
+    'frame', [b'{\n', b'[]\n', b'{"op":"list"}\n', b'{"op":"unknown"}\n', b'{"op":"hello","protocol":2}\n']
+)
 async def test_invalid_or_unknown_frame_returns_typed_error(private_runtime: Path, frame: bytes) -> None:
     registry = LiveRegistry(lambda: [], directory=private_runtime)
     async with registry.serving(subscribe):

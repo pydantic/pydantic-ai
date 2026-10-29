@@ -336,8 +336,8 @@ class LiveSession(Protocol):
         ...
 
     @property
-    def waiting_for(self) -> str:
-        """The most recent active user wait, or an empty string when none is open."""
+    def waiting_for(self) -> str | None:
+        """The most recent active user wait, or `None` when none is open."""
         ...
 
     def wait_for_user(self, reason: str, /) -> Callable[[], None]:

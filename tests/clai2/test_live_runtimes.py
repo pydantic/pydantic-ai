@@ -188,9 +188,14 @@ async def test_registry_tracks_open_sessions(
             capsys.readouterr().out
             == f'ID\tName\tStatus\tTitle\tWorkspace\n{home.id[:8]}\thome\tidle\t\t{home.workspace}\n'
         )
+        host = PluginHost[None](name='observer', console=Console(file=io.StringIO()), settings={}, live=fleet.live)
+        live = host.live
+        assert live is not None
+        observed: list[str | None] = []
+        unsubscribe = live.subscribe(lambda: observed.append(live.get(home.id).waiting_for))
         with pytest.raises(ValueError, match='must not be empty'):
-            home.wait_for_user('')
-        finished = home.wait_for_user('approval')
+            live.get(home.id).wait_for_user('')
+        finished = live.get(home.id).wait_for_user('approval')
         assert home.waiting_for == 'approval'
         clock[0] = transition + timedelta(seconds=1)
         waiting = fleet.live.registry.snapshot().sessions[0]
@@ -202,7 +207,10 @@ async def test_registry_tracks_open_sessions(
         second()  # Releasing a wait twice leaves the earlier one intact.
         assert home.waiting_for == 'approval'
         finished()
-        assert home.waiting_for == ''
+        assert home.waiting_for is None
+        assert observed == ['approval', 'a question', 'approval', None]
+        assert live.listing()[0].waiting_for is None
+        unsubscribe()
         assert record.read_bytes() == metadata
         assert (record.stat().st_ino, record.stat().st_mtime_ns) == (metadata_stat.st_ino, metadata_stat.st_mtime_ns)
         await fleet.live.close(home.id)
@@ -291,7 +299,7 @@ async def test_question_status_follows_answer_and_turn_end(tmp_path: Path, cance
             else:
                 release.set()
             await until(fleet.live, lambda: not home.running)
-            assert home.waiting_for == ''
+            assert home.waiting_for is None
             assert fleet.live.registry.snapshot().sessions[0].status == 'idle'
 
 

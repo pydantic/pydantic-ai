@@ -14,15 +14,10 @@ from typing import Literal
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_clai2.builtin_plugins.workspaces.kinds import Teardown
-from pydantic_clai2.config.private_files import write_private as _write_private
+from pydantic_clai2.config.private_files import write_private
 from pydantic_clai2.config.settings_store import state_dir
 
 _ID = re.compile(r'[a-z0-9][a-z0-9-]{0,47}')
-
-
-def write_private(path: Path, text: str) -> None:
-    """Write a private workspace state file atomically."""
-    _write_private(path, text)
 
 
 def workspaces_dir() -> Path:
@@ -80,7 +75,7 @@ class Registry:
         """Write the record, replacing the last one."""
         folder = self.folder(workspace.id)
         folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-        _write_private(folder / 'workspace.json', _RECORD.dump_json(workspace, indent=2).decode())
+        write_private(folder / 'workspace.json', _RECORD.dump_json(workspace, indent=2).decode())
 
     def get(self, workspace_id: str) -> Workspace:
         """A workspace's record; `LookupError` for an unknown or unreadable one."""

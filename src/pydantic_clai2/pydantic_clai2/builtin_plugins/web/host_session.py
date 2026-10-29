@@ -16,6 +16,7 @@ from pydantic_clai2.plugins import (
     SessionCatalog,
     TaskCatalog,
 )
+from pydantic_clai2.plugins._user_waits import UserWaits
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering.status import Status
@@ -28,7 +29,7 @@ class HostSession:
 
     def __init__(self, host: PluginHost[None]) -> None:
         self._host = host
-        self._waits: dict[object, str] = {}
+        self._user_waits = UserWaits()
 
     @property
     def id(self) -> str:
@@ -67,19 +68,11 @@ class HostSession:
         return False
 
     @property
-    def waiting_for(self) -> str:
-        return next(reversed(self._waits.values()), '')
+    def waiting_for(self) -> str | None:
+        return self._user_waits.current
 
     def wait_for_user(self, reason: str, /) -> Callable[[], None]:
-        if not reason:
-            raise ValueError('User-wait reason must not be empty.')
-        token = object()
-        self._waits[token] = reason
-
-        def finished() -> None:
-            self._waits.pop(token, None)
-
-        return finished
+        return self._user_waits.start(reason)
 
     @property
     def queued(self) -> int:

@@ -12,7 +12,7 @@ import socket
 import stat
 import struct
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,7 +26,8 @@ from pydantic_clai2.config.private_files import write_private
 from pydantic_clai2.config.settings_store import state_dir
 from pydantic_clai2.plugins import LiveSession
 
-_PROTOCOL = 1
+ProtocolVersion = Literal[1]
+_PROTOCOL: ProtocolVersion = 1
 _MAX_REQUEST = 65_536
 _MAX_REPLY = 1_048_576
 _TIMEOUT = 0.5
@@ -44,7 +45,7 @@ class LiveEntry:
     workspace: str
     model: str
     status: LiveStatus
-    waiting_for: str = ''
+    waiting_for: str | None = None
     status_since: datetime | None = None
 
 
@@ -69,7 +70,7 @@ class HelloRequest:
     """Request the current process identity and sessions."""
 
     op: Literal['hello'] = 'hello'
-    protocol: int = 1
+    protocol: ProtocolVersion = _PROTOCOL
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -78,7 +79,7 @@ class Hello:
 
     op: Literal['hello_reply']
     instance: str
-    protocol: Literal[1]
+    protocol: ProtocolVersion = _PROTOCOL
     sessions: list[LiveEntry]
 
 
@@ -258,18 +259,25 @@ class LiveRegistry:
         self._unsubscribe: Callable[[], None] | None = None
         self._statuses: dict[str, tuple[LiveStatus, datetime]] = {}
 
-    def snapshot(self) -> Hello:
-        """Current session metadata, with status-transition times retained between requests."""
+    def _track(self) -> list[LiveSession]:
         now = datetime.now(UTC)
         sessions = self.sessions()
         ids = {session.id for session in sessions}
         self._statuses = {key: value for key, value in self._statuses.items() if key in ids}
-        entries: list[LiveEntry] = []
         for session in sessions:
-            status: LiveStatus = 'waiting' if session.waiting_for else 'running' if session.running else 'idle'
+            status: LiveStatus = (
+                'waiting' if session.waiting_for is not None else 'running' if session.running else 'idle'
+            )
             previous = self._statuses.get(session.id)
             if previous is None or previous[0] != status:
                 self._statuses[session.id] = (status, now)
+        return sessions
+
+    def snapshot(self) -> Hello:
+        """Current session metadata, with status-transition times retained between requests."""
+        entries: list[LiveEntry] = []
+        for session in self._track():
+            status, since = self._statuses[session.id]
             entries.append(
                 LiveEntry(
                     id=session.id,
@@ -279,15 +287,15 @@ class LiveRegistry:
                     workspace=str(session.workspace),
                     model=session.status.model,
                     status=status,
-                    status_since=self._statuses[session.id][1],
+                    status_since=since,
                     waiting_for=session.waiting_for,
                 )
             )
-        return Hello(op='hello_reply', instance=self.instance, protocol=1, sessions=entries)
+        return Hello(op='hello_reply', instance=self.instance, sessions=entries)
 
     def changed(self) -> None:
         """Track session transitions in memory; discovery metadata is never rewritten."""
-        self.snapshot()
+        self._track()
 
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -325,7 +333,8 @@ class LiveRegistry:
                 await writer.wait_closed()
 
     @asynccontextmanager
-    async def serving(self, subscribe: Callable[[Callable[[], None]], Callable[[], None]]):
+    async def serving(self, subscribe: Callable[[Callable[[], None]], Callable[[], None]]) -> AsyncGenerator[None]:
+        """Serve current sessions and track transitions until the context ends; publish discovery metadata once."""
         if os.name != 'posix':
             raise OSError('Live session discovery requires Unix sockets')
         _private_directory(self.directory)

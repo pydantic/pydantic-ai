@@ -77,7 +77,6 @@ def profile_accounts() -> list[str]:
 
 def write_private(*, path: Path, value: str, replace: bool = True) -> None:
     """Publish credential data privately, cleaning up abandoned staging files first."""
-    path.parent.mkdir(parents=True, exist_ok=True)
     for stale in path.parent.glob(f'{path.name}.*.tmp'):
         stale.unlink(missing_ok=True)
     _write_private(path, value, replace=replace)

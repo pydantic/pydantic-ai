@@ -38,6 +38,7 @@ from pydantic_clai2.plugins import (
     SessionEndReason,
     TaskCatalog,
 )
+from pydantic_clai2.plugins._user_waits import UserWaits
 from pydantic_clai2.plugins.factories import import_file
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
@@ -146,7 +147,7 @@ class LiveRuntime:
         self._forks = forks
         self._changed = changed
         self._watchers = 0
-        self._waits: dict[object, str] = {}
+        self._user_waits = UserWaits(changed=self.changed)
 
     @property
     def id(self) -> str:
@@ -194,24 +195,13 @@ class LiveRuntime:
         return self._running()
 
     @property
-    def waiting_for(self) -> str:
-        """The most recent active user wait, or an empty string."""
-        return next(reversed(self._waits.values()), '')
+    def waiting_for(self) -> str | None:
+        """The most recent active user wait, or `None`."""
+        return self._user_waits.current
 
     def wait_for_user(self, reason: str, /) -> Callable[[], None]:
         """Report a nonempty reason until the returned idempotent function ends the wait."""
-        if not reason:
-            raise ValueError('User-wait reason must not be empty.')
-        token = object()
-        self._waits[token] = reason
-        self.changed()
-
-        def finished() -> None:
-            if token in self._waits:
-                del self._waits[token]
-                self.changed()
-
-        return finished
+        return self._user_waits.start(reason)
 
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting in the session."""
