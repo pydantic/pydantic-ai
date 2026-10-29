@@ -94,8 +94,9 @@ def ensure_inactive(summary: ConversationSummary) -> None:
     """Local SQLite sessions cannot be resumed while their recorded process is running.
 
     On Linux, a process that started after the conversation was last saved reuses the recorded PID, so the
-    conversation is not busy; elsewhere PID reuse is conservatively treated as busy. This is not a distributed
-    lease; do not share this database between hosts.
+    conversation is not busy; elsewhere PID reuse is conservatively treated as busy. Linux times a start from
+    the current wall clock, so a forward clock jump larger than the owner's age at its last save makes a running
+    conversation read as not busy. This is not a distributed lease; do not share this database between hosts.
     """
     if summary.outcome != 'running' or summary.owner_pid is None:
         return
