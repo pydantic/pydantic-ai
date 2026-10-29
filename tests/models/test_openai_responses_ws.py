@@ -64,6 +64,7 @@ from pydantic_ai.models import (
     ModelSelectionContext,
 )
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import NativeOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile
@@ -507,6 +508,7 @@ def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
         return socket
 
     monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    monkeypatch.setattr('pydantic_ai.models.openai.random', lambda: 0.0)
     return harness
 
 
@@ -622,15 +624,18 @@ async def test_model_selection_paths_use_the_socket(
 async def test_streaming_transport_is_recorded_on_model_span(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, capfire: CaptureLogfire
 ):
-    """A socket request's `chat` span says so, and an HTTP request's carries no transport attribute."""
+    """WebSocket mode identifies socket and HTTP sends; plain HTTP leaves the attribute unset."""
     logfire.instrument_pydantic_ai()
     sockets.pending[0].responses = deque([text_events('streamed')])
     agent = Agent(websocket_model(http.provider()))
-    async with agent.run_stream('hello') as result:
-        assert await result.get_output() == 'streamed'
-    http_settings: OpenAIResponsesModelSettings = {'openai_transport': 'http'}
-    with logfire.span('caller span'):
-        await agent.run('over HTTP', model_settings=http_settings)
+    async with agent:
+        async with agent.run_stream('hello') as result:
+            assert await result.get_output() == 'streamed'
+        http_settings: OpenAIResponsesModelSettings = {'openai_transport': 'http'}
+        with logfire.span('caller span'):
+            await agent.run('over HTTP', model_settings=http_settings)
+        different_headers = OpenAIResponsesModelSettings(extra_headers={'x-test': 'different'})
+        await agent.run('header fallback', model_settings=different_headers)
 
     logfire.force_flush()
     spans = capfire.exporter.exported_spans_as_dict()
@@ -639,7 +644,9 @@ async def test_streaming_transport_is_recorded_on_model_span(
         for span in spans
         if span['attributes'].get('gen_ai.operation.name') == 'chat'
     ]
-    assert chat_transports == ['websocket', None]
+    assert chat_transports == ['websocket', None, 'http']
+    assert len(sockets.opened) == 1
+    assert len(http.requests) == 2
     caller_span = next(span for span in spans if span['name'] == 'caller span')
     assert 'pydantic_ai.transport' not in caller_span['attributes']
 
@@ -2607,7 +2614,11 @@ async def test_bedrock_mantle_websocket_accepts_compatible_bearer_client(
 
 @pytest.mark.parametrize('request_kind', ['background', 'background_body', 'resume'])
 async def test_background_and_resumed_requests_use_http(
-    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, request_kind: str
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    http: HTTPResponses,
+    request_kind: str,
+    capfire: CaptureLogfire,
 ):
     """The socket can't run a background response or retrieve a suspended one, so those requests use HTTP."""
     settings: OpenAIResponsesModelSettings = (
@@ -2630,12 +2641,19 @@ async def test_background_and_resumed_requests_use_http(
         if request_kind == 'resume'
         else user_prompt('hello')
     )
-    model = websocket_model(http.provider())
+    model = InstrumentedModel(websocket_model(http.provider()))
     async with model:
         response = await model.request(messages, settings, ModelRequestParameters())
     assert response.text == 'from HTTP'
     assert sockets.connect_count == 0
     assert [request.method for request in http.requests] == (['GET'] if request_kind == 'resume' else ['POST'])
+    logfire.force_flush()
+    chat_transports = [
+        span['attributes'].get('pydantic_ai.transport')
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'chat'
+    ]
+    assert chat_transports == ['http']
 
 
 @pytest.mark.parametrize('extra_body', [['invalid'], {'stream': True}, {'stream_id': 'x'}, {'type': 'other'}])
@@ -2954,6 +2972,33 @@ async def test_early_rejection_retry_budget(
     expected_retries = 2 if max_retries is None else max_retries
     assert len(socket.sent) == expected_retries + 1
     assert delays == [0.25] * expected_retries
+    assert socket.close_count == 1
+
+
+async def test_early_rejection_backoff_has_jitter(
+    allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch
+):
+    """Each rejection samples its own bounded delay, including after exponential backoff reaches its cap."""
+    socket = sockets.pending[0]
+    error: Frame = {
+        'type': 'error',
+        'status': 429,
+        'error': {'type': 'rate_limit_error', 'code': 'rate_limit_exceeded', 'message': 'retry later'},
+    }
+    socket.responses = deque([[error] for _ in range(6)])
+    socket.responses.append(text_events())
+    delays: list[float] = []
+    random_values = iter((0.0, 0.5, 0.25, 0.75, 1.0, 0.0))
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(anyio, 'sleep', sleep)
+    monkeypatch.setattr('pydantic_ai.models.openai.random', random_values.__next__)
+    settings = OpenAIResponsesModelSettings(max_retries=6)
+    assert (await Agent(websocket_model(settings=settings)).run('hello')).output == 'ready'
+    assert delays == [0.5, 0.875, 1.875, 3.25, 6.0, 8.0]
+    assert len(socket.sent) == 7
     assert socket.close_count == 1
 
 

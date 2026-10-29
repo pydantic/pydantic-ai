@@ -27,6 +27,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
+from random import random
 from types import TracebackType
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Never, Self, TypeVar, assert_never, cast, get_args, overload
 
@@ -176,6 +177,14 @@ if TYPE_CHECKING:
     from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
+
+# Initial/max backoff and downward jitter follow the OpenAI SDK's retry algorithm.
+_WEBSOCKET_RETRY_INITIAL_DELAY = 0.5
+_WEBSOCKET_RETRY_MAX_DELAY = 8.0
+_WEBSOCKET_RETRY_JITTER_RATIO = 0.25
+_WEBSOCKET_RETRY_MAX_EXPONENT = 4  # The base delay has reached its cap after four doublings.
+# Longer server-directed waits remain caller-owned rather than blocking a socket request.
+_WEBSOCKET_RETRY_AFTER_LIMIT = 60.0
 
 if TYPE_CHECKING:
     from ._openai_responses_websocket import ResponsesWebSocket, ResponsesWebSocketStream
@@ -4519,19 +4528,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     websocket_stream.rejection_retries >= max_retries
                     or not (exc.status_code in (408, 409, 429) or exc.status_code >= 500)
                     or (exc.headers or {}).get('x-should-retry') == 'false'
-                    or (retry_after is not None and retry_after > 60)
+                    or (retry_after is not None and retry_after > _WEBSOCKET_RETRY_AFTER_LIMIT)
                 ):
                     raise
                 await websocket_stream.close()
-                await anyio.sleep(
-                    retry_after
-                    if retry_after is not None
-                    else min(0.5 * 2 ** min(websocket_stream.rejection_retries, 4), 8)
-                )
+                delay = retry_after
+                if delay is None:
+                    delay = min(
+                        _WEBSOCKET_RETRY_INITIAL_DELAY
+                        * 2 ** min(websocket_stream.rejection_retries, _WEBSOCKET_RETRY_MAX_EXPONENT),
+                        _WEBSOCKET_RETRY_MAX_DELAY,
+                    )
+                    delay *= 1 - _WEBSOCKET_RETRY_JITTER_RATIO * random()
+                await anyio.sleep(delay)
                 retry = await self._reserve_websocket_lane(asyncio.get_running_loop(), messages, given_settings)
                 if retry is None:
-                    if (span := current_model_request_span()) is not None:
-                        span.set_attribute('pydantic_ai.transport', 'http')
                     http_settings: OpenAIResponsesModelSettings = {
                         **given_settings,
                         'max_retries': max_retries - websocket_stream.rejection_retries - 1,
@@ -4561,6 +4572,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 retry, messages, stream, given_settings, model_request_parameters
             )
 
+        if model_settings.get('openai_transport') == 'websocket' and (span := current_model_request_span()) is not None:
+            span.set_attribute('pydantic_ai.transport', 'http')
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await with_max_retries(self.client, model_settings).responses.create(
@@ -4748,6 +4761,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Retrieve a background response by ID, optionally streaming."""
         include = self._build_include(model_settings, is_retrieve=True)
         extra_headers, timeout = self._build_request_options(model_settings)
+        if model_settings.get('openai_transport') == 'websocket' and (span := current_model_request_span()) is not None:
+            span.set_attribute('pydantic_ai.transport', 'http')
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await with_max_retries(self.client, model_settings).responses.retrieve(
