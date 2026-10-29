@@ -418,7 +418,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             aria-current={current ? 'true' : undefined}
           >
             {/* A row that needs input says so with its pill instead. */}
-            <Glyph state={state === 'asking' ? null : state} pid={session.pid} />
+            <Glyph state={state === 'asking' ? null : state} pid={session.owner_pid} />
             <span className="session-title">{session.title}</span>
             {chip && <span className="session-chip">{chip}</span>}
             {twins.has(session.id) && <span className="session-chip mono">#{session.id.slice(0, 6)}</span>}

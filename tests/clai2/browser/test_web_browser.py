@@ -371,7 +371,7 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
             'updated_at': '2026-01-01T00:00:00Z',
             'created_at': '2026-01-01T00:00:00Z',
             'state': 'ready',
-            'pid': None,
+            'owner_pid': None,
             'messages': 2,
             'model': None,
             'current': False,

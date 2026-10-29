@@ -29,7 +29,7 @@ def session_entry(
         updated_at=summary.updated_at,
         created_at=summary.created_at or summary.updated_at,
         state=state,
-        pid=summary.owner_pid if state == 'busy' else None,
+        owner_pid=summary.owner_pid if state == 'busy' else None,
         messages=summary.message_count,
         model=summary.model,
         current=current,

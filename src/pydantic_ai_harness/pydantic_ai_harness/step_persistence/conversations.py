@@ -48,6 +48,10 @@ class GitCheckout:
     """The checked-out branch, or a label for a detached checkout."""
 
 
+ConversationOrder = Literal['updated_at', 'created_at']
+"""How `SqliteConversationStore.listing` orders conversations: by last activity, or by creation."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class ConversationSummary:
     """Browser metadata. Naming and archiving do not change activity or content revision."""
@@ -61,7 +65,8 @@ class ConversationSummary:
     created_at: datetime | None = None
     """When the conversation was first saved, which saving more content keeps; `None` until then.
 
-    A conversation saved before this field existed gets its activity time from before its next save.
+    A conversation saved before this field existed reads `None` until its next save, which sets it to the
+    conversation's previous `updated_at`.
     """
     revision: int = 0
     title: str = 'New session'
@@ -88,6 +93,10 @@ class ConversationSummary:
     It names the whole source conversation, not a message in it. The store only saves it; the application
     decides which copies record it, and `listing(forked_from=...)` finds those.
     """
+
+
+_CLOCK_SLACK = timedelta(seconds=2)
+"""How much later than a save its own process may seem to start: Linux times processes in whole seconds and ticks."""
 
 
 def ensure_inactive(summary: ConversationSummary) -> None:
@@ -124,17 +133,13 @@ def ensure_inactive(summary: ConversationSummary) -> None:
     raise ConversationConflict(f'Session is busy in process {summary.owner_pid}.')
 
 
-_CLOCK_SLACK = timedelta(seconds=2)
-"""How much later than a save its own process may seem to start: Linux times processes in whole seconds and ticks."""
-
-
 _CREATED = "coalesce(json_extract(metadata, '$.created_at'), json_extract(metadata, '$.updated_at'))"
 """A conversation's creation time, or its last activity when saved before `created_at` existed.
 
 Both come from the metadata, so both are in its one timestamp format and compare as text.
 """
 
-_ORDERS = {'updated_at': 'updated_at', 'created_at': _CREATED}
+_ORDERS: dict[ConversationOrder, str] = {'updated_at': 'updated_at', 'created_at': _CREATED}
 """The SQL each `listing(order_by=...)` sorts by."""
 
 
@@ -328,7 +333,7 @@ class SqliteConversationStore:
         offset: int = 0,
         archived: bool | None = None,
         forked_from: str | None = None,
-        order_by: Literal['updated_at', 'created_at'] = 'updated_at',
+        order_by: ConversationOrder = 'updated_at',
     ) -> list[ConversationSummary]:
         """Page summaries without loading transcripts. Search includes title, tags and conversation text.
 
@@ -348,7 +353,7 @@ class SqliteConversationStore:
         offset: int,
         archived: bool | None,
         forked_from: str | None,
-        order_by: Literal['updated_at', 'created_at'],
+        order_by: ConversationOrder,
     ) -> list[ConversationSummary]:
         # Every row matches an empty query, and searching reads each transcript, so only a real query searches.
         search = 'instr(casefold(search_text || metadata), casefold(?)) > 0 AND ' if query else ''

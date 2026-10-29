@@ -886,7 +886,7 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
         'Mine': 'cancelled',
         'Dead': 'cancelled',
     }, "this process's own turn is never busy elsewhere: no live session here holds it, so it ended unsaved"
-    assert {entry['title']: entry['pid'] for entry in removed['sessions']} == {
+    assert {entry['title']: entry['owner_pid'] for entry in removed['sessions']} == {
         'Live': os.getppid(),
         'Mine': None,
         'Dead': None,
