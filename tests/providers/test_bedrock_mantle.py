@@ -212,7 +212,9 @@ def test_bedrock_converse_rejects_proprietary_openai() -> None:
         'openai.gpt-5.4',
         'openai.gpt-5.5',
     ):
-        assert BedrockProvider.model_profile(model_name) == snapshot({'bedrock_supported_on_converse': False})
+        assert BedrockProvider.model_profile(model_name) == snapshot(
+            {'bedrock_supported_on_converse': False, 'supports_video_input': False}
+        )
         with pytest.raises(UserError, match='BedrockMantleProvider'):
             infer_model(f'bedrock:{model_name}')
     # The open-weight GPT-OSS family remains available on Converse.
@@ -241,6 +243,8 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
             'bedrock_thinking_variant': 'openai_responses',
             'supports_thinking': True,
             'thinking_always_enabled': base_name in ('gpt-6-astra', 'gpt-6.1-sol'),
+            # Converse takes video only on Nova.
+            'supports_video_input': False,
             **retention,
         }
         model = BedrockConverseModel(f'us.openai.{base_name}', provider=BedrockProvider(region_name='us-west-2'))
@@ -304,7 +308,7 @@ def test_bedrock_converse_gpt_5_6_inference_id_forms() -> None:
 
     # India normalization must still route unsupported proprietary models through the OpenAI profile gate.
     assert BedrockProvider.model_profile('in.openai.gpt-5.6-cyber') == snapshot(
-        {'bedrock_supported_on_converse': False}
+        {'bedrock_supported_on_converse': False, 'supports_video_input': False}
     )
     with pytest.raises(UserError, match='BedrockMantleProvider'):
         BedrockConverseModel('in.openai.gpt-5.6-cyber', provider=BedrockProvider(region_name='ap-south-1'))
