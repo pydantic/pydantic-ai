@@ -62,3 +62,4 @@ This installation also includes [migration skills](framework-migration.md) for m
 - [`pydantic/skills`](https://github.com/pydantic/skills): source repository
 - [agentskills.io](https://agentskills.io): the open standard for agent skills
 - [library-skills.io](https://library-skills.io): install agent skills bundled with your project's dependencies
+- [Built with Pydantic AI](built-with.md): open source systems your coding agent can study for how to structure a large application, and libraries that build on Pydantic AI

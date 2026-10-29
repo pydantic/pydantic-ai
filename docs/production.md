@@ -22,6 +22,8 @@ The rest of the page answers the questions teams ask before shipping an agent, e
 | [How do I serve it to a frontend?](#frontend) | [AG-UI](ui/ag-ui.md) or [Vercel AI](ui/vercel-ai.md) streams from any ASGI app | `pydantic-ai` |
 | [How do I deploy it?](#deploy) | As your own Python process: a web app, a worker or a function | Your infrastructure |
 
+For systems already running Pydantic AI in production, with their code or case studies, see [Built with Pydantic AI](built-with.md).
+
 ## An end-to-end service {#end-to-end}
 
 One file with the pieces most production agents need: an HTTP API, a tool that waits for a person to approve it, durable execution on [DBOS](durable_execution/dbos.md), and OpenTelemetry traces. It needs a model provider's API key and nothing else: DBOS keeps its state in a SQLite file here (use Postgres in production), and traces go to [Logfire](logfire.md) when a Logfire token is available, from `LOGFIRE_TOKEN` or the credentials `logfire auth` saved locally, or to any OTel collector named by `OTEL_EXPORTER_OTLP_ENDPOINT`. To stay short, it leaves out what you add before exposing it: authentication and checks that the caller owns the run, deduplication of repeated requests, and [usage limits](#cost).

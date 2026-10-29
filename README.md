@@ -242,7 +242,7 @@ That [standalone image API](https://pydantic.dev/docs/ai/guides/image-generation
 
 - **Coming from another framework?** The [comparisons](https://pydantic.dev/docs/ai/comparisons/overview/) show where Pydantic AI differs from LangChain, Google ADK, the Claude Agent SDK and seven more, and the [migration skills](https://pydantic.dev/docs/ai/comparisons/migrate-from-other-frameworks/) let your coding agent port an existing application over.
 
-Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents.
+Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents. [Built with Pydantic AI](https://pydantic.dev/docs/ai/overview/built-with/) lists open source projects and organizations that run on it.
 
 ## Putting it together: a bank support agent
 
