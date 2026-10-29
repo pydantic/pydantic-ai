@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
@@ -35,7 +36,6 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 from pydantic_ai.workspaces import WorkspaceRef
 
-from ._operation_backend import INPUT, ActivityInput
 from ._run_context import ContextSnapshot
 
 
@@ -81,7 +81,23 @@ WireT = TypeVar('WireT', bound=_HasContext)
 RestoreContext = Callable[[ContextSnapshot], RunContext[Any]]
 
 
-class _Transport(ParameterTransport[ParamsT, JsonValue], Generic[ParamsT, WireT]):
+@dataclass
+class ActivityInput:
+    parameters: JsonValue
+    deps_input: JsonValue
+
+
+INPUT = TypeAdapter(ActivityInput)
+
+
+class JsonTransport(ParameterTransport[ParamsT, JsonValue], ABC):
+    """Base for every transport this capability installs, so activities load their input without asserting its wire type."""
+
+    @abstractmethod
+    def load(self, payload: object, *, runtime: object) -> ParamsT: ...
+
+
+class _Transport(JsonTransport[ParamsT], Generic[ParamsT, WireT]):
     def __init__(
         self,
         adapter: TypeAdapter[WireT],
@@ -100,7 +116,7 @@ class _Transport(ParameterTransport[ParamsT, JsonValue], Generic[ParamsT, WireT]
         )
         return INPUT.dump_python(payload, mode='json')
 
-    def load(self, payload: JsonValue, *, runtime: object) -> ParamsT:
+    def load(self, payload: object, *, runtime: object) -> ParamsT:
         return self._load(self._adapter.validate_python(INPUT.validate_python(payload).parameters))
 
 

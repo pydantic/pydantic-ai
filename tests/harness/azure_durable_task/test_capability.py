@@ -22,10 +22,8 @@ from pydantic_ai import (
     ToolApproved,
     ToolDenied,
 )
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, Instrumentation, durable_operation
 from pydantic_ai.durable_exec import (
-    CapabilityOperationId,
-    DurableOperation,
     conversation_id_from_run_id,
 )
 from pydantic_ai.exceptions import UserError
@@ -46,6 +44,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
+from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ...conftest import try_import
 from ...workspace_fakes import InMemoryProvider
 
@@ -56,10 +55,7 @@ with try_import() as imports_successful:
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
 
     from .worker import (
-        EmptyCacheIdentity,
-        IdentityTransport,
         InMemoryWorker,
-        JsonResultCodec,
         agent_orchestrator,
         completed,
         registered_agent,
@@ -515,6 +511,44 @@ class TestAzureDurableTaskDurability:
             ]
         }
         assert all(len(name) == 100 for name in names)
+
+    def test_batched_request_waits_on_durable_timers_and_recovers_its_batch(
+        self, durable_worker: InMemoryWorker
+    ) -> None:
+        model = SlowBatchTestModel(pending_checks=2)
+
+        def make_agent() -> Agent[object, str]:
+            return Agent(
+                model,
+                name='batch',
+                capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), AzureDurableTaskDurability()],
+            )
+
+        durable = make_agent()
+        with registered_agent(durable_worker, durable):
+            handle = schedule_agent(durable_worker, durable, 'go', deps=None)
+            durable_worker.run_until_idle()
+        # Submitting ran as an activity, and the wait before the first check is a durable timer.
+        assert len(model.created) == 1
+        assert model.status_checks == 0
+        assert len(durable_worker.timers) == 1
+
+        replacement = InMemoryWorker()
+        replacement.instances = durable_worker.instances
+        replacement.timers = durable_worker.timers
+        new_durable = make_agent()
+        replacement.add_orchestrator(agent_orchestrator(new_durable, 'go', deps=None))
+        with registered_agent(replacement, new_durable):
+            waits = 0
+            while replacement.timers:
+                waits += 1
+                replacement.fire_timers()
+                replacement.run_until_idle()
+            assert completed(replacement, handle) == 'success (no tool calls)'
+        assert len(model.created) == 1
+        assert model.status_checks == 3
+        assert replacement.activity_calls == ['batch__model.request'] * 3
+        assert waits == 3
 
     def test_replay_on_a_new_worker_does_not_repeat_tools(self, durable_worker: InMemoryWorker) -> None:
         calls: list[str] = []
@@ -1038,40 +1072,6 @@ class TestAzureDurableTaskDurability:
 def test_unbound_capability_cannot_register() -> None:
     with pytest.raises(UserError, match=r'Bind .* to an agent'):
         AzureDurableTaskDurability().get_durable_operation_backend()
-
-
-def test_backend_outside_orchestration_and_invalid_native_policy(durable_worker: InMemoryWorker) -> None:
-    async def echo(value: str) -> str:
-        return value
-
-    capability = AzureDurableTaskDurability.from_agent(
-        Agent(TestModel(), name='custom', capabilities=[AzureDurableTaskDurability()])
-    )
-    assert capability is not None
-    backend = capability.get_durable_operation_backend()
-    operation = backend.bind(
-        DurableOperation(
-            operation_id=CapabilityOperationId('custom', operation='echo'),
-            handler=echo,
-            parameter_transport=IdentityTransport[str](),
-            cache_identity=EmptyCacheIdentity[str](),
-            result_codec=JsonResultCodec[str](str),
-            config_role='capability',
-        )
-    )
-    assert asyncio.run(operation('ordinary')) == 'ordinary'
-
-    def orchestrator(context: task.OrchestrationContext, payload: object) -> Generator[task.Task[object], object, str]:
-        async def body() -> str:
-            return await operation('invalid', config=object())
-
-        return (yield from run_durable(context, body))
-
-    durable_worker.add_orchestrator(orchestrator)
-    instance_id = durable_worker.schedule(orchestrator)
-    state = durable_worker.wait(instance_id)
-    with pytest.raises(OrchestrationFailedError, match='activity configuration must be'):
-        state.raise_if_failed()
 
 
 def test_activity_cannot_emit_live_events(durable_worker: InMemoryWorker) -> None:

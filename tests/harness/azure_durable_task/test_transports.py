@@ -10,7 +10,6 @@ from typing import Any, Self
 from uuid import UUID
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, ConfigDict, Json, JsonValue
 
 from pydantic_ai import (
@@ -19,11 +18,7 @@ from pydantic_ai import (
     Choices,
     RunContext,
 )
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.durable_exec import (
-    CapabilityOperationId,
-    DurableOperation,
-)
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -49,10 +44,7 @@ with try_import() as imports_successful:
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
 
     from .worker import (
-        EmptyCacheIdentity,
-        IdentityTransport,
         InMemoryWorker,
-        JsonResultCodec,
         completed,
         registered_agent,
         run_agent,
@@ -356,78 +348,45 @@ def test_activity_toolset_scope_closes_after_failure_or_cancellation(
     assert 'enter' in lifetimes
 
 
-@pytest.mark.parametrize('kind', ['collision', 'value', 'missing-format', 'codec-failure', 'json-failure'])
+@pytest.mark.parametrize('kind', ['collision', 'missing-format', 'codec-failure'])
 def test_activity_result_wire_contract(durable_worker: 'InMemoryWorker', kind: str) -> None:
-    value: JsonValue = (
-        {'format': 'pydantic-ai-durabletask-result-v1', 'value': 'user data', 'error': 'not a failure'}
-        if kind == 'collision'
-        else {'answer': 42}
-    )
+    lookalike: JsonValue = {
+        'format': 'pydantic-ai-durabletask-result-v1',
+        'value': 'user data',
+        'error': 'not a failure',
+    }
+    returned: list[object] = []
 
-    async def handler(params: dict[str, JsonValue]) -> object:
-        return object() if kind.endswith('failure') else value
+    class Producer(AbstractCapability[object]):
+        id = 'producer'
 
-    capability = AzureDurableTaskDurability.from_agent(
-        Agent(TestModel(), name='wire', capabilities=[AzureDurableTaskDurability()])
-    )
-    assert capability is not None
-    backend = capability.get_durable_operation_backend()
-    operation = backend.bind(
-        DurableOperation(
-            operation_id=CapabilityOperationId('wire', operation='echo'),
-            handler=handler,
-            parameter_transport=IdentityTransport[dict[str, JsonValue]](),
-            cache_identity=EmptyCacheIdentity[dict[str, JsonValue]](),
-            result_codec=JsonResultCodec[object](object, mode='identity' if kind == 'json-failure' else 'json'),
-            config_role='capability',
-        )
-    )
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            returned.append(await self.produce(ctx))
 
-    def orchestrator(
-        context: task.OrchestrationContext, payload: object
-    ) -> Generator[task.Task[object], object, object]:
-        async def body() -> object:
-            return await operation({'parameters': None, 'deps_input': None})
+        @durable_operation('produce')
+        async def produce(self, ctx: RunContext[object]) -> object:
+            return object() if kind == 'codec-failure' else lookalike
 
-        return (yield from run_durable(context, body))
-
-    with capability.register(durable_worker):
-        durable_worker.add_orchestrator(orchestrator)
-        instance_id = durable_worker.schedule(orchestrator)
-        assert durable_worker.step()
-        assert durable_worker.step()
-        event = durable_worker.instances[instance_id].new_events[0]
-        assert event.HasField('taskCompleted')
-        recorded = json.loads(event.taskCompleted.result.value)
+    agent = Agent(TestModel(), name='wire', capabilities=[Producer(), AzureDurableTaskDurability()])
+    with registered_agent(durable_worker, agent):
+        run = schedule_agent(durable_worker, agent, 'Hi', deps=None)
         if kind == 'collision':
-            assert recorded == snapshot(
-                {
-                    'format': 'pydantic-ai-durabletask-result-v1',
-                    'value': {
-                        'format': 'pydantic-ai-durabletask-result-v1',
-                        'value': 'user data',
-                        'error': 'not a failure',
-                    },
-                    'error': None,
-                }
-            )
-        elif kind.endswith('failure'):
-            assert recorded['error'].startswith('Durable Task serialization failed:')
-        else:
-            assert recorded['value'] == value
-            if kind == 'missing-format':
-                del recorded['format']
-                event.taskCompleted.result.value = json.dumps(recorded)
-        state = durable_worker.wait(instance_id)
-    if kind == 'missing-format':
-        with pytest.raises(OrchestrationFailedError, match='Field required'):
-            state.raise_if_failed()
-    elif kind.endswith('failure'):
-        with pytest.raises(OrchestrationFailedError, match='Durable Task serialization failed'):
-            state.raise_if_failed()
-    else:
-        state.raise_if_failed()
-        assert state.get_output() == value
+            completed(durable_worker, run)
+            # A value shaped like the result envelope comes back as the value, not as an error.
+            assert returned and all(value == lookalike for value in returned)
+            return
+        if kind == 'missing-format':
+            assert durable_worker.step()  # Schedule the capability operation.
+            assert durable_worker.step()  # Run it.
+            event = durable_worker.instances[run].new_events[0]
+            recorded = json.loads(event.taskCompleted.result.value)
+            del recorded['format']
+            event.taskCompleted.result.value = json.dumps(recorded)
+        with pytest.raises(
+            OrchestrationFailedError,
+            match='Field required' if kind == 'missing-format' else 'Durable Task serialization failed',
+        ):
+            completed(durable_worker, run)
 
 
 def test_model_compaction_restores_the_model(durable_worker: 'InMemoryWorker') -> None:

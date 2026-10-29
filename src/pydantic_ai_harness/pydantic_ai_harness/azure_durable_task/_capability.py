@@ -107,6 +107,7 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         def resolve_options(
             operation_id: DurableOperationId, tool: object | None, tool_name: str
         ) -> RetryPolicy | Literal[False] | None:
+            # Keep the declared type: the `isinstance` checks below would narrow `tool` to a partially unknown generic.
             resolver_tool: object | None = tool
             from_metadata = (
                 isinstance(tool, ToolsetTool)

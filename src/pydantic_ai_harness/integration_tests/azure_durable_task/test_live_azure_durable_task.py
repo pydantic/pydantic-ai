@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from threading import Barrier, Lock
-from typing import Literal, NoReturn, TypeVar, cast
+from typing import Literal, NoReturn, TypeVar
 from uuid import uuid4
 
 import grpc
@@ -35,6 +35,7 @@ from pydantic_ai import (
     ToolDenied,
     UserError,
 )
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.messages import (
     ModelMessage,
@@ -83,7 +84,7 @@ class _ReviewExample:
         review = _Review.model_validate({'pause': pause, 'decisions': decisions})
         state = client.get_orchestration_state(instance_id)
         pending = state.get_custom_status() if state is not None else None
-        if not isinstance(pending, dict) or cast(dict[str, object], pending).get('pause') != pause:
+        if not is_str_dict(pending) or pending.get('pause') != pause:
             raise UserError('The reviewed pause is no longer pending.')
         client.raise_orchestration_event(instance_id, f'review:{pause}', data=review.model_dump(mode='json'))
 

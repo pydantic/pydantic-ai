@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass
-from typing import Generic, Literal, TypeVar, cast
+from typing import Generic, Literal, TypeVar
 
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 from durabletask import task
@@ -28,6 +28,7 @@ from pydantic_ai.durable_exec import (
 from pydantic_ai.exceptions import UserError
 
 from ._bridge import current_loop
+from ._transports import INPUT, JsonTransport
 
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
@@ -35,13 +36,6 @@ ResultT = TypeVar('ResultT')
 __all__ = ('AzureDurableTaskOperationBackend',)
 
 
-@dataclass
-class ActivityInput:
-    parameters: JsonValue
-    deps_input: JsonValue
-
-
-INPUT = TypeAdapter(ActivityInput)
 _JSON = TypeAdapter[JsonValue](JsonValue)
 _RESULT_FORMAT: Literal['pydantic-ai-durabletask-result-v1'] = 'pydantic-ai-durabletask-result-v1'
 _ESCAPED_NAME_CHARACTER = re.compile(r'-|[^a-zA-Z0-9_.`+:-]')
@@ -90,7 +84,7 @@ class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[Pa
 
     async def __call__(self, params: ParamsT, *, config: object | None = _DEFAULT_CONFIG) -> ResultT:
         loop = current_loop()
-        if loop is None:
+        if loop is None:  # pragma: no cover - core only calls bound operations inside a durable context
             return await self.operation.handler(params)
         if loop.abandoned:
             # Fail fast, so best-effort cleanup like withdrawing a pending model response gives up instead of waiting.
@@ -100,7 +94,9 @@ class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[Pa
             config is None and isinstance(self.operation.operation_id, (ToolsetGetToolsId, ToolsetGetInstructionsId))
         ):
             config = self._options
-        if config is not None and not isinstance(config, task.RetryPolicy):
+        if config is not None and not isinstance(
+            config, task.RetryPolicy
+        ):  # pragma: no cover - typed resolvers return a policy
             raise UserError('Durable Task activity configuration must be a `durabletask.task.RetryPolicy`.')
         pending = loop.context.call_activity(
             self._name,
@@ -154,6 +150,10 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
                 'Choose distinct agent, model and toolset identities.'
             )
         self._activity_names.add(name)
+        transport = operation.parameter_transport
+        if not isinstance(transport, JsonTransport):  # pragma: no cover - this capability installs every transport
+            raise TypeError(f'{type(transport).__name__} does not accept the Durable Task JSON wire.')
+        json_transport: JsonTransport[ParamsT] = transport
 
         async def execute(payload: object) -> object:
             try:
@@ -164,8 +164,7 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
                 async with self._activity_scope(wire.deps_input):
                     with durable_unit_scope():
                         try:
-                            # JSON erases the wire type; its transport validates it on load.
-                            params = operation.parameter_transport.load(cast(WireT, payload), runtime=self)
+                            params = json_transport.load(payload, runtime=self)
                         except ValidationError as exc:
                             return _failure(SerializationFailure(exc))
                         result = await operation.handler(params)

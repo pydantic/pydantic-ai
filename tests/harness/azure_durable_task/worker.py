@@ -6,7 +6,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal, TypeVar
+from typing import Any, TypeVar
 
 import pytest
 from durabletask import client, task, worker
@@ -15,7 +15,6 @@ from pydantic import JsonValue, TypeAdapter
 from pydantic_core import to_jsonable_python
 
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.durable_exec import CacheIdentity, ParameterTransport, ResultCodec
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
 
@@ -23,8 +22,6 @@ from .sdk import ActivityExecutor, OrchestrationExecutor, Registry, pb, ph
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
-ParamsT = TypeVar('ParamsT')
-ResultT = TypeVar('ResultT')
 _JSON = TypeAdapter[JsonValue](JsonValue)
 
 
@@ -254,29 +251,3 @@ def run_agent(
     completed(worker, instance_id)
     assert len(results) == 1
     return results[0]
-
-
-class IdentityTransport(ParameterTransport[ParamsT, ParamsT]):
-    def dump(self, params: ParamsT) -> ParamsT:
-        return params
-
-    def load(self, payload: ParamsT, *, runtime: object) -> ParamsT:
-        return payload
-
-
-class EmptyCacheIdentity(CacheIdentity[ParamsT]):
-    def project(self, params: ParamsT) -> tuple[()]:
-        # Registered backends do not consult cache identities.
-        return ()  # pragma: no cover
-
-
-class JsonResultCodec(ResultCodec[ResultT]):
-    def __init__(self, result_type: type[ResultT], *, mode: Literal['json', 'identity'] = 'json') -> None:
-        self._adapter = TypeAdapter[ResultT](result_type)
-        self._mode = mode
-
-    def dump(self, value: ResultT) -> object:
-        return self._adapter.dump_python(value, mode='json') if self._mode == 'json' else value
-
-    def load(self, payload: object) -> ResultT:
-        return self._adapter.validate_python(payload)
