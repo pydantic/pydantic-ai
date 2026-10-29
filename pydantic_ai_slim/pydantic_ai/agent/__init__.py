@@ -1799,6 +1799,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_inputs: dict[str, object] = {
                 'prompt': user_prompt,
                 'messages': list(message_history) if message_history else [],
+                # Result caching drops these IDs for cross-run reuse, but run identity must
+                # distinguish the incoming conversation and the runs that produced its history.
+                'message_history_ids': [(message.run_id, message.conversation_id) for message in message_history or ()],
+                'conversation_id': conversation_id,
                 'deps': deps,
                 'metadata': static_metadata or None,
             }

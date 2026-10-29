@@ -70,4 +70,4 @@ def test_public_default_run_id_container_delegation(provided: str | None) -> Non
 
     capability = LegacyCapability()
     assert WrapperCapability(capability).get_default_run_id() == provided
-    assert CombinedCapability([capability, AbstractCapability()]).get_default_run_id() == provided
+    assert CombinedCapability([capability, AbstractCapability[object]()]).get_default_run_id() == provided

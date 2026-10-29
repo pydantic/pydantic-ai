@@ -129,6 +129,50 @@ async def test_identical_projected_inputs_get_separate_retry_stable_ids() -> Non
     assert original[2:] == [f'{original[0]}:1', f'{original[0]}:2']
 
 
+@pytest.mark.parametrize('identity', ['history', 'shared_conversation', 'explicit_conversation'])
+async def test_flow_retry_preserves_incoming_conversation_identity(identity: str) -> None:
+    model_calls: list[None] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        model_calls.append(None)
+        return ModelResponse(parts=[TextPart('answer')])
+
+    agent = Agent(
+        FunctionModel(model_fn), deps_type=str, name='incoming_identity', capabilities=[PrefectDurability[str]()]
+    )
+    attempts: list[dict[str, tuple[str, str]]] = []
+
+    @flow(retries=1)
+    async def reordered() -> None:
+        ids: dict[str, tuple[str, str]] = {}
+        attempts.append(ids)
+        order = ('left', 'right') if len(attempts) == 1 else ('right', 'left')
+        for label in order:
+            if identity == 'explicit_conversation':
+                result = await agent.run('same prompt', deps='same', conversation_id=label)
+                assert result.conversation_id == label
+            else:
+                parent = await agent.run(
+                    'same parent prompt',
+                    deps=label,
+                    conversation_id='shared' if identity == 'shared_conversation' else None,
+                )
+                ids[f'{label}:parent'] = parent.run_id, parent.conversation_id
+                result = await agent.run('same follow-up', deps='same', message_history=parent.all_messages())
+                assert result.conversation_id == parent.conversation_id
+                assert result.new_messages()
+            ids[label] = result.run_id, result.conversation_id
+        if len(attempts) == 1:
+            raise RuntimeError('retry')
+
+    await reordered()
+    original, retried = attempts
+    assert original['left'][0] != original['right'][0]
+    assert retried == original
+    # Logical run identity separates these calls without changing cross-run model-result reuse.
+    assert len(model_calls) == (1 if identity == 'explicit_conversation' else 3)
+
+
 async def test_default_id_static_metadata_precedence_and_factory_lifecycle() -> None:
     agent = Agent(
         TestModel(),
