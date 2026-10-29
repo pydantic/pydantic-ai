@@ -6819,6 +6819,55 @@ async def test_temporal_workspace_calls_are_traced_inside_their_activity(
     )
 
 
+_untraced_workspace_probe_agent = Agent(
+    TestModel(call_tools=['probe_workspace']),
+    name='untraced_workspace_probe_agent',
+    deps_type=WorkspaceProbeDeps,
+    capabilities=[
+        WorkspaceProbeCapability(),
+        TemporalDurability(run_context_type=WorkspaceProbeContext, activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+_untraced_workspace_probe_agent.instrument = False
+_untraced_workspace_probe_agent.tool(probe_workspace)
+
+
+@workflow.defn
+class UntracedWorkspaceProbeWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _untraced_workspace_probe_agent.run(
+            'Use the probe_workspace tool.',
+            deps=WorkspaceProbeDeps(prefix='worker'),
+            workspace=WorkspaceRef(provider='probe', id='existing-123'),
+        )
+        return result.output
+
+
+async def test_temporal_workspace_calls_of_an_uninstrumented_agent_are_not_traced(
+    client_with_logfire: Client, capfire: CaptureLogfire
+):
+    """An agent with instrumentation off traces nothing in its activities, though `LogfirePlugin` turns on `Agent.instrument_all()`."""
+    _workspace_probe_backends.clear()
+
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[UntracedWorkspaceProbeWorkflow],
+        plugins=[AgentPlugin(_untraced_workspace_probe_agent)],
+    ):
+        await client_with_logfire.execute_workflow(
+            UntracedWorkspaceProbeWorkflow.run,
+            id=f'{UntracedWorkspaceProbeWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert [command for backend in _workspace_probe_backends for command in backend.commands] == [['first'], ['second']]
+    assert [
+        span['name'] for span in capfire.exporter.exported_spans_as_dict() if span['name'].startswith('workspace ')
+    ] == []
+
+
 @workflow.defn
 class DecideDurableAgentWorkflow:
     @workflow.run

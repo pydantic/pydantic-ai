@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 
@@ -182,6 +183,78 @@ async def test_nothing_is_traced_without_instrumentation_or_outside_the_run(tmp_
     assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == ['workspace exists']
 
 
+async def test_an_instrumented_sub_agent_traces_with_its_own_settings(tmp_path: Path) -> None:
+    """A sub-agent given the parent's workspace traces to its own provider with its own content setting."""
+    parent_instrumentation, parent_exporter = instrumented(include_content=True)
+    sub_instrumentation, sub_exporter = instrumented(include_content=False)
+    sub_agent = file_agent(capabilities=[sub_instrumentation])
+    agent = Agent(TestModel(call_tools=['delegate']), capabilities=[parent_instrumentation])
+
+    @agent.tool
+    async def delegate(ctx: RunContext[Any]) -> str:
+        await sub_agent.run('go', workspace=ctx.workspace)
+        assert await ctx.workspace.exists('notes.txt')
+        return 'done'
+
+    await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
+
+    assert workspace_spans(parent_exporter, tmp_path) == snapshot(
+        [{'name': 'workspace exists', 'status': 'UNSET', 'file.path': '<root>/notes.txt'}]
+    )
+    assert [span['name'] for span in workspace_spans(sub_exporter, tmp_path)] == snapshot(
+        ['workspace write_bytes', 'workspace read_bytes', 'workspace exists', 'workspace stat', 'workspace run']
+    )
+    assert not any('file.path' in span for span in workspace_spans(sub_exporter, tmp_path))
+
+
+@pytest.mark.parametrize('shared', ['facade', 'backend'])
+async def test_concurrent_runs_sharing_a_workspace_trace_separately(tmp_path: Path, shared: str) -> None:
+    """Two runs with their own providers, interleaving calls on one workspace, each record only their own."""
+    backend = LocalWorkspaceBackend(tmp_path)
+    workspace = Workspace(backend) if shared == 'facade' else backend
+    exporters: list[InMemorySpanExporter] = []
+
+    def looping_agent() -> Agent[Any, str]:
+        instrumentation, exporter = instrumented(include_content=False)
+        exporters.append(exporter)
+        agent = Agent(TestModel(call_tools=['look']), capabilities=[instrumentation])
+
+        @agent.tool
+        async def look(ctx: RunContext[Any]) -> str:
+            for _ in range(3):
+                await ctx.workspace.exists('notes.txt')
+                # Yield, so the two runs' calls interleave.
+                await anyio.sleep(0)
+            return 'done'
+
+        return agent
+
+    first, second = looping_agent(), looping_agent()
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(lambda: first.run('go', workspace=workspace))
+        tg.start_soon(lambda: second.run('go', workspace=workspace))
+
+    for exporter in exporters:
+        assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == ['workspace exists'] * 3
+        assert len({span.context.trace_id for span in exporter.get_finished_spans() if span.context}) == 1
+
+
+async def test_calls_from_a_task_the_tool_starts_are_traced(tmp_path: Path) -> None:
+    instrumentation, exporter = instrumented(include_content=False)
+    agent = Agent(TestModel(call_tools=['fan_out']), capabilities=[LocalWorkspace(tmp_path), instrumentation])
+
+    @agent.tool
+    async def fan_out(ctx: RunContext[Any]) -> str:
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(ctx.workspace.exists, 'a.txt')
+            tg.start_soon(ctx.workspace.exists, 'b.txt')
+        return 'done'
+
+    await agent.run('go')
+
+    assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == ['workspace exists'] * 2
+
+
 class LazySandbox(RunOnlyWorkspaceBackend):
     """A command-only backend that creates its sandbox on first use, as the harness provider backends do."""
 
@@ -215,27 +288,6 @@ async def test_a_sandbox_created_on_first_use_shows_inside_that_operation(tmp_pa
     [create] = [span for span in exporter.get_finished_spans() if span.name == 'workspace create']
     assert create.attributes == snapshot(
         {'pydantic_ai.workspace.provider': 'lazy', 'pydantic_ai.workspace.id': 'box-1'}
-    )
-
-
-@pytest.mark.parametrize('instrument', ['default', 'settings'])
-async def test_outside_a_run_only_the_lifecycle_follows_instrument_all(
-    tmp_path: Path, capfire: CaptureLogfire, instrument: str
-) -> None:
-    """Destroying a sandbox usually happens after its run, where only `Agent.instrument_all()` can say to trace it.
-
-    Other calls outside a run stay untraced: the agent's own content setting can't be seen there. The
-    harness capabilities wrap `destroy(ref)` in `lifecycle_span`, called directly here as core has no
-    backend with a sandbox to destroy. Both forms `instrument_all()` takes are covered.
-    """
-    Agent.instrument_all(True if instrument == 'default' else InstrumentationSettings(include_content=False))
-    await Workspace(LocalWorkspaceBackend(tmp_path)).working_dir()
-    with lifecycle_span('destroy', WorkspaceRef(provider='lazy', id='box-1')):
-        pass
-
-    spans = capfire.exporter.exported_spans_as_dict()
-    assert [(span['name'], span['attributes']['pydantic_ai.workspace.id']) for span in spans] == snapshot(
-        [('workspace destroy', 'box-1')]
     )
 
 

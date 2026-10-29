@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, overload
 
-from opentelemetry.trace import NoOpTracer, get_current_span
+from opentelemetry.trace import get_current_span
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import CapabilityEventT, CustomEventT
@@ -99,6 +99,3 @@ def _publish_workspace_telemetry(ctx: RunContext[Any], agent: AbstractAgent[Any,
         publish_workspace_telemetry(
             settings.tracer, include_content=settings.include_content and ctx.trace_include_content
         )
-    else:
-        # Published as off, not left unset: unset means outside any run, where `Agent.instrument_all()` decides.
-        publish_workspace_telemetry(NoOpTracer(), include_content=False)

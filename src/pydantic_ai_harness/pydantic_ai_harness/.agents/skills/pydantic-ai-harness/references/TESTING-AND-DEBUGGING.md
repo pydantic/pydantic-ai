@@ -258,7 +258,7 @@ In an app, `logfire.configure()` plus `logfire.instrument_pydantic_ai()` traces 
 capabilities add their own spans (`memory.write`, nested tool calls under `run_code`). The sandbox
 capabilities add `workspace create` / `workspace attach` around acquiring the sandbox, `workspace stop`
 when a command is stopped after a timeout, cancellation or failure, and `workspace destroy` from
-`destroy(ref)`. In tests, attach
+`destroy(ref)` called inside a run (after the run it is not traced). In tests, attach
 the core `Instrumentation` capability with an in-memory exporter:
 
 ```python

@@ -333,7 +333,7 @@ async def test_capability_supplies_the_run_workspace(docker: FakeDocker, contain
 
 
 async def test_the_containers_lifecycle_is_traced(docker: FakeDocker, container_dir: Path) -> None:
-    """Creating, reattaching to and destroying the container each get a span, the first two under the call that needed it."""
+    """Creating, reattaching to and destroying the container each get a span, under the call or tool that needed it."""
     exporter = InMemorySpanExporter()
     tracer_provider = TracerProvider()
     tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -348,9 +348,13 @@ async def test_the_containers_lifecycle_is_traced(docker: FakeDocker, container_
     ref = (await agent.run('go')).workspace.ref
     assert ref is not None
     await agent.run('go', workspace=ref)
-    # After the run, as `logfire.instrument_pydantic_ai()` would set it.
-    Agent.instrument_all(settings)
-    await sandbox.destroy(ref)
+    cleanup = Agent(TestModel(call_tools=['destroy']), capabilities=[Instrumentation(settings=settings)])
+
+    @cleanup.tool_plain
+    async def destroy() -> None:
+        await sandbox.destroy(ref)
+
+    await cleanup.run('go')
 
     spans = sorted(exporter.get_finished_spans(), key=lambda span: span.start_time or 0)
     names = {span.context.span_id: span.name for span in spans if span.context is not None}
@@ -366,7 +370,7 @@ async def test_the_containers_lifecycle_is_traced(docker: FakeDocker, container_
         [
             ('workspace create', 'workspace exists', True),
             ('workspace attach', 'workspace exists', True),
-            ('workspace destroy', None, True),
+            ('workspace destroy', 'execute_tool destroy', True),
         ]
     )
 
