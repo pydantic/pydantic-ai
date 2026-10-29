@@ -294,10 +294,9 @@ covers the rest of the job's configuration.
 
 ## gh-aw compatibility
 
-This definition requires the protected session capture contract being integrated in
-[github/gh-aw#69586](https://github.com/github/gh-aw/pull/69586), backed by AWF's protected
-command capture from
-[github/gh-aw-firewall#10169](https://github.com/github/gh-aw-firewall/pull/10169).
+This definition requires [gh-aw v1.0.1](https://github.com/github/gh-aw/releases/tag/v1.0.1)
+or newer with AWF v0.29.0 or newer. That compiler release defaults to AWF v0.29.0 and
+includes native protected capture, packaged engine parsers, and verified-publication guards.
 A compatible gh-aw runtime must:
 
 - accept `engine.behaviors.execution.protected-session-capture: true` only with an enabled
@@ -313,10 +312,21 @@ A compatible gh-aw runtime must:
 
 The engine refuses to start when the runtime marker is absent. The AWF container must keep
 `SYS_PTRACE` unavailable to agent processes so they cannot inspect the recorder's signing key.
-No released gh-aw version
-contains this contract yet. Existing workflows will need to install the compatible tagged
-release, recompile, and commit their generated lockfile; installing a newer `gh aw` CLI does
+Existing workflows must install a compatible release, recompile, and commit their
+generated lockfile; installing a newer `gh aw` CLI does
 not alter an already committed lockfile or the runtime it selects.
+
+Install the current stable compiler, check that it is at least v1.0.1, then compile:
+
+```bash
+gh extension install github/gh-aw
+gh aw version
+gh aw compile
+```
+
+For an existing installation, use `gh extension upgrade gh-aw` before compiling.
+The version requirements are minimums; they do not prevent adopting newer compatible
+releases. Generated workflow locks retain explicit runtime versions and integrity hashes.
 
 The protected-capture runtime rejects workflows with `evals`, whose secondary engine invocation
 reads `evals.log`. Omit `evals` when using this engine.

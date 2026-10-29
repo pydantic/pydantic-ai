@@ -916,8 +916,8 @@ engine:
 # Pydantic AI
 
 Shared engine definition for CLAI 2 headless execution. Import this file and set
-`engine: id: pydantic-ai`; a gh-aw release with the protected session capture contract
-described in `README.md` is required.
+`engine: id: pydantic-ai`; gh-aw v1.0.1 or newer with the protected session capture
+contract described in `README.md` is required.
 
 ```yaml
 imports:

@@ -47,11 +47,9 @@ import-based engine like this one, so it is not part of the configuration below.
 
 - The [`gh` CLI](https://cli.github.com), authenticated with the `repo` and `workflow`
   scopes: `gh auth login --scopes repo,workflow`.
-- Use a gh-aw release containing the protected session capture contract being integrated in
-  [github/gh-aw#69586](https://github.com/github/gh-aw/pull/69586), backed by AWF's protected
-  command capture from
-  [github/gh-aw-firewall#10169](https://github.com/github/gh-aw-firewall/pull/10169). No
-  released gh-aw version contains the complete contract yet.
+- Use [gh-aw v1.0.1](https://github.com/github/gh-aw/releases/tag/v1.0.1) or newer with
+  AWF v0.29.0 or newer. That compiler release defaults to AWF v0.29.0 and includes
+  native protected capture, packaged engine parsers, and verified-publication guards.
 - Existing workflows need a compatible runtime build and a newly compiled lockfile.
   Installing a newer `gh aw` CLI locally does not change the runtime an existing lockfile
   selects.
@@ -68,6 +66,18 @@ import-based engine like this one, so it is not part of the configuration below.
   when a workflow declares the `create-issue` safe output, and fails compilation if issues
   are off.
 - Actions enabled on the repository (see [Repository settings](#repository-settings)).
+
+Install the current stable compiler, check that it is at least v1.0.1, then compile:
+
+```bash
+gh extension install github/gh-aw
+gh aw version
+gh aw compile
+```
+
+For an existing installation, use `gh extension upgrade gh-aw` before compiling.
+The version requirements are minimums; they do not prevent adopting newer compatible
+releases. Generated workflow locks retain explicit runtime versions and integrity hashes.
 
 ## Start from `Coder`, `Researcher`, or your own
 
