@@ -167,6 +167,7 @@ async def test_native_compaction_compacts_with_the_model_and_keeps_the_turn():
                 parts=[TextPart(content='answered by primary')],
                 usage=RequestUsage(input_tokens=54, output_tokens=3),
                 model_name='primary',
+                model_id='function:primary',
                 timestamp=IsDatetime(),
                 run_id=result.run_id,
                 conversation_id=result.conversation_id,
