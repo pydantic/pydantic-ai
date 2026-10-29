@@ -53,17 +53,19 @@ def stored_frame_ref(message: ModelMessage) -> str | None:
     return ref if isinstance(ref, str) and is_frame_ref(ref) else None
 
 
+def latest_stored_frame_ref(messages: Sequence[ModelMessage]) -> str | None:
+    """The frame ref the latest request in `messages` that stores one stores, or `None` when none does."""
+    return next((ref for message in reversed(messages) if (ref := stored_frame_ref(message)) is not None), None)
+
+
 def frame_ref(messages: Sequence[ModelMessage]) -> str:
     """The conversation's frame ref: the one its latest request stores, or else the one derived from its first prompt."""
-    for message in reversed(messages):
-        if (ref := stored_frame_ref(message)) is not None:
-            return ref
-    return _derived_frame_ref(messages)
+    return latest_stored_frame_ref(messages) or _derived_frame_ref(messages)
 
 
 def has_stored_frame_ref(messages: Sequence[ModelMessage]) -> bool:
     """Whether any request in `messages` stores a frame ref."""
-    return any(stored_frame_ref(message) is not None for message in messages)
+    return latest_stored_frame_ref(messages) is not None
 
 
 def with_frame_ref(request: ModelRequest, ref: str) -> ModelRequest:

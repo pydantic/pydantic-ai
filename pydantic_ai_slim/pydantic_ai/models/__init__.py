@@ -798,7 +798,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     Set by a model that judges the conversation rather than answering it: translated, the feedback would
     read as the user's request or as a system prompt, where the model has to see it as a step the agent took.
     """
-    _announces_system_voice: ClassVar[bool] = True
+    _announces_frame_ref: ClassVar[bool] = True
     """Whether the model is told which frame ref the application's frames carry (see `pydantic_ai._frame_ref`).
 
     Where the profile's `supports_inline_system_prompts` is `False`, the announcement goes at the end of the
@@ -1865,7 +1865,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             renders_frames = renders_frames or wrapped is not messages
             # The announcement itself goes at the end of the instructions; see `_get_instruction_parts`.
             renders_frames = renders_frames or (
-                self._announces_system_voice
+                self._announces_frame_ref
                 and first_request is not None
                 and bool(
                     standing_prompt_count
@@ -1941,7 +1941,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Returns the messages, and whether the history has any frame or note, which means the ref has to be stored.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
-        announce = inline_system and self._announces_system_voice
+        announce = inline_system and self._announces_frame_ref
         first_request_index = next((i for i, m in enumerate(messages) if isinstance(m, ModelRequest)), None)
         has_frames = False
         announced = False
@@ -2249,7 +2249,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         parts = _instruction_parts_of(messages, model_request_parameters)
         if (
-            self._announces_system_voice
+            self._announces_frame_ref
             and not self.profile.get('supports_inline_system_prompts', False)
             and has_stored_frame_ref(messages)
             and (parts or _first_request_has_standing_prompt(messages))

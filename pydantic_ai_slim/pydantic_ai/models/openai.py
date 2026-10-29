@@ -2284,9 +2284,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return self._MapModelResponseContext(self).map_assistant_message(message)
 
-    def _map_carried_thinking(
-        self, message: ModelResponse, *, ref: str | None = None
-    ) -> chat.ChatCompletionUserMessageParam | None:
+    def _map_carried_thinking(self, message: ModelResponse, *, ref: str) -> chat.ChatCompletionUserMessageParam | None:
         """Build the user message that carries this `ModelResponse`'s reasoning ahead of its assistant message.
 
         That is reasoning that can't be sent natively, for a profile with
@@ -2483,7 +2481,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return tool_param
 
     async def _map_user_message(
-        self, message: ModelRequest, *, ref: str | None = None
+        self, message: ModelRequest, *, ref: str
     ) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         file_content: list[UserContent] = []
         for part in _sendable_request_parts(message.parts, ref=ref):

@@ -699,7 +699,7 @@ class GroqModel(Model[AsyncGroq]):
         return response_format_param
 
     async def _map_user_message(
-        self, message: ModelRequest, *, ref: str | None = None
+        self, message: ModelRequest, *, ref: str
     ) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         file_content: list[UserContent] = []
         for part in _sendable_request_parts(message.parts, ref=ref):

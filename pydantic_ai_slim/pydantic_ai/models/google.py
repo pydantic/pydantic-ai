@@ -1512,9 +1512,7 @@ class GoogleModel(Model[Client]):
 
         return system_instruction, contents
 
-    async def _map_tool_return(
-        self, part: ToolReturnPart, *, ref: str | None = None
-    ) -> tuple[PartDict, list[PartDict]]:
+    async def _map_tool_return(self, part: ToolReturnPart, *, ref: str) -> tuple[PartDict, list[PartDict]]:
         """Map a `ToolReturnPart` to Google API format, handling multimodal content.
 
         Returns the `function_response` part and, separately, any files this model can't carry

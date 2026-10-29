@@ -24,9 +24,12 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
+from pydantic_ai._frame_ref import FRAME_REF_KEY
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
+    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
@@ -137,13 +140,13 @@ def _canonical_message(message: ModelMessage) -> ModelMessage:
 
 def _without_frame_ref(metadata: dict[str, Any] | None) -> dict[str, Any] | None:
     """`metadata` without the frame ref pydantic-ai stores in its reserved namespace, and without the namespace if empty."""
-    namespace = (metadata or {}).get('__pydantic_ai__')
-    if metadata is None or not isinstance(namespace, dict) or 'frame_ref' not in namespace:
+    namespace = (metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    if metadata is None or not is_str_dict(namespace) or FRAME_REF_KEY not in namespace:
         return metadata
-    rest = {key: value for key, value in cast('dict[str, Any]', namespace).items() if key != 'frame_ref'}
-    stripped = {key: value for key, value in metadata.items() if key != '__pydantic_ai__'}
+    rest = {key: value for key, value in namespace.items() if key != FRAME_REF_KEY}
+    stripped = {key: value for key, value in metadata.items() if key != _PYDANTIC_AI_METADATA_KEY}
     if rest:
-        stripped['__pydantic_ai__'] = rest
+        stripped[_PYDANTIC_AI_METADATA_KEY] = rest
     return stripped or None
 
 

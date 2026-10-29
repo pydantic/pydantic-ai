@@ -87,7 +87,7 @@ from ._deferred_capabilities import (
     parse_loaded_capabilities,
     registered_loaded_capability_ids,
 )
-from ._frame_ref import store_frame_ref, stored_frame_ref
+from ._frame_ref import latest_stored_frame_ref, store_frame_ref, stored_frame_ref
 from ._genai_prices import best_effort_price, fill_response_cost
 from ._history_mirroring import HistoryMirroringMessages
 from ._instructions import (
@@ -1547,11 +1547,9 @@ def _carry_frame_ref_forward(history: list[_messages.ModelMessage]) -> None:
     Every request from the first one that needed the ref then carries it, so compaction or a history processor that
     drops the opening turns still leaves it in history.
     """
-    requests = [m for m in history if isinstance(m, _messages.ModelRequest)]
-    if not requests or stored_frame_ref(requests[-1]) is not None:
-        return
-    if (ref := next((r for m in reversed(requests) if (r := stored_frame_ref(m)) is not None), None)) is not None:
-        store_frame_ref(requests[-1], ref)
+    last = next((m for m in reversed(history) if isinstance(m, _messages.ModelRequest)), None)
+    if last is not None and stored_frame_ref(last) is None and (ref := latest_stored_frame_ref(history)) is not None:
+        store_frame_ref(last, ref)
 
 
 def _keep_frame_ref(history: list[_messages.ModelMessage], prepared: list[_messages.ModelMessage]) -> None:

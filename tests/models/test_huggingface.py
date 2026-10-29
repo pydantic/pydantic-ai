@@ -1160,7 +1160,7 @@ async def test_image_tool_return_is_forwarded_as_user_message():
 
     mapped_messages = [
         {k: v for k, v in asdict(mapped_message).items() if v is not None}
-        async for mapped_message in model._map_user_message(model_request)  # pyright: ignore[reportPrivateUsage]
+        async for mapped_message in model._map_user_message(model_request, ref='0123456789ab')  # pyright: ignore[reportPrivateUsage]
     ]
 
     assert mapped_messages == snapshot(
@@ -1172,7 +1172,7 @@ async def test_image_tool_return_is_forwarded_as_user_message():
                     {
                         'type': 'text',
                         'image_url': None,
-                        'text': '<tool_result tool_name="get_image" tool_call_id="call_1" file_id="01a7df">',
+                        'text': '<tool_result ref="0123456789ab" tool_name="get_image" tool_call_id="call_1" file_id="01a7df">',
                     },
                     {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'text': None},
                     {'type': 'text', 'image_url': None, 'text': '</tool_result>'},

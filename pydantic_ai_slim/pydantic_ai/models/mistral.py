@@ -664,9 +664,7 @@ class MistralModel(Model[Mistral]):
             return UNSET
         return _MISTRAL_REASONING_EFFORT_MAP[thinking]
 
-    async def _map_user_message(
-        self, message: ModelRequest, *, ref: str | None = None
-    ) -> AsyncIterable[MistralMessages]:
+    async def _map_user_message(self, message: ModelRequest, *, ref: str) -> AsyncIterable[MistralMessages]:
         file_content: list[UserContent] = []
         for part in _sendable_request_parts(message.parts, ref=ref):
             if isinstance(part, SystemPromptPart):

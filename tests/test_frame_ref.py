@@ -60,7 +60,7 @@ with try_import() as agui_encrypted_value_available:
 class AnnouncingFunctionModel(FunctionModel):
     """A `FunctionModel` that is told about the frame ref, as a model with a wire is."""
 
-    _announces_system_voice = True
+    _announces_frame_ref = True
 
 
 def namespace(message: ModelMessage) -> dict[str, Any]:

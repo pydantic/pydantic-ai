@@ -78,7 +78,7 @@ class TestModel(InMemoryBatchModel):
     supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
     # Nor is there a model to tell what the `<system>` tag means, and the announcement would show up in every
     # history a test inspects.
-    _announces_system_voice = False
+    _announces_frame_ref = False
 
     # NOTE: Avoid test discovery by pytest.
     __test__ = False

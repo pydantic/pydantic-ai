@@ -436,7 +436,7 @@ class CohereModel(Model[AsyncClientV2]):
         )
 
     @classmethod
-    def _map_user_message(cls, message: ModelRequest, *, ref: str | None = None) -> Iterable[ChatMessageV2]:
+    def _map_user_message(cls, message: ModelRequest, *, ref: str) -> Iterable[ChatMessageV2]:
         for part in _sendable_request_parts(message.parts, ref=ref):
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)

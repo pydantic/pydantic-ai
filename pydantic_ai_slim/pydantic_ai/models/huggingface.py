@@ -513,7 +513,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         return tool_param
 
     async def _map_user_message(
-        self, message: ModelRequest, *, ref: str | None = None
+        self, message: ModelRequest, *, ref: str
     ) -> AsyncIterable[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         file_content: list[UserContent] = []
         for part in _sendable_request_parts(message.parts, ref=ref):

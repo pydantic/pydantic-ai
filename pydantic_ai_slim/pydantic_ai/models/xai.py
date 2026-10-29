@@ -484,7 +484,7 @@ class XaiModel(Model[AsyncClient]):
         parts: Sequence[ModelRequestPart],
         pending_tool_call_ids: list[str],
         *,
-        ref: str | None = None,
+        ref: str,
     ) -> list[chat_types.chat_pb2.Message]:
         """Map ModelRequest parts to xAI messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
