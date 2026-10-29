@@ -364,7 +364,9 @@ Gotchas:
   pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one.
 - A screen larger than the model takes (profile `computer_use_screenshot_limit`) is sent scaled
   down if the display can scale screenshots; otherwise the run stops with an error. 1280x800 fits every model.
-- Under durable execution a retried action may repeat a click that already happened.
+- Under durable execution an action runs at most once and looks retry: Temporal never repeats an action; DBOS and
+  Prefect can repeat the one running when the process crashed; Absurd and pgtask retry the whole call.
+- Under Temporal, screenshots pass the 2 MB payload limit after a few steps; configure external storage.
 
 ## See also
 
