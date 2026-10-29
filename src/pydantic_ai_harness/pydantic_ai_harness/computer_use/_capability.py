@@ -50,6 +50,7 @@ from pydantic_ai.workspaces import (
     Region,
     Scroll,
     SupportsDisplay,
+    SupportsStartCount,
     WorkspaceError,
     WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
@@ -125,16 +126,6 @@ class _HasScreenKey(Protocol):
     @property
     def screen_key(self) -> object | None:
         """A hashable name for the screen, such as its X `DISPLAY`, or `None` to key on the workspace's ref."""
-        ...
-
-
-@runtime_checkable
-class _CountsStarts(Protocol):
-    """A display that counts its starts, each without the windows that were open before."""
-
-    @property
-    def starts(self) -> int:
-        """How many times the display started."""
         ...
 
 
@@ -284,6 +275,22 @@ class _Call:
         )
 
 
+async def _screenshot(ctx: RunContext[Any], limit: tuple[int, int] | None, size: tuple[int, int] | None) -> bytes:
+    """The screen, scaled down by the display to what the model takes; `size` is the display's, when the call read it."""
+    if limit is not None:
+        if size is None:
+            size = await ctx.workspace.display_size()
+        if (fitted := _fit(size, limit)) != size:
+            try:
+                return await ctx.workspace.scaled_screenshot(*fitted)
+            except WorkspaceUnsupportedActionError:
+                raise UserError(
+                    f'The screen is {size[0]}x{size[1]}, larger than {ctx.model.model_name!r} can see, and its '
+                    f'display cannot scale screenshots down. Start the display at {fitted[0]}x{fitted[1]} or smaller.'
+                ) from None
+    return await ctx.workspace.screenshot()
+
+
 async def _perform(
     ctx: RunContext[Any],
     actions: list[ComputerToolAction],
@@ -394,28 +401,33 @@ def _display(ctx: RunContext[Any]) -> object | None:
 def _starts(ctx: RunContext[Any]) -> int | None:
     """How many times the display started: as the display counts, or in durable workflow code as its calls journaled."""
     display = _display(ctx)
-    if isinstance(display, _CountsStarts):
+    if isinstance(display, SupportsStartCount):
         return display.starts
     workspace = ctx.workspace
     return workspace.display_starts if display is None and isinstance(workspace, _CountsDisplayStarts) else None
 
 
-async def _display_size(ctx: RunContext[Any]) -> tuple[int, int]:
+async def _read_size(ctx: RunContext[Any]) -> tuple[int, int] | WorkspaceError:
+    """The display's size, or the error reading it; an unavailable workspace ends the run."""
     try:
         return await ctx.workspace.display_size()
     except WorkspaceUnavailableError:
         raise
     except WorkspaceError as e:
-        raise ToolFailed(f'Reading the display size failed, so no action ran: {e}') from e
+        return e
+
+
+async def _display_size(ctx: RunContext[Any]) -> tuple[int, int]:
+    size = await _read_size(ctx)
+    if isinstance(size, WorkspaceError):
+        raise ToolFailed(f'Reading the display size failed, so no action ran: {size}') from size
+    return size
 
 
 async def _with_display_size(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
     """Give the tool the size of the screenshots the model sees, for providers whose native tool declares it."""
-    try:
-        size = await ctx.workspace.display_size()
-    except WorkspaceUnavailableError:
-        raise
-    except WorkspaceError:
+    size = await _read_size(ctx)
+    if isinstance(size, WorkspaceError):
         return tool_def  # the call itself will report the display's error
     size = _fit(size, _screenshot_limit(ctx.model))
     return replace(tool_def, metadata={**(tool_def.metadata or {}), DISPLAY_SIZE: size})
@@ -490,7 +502,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     """
 
     id: str | None = 'computer'
-    """One-off: an agent has a single display to control, so the id is fixed by default."""
+    """Stable capability ID: an agent controls one display."""
 
     _toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False, compare=False)
     _shown_starts: dict[str | None, int | None] = field(
@@ -579,6 +591,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             result['changed'] = True
             summary.append(f'Before it ran, this call was changed to: {_ACTIONS.dump_json(call.changed).decode()}.')
         if held:
+            result['restarted'] = True
             ran = 'No action ran' if not performed else f'Only {performed} of {len(actions)} actions ran'
             summary.append(f'{_FRESH_SCREEN} {ran}, so check this screenshot before acting.')
         elif error is None:
@@ -602,6 +615,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
         result['screenshot_size'] = size
         if restarted() and not held:
+            result['restarted'] = True
             summary.append(_FRESH_SCREEN)
         self._shown_starts[ctx.run_id] = _starts(ctx)
         # A grid model points on its grid, so the size in pixels would only invite pixel coordinates.
@@ -697,22 +711,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             'screenshot_size': _last_screenshot_size(request_context.messages),
         }
         return replace(response, metadata={**(response.metadata or {}), _CALL_SPACE: record})
-
-
-async def _screenshot(ctx: RunContext[Any], limit: tuple[int, int] | None, size: tuple[int, int] | None) -> bytes:
-    """The screen, scaled down by the display to what the model takes; `size` is the display's, when the call read it."""
-    if limit is not None:
-        if size is None:
-            size = await ctx.workspace.display_size()
-        if (fitted := _fit(size, limit)) != size:
-            try:
-                return await ctx.workspace.scaled_screenshot(*fitted)
-            except WorkspaceUnsupportedActionError:
-                raise UserError(
-                    f'The screen is {size[0]}x{size[1]}, larger than {ctx.model.model_name!r} can see, and its '
-                    f'display cannot scale screenshots down. Start the display at {fitted[0]}x{fitted[1]} or smaller.'
-                ) from None
-    return await ctx.workspace.screenshot()
 
 
 def _screenshots(messages: list[ModelMessage]) -> Iterator[tuple[int, int, int, int]]:

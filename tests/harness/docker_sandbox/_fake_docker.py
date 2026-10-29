@@ -93,9 +93,9 @@ exec)
         export FAKE_TMP="$tmp"
         for arg; do
             shift
-            case $arg in */run/pydantic-ai/* | */tmp/.X* | */proc/*)
+            case $arg in */run/pydantic-ai/* | */tmp/.X* | */tmp/.pydantic-ai-* | */proc/*)
                 arg=$(printf '%s' "$arg" | sed -e "s#/run/pydantic-ai/#$tmp/#g" -e "s#/tmp/\\.X#$tmp/.X#g" \
-                    -e "s#/proc/#$tmp/proc/#g") ;;
+                    -e "s#/tmp/\\.pydantic-ai-#$tmp/.pydantic-ai-#g" -e "s#/proc/#$tmp/proc/#g") ;;
             esac
             set -- "$@" "$arg"
         done

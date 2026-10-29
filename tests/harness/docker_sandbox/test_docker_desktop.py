@@ -152,6 +152,33 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
     assert backend.display.starts == 1
 
 
+async def test_a_start_whose_call_failed_is_reported_by_the_next_backend_on_the_container(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    """A durable engine retries a failed unit on a new backend, which finds the X server the failed one started."""
+    failed = _desktop(container_dir, image='my-desktop')
+    await failed.working_dir()
+    assert failed.ref is not None and failed.display is not None
+    await Workspace(failed).display_size()  # the screen the model saw
+    docker.remove_display()
+    xwininfo = docker.bin_dir / 'xwininfo'
+    working = xwininfo.read_text()
+    xwininfo.write_text('#!/bin/sh\necho "connection lost" >&2; exit 1\n')
+    with pytest.raises(WorkspaceError, match='connection lost'):
+        await Workspace(failed).display_size()
+    assert (docker.xvfb_starts, failed.display.starts) == (1, 1)
+    xwininfo.write_text(working)
+
+    retry = DockerSandboxBackend(ref=failed.ref, working_dir=str(container_dir), desktop=True)
+    assert retry.display is not None
+    assert await Workspace(retry).display_size() == (1280, 800)
+    assert retry.display.starts == 1
+    later = DockerSandboxBackend(ref=failed.ref, working_dir=str(container_dir), desktop=True)
+    assert later.display is not None
+    await Workspace(later).display_size()
+    assert later.display.starts == 0
+
+
 async def test_an_action_that_fails_on_a_running_display_says_why(docker: FakeDocker, container_dir: Path) -> None:
     workspace = Workspace(_desktop(container_dir, image='my-desktop'))
     await workspace.display_size()

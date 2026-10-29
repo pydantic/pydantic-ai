@@ -75,7 +75,8 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
 
     desktop: bool | tuple[int, int] = False
     """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
-    for 1280x800, or its `(width, height)`. The size applies to a new sandbox; an attached one keeps its own."""
+    for 1280x800, or its `(width, height)`, at least 1024x768. The size applies to a new sandbox; an attached one keeps
+    its own."""
 
     def __post_init__(self) -> None:
         if self.defer_loading:

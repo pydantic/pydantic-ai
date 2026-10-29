@@ -40,6 +40,7 @@ from pydantic_ai.durable_exec._workspace import (
     DurableWorkspace,
     WorkspaceCall,
     WorkspaceCallError,
+    WorkspaceCallParams,
     WorkspaceCallResult,
     error_as_data,
     execute_call,
@@ -734,16 +735,28 @@ async def test_a_backend_error_keeps_its_details_across_a_durable_call(error: Ex
     ]
 
 
-async def test_a_display_start_in_a_failed_unit_is_reported_by_the_retry() -> None:
+async def test_a_display_start_in_a_failed_unit_is_reported_by_the_retry_on_a_new_workspace() -> None:
     provider = InMemoryProvider()
-    workspace = Workspace(provider.backend(None))
-    # The display starts again, then the unit fails outside the error table, so the engine retries it.
+    ref = (await execute_call(Workspace(provider.backend(None)), WorkspaceCall(method='ensure'))).ref
+    # The display starts again, then the unit fails outside the error table, so the engine retries it. Temporal
+    # rebuilds the backend and workspace from the ref for every attempt.
     provider.restart_display = provider.lose_next_action = True
     with pytest.raises(RuntimeError, match='the worker was lost'):
-        await execute_call(workspace, WorkspaceCall(method='act', action=PressKeys(keys=('a',))))
-    retried = await execute_call(workspace, WorkspaceCall(method='screenshot'))
+        await execute_call(Workspace(provider.backend(ref)), WorkspaceCall(method='act', action=PressKeys(keys=('a',))))
+    retried = await execute_call(Workspace(provider.backend(ref)), WorkspaceCall(method='screenshot'))
     assert (retried.data, retried.starts) == (FAKE_SCREENSHOT, 1)
-    assert (await execute_call(workspace, WorkspaceCall(method='screenshot'))).starts == 0
+    assert (await execute_call(Workspace(provider.backend(ref)), WorkspaceCall(method='screenshot'))).starts == 0
+
+
+async def test_a_configuration_error_reaches_workflow_code_as_it_is_for_display_calls() -> None:
+    class NoWorkspaceOnTheWorker(FakeDurability):
+        async def _call_workspace(self, params: WorkspaceCallParams) -> WorkspaceCallResult:
+            raise UserError('No capability can supply the workspace on this worker.')
+
+    workspace = DurableWorkspace(Workspace(FakeWorkspace('x')), durability=NoWorkspaceOnTheWorker(), ctx=_run_context())
+    for method in ('stat', 'screenshot', 'act'):
+        with pytest.raises(UserError, match='No capability can supply'):
+            await workspace._dispatch(WorkspaceCall(method=method), ref=None)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_unexpected_errors_fail_the_unit() -> None:

@@ -563,6 +563,24 @@ def test_render_task_name_matrix_and_assembly_completeness(workspace: bool) -> N
         assert (act.retry and act.retry.max_retries, act.timeout_seconds) == (0, 180)
 
 
+@pytest.mark.parametrize(('configured', 'expected'), [(60, 180), (600, 600)])
+def test_render_action_raises_a_shorter_configured_timeout_and_keeps_a_longer_one(
+    configured: int, expected: int
+) -> None:
+    pytest.importorskip('render')
+    pytest.importorskip('pydantic_ai_harness')
+    from render.workflows import Options
+
+    from pydantic_ai_harness import RenderWorkflows
+
+    from ..harness.render.conftest import RecordingWorkflows
+
+    app = RecordingWorkflows()
+    durability = RenderWorkflows(app, capability_options=Options(timeout_seconds=configured))
+    Agent(TestModel(), name='compat', capabilities=[durability, CompatWorkspaceSupplier()])
+    assert app.options['compat__capability__workspace.call.act'].timeout_seconds == expected
+
+
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:
     pytest.importorskip('mcp')
     from fastmcp.client.transports import StdioTransport

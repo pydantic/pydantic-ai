@@ -6939,6 +6939,28 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::_counting_display"
       ]
     },
+    "SupportsStartCount": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>"
+      ]
+    },
+    "SupportsStartCount.starts": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::execute_call"
+      ]
+    },
     "WorkspaceBackend": {
       "engines": [
         "dbos",

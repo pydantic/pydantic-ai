@@ -46,15 +46,17 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import UserContent
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector as TextDetector
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 from pydantic_ai_harness.guardrails._tool_return_text import (
     detect_content_list_result as _detect_content_list_result,
+    detect_return_value as _detect_return_value,
     detect_tool_return_content as _detect_tool_return_content,
-    is_text_tool_return as _is_text_tool_return,
+    is_checked_tool_return as _is_checked_tool_return,
 )
 
 _NEWLINE = r'(?:\r?\n|\\+n)'
@@ -434,33 +436,28 @@ def for_tool_result_text(
                     'A text detector used with for_tool_result_text() must replace a tool result with text.'
                 )
             return verdict
-        if _is_text_tool_return(result):
+        if (verdict := _detect_content_list_result(detector, result)) is not None:
+            return verdict
+        if _is_checked_tool_return(result):
             # `ToolReturn`'s type parameter does not type `return_value`, so the guard cannot narrow it.
-            assert isinstance(result.return_value, str)
-            verdict = detector(result.return_value)
-            if verdict.action not in ('allow', 'replace'):
-                return verdict
-            return_value = verdict.replacement if verdict.action == 'replace' else result.return_value
-            if not isinstance(return_value, str):
-                raise UserError(
-                    'A text detector used with for_tool_result_text() must replace a tool result with text.'
-                )
+            value = cast('str | list[UserContent]', result.return_value)
+            value_verdict, return_value = _detect_return_value(detector, value)
+            if value_verdict is not None:
+                return value_verdict
 
             content_verdict, content = _detect_tool_return_content(detector, result.content)
             if content_verdict is not None:
                 return content_verdict
 
-            if verdict.action == 'replace' or content is not None:
-                return GuardrailResult.replace(
-                    replace(
-                        result,
-                        return_value=return_value,
-                        content=result.content if content is None else content,
-                    )
+            if return_value is None and content is None:
+                return GuardrailResult.allow()
+            return GuardrailResult.replace(
+                replace(
+                    result,
+                    return_value=result.return_value if return_value is None else return_value,
+                    content=result.content if content is None else content,
                 )
-            return GuardrailResult.allow()
-        if (verdict := _detect_content_list_result(detector, result)) is not None:
-            return verdict
+            )
         if on_other == 'allow':
             return GuardrailResult.allow()
         raise UserError(
