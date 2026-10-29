@@ -8,7 +8,7 @@ from pydantic_ai import exceptions
 from pydantic_ai._fallback import FallbackChain, FallbackOn, FallbackPredicates
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UsageLimitExceeded, UserError
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -135,8 +135,10 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 an error before its first event, still falls back.
             sticky: Whether a conversation that fell back keeps using the candidate that answered,
                 instead of starting each request step from the model selected for it. The agent records
-                the model that answered as the response's `model_id`, so this also holds for a later run
-                continuing that history. It only replaces the agent's default model: a model passed to
+                the model that answered as the response's `model_id`, and the attempts that failed before
+                it as `failed_attempts`, so this also holds for a later run continuing that history. Only a
+                fallback makes the conversation sticky: an answer from a candidate chosen for its run, with
+                no attempt failing before it, doesn't. It only replaces the agent's default model: a model passed to
                 `run(model=...)` or `override(model=...)`, or selected by another capability, such as
                 `SelectModel`, is still attempted first. If the sticky candidate fails, the chain moves on
                 to the models after it, then the step's own model and the models before it.
@@ -301,9 +303,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             return self.models[index + 1 :], None if last.model_id == step_id else self.models[index]
         if not (self.sticky and self._is_default_model(request_context)):
             return None
-        latest = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+        sticky_id = _fallen_back_to(messages)
         # A conversation the step's own model answered last, or a model that's no longer a candidate, starts as usual.
-        if latest is None or latest.model_id == step_id or (index := self._index_of(latest.model_id)) is None:
+        if sticky_id is None or sticky_id == step_id or (index := self._index_of(sticky_id)) is None:
             return None
         # Should the sticky candidate fail, the chain goes on from there and comes back around to the step's model, so
         # sticking to a candidate never leaves a model untried that the chain would otherwise have attempted.
@@ -400,6 +402,26 @@ def _spec_list(value: object, name: str) -> Sequence[object]:
 def _pin_id(model: Model | str) -> str:
     """How a candidate is identified in a response's `model_id`: the string it was given as, or its `model_id`."""
     return model if isinstance(model, str) else model.model_id
+
+
+def _fallen_back_to(messages: Sequence[ModelMessage]) -> str | None:
+    """The model the conversation fell back to, if the latest answers all came from it since it was fallen back to.
+
+    That's the `model_id` of the latest responses, as long as one of them was reached by falling back, as the
+    attempts that failed before it record. Answers from a model chosen for its run, like with `run(model=...)`, with
+    no attempt failing before them, don't make the conversation stick to it.
+    """
+    model_id: str | None = None
+    for message in reversed(messages):
+        if not isinstance(message, ModelResponse):
+            continue
+        if model_id is None:
+            model_id = message.model_id
+        if message.model_id is None or message.model_id != model_id:
+            return None
+        if message.failed_attempts:
+            return model_id
+    return None
 
 
 def _is_or_wraps(model: Model, candidate: Model) -> bool:

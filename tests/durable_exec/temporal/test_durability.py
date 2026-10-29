@@ -9,7 +9,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import NoneType, SimpleNamespace
 from typing import Any, Literal, cast
@@ -104,7 +104,7 @@ from pydantic_ai.images import (
     ImageGenerationSettings,
     TestImageGenerationModel,
 )
-from pydantic_ai.messages import UploadedFile
+from pydantic_ai.messages import ModelRequestAttempt, UploadedFile
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -494,10 +494,19 @@ class StickyWrapAroundDurableAgentWorkflow:
     async def run(self, prompt: str) -> list[tuple[str | None, str | None]]:
         history: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart('earlier')]),
+            # An answer the conversation fell back to after the primary failed.
             ModelResponse(
                 parts=[TextPart('earlier answer')],
                 model_name='down_target',
                 model_id='down_target',
+                failed_attempts=[
+                    ModelRequestAttempt(
+                        model_name='primary',
+                        outcome='error',
+                        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                        duration=timedelta(),
+                    )
+                ],
             ),
         ]
         result = await sticky_wrap_around_durable_agent.run(prompt, message_history=history)

@@ -329,7 +329,7 @@ agent = Agent(
 
 Each step restarts the chain from the step's model. Pass `sticky=True` to keep a conversation on the candidate that
 last answered (to keep its prompt cache warm and stop retrying a failing primary every step); the agent records the answering model as each
-response's `model_id`, so it carries over to later runs continuing that history. It only replaces the agent's default model,
+response's `model_id` (with `failed_attempts` marking a fallback), so it carries over to later runs continuing that history; a candidate picked with `run(model=...)` that answered without a fallback doesn't make it sticky. It only replaces the agent's default model,
 not `run(model=...)`, `override(model=...)` or `SelectModel`, and if the sticky candidate fails, the chain continues after it and wraps around.
 
 In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError]}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
