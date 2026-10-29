@@ -1,6 +1,7 @@
-"""A CLAI shell with only the `slack` plugin loaded, and scripted settings-menu widgets."""
+"""A CLAI shell with only the `slack` plugin loaded, scripted terminal widgets, and scripted dialogs."""
 
 import io
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from typing import TypeGuard
 
@@ -21,6 +22,9 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, TurnStart
 from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.ui.menus import dialogs
+from tests.clai2.dialog_script import Answer, ScriptedDialogs
 from tests.clai2.menu_script import Script
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'slack')
@@ -43,6 +47,7 @@ class Shell:
     def slack(self) -> Slack[None]:
         [capability] = self.plugins.capabilities()
         assert is_slack(capability)
+        assert capability.defer_loading
         return capability
 
     async def turn_token(self) -> str | None:
@@ -50,7 +55,9 @@ class Shell:
         await self.plugins.fire(TurnStart(text='hi'))
         auth = self.slack().auth
         assert callable(auth)
-        return auth(CONTEXT)
+        token = auth(CONTEXT)
+        assert not isinstance(token, Awaitable)
+        return token
 
     def saved(self) -> dict[str, JsonValue]:
         [declaration] = self.store.plugins()
@@ -64,13 +71,25 @@ class Shell:
     def source(self) -> 'slack_plugin.SlackSource[None]':
         return slack_plugin.SlackSource(self.host())
 
+    async def act(self, key: str, answers: Sequence[Answer]) -> tuple[list[str], ScriptedDialogs]:
+        """Run a row's action as the web UI does, answering its dialogs in order; its messages and the dialogs."""
+        scripted = ScriptedDialogs(answers)
 
-async def shell(declaration: PluginSettings = ENABLED) -> Shell:
+        async def edit(menu: SettingsMenu) -> list[str]:
+            return [*await menu.actions[key](scripted)]
+
+        messages = await self.plugins.edit_settings('slack', edit)
+        assert scripted.unused == []
+        return messages, scripted
+
+
+async def shell(declaration: PluginSettings = ENABLED, *, terminal: bool = True) -> Shell:
     store = SettingsStore()
     output = io.StringIO()
     plugins: PluginLoader[None] = PluginLoader(
         store=store,
-        console=Console(file=output, width=200),
+        # A terminal opens the settings menu; no colours keep the output plain to assert on.
+        console=Console(file=output, width=200, force_terminal=terminal, color_system=None),
         commands=Commands(),
         session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
         builtin=(declaration,),
@@ -86,5 +105,5 @@ def script(
     texts: list[TextInputResult] | None = None,
 ) -> Script:
     scripted = Script(lists=[*lists, CLOSE], choices=choices or [], texts=texts or [])
-    monkeypatch.setattr(slack_plugin, 'RUNNERS', scripted.runners)
+    monkeypatch.setattr(dialogs, 'RUNNERS', scripted.runners)
     return scripted

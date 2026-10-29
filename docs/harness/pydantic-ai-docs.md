@@ -68,6 +68,17 @@ The capability never runs git. Keep the local checkout current yourself; the rem
 
 Caching is isolated per run so content read from one workspace is not reused in another. Set `cache=False` to re-read or re-fetch on every call within a run.
 
+## Two of them
+
+`PydanticAIDocs` declares the default `id` `'pydantic_ai_docs'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `PydanticAIDocs`s on one agent that
+share it are one docs source stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
+in [PrefixTools](../capabilities/prefix-tools.md), since both register `read_pyai_docs`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
+
 ## Agent spec (YAML/JSON)
 
 `PydanticAIDocs` works with Pydantic AI's [agent spec](../agent-spec.md) feature for defining agents in YAML or JSON. Its serialization name is `PydanticAIDocs`:

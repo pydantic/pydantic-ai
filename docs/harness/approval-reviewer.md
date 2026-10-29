@@ -81,7 +81,7 @@ Only calls that need approval reach the reviewer. A call needs approval when its
 | `{'risk': 'low'}` | tools whose metadata includes those pairs |
 | `lambda ctx, tool_def: ...` | whatever the predicate returns |
 
-Approval requests for tools the selector does not match go to the person unreviewed.
+Approval requests for tools the selector does not match go to the person unreviewed. `'all'` also covers the requests a `ToolGuardrail` or a `ToolCallJudge` raises and any approval-required tool added later, all answered by the one `question`, so name the tools the question was written for.
 
 ## What happens to the rest
 
@@ -114,7 +114,7 @@ def ask_in_terminal(ctx: RunContext[None], requests: DeferredToolRequests) -> De
 agent = Agent(
     '{{ anthropic:xlarge }}',
     capabilities=[
-        ApprovalReviewer('{{ anthropic:small }}', question='Could this destroy data or leak secrets?'),
+        ApprovalReviewer('{{ anthropic:small }}', tools=['run_shell'], question='Could this destroy data or leak secrets?'),
         HandleDeferredToolCalls(handler=ask_in_terminal),
     ],
 )
@@ -124,7 +124,49 @@ agent = Agent(
 
 [`ToolCallJudge`](tool-call-judge.md) and `ApprovalReviewer` ask the same kind of question at different points, and in opposite directions. A judge can only narrow what runs: its `yes` blocks a call. A reviewer can only widen what runs without a person: its `no` approves a call.
 
-Both can apply to one call. A call the reviewer approves is executed, and a judge on the same tool is asked then, about the validated arguments; the judge can still block it. A judge with `on_uncertain='ask'` raises an approval request, and that request reaches the reviewer like any other. Scope the reviewer's `tools` away from the judge's when you want the judge's escalations to reach a person.
+Together they sort every call into blocked, run, or sent to a person. Let the judge block what must never run and escalate what it cannot settle with `on_uncertain='ask'`, and let the reviewer approve the escalations that are safe enough to run unattended:
+
+```python {names="defined"}
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
+from pydantic_ai_harness.tool_call_judge import ToolCallJudge
+
+agent = Agent(
+    '{{ anthropic:xlarge }}',
+    capabilities=[
+        ToolCallJudge(
+            '{{ anthropic:small }}',
+            tools=['run_shell'],
+            question='Could this command delete or overwrite data outside the project directory?',
+            on_uncertain='ask',
+        ),
+        ApprovalReviewer(
+            '{{ anthropic:small }}',
+            tools=['run_shell'],
+            question='Could this command delete or overwrite data, reach the network, or expose secrets?',
+        ),
+    ],
+    output_type=[str, DeferredToolRequests],
+)
+
+
+@agent.tool_plain
+def run_shell(command: str) -> str:
+    return f'Would run: {command}'
+```
+
+| Judge | Reviewer | What happens |
+|---|---|---|
+| `no` | not asked | the call runs |
+| `yes` | not asked | the call is blocked |
+| `unsure` or failed | `no` | the call is approved, and the judge is asked again before it runs |
+| `unsure` or failed | `yes`, `unsure`, or failed | the call is left for the person |
+
+`run_shell` is not registered with `requires_approval=True`, so the judge's escalations are the only approval requests the reviewer sees for it. On a tool that also requires approval, the reviewer answers those requests too, under the same `question`.
+
+A call the reviewer approves is judged again, like any approved call ([working with human approval](tool-call-judge.md#working-with-human-approval)): a `yes` still blocks it, and an `unsure` now lets it run. An escalated call that runs costs two judgements and one review.
+
+Scope the reviewer's `tools` away from the judge's when you want the judge's escalations to reach a person.
 
 ## What the reviewer sees
 
@@ -137,7 +179,7 @@ The outer agent's conversation, instructions, and tool results are not forwarded
 
 Set `include_conversation=True` when the question needs the conversation that led to the call, such as "does this go beyond what the user asked for?". The reviewer then also receives a `<conversation>` block: user messages, assistant messages, tool calls, and tool results, clamped to the most recent `conversation_window` tokens (estimated at ~4 characters per token). System prompts and thinking parts are left out.
 
-Turning it on widens the reviewer's own prompt-injection surface, because the transcript includes third-party content, and a reviewer that is talked into answering `no` approves the call. The instructions label both blocks as untrusted data and both are escaped before they are embedded, which reduces the risk rather than removing it.
+Turning it on widens the reviewer's own prompt-injection surface, because the transcript includes third-party content, and a reviewer that is talked into answering `no` approves the call. The instructions label both blocks as untrusted data, and the `<` of every opening or closing framework tag inside either block is escaped (`<tool_call>`, `<conversation>`, and Pydantic AI framing tags such as `<system>`), so content cannot end its block or forge another. Everything else is embedded as written. That reduces the risk rather than removing it.
 
 Either way, what the reviewer is shown leaves the process: a call's arguments go to the reviewing model's provider, including for calls the reviewer then leaves for the person. Where a tool's arguments can carry credentials or customer data, scope `tools` away from it, or route the reviewer to a provider you already trust with that data.
 
@@ -266,10 +308,13 @@ from pydantic_ai_harness.approval_reviewer import ApprovalReview, ApprovalReview
 reviews: list[ApprovalReview] = []
 reviewer = ApprovalReviewer(
     '{{ anthropic:small }}',
+    tools=['run_shell'],
     question='Could this destroy data or leak secrets?',
     on_review=reviews.append,
 )
 ```
+
+An exception raised by `on_review` is not caught: it ends the run, and approvals already made in the same batch are not applied.
 
 ## Safety boundary
 

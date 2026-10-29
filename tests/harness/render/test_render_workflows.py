@@ -34,6 +34,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai_harness import RenderWorkflows, ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 from tests.wrapped_retry_toolsets import call_probe_once, call_while_listed, failing_toolset, snapshot_probe_toolset
 
 from .conftest import RecordingTaskContext, RecordingWorkflows, ToolTaskConcurrency, mcp_toolset, run_agent_in_task
@@ -218,6 +219,7 @@ async def test_dynamic_tool_discovery_and_call_run_as_render_child_tasks() -> No
     assert 'dynamic-support__dynamic_toolset__dynamic-tools.call_tool' in context.task_names
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_prefixed_dynamic_tool_child_tasks_see_its_retry_count() -> None:
     """A dynamic toolset's child tasks list it under the prefix the run listed it under.
 
@@ -241,8 +243,9 @@ async def test_prefixed_dynamic_tool_child_tasks_see_its_retry_count() -> None:
 async def test_prefixed_dynamic_tool_child_tasks_keep_context_snapshots() -> None:
     """Under `.prefixed()`, a dynamic toolset's child tasks still answer from the snapshots serialized at dispatch.
 
-    `available_tool_names` and `active_capability_ids` live outside `RenderRunContext`'s dataclass fields, so the
-    context copies that carry or strip the tool name path have to keep them.
+    `available_tool_names` and `active_capability_ids` are not `RunContext` fields, so every context copy made inside
+    a child task has to keep them: the ones that carry or strip the tool name path, the enqueue guard, the one a tool's
+    `prepare` gets, and the ones the inner prefix and rename make before the tool runs.
     """
     reads: list[tuple[str, list[str], int]] = []
 
@@ -263,12 +266,16 @@ async def test_prefixed_dynamic_tool_child_tasks_keep_context_snapshots() -> Non
             'Done.',
             [
                 ('factory', [], 3),
+                ('prepare', [], 3),
                 ('instructions', [], 3),
                 ('factory', ['demo_probe'], 3),
+                ('prepare', ['demo_probe'], 3),
                 ('validator', ['demo_probe'], 3),
                 ('factory', ['demo_probe'], 3),
+                ('prepare', ['demo_probe'], 3),
                 ('body', ['demo_probe'], 3),
                 ('factory', ['demo_probe'], 3),
+                ('prepare', ['demo_probe'], 3),
                 ('instructions', ['demo_probe'], 3),
             ],
         )

@@ -13,7 +13,7 @@ from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 from pydantic_clai2.ui.rendering.spinners import MIN_INTERVAL, Spinner, Spinners, clamp_interval
 
 USAGE = 'Usage: /spinner [NAME [SECONDS]] | /spinner init'
@@ -85,7 +85,7 @@ class SpinnerPicker:
         slower, faster = self.nudge(MIN_INTERVAL), self.nudge(-MIN_INTERVAL)
         return slash_search(
             builder,
-            footer='-/+ speed · enter apply · esc close',
+            footer='-/+ speed - Enter apply - Esc close',
             key_source=lambda: menu_key() or _TICK,
             hotkeys={'-': slower, 'left': slower, '+': faster, '=': faster, 'right': faster},
         )

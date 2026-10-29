@@ -223,8 +223,9 @@ def test_bedrock_converse_rejects_proprietary_openai() -> None:
 def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
     # AWS serves GPT-5.6 Sol/Luna/Terra (#7793), GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol on the Converse API (see
     # `test_bedrock_openai_converse`) — unlike every other proprietary GPT model, they construct on
-    # `BedrockConverseModel`. Converse rejects their sampling settings; the rest of the profile keeps the defaults,
-    # except that Bedrock documents a 30-minute prompt-cache TTL for GPT-5.6.
+    # `BedrockConverseModel`. Converse rejects their sampling settings and takes their reasoning effort in the
+    # Responses API shape; GPT-6 Astra and GPT-6.1 Sol can't turn reasoning off. Bedrock documents a 30-minute
+    # prompt-cache TTL for GPT-5.6.
     for base_name in (
         'gpt-5.6-sol',
         'gpt-5.6-luna',
@@ -237,6 +238,9 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
         retention = {'default_cache_retention': timedelta(minutes=30)} if base_name.startswith('gpt-5.6') else {}
         assert BedrockProvider.model_profile(f'openai.{base_name}') == {
             'bedrock_disallows_sampling_settings': True,
+            'bedrock_thinking_variant': 'openai_responses',
+            'supports_thinking': True,
+            'thinking_always_enabled': base_name in ('gpt-6-astra', 'gpt-6.1-sol'),
             **retention,
         }
         model = BedrockConverseModel(f'us.openai.{base_name}', provider=BedrockProvider(region_name='us-west-2'))
@@ -247,8 +251,8 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
         } == snapshot(
             {
                 'supports_json_schema_output': False,
-                'supports_thinking': False,
-                'bedrock_thinking_variant': None,
+                'supports_thinking': True,
+                'bedrock_thinking_variant': 'openai_responses',
             }
         )
     assert isinstance(infer_model('bedrock:openai.gpt-5.6-luna'), BedrockConverseModel)

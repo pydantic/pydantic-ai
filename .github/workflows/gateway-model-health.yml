@@ -1,3 +1,4 @@
+# description: Runs the live gateway model catalog checks each Monday and notifies Slack when they fail.
 name: Gateway Model Health
 
 on:

@@ -3,6 +3,7 @@
 import re
 from dataclasses import dataclass
 
+from rich.style import Style
 from rich.syntax import Syntax, SyntaxTheme
 from rich.text import Text
 
@@ -69,6 +70,8 @@ _INLINE = re.compile(
     r'(?:\'(?P<single>[^\']*)\'|"(?P<double>[^"$`\\]*)")'
 )
 """A command, a flag, and its quoted argument, when the argument reaches the command as shown: no expansions."""
+_SECONDARY = Style(dim=True, underline=False)
+"""Lexed code reads as secondary to the answer: dimmed, without the underline `syntax_theme()` gives module names."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -178,7 +181,7 @@ def _shell_segment(text: str) -> Segment:
 
 
 def highlight_command(command: str, *, end: int) -> Text:
-    """`command[:end]` in `theme.syntax_theme()`, with code in an unknown language muted.
+    """`command[:end]` in `theme.syntax_theme()`, dimmed and not underlined, with code in an unknown language muted.
 
     Languages are found in the whole command, but nothing past `end` is lexed. `command` must
     already be terminal-safe: highlighting styles text, it does not escape it.
@@ -210,4 +213,6 @@ def _lex(code: str, *, language: str, syntax_theme: SyntaxTheme) -> Text:
     highlighted = Syntax(code, language, theme=syntax_theme, tab_size=0).highlight(code)
     if not code.endswith('\n'):
         highlighted.right_crop(1)  # The newline the lexer ends all code with.
+    # Last, so it overrides the token styles; it also dims names left in the terminal foreground.
+    highlighted.stylize(_SECONDARY)
     return highlighted

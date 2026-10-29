@@ -2,7 +2,14 @@
 emoji: "🌊"
 name: "Pydantic AI Streaming Resilience Sweep"
 description: "Audit the streaming state machine for ordering/lifecycle bugs and file a reproducible report. Runs on the Pydantic AI gh-aw shim; the prompt is iterable from a Logfire managed variable."
-on: weekly on saturday
+on:
+  schedule: weekly on saturday
+  workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
 permissions:
   contents: read
   issues: read
@@ -42,6 +49,8 @@ env:
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
+max-daily-ai-credits: -1
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md

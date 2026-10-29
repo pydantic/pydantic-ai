@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime as _datetime
-from types import TracebackType
+from types import AsyncGeneratorType, TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
@@ -49,23 +49,28 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
+    ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolResultEvent,
     ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
+    _run_context,
     _utils,
     capture_run_messages,
     models,
+    result as result_module,
 )
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
@@ -91,11 +96,14 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsNow, IsStr, message_part
+from .conftest import IsDatetime, IsInt, IsNow, IsStr, legacy_retry_prompt_part, message_part
+
+READINESS_WAIT_TIMEOUT = 5
+"""Seconds to wait for something that should happen promptly: only a hang should exceed it on a loaded runner."""
 
 
 class Foo(BaseModel):
@@ -1561,6 +1569,70 @@ async def test_run_stream_cancel_during_debounce_from_another_task():
     assert result.response.state == 'interrupted'
 
 
+@pytest.mark.parametrize('stream_method', ['stream_text', 'stream_response'])
+async def test_run_stream_outer_cancel_during_debounce_lets_source_cleanup_finish(
+    stream_method: Literal['stream_text', 'stream_response'],
+):
+    """An outer `anyio` cancel landing on a debounced pull lets the source's shielded cleanup finish.
+
+    The cancelled scope keeps re-cancelling the consumer while the debounce teardown waits for the pull it cancelled.
+    A plain `await` on that pull would forward each re-cancel into the source natively and interrupt its cleanup.
+    """
+    source_waiting = anyio.Event()
+    cleanup_started = anyio.Event()
+    cleanup_permitted = anyio.Event()
+    cleanup_finished = anyio.Event()
+    sources: list[AsyncGenerator[str]] = []
+    source_tasks: list[asyncio.Task[object] | None] = []
+
+    async def tokens() -> AsyncGenerator[str]:
+        try:
+            yield 'first'
+            source_tasks.append(asyncio.current_task())
+            source_waiting.set()
+            await anyio.sleep_forever()
+        finally:
+            cleanup_started.set()
+            with anyio.CancelScope(shield=True):
+                await cleanup_permitted.wait()
+                cleanup_finished.set()
+
+    def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        iterator = tokens()
+        sources.append(iterator)
+        return iterator
+
+    scope = anyio.CancelScope()
+
+    async def cancel_during_pull() -> None:
+        await source_waiting.wait()
+        scope.cancel()
+        await cleanup_started.wait()
+        await anyio.lowlevel.checkpoint()
+        cleanup_permitted.set()
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    try:
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(cancel_during_pull)
+                with scope:
+                    async with agent.run_stream('hello') as result:
+                        stream = result.stream_text() if stream_method == 'stream_text' else result.stream_response()
+                        async for _ in stream:  # pragma: no branch
+                            pass
+                assert cleanup_finished.is_set(), 'Model source cleanup was interrupted during teardown'
+
+        assert scope.cancelled_caught
+        # The debouncer pulls the source in a task of its own: that pull is what teardown has to wait for.
+        [source_task] = source_tasks
+        assert source_task is not asyncio.current_task()
+    finally:
+        cleanup_permitted.set()
+        for iterator in sources:
+            await iterator.aclose()
+
+
 def test_run_stream_sync_rejects_already_entered_result():
     """Passing an already-entered `StreamedRunResult` (the old constructor arg) raises a clear error."""
     with pytest.raises(TypeError, match='now takes the `run_stream\\(\\)` context manager'):
@@ -2093,9 +2165,9 @@ async def test_empty_response():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2671,6 +2743,66 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_early_strategy_emits_events_for_skipped_tool_calls(self):
+        """Calls skipped because an output tool already produced the final result still emit their events.
+
+        Each skipped function or deferred call gets an unvalidated `FunctionToolCallEvent` and a
+        `FunctionToolResultEvent` carrying the stub return recorded in history, like a skipped output tool.
+        """
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            yield {
+                0: DeltaToolCall('final_result', '{"value": "final"}', tool_call_id='call-output'),
+                1: DeltaToolCall('regular_tool', '{"x": 1}', tool_call_id='call-regular'),
+                2: DeltaToolCall('deferred_tool', '{"x": 2}', tool_call_id='call-deferred'),
+                3: DeltaToolCall('final_result', '{"value": "other"}', tool_call_id='call-output-2'),
+            }
+
+        agent = Agent(
+            FunctionModel(stream_function=sf),
+            output_type=[OutputType, DeferredToolRequests],
+            end_strategy='early',
+            toolsets=[ExternalToolset([ToolDefinition(name='deferred_tool')])],
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            return x
+
+        async with agent.run_stream_events('test early strategy') as event_stream:
+            events: list[tuple[str, str, bool | str | None]] = []
+            async for event in event_stream:
+                if isinstance(event, ToolCallEvent):
+                    events.append((type(event).__name__, event.tool_call_id, event.args_valid))
+                elif isinstance(event, ToolResultEvent):
+                    assert isinstance(event.part, ToolReturnPart)
+                    events.append((type(event).__name__, event.tool_call_id, event.part.model_response_str()))
+
+        assert events == snapshot(
+            [
+                ('OutputToolCallEvent', 'call-output', True),
+                ('OutputToolResultEvent', 'call-output', 'Final result processed.'),
+                ('OutputToolCallEvent', 'call-output-2', None),
+                (
+                    'OutputToolResultEvent',
+                    'call-output-2',
+                    'Output tool not used - a final result was already processed.',
+                ),
+                ('FunctionToolCallEvent', 'call-regular', None),
+                (
+                    'FunctionToolResultEvent',
+                    'call-regular',
+                    'Tool not executed - a final result was already processed.',
+                ),
+                ('FunctionToolCallEvent', 'call-deferred', None),
+                (
+                    'FunctionToolResultEvent',
+                    'call-deferred',
+                    'Tool not executed - a final result was already processed.',
                 ),
             ]
         )
@@ -3602,11 +3734,13 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
+                            outcome='retried',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -3717,11 +3851,13 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
+                            outcome='retried',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -3876,7 +4012,7 @@ class TestMultipleToolCalls:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        legacy_retry_prompt_part(
                             content='First output validation failed',
                             tool_name='first_output',
                             tool_call_id=IsStr(),
@@ -4043,11 +4179,13 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Second output validation failed',
                             tool_name='second_output',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
+                            outcome='retried',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         ),
                     ],
                     timestamp=IsNow(tz=datetime.UTC),
@@ -4121,7 +4259,7 @@ class TestMultipleToolCalls:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        legacy_retry_prompt_part(
                             content=[
                                 ErrorDetails(
                                     type='missing',
@@ -4766,11 +4904,13 @@ async def test_unknown_tool_call_events():
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                part=RetryPromptPart(
+                part=ToolReturnPart(
                     content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
                     tool_name='unknown_tool',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
+                    outcome='retried',
+                    retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                 ),
             ),
             FunctionToolResultEvent(
@@ -4869,18 +5009,20 @@ async def test_output_tool_events():
                 args_valid=False,
             ),
             OutputToolResultEvent(
-                part=RetryPromptPart(
+                part=ToolReturnPart(
                     content=[
-                        ErrorDetails(
-                            type='missing',
-                            loc=('value',),
-                            msg='Field required',
-                            input={'bad_value': 'invalid'},
-                        ),
+                        {
+                            'type': 'missing',
+                            'loc': ['value'],
+                            'msg': 'Field required',
+                            'input': {'bad_value': 'invalid'},
+                        },
                     ],
                     tool_name='final_result',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
+                    outcome='retried',
+                    retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                 )
             ),
             OutputToolCallEvent(
@@ -6008,11 +6150,13 @@ async def test_args_validator_failure_events():
                 args_valid=False,
             ),
             FunctionToolResultEvent(
-                part=RetryPromptPart(
+                part=ToolReturnPart(
                     content='Validation failed: x must be positive',
                     tool_name='add_numbers',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
+                    outcome='retried',
+                    retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                 ),
             ),
             PartStartEvent(
@@ -6945,7 +7089,8 @@ async def test_replay_text_preserves_subclasses(custom_part: bool) -> None:
         pass
     assert stream.get() == response
     assert start.content == 'a'
-    assert seen_lengths == ([2, 3] if custom_part else [])
+    # The 1 is replay copying the start part, so later deltas never mutate the caller's event.
+    assert seen_lengths == ([1, 2, 3] if custom_part else [])
 
 
 async def test_replay_text_requires_start() -> None:
@@ -7138,6 +7283,69 @@ async def test_stream_response_state_incomplete_after_early_break():
                 return
 
 
+@pytest.mark.parametrize(
+    'usage_limits,expected_layers',
+    [
+        pytest.param(
+            None,
+            snapshot(['AgentStream._events_iter', 'AgentStream._model_events', 'dispatch_event_stream']),
+            id='no-limits',
+        ),
+        pytest.param(
+            UsageLimits(total_tokens_limit=1000),
+            snapshot(
+                [
+                    'AgentStream._events_iter',
+                    'AgentStream._model_events',
+                    '_get_usage_checking_stream_response.<locals>._usage_checking_iterator',
+                    'dispatch_event_stream',
+                ]
+            ),
+            id='limits',
+        ),
+    ],
+)
+async def test_node_stream_early_exit_closes_event_stream(usage_limits: UsageLimits | None, expected_layers: list[str]):
+    """Leaving `node.stream()` early closes every generator `AgentStream` stacks on the model stream.
+
+    Each layer has to close the one it reads from. Otherwise the garbage collector closes it later, by
+    scheduling an `aclose()` task that can still be pending when `agent.iter()` returns. The generators are
+    held here, so the garbage collector can't close them in place of the stream. Token limits add a layer.
+    """
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        for piece in ('aa', 'bb', 'cc'):  # pragma: no branch
+            yield piece
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    event_stream_modules = {result_module.__file__, _run_context.__file__}
+    layers: list[AsyncGeneratorType[Any, Any]] = []
+    # The consumer's own iterator is the consumer's to close.
+    consumers: list[AsyncIterator[AgentStreamEvent]] = []
+    firstiter, finalizer = sys.get_asyncgen_hooks()
+
+    def track(agen: AsyncGenerator[Any]) -> None:
+        if isinstance(agen, AsyncGeneratorType) and agen.ag_code.co_filename in event_stream_modules:
+            layers.append(agen)
+        if firstiter is not None:  # pragma: no branch
+            firstiter(agen)
+
+    async with agent.iter('Hello', usage_limits=usage_limits) as run:
+        async for node in run:  # pragma: no branch
+            if agent.is_model_request_node(node):
+                sys.set_asyncgen_hooks(track, finalizer)
+                try:
+                    async with node.stream(run.ctx) as stream:
+                        consumers.append(aiter(stream))
+                        await anext(consumers[0])
+                finally:
+                    sys.set_asyncgen_hooks(firstiter, finalizer)
+                layers = [agen for agen in layers if agen not in consumers]
+                assert sorted(agen.ag_code.co_qualname for agen in layers) == expected_layers
+                assert [agen.ag_code.co_qualname for agen in layers if agen.ag_frame is not None] == []
+                break
+
+
 async def test_run_stream_events_break_cleanup():
     agent = Agent(TestModel())
 
@@ -7207,8 +7415,8 @@ async def test_run_stream_events_first_iteration_starts_background_task():
     agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
 
     async with agent.run_stream_events('') as events:
-        # Time out the first iteration itself so a lazy-start regression fails fast instead of hanging here.
-        await asyncio.wait_for(anext(events), timeout=1.0)
+        # Bound the first iteration so a lazy-start regression fails instead of hanging here.
+        await asyncio.wait_for(anext(events), timeout=READINESS_WAIT_TIMEOUT)
         assert producer_started.is_set()
 
 

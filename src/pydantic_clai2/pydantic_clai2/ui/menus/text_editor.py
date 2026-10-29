@@ -12,6 +12,7 @@ import tempfile
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from pathlib import Path
+from typing import Protocol
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
@@ -22,7 +23,13 @@ from prompt_toolkit.widgets import TextArea
 EditorApp = Application[str | None]
 """The built-in editor: its result is the edited text, or `None` when cancelled."""
 TextAreaRunner = Callable[[EditorApp], str | None]
-BUILT_IN_KEYS = 'ctrl-s save · esc cancel'
+BUILT_IN_KEYS = 'Ctrl+S save - Esc cancel'
+
+
+class TextEditor(Protocol):
+    """Edit `text` under `title`; the result, or `None` when the user cancelled."""
+
+    def __call__(self, text: str, /, *, title: str) -> str | None: ...
 
 
 def editor_command(*, default: str = '') -> list[str]:

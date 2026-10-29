@@ -3,17 +3,17 @@
 The built-in `day_ai` plugin: harness `DayAI`, with a browser sign-in by default or a token from `/keys`.
 
 Settings hold `DayAI`'s non-secret options and at most the name of a `/keys` entry, never a token; the menu that
-`/plugins configure day_ai` opens edits them. The browser sign-in works the way `/mcp` does for an OAuth server:
-FastMCP's flow, with tokens kept in the keyring under `mcp-day_ai`. `/mcp` server names cannot contain underscores,
-so that credential never belongs to one of your servers. The environment is not read.
+`/plugins configure day_ai` opens, also shown in the web UI's plugins panel, edits them. The browser sign-in works the
+way `/mcp` does for an OAuth server: FastMCP's flow, with tokens kept in the keyring under `mcp-day_ai`. `/mcp` server
+names cannot contain underscores, so that credential never belongs to one of your servers. The environment is not read.
 
 The sign-in runs only from that menu or `/day_ai login`, never while loading or in a prompt; see
 `pydantic_clai2.plugins.sign_in`.
 """
 
-import asyncio
 from collections.abc import Sequence
 from dataclasses import replace
+from functools import partial
 from typing import Generic, Literal
 
 from anyio import to_thread
@@ -26,10 +26,11 @@ from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, SavedKey, load_keys
 from pydantic_clai2.mcp import OAuthSignIn
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
-from pydantic_clai2.plugins.keys import choose_key, on_loop
+from pydantic_clai2.plugins.keys import choose_key
+from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.plugins.sign_in import sign_in_command, sign_in_now, warn_if_signed_out
-from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
-from pydantic_clai2.ui.menus.menu_worker import run_worker
+from pydantic_clai2.runtime.session import WorkspacelessCapability
+from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 
 DAY_AI_MCP_URL = 'https://day.ai/api/mcp'
@@ -44,8 +45,6 @@ TOKEN_ACCOUNT = 'day_ai'
 SETUP = 'Run /plugins configure day_ai to choose a token in /keys or browser sign-in.'
 SIGN_IN = OAuthSignIn(name=TOKEN_ACCOUNT, service='Day AI', setup='/day_ai login', url=DAY_AI_MCP_URL)
 """The browser sign-in; its tokens are the keyring credential `mcp-day_ai`."""
-RUNNERS: Runners = TERMINAL
-"""How the settings menu's widgets are shown; tests swap in scripted ones."""
 
 Auth = KeyReference | Literal['oauth']
 
@@ -74,10 +73,12 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
         if isinstance(auth, KeyReference):
             return (
                 DayAI[DepsT](
-                    auth=SavedKey(name=auth.name, setup=SETUP), include_instructions=self.settings.include_instructions
+                    defer_loading=True,
+                    auth=SavedKey(name=auth.name, setup=SETUP),
+                    include_instructions=self.settings.include_instructions,
                 ),
             )
-        return (self.for_run,)
+        return (WorkspacelessCapability[DepsT](self.for_run),)
 
     def get_commands(self) -> Sequence[Command]:
         return (sign_in_command('day_ai', SIGN_IN),)
@@ -86,10 +87,13 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
         # Checked per run, so signing in from the menu or `/day_ai login` applies to the next prompt.
         if not await to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
             return None
-        return DayAI[DepsT](client=SIGN_IN.client(), include_instructions=self.settings.include_instructions)
+        return DayAI[DepsT](
+            defer_loading=True, client=SIGN_IN.client(), include_instructions=self.settings.include_instructions
+        )
 
-    async def configure(self) -> str:
-        return await _configure(DayAISource(self.host))
+    def settings_menu(self) -> SettingsMenu:
+        source = DayAISource(self.host)
+        return SettingsMenu(source=source, actions={'auth': partial(_choose_auth, source)})
 
     async def on_session_start(self, event: SessionStart) -> None:
         console = self.host.console
@@ -194,28 +198,23 @@ class DayAISource(Generic[DepsT]):
         return DayAISettings.model_validate(data)
 
 
-async def _configure(source: DayAISource[DepsT]) -> str:
-    loop = asyncio.get_running_loop()
-    menu = FieldMenu(source)
-
-    def pick_auth() -> list[str]:
-        pick = RUNNERS.run_choice(menu.build_choices(_AUTH))
-        if pick.cancelled or pick.item is None:
-            return []
-        if pick.item.value == 'oauth':
-            return [source.apply(_AUTH, 'oauth'), *sign_in()]
-        label = f'Day AI access token (saved in /keys as {KEY_NAME})'
-        reference = on_loop(lambda: choose_key(name=KEY_NAME, label=label, runners=RUNNERS), loop)
-        if reference is None:
-            return []
-        source.save(source.settings.model_copy(update={'auth': reference}))
-        return [f'Day AI uses the saved key {reference.name}. Manage it in /keys.']
-
-    def sign_in() -> list[str]:
-        if SIGN_IN.signed_in():
-            return []
-        message = on_loop(lambda: sign_in_now(SIGN_IN, RUNNERS), loop)
-        return [] if message is None else [message]
-
-    messages = await run_worker(lambda: run_flow(menu, RUNNERS, submenus={'auth': pick_auth}))
-    return '\n'.join(messages) or 'Day AI settings unchanged.'
+async def _choose_auth(source: DayAISource[DepsT], dialogs: Dialogs) -> list[str]:
+    """The Sign-in row: browser sign-in, signing in now if needed, or a key picked or entered in `/keys`."""
+    picked = await dialogs.choose(
+        title=f'Choose {_AUTH.label}',
+        options=[Option(value=choice, label=_AUTH.display(choice)) for choice in _AUTH.choices],
+        current=await to_thread.run_sync(source.current, _AUTH),
+    )
+    if picked is None:
+        return []
+    if picked == 'oauth':
+        saved = await to_thread.run_sync(source.apply, _AUTH, 'oauth')
+        if await to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
+            return [saved]
+        return [saved, await sign_in_now(SIGN_IN, dialogs)]
+    label = f'Day AI access token (saved in /keys as {KEY_NAME})'
+    reference = await choose_key(name=KEY_NAME, label=label, dialogs=dialogs)
+    if reference is None:
+        return []
+    await to_thread.run_sync(lambda: source.save(source.settings.model_copy(update={'auth': reference})))
+    return [f'Day AI uses the saved key {reference.name}. Manage it in /keys.']

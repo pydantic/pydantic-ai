@@ -42,6 +42,15 @@ ignore_deprecation = pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.P
 class TestHTTPX2TenacityTransport:
     """`httpx2` retry transports use the same Tenacity configuration as their `httpx` predecessors."""
 
+    def test_default_wrapped_transports_use_pydantic_ai_pool_limits(self, transport_limits: list[httpx2.Limits]):
+        """Without `wrapped`, each transport sends through one with the pool limits of Pydantic AI's own clients."""
+        sync_transport = HTTPX2TenacityTransport(config=RetryConfig())
+        async_transport = AsyncHTTPX2TenacityTransport(config=RetryConfig())
+
+        assert isinstance(sync_transport.wrapped, httpx2.HTTPTransport)
+        assert isinstance(async_transport.wrapped, httpx2.AsyncHTTPTransport)
+        assert transport_limits == [httpx2.Limits(max_connections=1000, max_keepalive_connections=100)] * 2
+
     def test_sync_transport_passes_response_without_validator_and_closes_wrapped_transport(self):
         request = httpx2.Request('GET', 'https://example.com')
         response = httpx2.Response(200, request=request)
@@ -587,6 +596,31 @@ class TestWaitRetryAfter:
         result = wait_func(retry_state)
 
         assert result == 60.0
+        fallback.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ('headers', 'max_wait', 'expected'),
+        [
+            pytest.param({'retry-after-ms': '1500'}, 300, 1.5, id='ms-only'),
+            pytest.param({'retry-after-ms': '1500', 'retry-after': '2'}, 300, 1.5, id='ms-preferred'),
+            pytest.param({'retry-after-ms': '90000'}, 60, 60.0, id='ms-capped'),
+            pytest.param({'retry-after-ms': 'invalid', 'retry-after': '2'}, 300, 2.0, id='invalid-ms-falls-through'),
+        ],
+    )
+    def test_retry_after_ms(self, headers: dict[str, str], max_wait: float, expected: float):
+        """`retry-after-ms`, as OpenAI and Anthropic send it, takes precedence over `Retry-After` like in their SDKs."""
+        fallback = Mock(return_value=8.0)
+        wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=max_wait)
+
+        request = httpx2.Request('POST', 'https://api.openai.com/v1/chat/completions')
+        response = httpx2.Response(429, headers=headers, request=request)
+        http_error = httpx2.HTTPStatusError('Rate limited', request=request, response=response)
+
+        retry_state = Mock(spec=RetryCallState)
+        retry_state.outcome = Mock()
+        retry_state.outcome.exception.return_value = http_error
+
+        assert wait_func(retry_state) == expected
         fallback.assert_not_called()
 
     def test_retry_after_http_date_format(self):
