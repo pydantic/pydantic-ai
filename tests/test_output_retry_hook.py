@@ -76,7 +76,7 @@ async def test_terminal_exhaustion_does_not_notify() -> None:
     hooks = Hooks[object]()
 
     @hooks.on.after_output_retry
-    def record(ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:
+    def record(ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:  # pragma: no cover
         received.append(retry_context)
 
     agent = Agent(TestModel(custom_output_text='draft'), capabilities=[hooks], retries={'output': 0})
@@ -116,7 +116,7 @@ async def test_none_output_validator_retry_notifies() -> None:
 async def test_recovered_schema_error_does_not_notify() -> None:
     received: list[OutputRetryContext] = []
 
-    def record(ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:
+    def record(ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:  # pragma: no cover
         received.append(retry_context)
 
     def recover(

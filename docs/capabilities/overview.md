@@ -184,7 +184,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 
 ### Loop customization
 
-Core also ships capabilities for customizing the agent loop itself, mostly for production servers:
+Core and Harness also ship capabilities for customizing the agent loop itself, mostly for production servers:
 
 | Capability | Package | What it does |
 |---|---|---|

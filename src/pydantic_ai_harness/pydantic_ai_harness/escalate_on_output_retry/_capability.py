@@ -148,6 +148,8 @@ class EscalateOnOutputRetry(AbstractCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         """Trace transitions when this selector actually contributes a new request's model."""
         if self._selected_level != self._reported_level:
+            # Only an accepted output retry can move the selected level.
+            assert self._last_retry is not None
             span = ctx.tracer.start_span('escalate_on_output_retry')
             if span.is_recording():
                 span.set_attributes(
@@ -158,10 +160,9 @@ class EscalateOnOutputRetry(AbstractCapability[AgentDepsT]):
                         'escalate_on_output_retry.model': ctx.model.model_name,
                     }
                 )
-                if self._last_retry is not None:
-                    span.set_attribute('escalate_on_output_retry.source', self._last_retry.source)
-                    if self._last_retry.response.model_name is not None:
-                        span.set_attribute('escalate_on_output_retry.producer', self._last_retry.response.model_name)
+                span.set_attribute('escalate_on_output_retry.source', self._last_retry.source)
+                if self._last_retry.response.model_name is not None:
+                    span.set_attribute('escalate_on_output_retry.producer', self._last_retry.response.model_name)
             span.end()
             self._reported_level = self._selected_level
         return request_context

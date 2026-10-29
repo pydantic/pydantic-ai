@@ -13,9 +13,9 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent, ModelRetry, RunContext, ToolOutput
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation, SelectModel
-from pydantic_ai.messages import CapabilityEvent, ModelMessage
-from pydantic_ai.models import Model, ModelSelectionContext
+from pydantic_ai.capabilities import AbstractCapability, Hooks, Instrumentation, SelectModel
+from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelResponse
+from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -41,7 +41,7 @@ class TestOutputRetryEvent:
         selections: list[int] = []
 
         class ObservedEscalation(EscalateOnOutputRetry[object]):
-            def select_model(self, ctx: ModelSelectionContext[object]) -> Model | str:
+            def select_model(self, ctx: ModelSelectionContext[object]) -> Model | str:  # pragma: no cover
                 selections.append(ctx.retry)
                 return super().select_model(ctx)
 
@@ -67,11 +67,21 @@ class TestOutputRetryEvent:
         assert all(span.name != 'escalate_on_output_retry' for span in exporter.get_finished_spans())
 
     @pytest.mark.parametrize('include_content', [False, True])
-    async def test_retry_events_and_single_trace(self, include_content: bool) -> None:
+    @pytest.mark.parametrize('producer', ['test', None])
+    async def test_retry_events_and_single_trace(self, include_content: bool, producer: str | None) -> None:
         exporter = InMemorySpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         recorder = RecordRetries()
+        hooks = Hooks[object]()
+
+        @hooks.on.after_model_request
+        def set_producer(
+            ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            response.model_name = producer
+            return response
+
         agent = Agent(
             capabilities=[
                 EscalateOnOutputRetry(
@@ -82,6 +92,7 @@ class TestOutputRetryEvent:
                     ],
                 ),
                 recorder,
+                hooks,
                 Instrumentation(
                     settings=InstrumentationSettings(tracer_provider=provider, include_content=include_content)
                 ),
@@ -98,20 +109,22 @@ class TestOutputRetryEvent:
         [event] = recorder.events
         assert event.source == 'response_output'
         assert event.response.text == 'draft'
+        assert event.response.model_name == producer
         assert (event.retry.cause, event.retry.attempt, event.retry.max_retries) == ('model_retry', 1, 1)
         assert event.capability_id == 'escalation'
         adapter = TypeAdapter(CapabilityEvent)
         assert adapter.validate_json(adapter.dump_json(event)) == event
         spans = exporter.get_finished_spans()
         [transition] = [s for s in spans if s.name == 'escalate_on_output_retry']
-        assert dict(transition.attributes or {}) == snapshot(
+        attributes: dict[str, object] = dict(transition.attributes or {})
+        assert attributes.pop('escalate_on_output_retry.producer', None) == producer
+        assert attributes == snapshot(
             {
                 'escalate_on_output_retry.from_level': 0,
                 'escalate_on_output_retry.to_level': 1,
                 'escalate_on_output_retry.failures': 1,
                 'escalate_on_output_retry.model': 'test',
                 'escalate_on_output_retry.source': 'response_output',
-                'escalate_on_output_retry.producer': 'test',
             }
         )
         assert len({s.context.trace_id for s in spans if s.context is not None}) == 1
