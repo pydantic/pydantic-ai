@@ -2442,6 +2442,54 @@ async def test_sticky_follows_an_answer_another_capability_retried_on_the_same_c
     assert calls == ['primary', 'backup', 'backup', 'backup']
 
 
+async def test_an_answer_from_a_model_chosen_for_its_run_does_not_stick():
+    """`run(model=...)` picks a candidate for that run only: an answer no attempt failed before doesn't make it sticky."""
+    calls: list[str] = []
+    backup = _candidate('backup', calls)
+    agent = Agent(_candidate('primary', calls), capabilities=[ModelFallback(backup, sticky=True)])
+    first = await agent.run('x', model=backup)
+    assert _model_ids(first.all_messages()) == ['function:backup']
+    await agent.run('y', message_history=first.all_messages())
+    assert calls == ['backup', 'primary']
+
+
+async def test_a_conversation_stays_on_the_model_it_fell_back_to_until_the_primary_answers():
+    """Sticky answers after the fallback keep the conversation there; once the primary answers again, it starts there."""
+    calls: list[str] = []
+    backup_fails = False
+
+    def backup_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('backup')
+        if backup_fails:
+            raise ModelAPIError(model_name='backup', message='down')
+        return ModelResponse(parts=[TextPart('backup')])
+
+    agent = Agent(
+        _candidate('primary', calls),
+        capabilities=[ModelFallback(FunctionModel(backup_fn, model_name='backup'), sticky=True)],
+    )
+    history = _sticky_history('function:backup')
+    for _ in range(2):
+        history = (await agent.run('y', message_history=history)).all_messages()
+    backup_fails = True
+    history = (await agent.run('y', message_history=history)).all_messages()
+    await agent.run('y', message_history=history)
+    assert calls == ['backup', 'backup', 'backup', 'primary', 'primary']
+
+
+async def test_a_later_answer_from_another_model_ends_the_sticky_streak():
+    """Only the latest answers count: one from the primary after a fallback, like a run's own choice, ends the streak."""
+    calls: list[str] = []
+    agent = Agent(_candidate('primary', calls), capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)])
+    history = [
+        *_sticky_history('function:backup'),
+        ModelRequest(parts=[UserPromptPart('y')]),
+        ModelResponse(parts=[TextPart('from primary')], model_id='function:primary'),
+    ]
+    await agent.run('z', message_history=history)
+    assert calls == ['primary']
+
+
 # --- Agent specs ---
 
 
@@ -2605,51 +2653,3 @@ async def test_override_spec_sets_the_fallback():
         result = await agent.run('x')
     assert result.output == 'success (no tool calls)'
     assert attempted_models(result) == ['failing', 'test']
-
-
-async def test_an_answer_from_a_model_chosen_for_its_run_does_not_stick():
-    """`run(model=...)` picks a candidate for that run only: an answer no attempt failed before doesn't make it sticky."""
-    calls: list[str] = []
-    backup = _candidate('backup', calls)
-    agent = Agent(_candidate('primary', calls), capabilities=[ModelFallback(backup, sticky=True)])
-    first = await agent.run('x', model=backup)
-    assert _model_ids(first.all_messages()) == ['function:backup']
-    await agent.run('y', message_history=first.all_messages())
-    assert calls == ['backup', 'primary']
-
-
-async def test_a_conversation_stays_on_the_model_it_fell_back_to_until_the_primary_answers():
-    """Sticky answers after the fallback keep the conversation there; once the primary answers again, it starts there."""
-    calls: list[str] = []
-    backup_fails = False
-
-    def backup_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        calls.append('backup')
-        if backup_fails:
-            raise ModelAPIError(model_name='backup', message='down')
-        return ModelResponse(parts=[TextPart('backup')])
-
-    agent = Agent(
-        _candidate('primary', calls),
-        capabilities=[ModelFallback(FunctionModel(backup_fn, model_name='backup'), sticky=True)],
-    )
-    history = _sticky_history('function:backup')
-    for _ in range(2):
-        history = (await agent.run('y', message_history=history)).all_messages()
-    backup_fails = True
-    history = (await agent.run('y', message_history=history)).all_messages()
-    await agent.run('y', message_history=history)
-    assert calls == ['backup', 'backup', 'backup', 'primary', 'primary']
-
-
-async def test_a_later_answer_from_another_model_ends_the_sticky_streak():
-    """Only the latest answers count: one from the primary after a fallback, like a run's own choice, ends the streak."""
-    calls: list[str] = []
-    agent = Agent(_candidate('primary', calls), capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)])
-    history = [
-        *_sticky_history('function:backup'),
-        ModelRequest(parts=[UserPromptPart('y')]),
-        ModelResponse(parts=[TextPart('from primary')], model_id='function:primary'),
-    ]
-    await agent.run('z', message_history=history)
-    assert calls == ['primary']
