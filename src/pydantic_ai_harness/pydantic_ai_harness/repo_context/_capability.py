@@ -162,7 +162,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     """Walk-up result for this run, loaded once in `before_run` via `ctx.workspace`."""
 
     _seen_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
-    """Run-scoped set of directories already surfaced by Strategy 3."""
+    """Run-scoped set of directories Strategy 3 should not surface again.
+
+    Those it already surfaced, plus the working directory when the walk-up loaded its file.
+    """
 
     _cached_working_dir: Path | None = field(default=None, init=False, repr=False, compare=False)
     """The workspace's working directory for this run."""
