@@ -24,11 +24,9 @@ from typing import (
     Any,
     Literal,
     Never,
-    Protocol,
     TypeAlias,
     assert_never,
     cast,
-    runtime_checkable,
 )
 
 import anyio
@@ -47,6 +45,7 @@ from pydantic_ai.workspaces import (
     Point,
     Region,
     SupportsDisplay,
+    SupportsStartCount,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -97,10 +96,6 @@ WorkspaceMethod: TypeAlias = Literal[
     'scaled_screenshot',
     'cursor_position',
 ]
-
-_DISPLAY_METHODS: frozenset[WorkspaceMethod] = frozenset(
-    {'display_size', 'screenshot', 'act', 'zoom', 'scaled_screenshot', 'cursor_position'}
-)
 
 WORKSPACE_CALL_POLICIES: Mapping[str, StepPolicy] = {
     'display_size': StepPolicy(),
@@ -228,18 +223,10 @@ class WorkspaceCall:
         assert_never(self.method)
 
 
-@runtime_checkable
-class _CountsStarts(Protocol):
-    """A display that counts its starts, each without the windows that were open before."""
-
-    @property
-    def starts(self) -> int: ...
-
-
-def _counting_display(workspace: Workspace) -> _CountsStarts | None:
+def _counting_display(workspace: Workspace) -> SupportsStartCount | None:
     backend = workspace.backend
     display = backend.display if isinstance(backend, SupportsDisplay) else None
-    return display if isinstance(display, _CountsStarts) else None
+    return display if isinstance(display, SupportsStartCount) else None
 
 
 _reported_starts: weakref.WeakKeyDictionary[Workspace, int] = weakref.WeakKeyDictionary()
@@ -357,7 +344,7 @@ def raise_error(error: WorkspaceCallError) -> Never:
 
 async def execute_call(workspace: Workspace, call: WorkspaceCall) -> WorkspaceCallResult:
     """Run a call inside a durable unit; anything outside the error table fails the unit, so the engine retries it."""
-    display = _counting_display(workspace) if call.method in _DISPLAY_METHODS else None
+    display = _counting_display(workspace) if call.method in WORKSPACE_CALL_POLICIES else None
     if display is not None:
         _reported_starts.setdefault(workspace, display.starts)
     try:
@@ -369,9 +356,10 @@ async def execute_call(workspace: Workspace, call: WorkspaceCall) -> WorkspaceCa
     if display is None:
         return result
     # The starts since the last journaled call, not the display's count: a unit on another worker rebuilds the backend,
-    # and with it the count, so only these add up across units. They include starts during a unit that failed, which
-    # journaled nothing, so the engine's retry reports them. An error carries them too: an action refused because the
-    # display restarted is how workflow code learns of the restart.
+    # and with it the count, so only these add up across units. A start during a unit that failed journaled nothing;
+    # the retry reports it only because `SupportsStartCount` asks the display, which may be a new object, to count a
+    # start no call has completed on. An error carries them too: an action refused because the display restarted is
+    # how workflow code learns of the restart.
     starts = display.starts - _reported_starts[workspace]
     _reported_starts[workspace] = display.starts
     return dataclasses.replace(result, starts=starts)
@@ -535,8 +523,9 @@ class DurableWorkspace(WrapperWorkspace):
                 WorkspaceCallParams(run_context=ctx, ref=ref, call=call)
             )
         except Exception as error:
-            # The engine gave up on a call with a policy: report it like any other failure of that call.
-            if (policy := WORKSPACE_CALL_POLICIES.get(call.method)) is None:
+            # The engine gave up on a call with a policy: report it like any other failure of that call. A
+            # configuration error, such as no capability supplying the workspace, isn't the call failing.
+            if (policy := WORKSPACE_CALL_POLICIES.get(call.method)) is None or isinstance(error, UserError):
                 raise
             if policy.repeatable:
                 raise WorkspaceError(f'The {call.method} call failed ({type(error).__name__}).') from error

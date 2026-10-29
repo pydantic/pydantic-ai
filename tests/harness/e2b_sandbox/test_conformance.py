@@ -125,11 +125,8 @@ class TestLiveE2BDesktop(TestLiveE2BSandboxBackend):  # pragma: lax no cover
             f'setsid xfce4-terminal --disable-server --geometry 60x10+100+100 -x sh -c "cat > {typed}" '
             '>/dev/null 2>&1 &',
             shell=True,
-            env={'DISPLAY': ':1'},
         )
-        await backend.run(
-            ['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xfce4-terminal'], env={'DISPLAY': ':1'}
-        )
+        await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xfce4-terminal'])
 
         await display.act(Click(x=300, y=180))
         await display.act(TypeText(text='hello, desktop'))

@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from daytona import AsyncComputerUse
 
 _REQUEST_TIMEOUT = 30
+"""As `_backend._REQUEST_TIMEOUT`, which imports this module."""
 
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""

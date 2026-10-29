@@ -79,8 +79,8 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
             # provider error.
             supported_native_tools=frozenset(),
             # OpenAI's native `computer` tool works on the `/openai/v1` endpoint as on OpenAI's own API, for the
-            # models that take it there (verified live 2026-10-22 on gpt-5.6-luna).
-            openai_supports_computer_tool=response_scoped and _is_computer_use_model(base),
+            # models that take it there.
+            openai_supports_computer_tool=interface == 'openai-responses' and _is_computer_use_model(base),
         ),
     )
 

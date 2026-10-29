@@ -85,8 +85,8 @@ def computer_member(block: dict[str, Any], version: AnthropicComputerToolVersion
     """A call's member and input: the earlier tools name the member in the input's `action`."""
     if version == 'computer_toolset_20260801':
         return block['name'], block['input']
-    input = {key: value for key, value in block['input'].items() if key != 'action'}
-    return block['input'].get('action', ''), input
+    args = {key: value for key, value in block['input'].items() if key != 'action'}
+    return block['input'].get('action', ''), args
 
 
 COMPUTER_ACTION_COUNTS = 'computer_action_counts'
@@ -97,6 +97,9 @@ RETURNS_OUTPUT = frozenset({'zoom', 'cursor_position'})
 
 COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 """The result Anthropic asks for on each member call after one that failed."""
+
+COMPUTER_HELD_BACK = 'Not executed: the display restarted, so this action was held back.'
+"""The result of a member call that didn't run because the display restarted; another call's result says more."""
 
 _COMPUTER_CLICKS = {
     'left_click': ('left', 1),
@@ -148,19 +151,19 @@ _COMPUTER_MEMBER_TYPES: dict[str, str] = {
 """The `computer` tool action type of each member whose name differs from it."""
 
 
-def map_computer_member(name: str, input: dict[str, Any]) -> list[dict[str, Any]]:
+def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]:
     """One computer use call as `computer` tool actions, mapped field by field.
 
     A member or field that doesn't map fails validation, so the model retries; only the names of what didn't map are
     kept, so the call never runs with part of what the model asked for.
     """
     fields = _COMPUTER_MEMBER_FIELDS.get(name)
-    unsupported = sorted(input.keys() - fields) if fields is not None else sorted(input.keys())
+    unsupported = sorted(args.keys() - fields) if fields is not None else sorted(args.keys())
     if fields is None or unsupported:
         # Under the tool's own type, so the retry names the fields rather than refusing the member.
         return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'unsupported_fields': unsupported}]
-    position = _point(input.get('coordinate'))
-    modifiers = [input['text']] if input.get('text') else []  # keys held during a click, move, scroll or drag
+    position = _point(args.get('coordinate'))
+    modifiers = [args['text']] if args.get('text') else []  # keys held during a click, move, scroll or drag
     if name in _COMPUTER_CLICKS:
         button, count = _COMPUTER_CLICKS[name]
         return [{'type': 'click', **position, 'button': button, 'count': count, 'modifiers': modifiers}]
@@ -169,7 +172,7 @@ def map_computer_member(name: str, input: dict[str, Any]) -> list[dict[str, Any]
             return [{'type': 'move', **position, 'modifiers': modifiers}]
         case 'left_click_drag':
             # A missing end leaves the path too short to validate, so the model is asked again.
-            ends = [input.get('start_coordinate'), input.get('coordinate')]
+            ends = [args.get('start_coordinate'), args.get('coordinate')]
             path = [_point(point) for point in ends if point is not None]
             return [{'type': 'drag', 'path': path, 'modifiers': modifiers}]
         case 'left_mouse_down':
@@ -177,21 +180,21 @@ def map_computer_member(name: str, input: dict[str, Any]) -> list[dict[str, Any]
         case 'left_mouse_up':
             return [{'type': 'mouse_up'}]
         case 'scroll':
-            direction = input.get('scroll_direction')
-            amount = input.get('scroll_amount')
+            direction = args.get('scroll_direction')
+            amount = args.get('scroll_amount')
             return [{'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}]
         case 'type':
-            return [{'type': 'type', 'text': input.get('text', '')}]
+            return [{'type': 'type', 'text': args.get('text', '')}]
         case 'key':
             # xdotool syntax, which Claude writes: chords separated by spaces are pressed one after another.
-            chords = str(input.get('text', '')).split() or ['']
-            return [{'type': 'keypress', 'keys': [chord], 'repeat': input.get('repeat')} for chord in chords]
+            chords = str(args.get('text', '')).split() or ['']
+            return [{'type': 'keypress', 'keys': [chord], 'repeat': args.get('repeat')} for chord in chords]
         case 'hold_key':
-            return [{'type': 'hold_key', 'keys': [input.get('text', '')], 'seconds': input.get('duration')}]
+            return [{'type': 'hold_key', 'keys': [args.get('text', '')], 'seconds': args.get('duration')}]
         case 'wait':
-            return [{'type': 'wait', 'seconds': input.get('duration')}]
+            return [{'type': 'wait', 'seconds': args.get('duration')}]
         case 'zoom':
-            region = input.get('region')
+            region = args.get('region')
             if isinstance(region, list) and len(cast(list[Any], region)) == 4:
                 left, top, right, bottom = cast(list[Any], region)
                 return [{'type': 'zoom', 'region': {'left': left, 'top': top, 'right': right, 'bottom': bottom}}]

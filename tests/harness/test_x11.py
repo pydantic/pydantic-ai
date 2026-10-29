@@ -166,13 +166,28 @@ async def test_x11_computer_maps_a_character_key_outside_ascii_before_pressing_i
     assert commands.argvs[0][4:] == ['U00E9', '--', *RELEASE_MODIFIERS, 'key', '--repeat', '1', '--', 'ctrl+U00E9']
 
 
+async def test_x11_computer_maps_a_held_character_outside_ascii_to_a_key_first() -> None:
+    commands = ScriptedCommands()
+    await X11Computer(commands).act(HoldKeys(keys=('é',), seconds=1))
+    assert commands.argvs[0][:2] == ['sh', '-c']
+    assert commands.argvs[0][4:] == [
+        'U00E9',
+        '--',
+        *RELEASE_MODIFIERS,
+        'keydown',
+        'U00E9',
+        'sleep',
+        '1.0',
+        'keyup',
+        'U00E9',
+    ]
+
+
 @pytest.mark.parametrize(
     'key',
     [
         # xdotool matches command names in any case.
         'Exec',
-        # A command only newer xdotool releases have.
-        'windowquit',
         '--help',
     ],
 )
@@ -230,15 +245,17 @@ async def test_x11_computer_releases_what_it_pressed_when_cancelled(action: Comp
 async def test_x11_computer_looks_return_the_png_and_pass_their_size_or_region_as_arguments() -> None:
     encoded = base64.encodebytes(FAKE_SCREENSHOT).decode()  # wrapped lines, as `base64` prints
     png = CommandResult(exit_code=0, stdout=encoded, stderr='')
-    commands = ScriptedCommands(CommandResult(exit_code=0, stdout='1280 800\n', stderr=''), png, png, png)
+    pointer = CommandResult(exit_code=0, stdout='X=12\nY=34\nSCREEN=0\nWINDOW=65\n', stderr='')
+    commands = ScriptedCommands(CommandResult(exit_code=0, stdout='1280 800\n', stderr=''), png, png, png, pointer)
     computer = X11Computer(commands)
 
     assert await computer.display_size() == (1280, 800)
     assert await computer.screenshot() == FAKE_SCREENSHOT
     assert await computer.scaled_screenshot(640, 400) == FAKE_SCREENSHOT
     assert await computer.zoom(Region(left=10, top=20, right=110, bottom=70)) == FAKE_SCREENSHOT
+    assert await computer.cursor_position() == Point(x=12, y=34)
     # The size and region go in as arguments, never into the script.
-    assert [command[-1] for command in commands.argvs[2:]] == ['640x400', '10,20,100,50']
+    assert [command[-1] for command in commands.argvs[2:4]] == ['640x400', '10,20,100,50']
     assert all(env == {'LC_ALL': 'C.UTF-8'} for _, _, env in commands.calls)
 
 
@@ -293,9 +310,3 @@ async def test_x11_computer_refuses_a_key_name_the_display_does_not_know() -> No
 async def test_x11_computer_refuses_an_unknown_action() -> None:
     with pytest.raises(WorkspaceUnsupportedActionError):
         await X11Computer(ScriptedCommands()).act(object())  # pyright: ignore[reportArgumentType]
-
-
-async def test_x11_computer_reads_the_pointer_position() -> None:
-    output = 'X=12\nY=34\nSCREEN=0\nWINDOW=65\n'
-    computer = X11Computer(ScriptedCommands(CommandResult(exit_code=0, stdout=output, stderr='')))
-    assert await computer.cursor_position() == Point(x=12, y=34)

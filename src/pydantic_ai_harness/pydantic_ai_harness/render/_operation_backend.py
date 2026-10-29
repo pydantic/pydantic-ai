@@ -70,11 +70,14 @@ def _snapshot_options(options: Options) -> Options:
 
 
 def _policy_options(options: Options | None, policy: StepPolicy) -> Options:
-    """`options` under `policy`: a step that isn't repeatable gets no retries."""
+    """`options` under `policy`: a step that isn't repeatable gets no retries, and a shorter timeout is raised."""
     options = _snapshot_options(options) if options is not None else Options()
+    timeout = options.timeout_seconds
+    if policy.timeout is not None:
+        timeout = max(timeout or 0, math.ceil(policy.timeout))
     return Options(
         retry=Retry(max_retries=0, wait_duration_ms=0) if not policy.repeatable else options.retry,
-        timeout_seconds=math.ceil(policy.timeout) if policy.timeout is not None else options.timeout_seconds,
+        timeout_seconds=timeout,
         plan=options.plan,
     )
 

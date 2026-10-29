@@ -106,7 +106,7 @@ its own, counting down from 255 past the modifier keys, then runs `xdotool` with
 
 `xdotool` alone types a character that has no key by remapping one spare keycode for each keystroke, and an
 application that reads the keymap after the keystroke, such as Chrome, then sees a later character, or none when
-every keycode is taken, as on E2B's desktop. Mapping a run's characters at once and waiting for applications to
+every keycode is taken. Mapping a run's characters at once and waiting for applications to
 see the new keymap types them reliably (checked live in Chrome and Firefox). The borrowed keycodes, which belong to
 rarely used keys such as media keys, stay mapped."""
 
@@ -152,6 +152,25 @@ _CAPTURE_SCALED = (
 
 STARTED = 'pydantic-ai-display-started'
 """What a start script prints when it started a new X server, rather than finding one running."""
+
+_GENERATION = '/tmp/.pydantic-ai-display-generation'
+"""Counts the X server starts in the environment, so every backend object on it numbers them alike."""
+
+_UNSHOWN = '/tmp/.pydantic-ai-display-unshown'
+"""Holds the generation of a start no display call has completed on yet, until one does."""
+
+RECORD_START = (
+    f'generation=$(($(cat {_GENERATION} 2>/dev/null || echo 0) + 1)); echo $generation > {_GENERATION}; '
+    f'echo $generation > {_UNSHOWN}; echo {STARTED}; '
+)
+"""What a start script runs once a new X server answers: numbers the start, keeps it as not yet shown, and prints
+`STARTED`."""
+
+_REPORT_UNSHOWN = f'; if [ -e {_UNSHOWN} ]; then echo "{STARTED} $(cat {_UNSHOWN})"; fi'
+"""Appended to a start script: prints `STARTED` and the generation of a start no call has completed on, whichever
+backend object made it, such as one whose durable unit failed."""
+
+_FORGET_UNSHOWN = f'if [ "$(cat {_UNSHOWN} 2>/dev/null)" = "$1" ]; then rm -f {_UNSHOWN}; fi'
 
 
 def _keysym(key: str) -> str:
@@ -214,7 +233,7 @@ DISPLAY = ':1'
 
 _LOCALE = {'LC_ALL': 'C.UTF-8'}
 """`xdotool type` reads its text in the locale's encoding, and stops at the first character outside ASCII under a
-POSIX locale, which is what an environment without one set, such as E2B's, has."""
+POSIX locale, which is what an environment without one set has."""
 
 
 _X_LOCK = f'/tmp/.X{DISPLAY[1:]}-lock'
@@ -224,8 +243,8 @@ _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY[1:]}'
 def start_x_server(log: str, *, then: str = '') -> str:
     """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
 
-    It gives up as soon as the X server exits, or after 10 seconds, with the end of `log` as the reason, and prints
-    `STARTED` once a new X server answers. `then` runs then, such as to start a panel.
+    It gives up as soon as the X server exits, or after 10 seconds, with the end of `log` as the reason, and runs
+    `RECORD_START` once a new X server answers. `then` runs then, such as to start a panel.
     """
     return (
         'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
@@ -233,30 +252,13 @@ def start_x_server(log: str, *, then: str = '') -> str:
         # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
         f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
         f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
+        # `-noreset`: Xvfb otherwise resets when its last client leaves, dropping the keys `xmodmap` mapped for typing.
         f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -noreset >/dev/null 2>{log} & xvfb=$!; i=0; '
         'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
         'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
         f"echo 'the X server did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
-        f'sleep 0.1; i=$((i+1)); done; echo {STARTED}; {then} fi; '
+        f'sleep 0.1; i=$((i+1)); done; {RECORD_START}{then} fi; '
     )
-
-
-async def start_x11(
-    backend: SupportsCommands, size: tuple[int, int], script: str, where: Callable[[], str]
-) -> tuple[X11Computer, bool]:
-    """Run `script`, which starts an X display unless one answers, and control that display.
-
-    `script`, built with `start_x_server`, starts it at the size `$1` names and prints `STARTED` when it started a new
-    X server. Returns the display's controller and whether it did. `where` names the environment in errors.
-    """
-    width, height = size
-    result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env={'DISPLAY': DISPLAY}, timeout=30)
-    if result.exit_code != 0:
-        raise WorkspaceUnavailableError(
-            f'Could not start the display in {where()}: it needs Xvfb, xdotool, xmodmap, scrot and setsid '
-            f'({(result.stderr or result.stdout).strip()})'
-        )
-    return X11Computer(backend), STARTED in result.stdout.split()
 
 
 def x11_display(
@@ -267,16 +269,39 @@ def x11_display(
     *,
     screen_key: Callable[[], object | None],
 ) -> ManagedDisplay:
-    """A backend's display on an X server that `script` starts, as `start_x11` runs it."""
+    """A backend's display on an X server that `script` starts at the size `$1` names, unless one answers.
+
+    `script` runs `RECORD_START` when it starts a new X server. `where` names the environment in errors.
+    """
 
     async def start() -> X11Computer:
-        computer, started = await start_x11(backend, size, script, where)
-        if started:
-            display.started_fresh()
-        return computer
+        width, height = size
+        result = await backend.run(['sh', '-c', script + _REPORT_UNSHOWN, 'sh', f'{width}x{height}'], timeout=30)
+        if result.exit_code != 0:
+            raise WorkspaceUnavailableError(
+                f'Could not start the display in {where()}: it needs Xvfb, xdotool, xmodmap, scrot and setsid '
+                f'({(result.stderr or result.stdout).strip()})'
+            )
+        if generation := _unshown_generation(result.stdout):
+            display.started_fresh(generation)
+        return X11Computer(backend)
 
-    display = ManagedDisplay(start, screen_key=screen_key)
+    async def shown(generation: int) -> None:
+        await backend.run(['sh', '-c', _FORGET_UNSHOWN, 'sh', str(generation)], timeout=30)
+
+    display = ManagedDisplay(start, screen_key=screen_key, shown=shown)
     return display
+
+
+def _unshown_generation(output: str) -> int | None:
+    """The generation of the start `_REPORT_UNSHOWN` printed, if it printed one."""
+    for line in output.splitlines():
+        match line.split():
+            case [marker, generation] if marker == STARTED and generation.isdigit():
+                return int(generation)
+            case _:
+                pass
+    return None
 
 
 class X11Computer:
@@ -308,7 +333,7 @@ class X11Computer:
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         keydown = ['keydown', *keysyms] if keysyms else []
-        await self._input(['xdotool', *self._release_modifiers, *keydown, *args, *keyup], [*release, *keyup])
+        await self._input(_press(keysyms, [*self._release_modifiers, *keydown, *args, *keyup]), [*release, *keyup])
 
     async def _input(self, command: list[str], release: list[str]) -> None:
         """Run an input command; if it fails or is cancelled, let go of what it may hold with `xdotool <release>`."""

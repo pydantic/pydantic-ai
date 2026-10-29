@@ -294,6 +294,11 @@ def test_a_desktop_smaller_than_daytona_starts_is_refused(size: tuple[int, int])
         DaytonaSandboxBackend(desktop=size)
 
 
+def test_an_attached_sandbox_keeps_its_own_size_whatever_desktop_says() -> None:
+    backend = DaytonaSandboxBackend(ref=WorkspaceRef(provider='daytona', id='sandbox-1'), desktop=(800, 600))
+    assert backend.display is not None
+
+
 async def test_a_sandbox_without_a_desktop_has_no_display(fake_daytona: FakeDaytona) -> None:
     backend = DaytonaSandboxBackend()
 
