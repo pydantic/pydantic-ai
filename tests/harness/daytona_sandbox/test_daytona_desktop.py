@@ -248,6 +248,9 @@ async def test_an_action_after_the_sandbox_restarted_starts_the_desktop_before_a
     sandbox.computer_use.stop_with_sandbox()
     with pytest.raises(WorkspaceError):
         await Workspace(backend).act(Click(x=1, y=1))
+    # The next action starts the desktop again, and doesn't run on the new screen.
+    with pytest.raises(WorkspaceError, match='The display restarted before this action'):
+        await Workspace(backend).act(Click(x=1, y=1))
     await Workspace(backend).act(Click(x=1, y=1))
 
     assert not sandbox.computer_use.broken
