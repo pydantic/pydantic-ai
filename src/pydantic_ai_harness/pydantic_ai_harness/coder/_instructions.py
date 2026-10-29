@@ -47,8 +47,8 @@ instructions explicitly ask for sub-agents, delegation, or parallel agent work.
 re-explores the project, so unrequested delegation multiplies tool calls and cost."""
 
 _FINISHING = """\
-Your deliverables may be graded in a fresh environment that contains only the
-files the task names as outputs. Make them self-contained, with no reliance on
+Deliverables may be used outside this workspace, where only the files you were
+asked to produce are present. Make them self-contained, with no reliance on
 other workspace files, caches, or data you did not include, and check that they
 still work when run from a clean directory.
 
