@@ -52,7 +52,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import ManagedDisplay
+from pydantic_ai_harness._display import ManagedDisplay, desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -62,7 +62,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness._x11 import DISPLAY, X11Computer, start_x11, start_x_server
+from pydantic_ai_harness._x11 import DISPLAY, start_x_server, x11_display
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -125,7 +125,6 @@ _OUTPUT_PREVIEW_CHARS = 64 * 1024
 _DESKTOP_TEMPLATE = 'desktop'
 """E2B's desktop template, which a new sandbox with `desktop` and no `template` runs."""
 
-_DEFAULT_DESKTOP_SIZE = (1280, 800)
 
 _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
 
@@ -353,12 +352,20 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         self._probe_setsid = template is not None or sandbox is not None or ref is not None
         if desktop and template is None:
             self._template = _DESKTOP_TEMPLATE
-        self._desktop_size = _DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
+        self._desktop_size = desktop_size(desktop)
         if self._desktop_size:
             # Commands see the desktop too, so a program the agent starts from the shell opens on it.
             self._env = {'DISPLAY': DISPLAY, **(self._env or {})}
         self._display = (
-            None if self._desktop_size is None else ManagedDisplay(self._start_display, screen_key=lambda: self.ref)
+            None
+            if self._desktop_size is None
+            else x11_display(
+                self,
+                self._desktop_size,
+                _START_DESKTOP,
+                lambda: f'E2B sandbox {self._ref and self._ref.id}',
+                screen_key=lambda: self.ref,
+            )
         )
         self._setsid: bool | None = None
         self._setsid_lock = anyio.Lock()
@@ -811,15 +818,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
     def display(self) -> ManagedDisplay | None:
         """The sandbox's desktop, when created with `desktop=True`."""
         return self._display
-
-    async def _start_display(self) -> X11Computer:
-        assert self._desktop_size is not None and self._display is not None
-        computer, started = await start_x11(
-            self, self._desktop_size, _START_DESKTOP, lambda: f'E2B sandbox {self._ref and self._ref.id}'
-        )
-        if started:
-            self._display.started_fresh()
-        return computer
 
     async def live_view_url(self) -> str:
         """A link to watch the desktop, and use it, in a browser, through the template's noVNC viewer.
