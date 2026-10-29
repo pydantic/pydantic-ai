@@ -2593,7 +2593,7 @@ class TestPlaywrightBrowserLifecycle:
         # not just the generic missing-binary hint.
         with pytest.warns(toolset_module.BrowserUnavailableWarning, match='HTTP 403 forbidden') as warned:
             result = await agent.run('screenshot the page')
-        assert 'Chromium is not installed' in str(warned[0].message)
+        assert 'Chromium is not installed' in str(warned.pop(toolset_module.BrowserUnavailableWarning).message)
         assert 'HTTP 403 forbidden' in _tool_results(result)
 
     async def test_close_error_still_exits_driver(self, monkeypatch: pytest.MonkeyPatch) -> None:
