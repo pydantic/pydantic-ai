@@ -25,7 +25,7 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -53,26 +53,14 @@ def _delegator(args: dict[str, object]) -> FunctionModel:
             return ModelResponse(parts=[ToolCallPart('delegate_task', args)])
         return ModelResponse(parts=[TextPart('from the delegate')])
 
-    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        for part in respond(messages, info).parts:
-            if isinstance(part, TextPart):
-                yield part.content
-            else:
-                assert isinstance(part, ToolCallPart)
-                yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
-
-    return FunctionModel(respond, stream_function=stream)
+    return FunctionModel(respond)
 
 
 def _worker(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('from the worker')])
 
 
-async def _stream_worker(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    yield 'from the worker'
-
-
-worker = Agent(FunctionModel(_worker, stream_function=_stream_worker), name='worker')
+worker = Agent(FunctionModel(_worker), name='worker')
 
 named_agent = Agent(
     _delegator({'agent_name': 'worker', 'task': 'Work on it'}),
@@ -111,7 +99,7 @@ async def test_delegation_to_a_named_agent_with_its_own_model(client: Client) ->
     assert output == 'from the worker'
 
 
-fast = FunctionModel(_worker, stream_function=_stream_worker)
+fast = FunctionModel(_worker)
 menu_agent = Agent(
     _delegator({'agent_name': 'self', 'task': 'Work on it'}),
     name='menu_delegating_agent',
