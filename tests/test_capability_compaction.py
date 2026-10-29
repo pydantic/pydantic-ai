@@ -605,6 +605,60 @@ async def test_retried_error_keeps_the_request_pending():
     assert isinstance(result.all_messages()[0].parts[0], CompactionPart)
 
 
+@dataclass
+class RequestEach(AbstractCapability[Any]):
+    """Requests compaction from `before_model_request` on the first step, once per `(reason, focus)` pair."""
+
+    requests: list[tuple[str, str | None]]
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if ctx.run_step == 1:
+            for reason, focus in self.requests:
+                ctx.request_compaction(reason=reason, focus=focus)
+        return request_context
+
+
+async def compacted_with(*requests: tuple[str, str | None]) -> tuple[str, str | None]:
+    """The reason and focus the hook gets after the requests are made in order."""
+    summarize = Summarize()
+    await Agent(TestModel(), capabilities=[RequestEach(list(requests)), summarize]).run('hi')
+    [request] = summarize.calls
+    return request.reason, request.focus
+
+
+async def test_a_manual_focus_survives_a_later_automatic_request():
+    """A `/compact` focus isn't dropped by the cache-expiry request that comes in after a long break."""
+    assert await compacted_with(('manual', 'the decisions'), ('cache_expiry', None)) == ('manual', 'the decisions')
+
+
+@pytest.mark.parametrize(
+    ('first', 'second', 'reason'),
+    [
+        ('cache_expiry', 'manual', 'manual'),
+        ('threshold', 'model_requested', 'model_requested'),
+        ('model_requested', 'context_overflow', 'model_requested'),
+        ('model_switch', 'context_overflow', 'context_overflow'),
+        ('threshold', 'model_switch', 'model_switch'),
+        ('cache_expiry', 'threshold', 'threshold'),
+        ('my reason', 'cache_expiry', 'cache_expiry'),
+        ('my reason', 'other reason', 'my reason'),
+    ],
+)
+async def test_merged_requests_keep_the_more_important_reason(first: str, second: str, reason: str):
+    assert (await compacted_with((first, None), (second, None)))[0] == reason
+
+
+async def test_merged_requests_keep_both_focuses():
+    assert await compacted_with(('manual', 'the decisions'), ('model_requested', 'the open bugs')) == (
+        'manual',
+        'the decisions\n\nthe open bugs',
+    )
+    # The same focus twice is kept once.
+    assert await compacted_with(('manual', 'the decisions'), ('manual', 'the decisions')) == ('manual', 'the decisions')
+
+
 async def test_request_made_during_the_attempt_stays_pending():
     """Accepting an attempt settles the request it compacted for, not one made while it ran."""
 

@@ -64,6 +64,24 @@ class RequestedCompaction:
     focus: str | None = None
 
 
+_COMPACTION_REASON_PRIORITY: tuple[str, ...] = (
+    'manual',
+    'model_requested',
+    'context_overflow',
+    'model_switch',
+    'threshold',
+    'cache_expiry',
+)
+"""The built-in reasons, most important first. A reason of your own ranks after all of them."""
+
+
+def _reason_rank(reason: _messages.CompactionReason) -> int:
+    try:
+        return _COMPACTION_REASON_PRIORITY.index(reason)
+    except ValueError:
+        return len(_COMPACTION_REASON_PRIORITY)
+
+
 @dataclasses.dataclass
 class CompactionRequests:
     """A run's pending compaction request, shared by reference by every `RunContext` of the run."""
@@ -71,10 +89,22 @@ class CompactionRequests:
     requested: RequestedCompaction | None = None
 
     def request(self, requested: RequestedCompaction) -> None:
-        self.requested = requested
+        """Make `requested` pending, merged into the request already pending, if any.
+
+        The merged request has the more important reason, by `_COMPACTION_REASON_PRIORITY`, and the earlier one's on
+        a tie. It keeps every focus: both, the earlier one first and separated by a blank line, when they differ.
+        """
+        pending = self.requested
+        if pending is None:
+            self.requested = requested
+            return
+        reason = requested.reason if _reason_rank(requested.reason) < _reason_rank(pending.reason) else pending.reason
+        focuses = [focus for focus in (pending.focus, requested.focus) if focus]
+        focus = '\n\n'.join(dict.fromkeys(focuses)) or None
+        self.requested = RequestedCompaction(reason=reason, focus=focus)
 
     def settle(self, requested: RequestedCompaction) -> None:
-        """Drop `requested` once it's been acted on, unless a later request replaced it in the meantime."""
+        """Drop `requested` once it's been acted on, unless a later request was merged into it in the meantime."""
         if self.requested is requested:
             self.requested = None
 
@@ -1095,9 +1125,16 @@ class RunContext(Generic[RunContextAgentDepsT]):
         step after it.
 
         The request stays pending until an attempt is sent with it: if the attempt it was made for fails
-        and another model serves the request, that attempt compacts again, for its own model. A later call
-        replaces a pending request. A [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent]
-        listener that cancels the compaction drops the request.
+        and another model serves the request, that attempt compacts again, for its own model. A
+        [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] listener that cancels the compaction
+        drops the request.
+
+        A call while a request is pending merges into it, so an automatic request, like one when the prompt cache
+        expired, doesn't lose a `/compact` command's focus. The merged request keeps the more important
+        [reason][pydantic_ai.messages.CompactionReason]: `'manual'`, then `'model_requested'`,
+        `'context_overflow'`, `'model_switch'`, `'threshold'` and `'cache_expiry'`, then a reason of your own, and
+        the earlier one on a tie. It keeps every focus: when both have a different one, the earlier first, separated
+        by a blank line.
 
         Args:
             reason: Why compaction is needed, passed on to the hooks and the compaction events.
