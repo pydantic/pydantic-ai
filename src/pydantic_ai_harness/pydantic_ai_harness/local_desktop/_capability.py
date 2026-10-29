@@ -42,7 +42,7 @@ class LocalDesktop(LocalWorkspace[AgentDepsT]):
         self._screen = None if self.real_screen else VirtualScreen(self.size)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        backend = LocalDesktopBackend(self.working_dir, env=self.env, screen=self._screen)
+        backend = LocalDesktopBackend(self.working_dir, env=self.env, screen=self._screen or 'real')
         if ref is not None and ref != backend.ref:
             return None
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend

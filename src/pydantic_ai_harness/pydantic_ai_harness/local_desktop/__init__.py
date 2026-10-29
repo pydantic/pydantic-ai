@@ -4,10 +4,11 @@
 that pass a workspace to a run as `workspace=`.
 """
 
-from pydantic_ai_harness.local_desktop._backend import LocalDesktopBackend
+from pydantic_ai_harness.local_desktop._backend import LocalDesktopBackend, VirtualScreen
 from pydantic_ai_harness.local_desktop._capability import LocalDesktop
 
 __all__ = [
     'LocalDesktop',
     'LocalDesktopBackend',
+    'VirtualScreen',
 ]

@@ -124,7 +124,7 @@ class BlockingCommands(ScriptedCommands):
 async def test_x11_computer_runs_one_xdotool_command_per_action(action: ComputerAction, argv: list[str]) -> None:
     commands = ScriptedCommands()
     await X11Computer(commands).act(action)
-    assert commands.calls == [(argv, False, {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'})]
+    assert commands.calls == [(argv, False, {'LC_ALL': 'C.UTF-8'})]
 
 
 async def test_x11_computer_types_mixed_text_in_one_command_mapping_each_character_outside_ascii_once() -> None:
@@ -233,7 +233,7 @@ async def test_x11_computer_looks_return_the_png_and_pass_their_size_or_region_a
     assert await computer.zoom(Region(left=10, top=20, right=110, bottom=70)) == FAKE_SCREENSHOT
     # The size and region go in as arguments, never into the script.
     assert [command[-1] for command in commands.argvs[2:]] == ['640x400', '10,20,100,50']
-    assert all(env == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'} for _, _, env in commands.calls)
+    assert all(env == {'LC_ALL': 'C.UTF-8'} for _, _, env in commands.calls)
 
 
 @pytest.mark.parametrize(
@@ -242,7 +242,7 @@ async def test_x11_computer_looks_return_the_png_and_pass_their_size_or_region_a
         (
             CommandResult(exit_code=1, stdout='', stderr="Can't open display: :1\n"),
             'display_size',
-            "exit code 1 on display :1: Can't open display: :1",
+            "exit code 1: Can't open display: :1",
         ),
         (CommandResult(exit_code=0, stdout='garbage\n', stderr=''), 'display_size', "output: 'garbage'"),
         (CommandResult(exit_code=127, stdout='', stderr='sh: scrot: not found'), 'screenshot', 'scrot: not found'),

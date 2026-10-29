@@ -73,3 +73,5 @@ screen there.
 ::: pydantic_ai_harness.local_desktop.LocalDesktop
 
 ::: pydantic_ai_harness.local_desktop.LocalDesktopBackend
+
+::: pydantic_ai_harness.local_desktop.VirtualScreen

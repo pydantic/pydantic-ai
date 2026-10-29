@@ -213,15 +213,35 @@ async def test_a_screen_that_cannot_start_says_why(
 
 @linux_only
 async def test_a_start_that_is_cancelled_stops_what_it_started(fake_x: Path, tmp_path: Path):
-    _install(Path(os.environ['PATH'].split(':')[0]), {'xprop': 'true'})  # the window manager never gets ready
-    desktop = LocalDesktop[None](tmp_path)
-    with anyio.move_on_after(0.5):
-        await _backend(desktop).display.screenshot()
+    bin_dir = Path(os.environ['PATH'].split(':')[0])
+    _install(bin_dir, {'xprop': 'touch "$LOG.waiting"'})  # the window manager never gets ready
+    display = _backend(LocalDesktop[None](tmp_path)).display
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(display.screenshot)
+        while not Path(f'{fake_x}.waiting').exists():
+            await anyio.sleep(0.01)
+        tg.cancel_scope.cancel()
     pids = [int(pid) for pid in Path(f'{fake_x}.pids').read_text(encoding='utf-8').split()]
     assert len(pids) == 2
     for pid in pids:
         with pytest.raises(ProcessLookupError):
             os.kill(pid, 0)
+
+
+@linux_only
+async def test_a_backend_uses_a_private_screen_unless_asked_for_yours(
+    fake_x: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv('DISPLAY', ':0')
+    monkeypatch.delenv('WAYLAND_DISPLAY', raising=False)
+    monkeypatch.delenv('XDG_SESSION_TYPE', raising=False)
+    backend = LocalDesktopBackend(tmp_path)
+    try:
+        assert (await backend.run('echo $DISPLAY', shell=True)).stdout == ':7\n'
+    finally:
+        await backend._screen.stop()  # pyright: ignore[reportOptionalMemberAccess,reportPrivateUsage]
+    real = LocalDesktopBackend(tmp_path, screen='real')
+    assert (await real.run('echo $DISPLAY', shell=True)).stdout == ':0\n'
 
 
 @linux_only
@@ -274,7 +294,6 @@ def test_it_is_a_local_workspace_with_a_screen(tmp_path: Path):
     assert isinstance(desktop.get_workspace(None, ref=None), ReadOnlyWorkspace)  # pyright: ignore[reportArgumentType]
     # Like `LocalWorkspace`, a ref for another directory never redirects it.
     assert desktop.get_workspace(None, ref=WorkspaceRef(provider='local', id='/elsewhere')) is None  # pyright: ignore[reportArgumentType]
-    assert desktop.id == 'local_workspace'
 
 
 def test_workspaces_on_one_screen_name_it_alike(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

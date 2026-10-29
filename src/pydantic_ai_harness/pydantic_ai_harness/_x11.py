@@ -267,27 +267,20 @@ def x11_display(
 class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 
-    The X server must already be running on `display`. Needs `xdotool`, `xmodmap`, `scrot`, `base64`, and `mktemp` in the
-    environment.
+    The backend's commands must already have the running X server's `DISPLAY`. Needs `xdotool`, `xmodmap`, `scrot`,
+    `base64`, and `mktemp` in the environment.
     """
 
-    def __init__(self, backend: SupportsCommands, display: str | None = DISPLAY):
-        """`display` is the X display's `DISPLAY`, or `None` when the backend's commands already have it."""
+    def __init__(self, backend: SupportsCommands):
         self._backend = backend
-        self._display = display
-        self._on = '' if display is None else f' on display {display}'
 
     async def _run(self, command: list[str] | str) -> CommandResult:
-        env = _LOCALE if self._display is None else {'DISPLAY': self._display, **_LOCALE}
-        result = await self._backend.run(command, shell=isinstance(command, str), env=env, timeout=_COMMAND_TIMEOUT)
+        result = await self._backend.run(command, shell=isinstance(command, str), env=_LOCALE, timeout=_COMMAND_TIMEOUT)
         if result.exit_code == 127:
-            raise WorkspaceUnavailableError(
-                f'A display command is missing{self._on}: {(result.stderr or result.stdout).strip()}'
-            )
+            raise WorkspaceUnavailableError(f'A display command is missing: {(result.stderr or result.stdout).strip()}')
         if result.exit_code != 0:
             raise WorkspaceError(
-                f'Display command failed with exit code {result.exit_code}{self._on}: '
-                f'{(result.stderr or result.stdout).strip()}'
+                f'Display command failed with exit code {result.exit_code}: {(result.stderr or result.stdout).strip()}'
             )
         return result
 
