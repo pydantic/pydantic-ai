@@ -143,6 +143,7 @@ from ._utils import (
     unwrap_model,
 )
 from ._workspace import (
+    WORKSPACE_CALL_POLICIES,
     WORKSPACE_OPERATION_ID,
     DurableWorkspace,
     WorkspaceCallCacheIdentity,
@@ -458,6 +459,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 cache_identity=WorkspaceCallCacheIdentity(),
                 result_codec=self._typed_result_codec(WorkspaceCallResult),
                 config_role='capability',
+                policies=WORKSPACE_CALL_POLICIES,
+                policy_key=lambda params: params.call.method,
             )
         )
 

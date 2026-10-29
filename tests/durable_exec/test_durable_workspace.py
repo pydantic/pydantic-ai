@@ -654,8 +654,14 @@ def test_display_calls_round_trip_through_json_and_pickle() -> None:
     assert JSON_CODEC.load(WorkspaceCall, JSON_CODEC.dump(WorkspaceCall, zoom)) == zoom
     scaled = WorkspaceCall(method='scaled_screenshot', size=(64, 40))
     assert JSON_CODEC.load(WorkspaceCall, JSON_CODEC.dump(WorkspaceCall, scaled)) == scaled
-    for result in (WorkspaceCallResult(size=(1280, 800)), WorkspaceCallResult(point=Point(x=1, y=2))):
+    for result in (
+        WorkspaceCallResult(size=(1280, 800)),
+        WorkspaceCallResult(point=Point(x=1, y=2)),
+        WorkspaceCallResult(starts=1),
+    ):
         assert JSON_CODEC.load(WorkspaceCallResult, JSON_CODEC.dump(WorkspaceCallResult, result)) == result
+    # Left out while nothing started, so a version without the field still reads the result.
+    assert 'starts' not in JSON_CODEC.dump(WorkspaceCallResult, WorkspaceCallResult())
 
 
 @pytest.mark.parametrize(

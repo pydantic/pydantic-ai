@@ -45,6 +45,7 @@ try:
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
+    from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec._workspace import WorkspaceCall
     from pydantic_ai.durable_exec.prefect import PrefectDurability
@@ -148,7 +149,17 @@ def test_workspace_failures_do_not_retry_temporal_activities() -> None:
 # --- The shared scenarios, in a workflow ---------------------------------------------------------
 
 provider = InMemoryProvider(in_unit=activity.in_activity)
-agents = scenario_agents(lambda: TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG), prefix='', provider=provider)
+agents = scenario_agents(
+    lambda: TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    prefix='',
+    provider=provider,
+    retrying=lambda: TemporalDurability(
+        activity_config=ActivityConfig(
+            start_to_close_timeout=timedelta(seconds=60),
+            retry_policy=RetryPolicy(initial_interval=timedelta(milliseconds=10)),
+        )
+    ),
+)
 
 
 @workflow.defn
@@ -159,7 +170,9 @@ class ScenarioWorkflow:
         return await SCENARIOS[name](agents, arg or None, f'{info.workflow_id}:{info.run_id}')
 
 
-async def _execute(client: Client, name: str, arg: str | None = None) -> tuple[Any, WorkflowHistory]:
+async def _execute(
+    client: Client, name: str, arg: str | None = None, *, timeout: timedelta = timedelta(seconds=30)
+) -> tuple[Any, WorkflowHistory]:
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -171,7 +184,7 @@ async def _execute(client: Client, name: str, arg: str | None = None) -> tuple[A
             args=[name, arg or ''],
             id=f'{name}-{uuid.uuid4()}',
             task_queue=TASK_QUEUE,
-            execution_timeout=timedelta(seconds=30),
+            execution_timeout=timeout,
         )
         try:
             output = await handle.result()
@@ -251,6 +264,32 @@ async def test_workspace_calls_from_workflow_code_are_activities_and_replay_disp
     replay = await Replayer(workflows=[ScenarioWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
     assert replay.replay_failure is None
     assert provider.log == log
+
+
+async def test_an_action_is_one_attempt_with_its_own_timeouts_and_a_look_is_retried(client: Client) -> None:
+    """Each workspace call is an activity under its method's policy, on top of the configured retries."""
+    provider.reset()
+    provider.restart_display = provider.lose_next_action = provider.fail_next_screenshot = True
+    # Long enough not to cap the action's own timeout.
+    _, history = await _execute(client, 'display_faults', timeout=timedelta(minutes=5))
+    calls = [
+        (
+            attributes.retry_policy.maximum_attempts,
+            attributes.start_to_close_timeout.seconds,
+            attributes.heartbeat_timeout.seconds,
+        )
+        for event in history.events
+        if (attributes := event.activity_task_scheduled_event_attributes).activity_type.name
+        == 'agent__display__capability__workspace__call'
+    ]
+    # `ensure`, the screenshot, the action.
+    assert calls == [(0, 60, 0), (0, 60, 0), (1, 180, 30)]
+    attempts = [
+        event.activity_task_started_event_attributes.attempt
+        for event in history.events
+        if event.HasField('activity_task_started_event_attributes')
+    ]
+    assert attempts == [1, 1, 2, 1]
 
 
 async def test_workspace_runs_draw_their_run_id_without_the_stable_id_patch(client: Client) -> None:
