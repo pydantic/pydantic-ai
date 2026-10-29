@@ -905,7 +905,14 @@ def test_banner_is_not_shown_for_a_run_an_installed_package_started(
     [
         pytest.param(_RUN_SOURCE, id='run'),
         # `wait_for` awaits the run in a coroutine of its own, which is part of the caller's chain.
-        pytest.param(_WAIT_FOR_SOURCE, id='wait_for'),
+        pytest.param(
+            _WAIT_FOR_SOURCE,
+            id='wait_for',
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 12),
+                reason="Before 3.12, `wait_for` runs the run in a task of its own, which keeps today's banner",
+            ),
+        ),
         # `run_stream_events()` runs the agent in its own task, so the caller's stack is read before it starts.
         pytest.param(_STREAM_EVENTS_SOURCE, id='run_stream_events'),
     ],
