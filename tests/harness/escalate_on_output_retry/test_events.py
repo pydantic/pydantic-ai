@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass, field
+from typing import Literal
 
 import anyio
 import pytest
@@ -11,7 +12,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import TypeAdapter
 
-from pydantic_ai import Agent, AgentStreamEvent, ModelRetry, RunContext, ToolOutput
+from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent, ModelRetry, RunContext, ToolOutput
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.messages import CapabilityEvent, ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -113,7 +114,10 @@ class TestOutputRetryEvent:
         assert (await agent.run('Answer again.', message_history=first.all_messages())).output == 'ready'
         assert [event.response.text for event in recorder.events] == ['draft'] * 4
 
-    async def test_failed_output_sibling_is_reported_without_another_request(self) -> None:
+    @pytest.mark.parametrize('method', ['run', 'handler', 'events'])
+    async def test_failed_output_sibling_is_reported_without_another_request(
+        self, method: Literal['run', 'handler', 'events']
+    ) -> None:
         calls: list[str] = []
 
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
@@ -137,8 +141,25 @@ class TestOutputRetryEvent:
                 recorder,
             ],
         )
-        assert (await agent.run('Answer.')).output == Answer(number=42)
+        streamed_events: list[AgentStreamEvent] = []
+        if method == 'handler':
+
+            async def collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+                streamed_events.extend([event async for event in stream])
+
+            assert (await agent.run('Answer.', event_stream_handler=collect)).output == Answer(number=42)
+        elif method == 'events':
+            async with agent.run_stream_events('Answer.') as event_stream:
+                async for event in event_stream:
+                    if isinstance(event, AgentRunResultEvent):
+                        assert event.result.output == Answer(number=42)
+                    else:
+                        streamed_events.append(event)
+        else:
+            assert (await agent.run('Answer.')).output == Answer(number=42)
         [event] = recorder.events
         assert (event.source, event.tool_name, event.tool_call_id) == ('output_tool', 'first', 'one')
         assert (event.retry.attempt, event.retry.max_retries) == (1, 1)
         assert calls == ['primary']
+        if method != 'run':
+            assert [e for e in streamed_events if isinstance(e, OutputRetryEvent)] == [event]

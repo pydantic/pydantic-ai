@@ -44,7 +44,7 @@ from .abstract import (
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
-    from pydantic_ai.output import OutputContext
+    from pydantic_ai.output import OutputContext, OutputRetryContext
     from pydantic_ai.run import AgentRunResult
 
 
@@ -617,6 +617,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         )
 
     # --- Output process lifecycle hooks ---
+
+    async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
+        await self.wrapped.after_output_retry(ctx, retry_context=retry_context)
 
     async def before_output_process(
         self,

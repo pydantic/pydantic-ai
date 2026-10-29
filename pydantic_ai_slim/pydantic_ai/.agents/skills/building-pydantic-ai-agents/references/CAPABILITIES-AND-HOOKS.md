@@ -135,9 +135,12 @@ Important hook families:
 - model-request hooks (`before_model_request`, `prepare_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`)
 - tool-validation and tool-execution hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
 - output-validation and output-processing hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
+- `after_output_retry(ctx, *, retry_context: OutputRetryContext)` reports output retries accepted by core, before the next model selection
 - event-stream hooks
 
 For each stage, the entire `wrap_*` chain encloses the `before_*` chain, the core operation with `on_*_error` recovery, and the `after_*` chain. A wrapper that returns without calling its handler skips everything inside, so mandatory authorization belongs in an outer wrapper or outside a short-circuitable cache. Recovered core failures are hidden from wrappers; hook failures and unrecovered core failures propagate through them. The exception is `agent.run_stream()` node handling: `before_node_run` fires before streaming, non-final nodes wrap only later graph advancement, and the final streamed `ModelRequestNode` skips `wrap_node_run`/`after_node_run`.
+
+Use `after_output_retry` for accepted output-failure notifications, including empty responses and output-tool argument errors. Read the rejected response and effective budget from `retry_context`. Request-hook and function-tool retries do not notify. The notification does not replenish retry limits; exceptions from it stop the run. Use Harness `EscalateOnOutputRetry` to select successive models from these notifications.
 
 In `run_stream()`, `ContextVar` values set by an async `before_model_request` hook are available to later tool, output, and run hooks, as in non-streamed runs. Values set later in that model request may not be; use a mutable attribute on `ctx.deps` for state that must be shared throughout the run.
 

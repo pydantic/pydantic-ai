@@ -8,7 +8,7 @@ from pydantic_ai.native_tools._tool_search import (
     ToolSearchNativeStrategy as ToolSearchNativeStrategy,
     ToolSearchStrategy as ToolSearchStrategy,
 )
-from pydantic_ai.output import OutputContext
+from pydantic_ai.output import OutputContext, OutputRetryContext
 
 from ._dynamic import CapabilityFunc, DynamicCapability
 from ._on_event import on_event
@@ -181,6 +181,7 @@ __all__ = [
     'HookTimeoutError',
     'Hooks',
     'OutputContext',
+    'OutputRetryContext',
 ]
 
 

@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
-    from pydantic_ai.output import OutputContext
+    from pydantic_ai.output import OutputContext, OutputRetryContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -1004,6 +1004,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         raise error
 
     # --- Output process lifecycle hooks ---
+
+    async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
+        for capability in reversed(self._dispatch):
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                await capability.after_output_retry(cap_ctx, retry_context=retry_context)
 
     async def before_output_process(
         self,

@@ -56,7 +56,7 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
-    from pydantic_ai.output import OutputContext
+    from pydantic_ai.output import OutputContext, OutputRetryContext
     from pydantic_ai.run import AgentRunResult
 
 _FuncT = TypeVar('_FuncT', bound=Callable[..., Any])
@@ -235,6 +235,10 @@ class WrapOutputValidateHookFunc(Protocol):
 class OnOutputValidateErrorHookFunc(Protocol):
     """Protocol for [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: RawOutput, error: ValidationError | ModelRetry) -> Any | Awaitable[Any]: ...
+
+class AfterOutputRetryHookFunc(Protocol[AgentDepsT]):
+    """Protocol for the `after_output_retry` notification hook."""
+    def __call__(self, ctx: RunContext[AgentDepsT], /, *, retry_context: OutputRetryContext) -> None | Awaitable[None]: ...
 
 class BeforeOutputProcessHookFunc(Protocol):
     """Protocol for [`before_output_process`][pydantic_ai.capabilities.AbstractCapability.before_output_process] hook functions."""
@@ -711,6 +715,22 @@ class _HookRegistration(Generic[AgentDepsT]):
     # --- Output execution ---
 
     @overload
+    def after_output_retry(
+        self, func: AfterOutputRetryHookFunc[AgentDepsT], /
+    ) -> AfterOutputRetryHookFunc[AgentDepsT]: ...
+    @overload
+    def after_output_retry(
+        self, *, timeout: float | None = None
+    ) -> Callable[[AfterOutputRetryHookFunc[AgentDepsT]], AfterOutputRetryHookFunc[AgentDepsT]]: ...
+    def after_output_retry(
+        self, func: AfterOutputRetryHookFunc[AgentDepsT] | None = None, *, timeout: float | None = None
+    ) -> (
+        AfterOutputRetryHookFunc[AgentDepsT]
+        | Callable[[AfterOutputRetryHookFunc[AgentDepsT]], AfterOutputRetryHookFunc[AgentDepsT]]
+    ):
+        return _bare_or_parameterized(self._r, 'after_output_retry', func, timeout=timeout)
+
+    @overload
     def before_output_process(self, func: BeforeOutputProcessHookFunc, /) -> BeforeOutputProcessHookFunc: ...
     @overload
     def before_output_process(
@@ -850,6 +870,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         # Output processing
         before_output_process: BeforeOutputProcessHookFunc | None = None,
         after_output_process: AfterOutputProcessHookFunc | None = None,
+        after_output_retry: AfterOutputRetryHookFunc[AgentDepsT] | None = None,
         output_process: WrapOutputProcessHookFunc | None = None,
         output_process_error: OnOutputProcessErrorHookFunc | None = None,
         # Deferred tool calls
@@ -898,6 +919,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'on_output_validate_error': output_validate_error,
             'before_output_process': before_output_process,
             'after_output_process': after_output_process,
+            'after_output_retry': after_output_retry,
             'wrap_output_process': output_process,
             'on_output_process_error': output_process_error,
             'handle_deferred_tool_calls': deferred_tool_calls,
@@ -1339,6 +1361,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
             except (ValidationError, ModelRetry) as new_error:
                 error = new_error
         raise error
+
+    async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
+        for entry in self._get('after_output_retry'):
+            await _call_entry(entry, 'after_output_retry', ctx, retry_context=retry_context)
 
     async def before_output_process(
         self, ctx: RunContext[AgentDepsT], *, output_context: OutputContext, output: Any

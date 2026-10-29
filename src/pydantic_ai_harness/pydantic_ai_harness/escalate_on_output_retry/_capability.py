@@ -8,10 +8,10 @@ from typing import Literal, NotRequired
 
 from typing_extensions import TypedDict
 
-from pydantic_ai import CallToolsNode, CapabilityEvent, ModelRequestNode
-from pydantic_ai.capabilities import AbstractCapability, AgentNode, ModelSelector, NodeResult
+from pydantic_ai import CapabilityEvent
+from pydantic_ai.capabilities import AbstractCapability, ModelSelector, OutputRetryContext
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, ModelResponse, RetryFeedbackPart, RetryInfo, ToolReturnPart
+from pydantic_ai.messages import ModelResponse, RetryInfo
 from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -130,42 +130,18 @@ class EscalateOnOutputRetry(AbstractCapability[AgentDepsT]):
             remaining -= level.after_failures
         return self.levels[self._selected_level].model
 
-    async def after_node_run(
-        self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT], result: NodeResult[AgentDepsT]
-    ) -> NodeResult[AgentDepsT]:
-        """Observe settled response processing, after core has accepted its retry charges."""
-        if not isinstance(node, CallToolsNode):
-            return result
-        # Model-request hooks can also consume output retries. Only response-processing nodes
-        # establish that these parts came from output validation rather than request hooks.
-        request = result.request if isinstance(result, ModelRequestNode) else ctx.messages[-1]
-        if not isinstance(request, ModelRequest):
-            return result
-        for part in request.parts:
-            source: Literal['response_output', 'output_tool']
-            if isinstance(part, RetryFeedbackPart):
-                source = 'response_output'
-            elif isinstance(part, ToolReturnPart) and part.outcome == 'retried' and part.retry is not None:
-                definition = ctx.tools.get(part.tool_name)
-                if definition is None or definition.kind != 'output':
-                    continue
-                source = 'output_tool'
-            else:
-                continue
-            retry = part.retry
-            if retry is None or retry.attempt is None or retry.max_retries is None:
-                continue
-            self._failures += 1
-            event = OutputRetryEvent(
-                source=source,
-                response=node.model_response,
-                retry=retry,
-                tool_name=part.tool_name if isinstance(part, ToolReturnPart) else None,
-                tool_call_id=part.tool_call_id if isinstance(part, ToolReturnPart) else None,
-            )
-            self._last_retry = event
-            await ctx.emit(event)
-        return result
+    async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
+        """Count and report each retry at core's accepted-output boundary."""
+        self._failures += 1
+        event = OutputRetryEvent(
+            source=retry_context.source,
+            response=retry_context.response,
+            retry=retry_context.retry,
+            tool_name=retry_context.tool_name,
+            tool_call_id=retry_context.tool_call_id,
+        )
+        self._last_retry = event
+        await ctx.emit(event)
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext

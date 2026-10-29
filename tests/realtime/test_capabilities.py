@@ -66,7 +66,7 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
-from pydantic_ai.output import OutputContext
+from pydantic_ai.output import OutputContext, OutputRetryContext
 from pydantic_ai.realtime import (
     RealtimeEvent,
     RealtimeModel,
@@ -1285,6 +1285,9 @@ class _ModelRequestCap(AbstractCapability[None]):
 
 
 class _GraphCap(AbstractCapability[None]):
+    async def after_output_retry(self, ctx: RunContext[None], *, retry_context: OutputRetryContext) -> None:
+        raise AssertionError('Realtime sessions have no output retries.')  # pragma: no cover
+
     async def after_node_run(
         self, ctx: RunContext[None], *, node: AgentNode[None], result: NodeResult[None]
     ) -> NodeResult[None]:
@@ -1384,7 +1387,7 @@ async def test_one_uncalled_hooks_warning_per_capability() -> None:
             await _drain(agent, _RecordingModel())
         assert sorted(str(warning.message) for warning in record) == sorted(
             [
-                _uncalled_hooks_warning('`_GraphCap`', '`after_node_run`, `wrap_output_process`'),
+                _uncalled_hooks_warning('`_GraphCap`', '`after_node_run`, `after_output_retry`, `wrap_output_process`'),
                 _uncalled_hooks_warning("`Hooks` (id='errors')", '`on_model_request_error`'),
                 _uncalled_hooks_warning('`_ModelRequestCap`', '`before_model_request`'),
                 _uncalled_hooks_warning('`_ModelRequestWrapper`', '`wrap_model_request`'),

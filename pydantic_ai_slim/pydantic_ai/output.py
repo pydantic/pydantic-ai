@@ -13,7 +13,7 @@ from typing_extensions import TypeAliasType, TypeForm, TypeVar
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._run_context import RunContext
-from .messages import ModelResponse, ToolCallPart
+from .messages import ModelResponse, RetryInfo, ToolCallPart
 from .tools import ObjectJsonSchema, ToolDefinition
 
 __all__ = (
@@ -29,6 +29,7 @@ __all__ = (
     'BoolCriteria',
     'OutputObjectDefinition',
     'OutputContext',
+    'OutputRetryContext',
     # types
     'OutputDataT',
     'OutputMode',
@@ -331,6 +332,32 @@ class OutputObjectDefinition:
     name: str | None = None
     description: str | None = None
     strict: bool | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class OutputRetryContext:
+    """An output retry core has accepted, passed to `after_output_retry` capability hooks.
+
+    This is a notification after enforcement, including when another output in the same response
+    succeeds. It does not grant another attempt or change the configured retry limit.
+    """
+
+    response: ModelResponse
+    """The rejected response, identifying its actual producer when request fallback served the step."""
+
+    retry: RetryInfo[str]
+    """The accepted retry's cause, attempt, and effective budget, including output-tool overrides."""
+
+    tool_name: str | None = None
+    """The output tool's name, or `None` for response-level output failures."""
+
+    tool_call_id: str | None = None
+    """The output tool call's ID, or `None` for response-level output failures."""
+
+    @property
+    def source(self) -> Literal['response_output', 'output_tool']:
+        """Whether response-level output or an output tool caused the retry."""
+        return 'response_output' if self.tool_name is None else 'output_tool'
 
 
 @dataclass

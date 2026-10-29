@@ -57,6 +57,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryInfo,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -75,7 +76,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
-from pydantic_ai.output import OutputContext, ToolOutput
+from pydantic_ai.output import OutputContext, OutputRetryContext, ToolOutput
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
@@ -504,6 +505,7 @@ async def test_stale_loaded_eager_capability_tool_stays_hidden() -> None:
 
 
 _DEFERRED_HOOK_NAMES = {
+    'after_output_retry',
     'prepare_output_tools',
     'wrap_run_event_stream',
     'on_model_request_error',
@@ -748,6 +750,12 @@ async def test_combined_capability_skips_unloaded_deferred_reverse_hooks() -> No
 
     assert [event async for event in combined.wrap_run_event_stream(ctx, stream=_empty_event_stream())] == []
     assert await combined.after_output_validate(ctx, output_context=output_context, output='parsed') == 'parsed'
+    await combined.after_output_retry(
+        ctx,
+        retry_context=OutputRetryContext(
+            response=ModelResponse(parts=[]), retry=RetryInfo(cause='no_output', attempt=1, max_retries=1)
+        ),
+    )
     assert (
         await combined.wrap_output_validate(ctx, output_context=output_context, output='raw', handler=_validate_output)
         == 'raw'

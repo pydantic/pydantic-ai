@@ -249,6 +249,18 @@ Output processing hooks fire when the output is processed — extracting values,
 
 See [Output hooks](capabilities/custom.md#output-hooks) for the full lifecycle, signatures, and details on how output validators interact with processing hooks.
 
+### Accepted output retries
+
+| `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
+|---|---|---|
+| `after_output_retry` | `after_output_retry=` | `after_output_retry` |
+
+[`after_output_retry`][pydantic_ai.capabilities.AbstractCapability.after_output_retry] notifies after core accepts an output retry, inside response processing. Its `retry_context` is an [`OutputRetryContext`][pydantic_ai.capabilities.OutputRetryContext] with the rejected response, core-stamped retry cause/attempt/limit, and output-tool identity when relevant. It covers schema and output-validator/function failures and responses with no usable output.
+
+Request-hook and function-tool retries, recovered errors, partial validation, skipped calls, cancellation, and terminal retry exhaustion do not notify. Several accepted output failures in one response produce several notifications, including a failed output beside a successful sibling. Hooks run in reverse capability order. Exceptions from this notification stop the run; they do not grant another retry.
+
+Use this hook for output-retry events and policy state. The next step's model selection runs afterward. [Escalate On Output Retry](harness/escalate-on-output-retry.md) uses it to select successive models while preserving core's retry budgets.
+
 ### Tool preparation
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |

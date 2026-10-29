@@ -53,7 +53,7 @@ if TYPE_CHECKING:
         ModelResolutionContext,
         ModelSelectionContext,
     )
-    from pydantic_ai.output import OutputContext
+    from pydantic_ai.output import OutputContext, OutputRetryContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -146,6 +146,7 @@ _REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
     'on_output_validate_error',
     'before_output_process',
     'after_output_process',
+    'after_output_retry',
     'wrap_output_process',
     'on_output_process_error',
 )
@@ -1498,6 +1499,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         raise error
 
     # --- Output process lifecycle hooks ---
+
+    async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
+        """Observe an output retry accepted by core, inside response processing.
+
+        Covers schema validation, output functions/validators, and unusable responses. Output-tool
+        retries carry their own effective budget and identity. Several accepted output failures in
+        one response produce several notifications, including failures beside a successful output.
+
+        Request-hook and function-tool retries, recovered errors, partial validation, skipped calls,
+        cancellation, and terminal retry exhaustion do not notify. Exceptions from this hook stop the
+        run; they do not grant a retry. Selection for the next ordinary step runs after this hook.
+        """
 
     async def before_output_process(
         self,
