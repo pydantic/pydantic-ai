@@ -5343,8 +5343,8 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
 async def test_compatible_compaction_stops_previous_response_chaining(
     allow_model_requests: None,
     previous_id: str,
-    compaction_provider: str,
-    payload: str,
+    compaction_provider: Literal['openai', 'openai-codex', 'azure'],
+    payload: Literal['encrypted', 'summary', 'empty'],
     marked: bool,
     expected: dict[str, object],
 ):
