@@ -3,7 +3,7 @@
     {
       "against": "v2.63.0",
       "fingerprint": "eae52d7ded8dd156b9f9487b98bceb8d78667414ad31ec4a4075c9086d296dae",
-      "reason": "David explicitly approved `answer_note` as a permanent built-in `DataTag` after reproducing lazy Harness registration warnings. All core data frames now escape this spelling, including without notes; update exhaustive tag handling and exact-byte expectations. This is a maintainer-approved core compatibility exception, separate from Harness 0.x.",
+      "reason": "The maintainer-selected built-in `answer_note` design and explicit core compatibility exception are recorded at https://github.com/pydantic/pydantic-ai/pull/11664#issuecomment-6509741654 (David's approval, relayed by the PR author). All core data frames now escape this spelling, including without notes; update exhaustive tag handling and exact-byte expectations. This exception is separate from Harness 0.x.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11664"
     },
     {
