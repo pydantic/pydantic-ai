@@ -2399,7 +2399,7 @@ class BaseToolReturnPart(Generic[ContentT_co]):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-def _tool_return_text_and_files(
+def _tool_return_text_and_files(  # pyright: ignore[reportUnusedFunction]
     part: BaseToolReturnPart[Any], *, ref: str | None, wrap_if_error: bool = True
 ) -> tuple[str, list[UserContent]]:
     """[`model_response_str_and_user_content`][pydantic_ai.messages.BaseToolReturnPart.model_response_str_and_user_content], with each file's frame carrying `ref`.

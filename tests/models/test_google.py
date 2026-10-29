@@ -3740,6 +3740,7 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': IsStr()}},
             ),
             ModelResponse(
                 parts=[
@@ -3784,6 +3785,7 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': IsStr()}},
             ),
             ModelResponse(
                 parts=[

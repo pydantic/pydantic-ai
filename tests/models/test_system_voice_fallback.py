@@ -45,7 +45,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._frame_ref import frame_ref
-from pydantic_ai._framing import frame_ref_announcement, lookalike_frame_note
+from pydantic_ai._framing import LookalikeSource, frame_ref_announcement, lookalike_frame_note
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import InstructionPart, RetryPromptPart  # pyright: ignore[reportDeprecated]
 from pydantic_ai.models import Model, ModelRequestParameters
@@ -392,7 +392,7 @@ def test_inline_system_models_get_native_notes_and_the_announcement_once():
         pytest.param(['plain', TextContent('plain'), CachePoint()], [], id='plain'),
     ],
 )
-def test_lookalike_trigger_in_user_prompts(content: Any, noted: list[str]):
+def test_lookalike_trigger_in_user_prompts(content: Any, noted: list[LookalikeSource]):
     model = FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]))
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=content)])]
 
@@ -422,7 +422,7 @@ def test_lookalike_trigger_in_user_prompts(content: Any, noted: list[str]):
 )
 def test_lookalike_trigger_in_tool_results(content: Any, noted: bool):
     model = FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]))
-    tool = ToolReturnPart('t', cast(Any, content), tool_call_id='call_1')
+    tool = ToolReturnPart('t', content, tool_call_id='call_1')
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Go.')]),
         ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='call_1')]),

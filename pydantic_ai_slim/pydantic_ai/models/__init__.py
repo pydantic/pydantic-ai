@@ -1967,7 +1967,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 if announce and not announced:
                     announced = True
                     announcement = SystemPromptPart(
-                        content=frame_ref_announcement(ref, system_role=True), timestamp=message.timestamp
+                        content=frame_ref_announcement(ref, system_role=True),
+                        timestamp=message.timestamp or _utils.now_utc(),
                     )
                     parts.insert(frame_at, announcement)
             if len(parts) != len(message.parts):
@@ -2001,7 +2002,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                     tool_notes.append(
                         SystemPromptPart(
                             content=lookalike_frame_note('tool', preceding=not precede_tool_results),
-                            timestamp=request.timestamp,
+                            timestamp=request.timestamp or _utils.now_utc(),
                         )
                     )
                 if self._relocates_tool_files and isinstance(part, ToolReturnPart) and part.files:
@@ -2020,7 +2021,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 or (first_request and all(isinstance(p, SystemPromptPart) for p in parts))
             )
             notes = [
-                SystemPromptPart(content=lookalike_frame_note(source, preceding=after), timestamp=request.timestamp)
+                SystemPromptPart(
+                    content=lookalike_frame_note(source, preceding=after),
+                    timestamp=request.timestamp or _utils.now_utc(),
+                )
                 for source in sources
             ]
             framed.extend(notes)

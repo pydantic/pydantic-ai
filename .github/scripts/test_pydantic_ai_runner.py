@@ -1099,10 +1099,11 @@ def _retry_feedback_text(part: ModelRequestPart | ModelResponsePart) -> str | No
     """The text of output-validator retry feedback as a model receives it, or `None` for any other part.
 
     The model is handed prepared messages, where a `ModelRetry`'s `RetryFeedbackPart` has already become
-    user text fenced in `<retry_feedback>` behind the application attribution line.
+    user text fenced in `<retry_feedback ref="...">` behind the application attribution line. The fence's
+    per-conversation frame ref is left out, so the assertions can spell the text out.
     """
-    if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<retry_feedback>' in part.content:
-        return part.content
+    if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<retry_feedback ' in part.content:
+        return re.sub(r'<retry_feedback ref="[0-9a-f]{12}">', '<retry_feedback>', part.content)
     return None
 
 
