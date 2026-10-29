@@ -244,6 +244,45 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 'To allowlist one tool, pass a one-element list.'
             )
 
+    @classmethod
+    def from_spec(
+        cls,
+        tools: Literal['all'] | Sequence[str] | dict[str, Any] = 'all',
+        max_retries: int = 3,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        max_tool_calls: int = 100,
+        resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
+        eager: bool = False,
+        speculate: Sequence[str] | Literal['declared'] | None = None,
+        monty_sandbox: str | None = None,
+        dynamic_catalog: bool = True,
+        **kwargs: Any,
+    ) -> CodeMode[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, it would read
+        `__init__`, whose runtime-only fields (`os_access`, `mount`, `repl_store`, and a
+        `monty_sandbox` factory) have no JSON schema and would drop the whole `CodeMode` entry.
+        `**kwargs` reaches `__init__` unchanged, so a spec that set anything else still loads.
+        """
+        return cls(
+            tools,
+            max_retries,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            max_tool_calls=max_tool_calls,
+            resource_limits=resource_limits,
+            eager=eager,
+            speculate=speculate,
+            monty_sandbox=monty_sandbox,
+            dynamic_catalog=dynamic_catalog,
+            **kwargs,
+        )
+
     def get_ordering(self) -> CapabilityOrdering:
         """CodeMode wraps around ToolSearch so that search_tools stays native."""
         return CapabilityOrdering(position='outermost', wraps=[_ToolSearch])

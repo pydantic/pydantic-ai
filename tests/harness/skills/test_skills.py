@@ -12,6 +12,7 @@ import anyio.to_thread
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -311,6 +312,19 @@ class TestSkills:
 
         assert run.instructions == _catalog('- from-spec: Help with the task.')
 
+    def test_agent_spec_schema_publishes_the_long_form(self) -> None:
+        """`Collection[str]` selectors and the `workspace` backend must not erase the long form."""
+        definitions = AgentSpec.model_json_schema_with_capabilities([Skills])['$defs']
+        assert sorted(definitions['spec_params_Skills']['properties']) == [
+            'directories',
+            'duplicate_names',
+            'exclude',
+            'include',
+            'missing_directories',
+            'unknown_names',
+        ]
+        assert definitions['spec_params_Skills']['required'] == ['directories']
+
 
 def _combined(*skills: Skills[Any]) -> Skills[Any]:
     merged = Skills.combine(list(skills))
@@ -373,11 +387,11 @@ class TestSkillValidation:
     @pytest.mark.parametrize('selector', ['include', 'exclude'])
     def test_selector_must_not_be_a_string(self, selector: str) -> None:
         with pytest.raises(TypeError, match=f'{selector} must be a collection of skill names'):
-            Skills.from_spec('skills', **{selector: 'alpha'})
+            Skills.from_spec('skills', **{selector: 'alpha'})  # pyright: ignore[reportArgumentType]
 
     def test_selector_entries_must_be_strings(self) -> None:
         with pytest.raises(TypeError, match='include must contain only skill names as strings'):
-            Skills.from_spec('skills', include=[1])
+            Skills.from_spec('skills', include=[1])  # pyright: ignore[reportArgumentType]
 
     async def test_multiple_unknown_skills_report_an_empty_library(self, tmp_path: Path) -> None:
         (tmp_path / 'skills').mkdir()
@@ -672,7 +686,7 @@ class TestSkillLibraryLayering:
     )
     def test_options_are_validated_for_specs_and_untyped_callers(self, option: str, value: str, allowed: str) -> None:
         with pytest.raises(ValueError, match=f'{option} must be {allowed}, not {value!r}'):
-            Skills.from_spec('skills', **{option: value})
+            Skills.from_spec('skills', **{option: value})  # pyright: ignore[reportArgumentType]
 
     async def test_symlinked_skill_selected_by_two_configurations_counts_once(self, tmp_path: Path) -> None:
         _write_skill(tmp_path / 'real', 'review')
