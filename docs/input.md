@@ -4,12 +4,15 @@ description: "Send images, audio, video, PDFs and other documents to a Pydantic 
 
 # Multimodal Input
 
-Alongside text, agents can accept image, audio, video, and document input, as long as the model supports it.
+Alongside text, agents can accept image, audio, video, and document input.
+
+!!! tip "Files the model can't read"
+    You aren't limited to the file types a model reads natively. With the [File Understanding](capabilities/file-understanding.md) capability, a file the agent's model can't take, such as audio on a model without audio input or an image on a text-only model, is described in text by another model first, and the agent's model gets the description in the file's place. Files the model does read are sent as they are.
 
 ## Image Input
 
 !!! info
-    Some models do not support image input. Please check the model's documentation to confirm whether it supports image input.
+    Some models do not support image input. Please check the model's documentation to confirm whether it supports image input. If it doesn't, [File Understanding](capabilities/file-understanding.md) can describe the image with a model that can.
 
 If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.ImageUrl]:
 
@@ -52,21 +55,21 @@ print(result.output)
 ## Audio Input
 
 !!! info
-    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input.
+    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input. If it doesn't, [File Understanding](capabilities/file-understanding.md) can describe the audio with a model that can.
 
 For audio, use [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 ## Video Input
 
 !!! info
-    Some models do not support video input. Please check the model's documentation to confirm whether it supports video input.
+    Some models do not support video input. Please check the model's documentation to confirm whether it supports video input. If it doesn't, [File Understanding](capabilities/file-understanding.md) can describe the video with a model that can.
 
 For video, use [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 ## Document Input
 
 !!! info
-    Some models do not support document input. Please check the model's documentation to confirm whether it supports document input.
+    Some models do not support document input. Please check the model's documentation to confirm whether it supports document input. If it doesn't, [File Understanding](capabilities/file-understanding.md) can describe the document with a model that can.
 
 For documents, use [`DocumentUrl`][pydantic_ai.DocumentUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
