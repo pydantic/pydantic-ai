@@ -1438,7 +1438,8 @@ thinking, tool calls and results, shell output, diffs), but not a background `/f
 it fires the turn moments too: the page shows a fork's answer, or why it failed, once it ends,
 from `on_fork_end`. Command results come from `on_command_end`, with `/usage` as a card of its
 figures and `/forks` as a card of its table (`LiveSession.forks`), and history from each
-session's `conversation`. The sidebar lists `host.sessions`, the store `/resume` uses. `GET /api/sessions` answers them
+session's `conversation`.
+The sidebar lists `host.sessions`, the store `/resume` uses. `GET /api/sessions` answers them
 grouped as `/resume` groups them: by repository, then by checkout, with a session from a removed
 worktree under its repository by the checkout saved with it (`ConversationSummary.checkout`). The
 page lists them by project, or all together, in the order they were created

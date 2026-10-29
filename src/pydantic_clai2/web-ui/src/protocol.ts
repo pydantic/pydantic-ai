@@ -347,7 +347,7 @@ export interface SessionEntry {
   /** `running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process runs. */
   state: SessionState
   /** The process running a `busy` session's turn. */
-  pid: number | null
+  owner_pid: number | null
   messages: number
   model: string | null
   current: boolean

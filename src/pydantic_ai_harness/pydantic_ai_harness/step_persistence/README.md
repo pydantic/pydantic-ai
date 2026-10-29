@@ -886,8 +886,9 @@ conversation by repository after that folder is removed; the store saves it as g
 `ConversationSummary.created_at` records when the conversation was first saved;
 later saves keep it, so a browser can list conversations in a stable order:
 `listing(order_by='created_at')` pages by it, so using an old conversation again
-does not move it onto the first page. A conversation saved without it, by a
-version before the field existed, takes its last activity time at its next save.
+does not move it onto the first page. A conversation saved before the field
+existed reads `None` until its next save, which sets it to the conversation's
+previous `updated_at`.
 
 Metadata naming uses a separate version. `name(source=..., title=..., ...)` cannot
 overwrite a newer content revision, newer name, or a manual title. Naming does not

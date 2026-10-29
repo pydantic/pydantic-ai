@@ -7,7 +7,7 @@ Claude Code and Codex sessions.
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
-from typing import Generic, Literal, TypeVar
+from typing import Generic, TypeVar
 
 from anyio.to_thread import run_sync
 from rich.console import Console
@@ -17,6 +17,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness.step_persistence import StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
+    ConversationOrder,
     ConversationSummary,
     SavedConversation,
     SqliteConversationStore,
@@ -226,7 +227,7 @@ class Sessions(Generic[DepsT, OutputT]):
         query: str = '',
         limit: int = 200,
         archived: bool | None = False,
-        order_by: Literal['updated_at', 'created_at'] = 'updated_at',
+        order_by: ConversationOrder = 'updated_at',
     ) -> list[ConversationSummary]:
         """Saved conversations from every directory, newest first, as `/resume` lists them, queueing untitled ones for naming.
 

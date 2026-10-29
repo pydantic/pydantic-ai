@@ -27,7 +27,7 @@ from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SavedConversation
+from pydantic_ai_harness.step_persistence.conversations import ConversationOrder, ConversationSummary, SavedConversation
 from pydantic_ai_harness.subagents import DelegationOutcome
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
@@ -115,7 +115,7 @@ class SessionCatalog(Protocol):
         query: str = '',
         limit: int = 200,
         archived: bool | None = False,
-        order_by: Literal['updated_at', 'created_at'] = 'updated_at',
+        order_by: ConversationOrder = 'updated_at',
     ) -> list[ConversationSummary]:
         """Saved conversations from every directory, newest first, matching `query` when it is not empty.
 
