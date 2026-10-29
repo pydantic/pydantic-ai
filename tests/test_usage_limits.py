@@ -31,7 +31,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._genai_prices import best_effort_price, calculate_price_for_usage
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, PydanticAIDeprecationWarning
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
@@ -1515,3 +1515,18 @@ def test_check_before_request_cost_exceeded():
 
 def test_check_before_request_cost_within_limit():
     UsageLimits(cost_limit=Decimal('0.01')).check_before_request(RunUsage(cost=Decimal('0.005')))
+
+
+async def test_calling_usage_like_a_v1_method_warns_and_returns_the_usage():
+    """`result.usage()` from V1 code warns instead of raising `TypeError`, which `except Exception` would hide."""
+    agent = Agent(TestModel())
+    result = await agent.run('Hello')
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=re.escape('use `result.usage` instead of `result.usage()`')):
+        usage = result.usage()  # pyright: ignore[reportDeprecated]
+    assert usage is result.usage
+
+    async with agent.run_stream('Hello') as stream:
+        await stream.get_output()
+    with pytest.warns(PydanticAIDeprecationWarning):
+        assert stream.usage() == stream.usage  # pyright: ignore[reportDeprecated]

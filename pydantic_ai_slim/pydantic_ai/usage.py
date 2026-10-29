@@ -11,11 +11,17 @@ from typing import Annotated, Any, Literal, cast
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import SchemaSerializer, core_schema
+from typing_extensions import deprecated
 
 from . import _utils
 from ._gateway_cost import gateway_reported_cost
 from ._genai_prices import iter_provider_references
-from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning, UsageLimitUnavailableWarning
+from ._warnings import (
+    CostNotFoundWarning,
+    PydanticAIDeprecationWarning,
+    UsageExtractionFailedWarning,
+    UsageLimitUnavailableWarning,
+)
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -479,6 +485,18 @@ class RunUsage(UsageBase):
         new_usage.tool_calls = self.tool_calls - other.tool_calls
         new_usage.cost = self.cost - (other.cost or 0) if self.cost is not None and self.cost != other.cost else None
         return new_usage
+
+    @deprecated(
+        '`usage` is a property since Pydantic AI v2, not a method: use `result.usage` instead of `result.usage()`.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def __call__(self) -> RunUsage:
+        """Return this usage, so that V1-style `result.usage()` keeps working, with a deprecation warning.
+
+        Without this, the call raises `TypeError: 'RunUsage' object is not callable`, which code that wraps
+        its usage accounting in `except Exception` turns into silently zero usage.
+        """
+        return self
 
 
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
