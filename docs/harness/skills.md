@@ -101,6 +101,20 @@ skills = Skills('skills', workspace=LocalWorkspaceBackend('/app'))
 durable engine such as Temporal, a `workspace=` backend is read in-process, not
 through the workflow.
 
+## Skills from an untrusted workspace
+
+The model reads the catalog as your instructions, so a library in an
+[untrusted workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/#untrusted-workspaces) (`trusted=False`) stays out of it. The
+instructions say instead that the workspace has skills, and the model calls
+`list_skills` for their names and descriptions and `load_skill` for one's
+instructions. Both reach it as tool output rather than as your instructions.
+This costs a tool call when a task may need a skill.
+
+Trust follows the workspace each library is read from: with an untrusted run
+workspace, `Skills('skills', workspace=LocalWorkspaceBackend('/app'))` keeps
+its skills in the catalog, while `Skills('skills')`, read from the run's
+workspace, offers its skills through `list_skills`.
+
 ## Choose which skills to expose
 
 By default, all discovered skills are included. Use `include` or `exclude` to
