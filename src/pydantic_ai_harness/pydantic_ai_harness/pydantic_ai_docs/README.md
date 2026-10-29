@@ -4,6 +4,8 @@ Give an agent a tool that locates and returns Pydantic AI documentation on deman
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pydantic_ai_docs/)
 
+![The model calls read_pyai_docs with one of six topics. The tool first looks for the page in a docs checkout inside the run workspace, and otherwise fetches it from the main branch on GitHub. It then replaces model aliases using model_aliases/aliases.json and returns the full page to the model. If neither source has the page, the tool returns an error naming the path and URL it tried.](https://pydantic.dev/docs/ai/img/harness/pydantic-ai-docs.svg)
+
 ## The problem
 
 An agent that authors Pydantic AI capabilities, hooks, tools, or toolsets needs the

@@ -13,6 +13,8 @@ Runtime capability creation lets an agent write, validate, and persist Pydantic 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![In one run the model calls author_capability with a name and Python source. CapabilityCreation writes it to <directory>/<name>.py, imports it, checks that it holds exactly one AbstractCapability subclass that constructs with no arguments, calls its static getters, and records it in manifest.json. The capability is not live in that run. Your loop calls creation.store.load_active() and passes the result to the next agent.run as capabilities, so its tools, hooks and instructions take effect there. The authored code runs in the agent process, so a run requires a writable LocalWorkspace.](../img/harness/capability-creation.svg)
+
 ## The problem
 
 A coding agent often discovers, mid-task, that it wants a behavior its host does not yet have: a guardrail, an extra instruction, a tool, a request hook. The capability surface to express that already exists -- but normally only a developer can write a capability class, wire it into the agent, and restart. Without runtime capability creation, the agent cannot author that extension during a run and make it available to the next run.

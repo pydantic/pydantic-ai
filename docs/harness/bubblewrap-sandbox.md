@@ -11,6 +11,8 @@ Run your agent's commands in a Linux [bubblewrap](https://github.com/containers/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. BubblewrapSandbox wraps another workspace capability, here SSHWorkspace, and its get_workspace hook runs every command and file operation on that host inside a bwrap sandbox. In the sandbox the working directory is writable, the rest of the host's files are read-only, /tmp is private, /run is empty, and a seccomp filter blocks every socket. The sandbox does not stop commands from reading files the host user can read, signalling the host user's processes, or writing files such as git hooks that run unsandboxed later.](../img/harness/bubblewrap-sandbox.svg)
+
 ## Install
 
 ```bash

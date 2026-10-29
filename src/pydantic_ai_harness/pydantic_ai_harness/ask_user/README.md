@@ -4,6 +4,8 @@ Let the model ask the user multiple-choice questions mid-run and wait for the an
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/ask_user/)
 
+![The model calls ask_user_question with one to ten multiple-choice questions. AskUser validates them, rejecting calls outside the limits or with control characters as a retry, then hands an AskUserRequest to the answerer you supply, such as a terminal menu or a web form. The answerer returns an AskUserResponse. The model gets the picked labels keyed by header, a sentence saying the user declined or did not answer in time, or, with answerer=None, the run pauses with DeferredToolRequests until you answer in a later run.](https://pydantic.dev/docs/ai/img/harness/ask-user.svg)
+
 ## The problem
 
 An agent given an ambiguous task either guesses or buries a question in its output and stops.
