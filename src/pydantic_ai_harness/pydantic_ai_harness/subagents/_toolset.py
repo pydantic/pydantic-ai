@@ -1140,7 +1140,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         else:
             own_budget = False
             child_usage = None if self._forward_usage else RunUsage()
-            usage_limits = ctx.usage_limits if owner is not None else None
+            # Shared usage is checked against the parent's limits, so they bound the whole tree.
+            usage_limits = ctx.usage_limits if owner is not None or self._forward_usage else None
 
         # A selected menu option decides the model and how it runs. Without one, a
         # sub-agent with no model of its own (e.g. one loaded from disk) inherits the
