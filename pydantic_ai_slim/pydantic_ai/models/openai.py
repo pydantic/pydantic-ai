@@ -1330,6 +1330,10 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     connection and send only their new input. Requests the socket can't take use HTTP; see
     [Responses WebSockets](../../models/openai.md#responses-websockets) for which, and for the
     `pydantic-ai-slim[openai-realtime]` install. Other models ignore this setting.
+
+    When neither `openai_previous_response_id` nor `openai_conversation_id` is set, this mode defaults
+    `openai_previous_response_id` to `'auto'`. That default, history digests and echoed storage metadata also apply
+    to HTTP requests, including setups that cannot use a socket.
     """
 
     openai_prompt_cache_diagnostics: bool
@@ -3333,7 +3337,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and 'openai_previous_response_id' not in model_settings
             and 'openai_conversation_id' not in model_settings
         ):
-            # Most of the time a socket saves comes from sending only the new input, so its requests continue by default.
+            # Keep continuation consistent when a request in WebSocket mode falls back to HTTP.
             continued: OpenAIResponsesModelSettings = {**model_settings, 'openai_previous_response_id': 'auto'}
             return continued, model_request_parameters
         return model_settings, model_request_parameters
@@ -3372,8 +3376,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def _warn_websocket_unsupported(self, reason: str) -> None:
         warnings.warn(
-            f"The `openai_transport='websocket'` setting is not supported by model {self.model_id!r} and will be "
-            f'ignored: {reason}',
+            f"The `openai_transport='websocket'` setting cannot open a socket for model {self.model_id!r}; using HTTP "
+            f"with the mode's `openai_previous_response_id='auto'` default and history metadata: {reason}",
             UnsupportedSettingWarning,
             stacklevel=2,
         )

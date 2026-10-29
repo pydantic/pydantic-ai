@@ -28,6 +28,7 @@ from typing_extensions import Unpack
 from pydantic_ai import (
     Agent,
     CompactionPart,
+    ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
@@ -2369,34 +2370,113 @@ def never_socket_model(
     return websocket_model(provider, profile=profile)
 
 
+@dataclass(frozen=True)
+class NeverSocketCase:
+    setup: Literal['azure-provider', 'azure-client', 'gateway', 'openai-chatgpt', 'openai-codex', 'openai-codex-model']
+    profile: OpenAIModelProfile | None = None
+    expected_store: bool = True
+    expected_previous_response_id: str | None = 'resp_http_1'
+    replays_history: bool = False
+
+
 @pytest.mark.parametrize(
-    ('setup', 'profile'),
+    'case',
     [
-        *(pytest.param(setup, None, id=setup) for setup in OVERRIDABLE_NEVER_SOCKET_SETUPS + FIXED_NEVER_SOCKET_SETUPS),
-        *(pytest.param(setup, WEBSOCKET_PROFILE, id=f'{setup}-profile-on') for setup in FIXED_NEVER_SOCKET_SETUPS),
+        pytest.param(NeverSocketCase('azure-provider'), id='azure-provider'),
+        pytest.param(NeverSocketCase('azure-client'), id='azure-client'),
+        pytest.param(NeverSocketCase('gateway'), id='gateway'),
+        pytest.param(
+            NeverSocketCase(
+                'openai-chatgpt', expected_store=False, expected_previous_response_id=None, replays_history=True
+            ),
+            id='openai-chatgpt',
+        ),
+        pytest.param(
+            NeverSocketCase(
+                'openai-codex', expected_store=False, expected_previous_response_id=None, replays_history=True
+            ),
+            id='openai-codex',
+        ),
+        pytest.param(NeverSocketCase('openai-codex-model'), id='openai-codex-model'),
+        pytest.param(
+            NeverSocketCase(
+                'openai-chatgpt',
+                WEBSOCKET_PROFILE,
+                expected_store=False,
+                expected_previous_response_id=None,
+                replays_history=True,
+            ),
+            id='openai-chatgpt-profile-on',
+        ),
+        pytest.param(
+            NeverSocketCase(
+                'openai-codex',
+                WEBSOCKET_PROFILE,
+                expected_store=False,
+                expected_previous_response_id=None,
+                replays_history=True,
+            ),
+            id='openai-codex-profile-on',
+        ),
+        pytest.param(NeverSocketCase('openai-codex-model', WEBSOCKET_PROFILE), id='openai-codex-model-profile-on'),
     ],
 )
 async def test_setup_that_can_never_use_a_socket_warns_and_uses_http(
-    allow_model_requests: None, sockets: SocketHarness, setup: str, profile: OpenAIModelProfile | None
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    case: NeverSocketCase,
 ):
-    """A model whose profile turns the socket off says so, and sends the request over HTTP, here rejected with a 400.
+    """A model that cannot use a socket warns that HTTP keeps the mode's continuation defaults.
 
     For the OAuth providers and `OpenAICodexModel`, a `profile=` that turns the socket on doesn't change that.
+    The HTTP mock exposes continuation IDs for both JSON replies and clients that require streaming.
+    The OAuth providers require `store=False`, so their HTTP requests replay history rather than chaining.
     """
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: httpx2.Response(400))) as client:
-        model = never_socket_model(setup, client, profile)
+    bodies: list[Frame] = []
+
+    def reply(request: httpx2.Request) -> httpx2.Response:
+        body = FRAME_ADAPTER.validate_json(request.content)
+        bodies.append(body)
+        response_id = f'resp_http_{len(bodies)}'
+        store = body.get('store') is not False
+        if body.get('stream') is True:
+            events = text_events('from HTTP', response_id, store=store)
+            content = ''.join(
+                f'event: {event["type"]}\ndata: {FRAME_ADAPTER.dump_json(event).decode()}\n\n' for event in events
+            )
+            return httpx2.Response(200, content=content.encode(), headers={'content-type': 'text/event-stream'})
+        message: Frame = {
+            'type': 'message',
+            'id': 'msg_http',
+            'role': 'assistant',
+            'status': 'completed',
+            'content': [{'type': 'output_text', 'text': 'from HTTP', 'annotations': [], 'logprobs': []}],
+        }
+        return httpx2.Response(200, json=completed_response(response_id, store=store, output=[message]))
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(reply)) as client:
+        model = never_socket_model(case.setup, client, case.profile)
+        messages = user_prompt('hello')
         async with model:
-            with (
-                pytest.warns(
-                    UnsupportedSettingWarning,
-                    match=(
-                        r"`openai_transport='websocket'` setting .* `openai_responses_supports_websocket=False`.* "
-                        r'`profile=OpenAIModelProfile\(openai_responses_supports_websocket=True\)`'
-                    ),
+            with pytest.warns(
+                UnsupportedSettingWarning,
+                match=(
+                    r"`openai_transport='websocket'` setting .* HTTP.*`openai_previous_response_id='auto'`.*"
+                    r'`openai_responses_supports_websocket=False`.* '
+                    r'`profile=OpenAIModelProfile\(openai_responses_supports_websocket=True\)`'
                 ),
-                pytest.raises(ModelHTTPError),
             ):
-                await model.request(user_prompt('hello'), None, ModelRequestParameters())
+                first = await model.request(messages, None, ModelRequestParameters())
+                follow_up: list[ModelMessage] = [*messages, first, ModelRequest.user_text_prompt('next')]
+                await model.request(follow_up, None, ModelRequestParameters())
+
+    assert first.history_digest is not None
+    assert (first.provider_details or {}).get('store') is case.expected_store
+    assert 'previous_response_id' not in bodies[0]
+    assert bodies[1].get('previous_response_id') == case.expected_previous_response_id
+    assert ('hello' in str(bodies[1]['input'])) is case.replays_history
+    assert ('from HTTP' in str(bodies[1]['input'])) is case.replays_history
+    assert 'next' in str(bodies[1]['input'])
     assert sockets.connect_count == 0
 
 
