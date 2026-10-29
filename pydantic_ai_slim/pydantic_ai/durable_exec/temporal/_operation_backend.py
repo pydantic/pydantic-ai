@@ -125,7 +125,8 @@ def _apply_policy(config: ActivityConfig, policy: StepPolicy) -> ActivityConfig:
         # the whole start-to-close timeout.
         config.setdefault('heartbeat_timeout', _AT_MOST_ONCE_HEARTBEAT_TIMEOUT)
     if policy.timeout is not None:
-        config['start_to_close_timeout'] = timedelta(seconds=policy.timeout)
+        floor = timedelta(seconds=policy.timeout)
+        config['start_to_close_timeout'] = max(config.get('start_to_close_timeout') or floor, floor)
     return config
 
 

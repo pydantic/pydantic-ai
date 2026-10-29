@@ -31,7 +31,7 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
         if not policy.repeatable:
             config['retries'] = 0
         if policy.timeout is not None:
-            config['timeout_seconds'] = policy.timeout
+            config['timeout_seconds'] = max(config.get('timeout_seconds') or policy.timeout, policy.timeout)
         return config
 
     async def execute(

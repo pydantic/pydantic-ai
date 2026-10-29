@@ -8,7 +8,6 @@ the public detectors that use it.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
 from typing import Any, TypeGuard, cast
 
 from pydantic_ai.exceptions import UserError
@@ -17,12 +16,7 @@ from pydantic_ai_harness._message_text import with_text
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector
 
 
-def is_text_tool_return(value: object) -> TypeGuard[ToolReturn[str]]:
-    """Whether `value` is a `ToolReturn` with a string payload."""
-    return isinstance(value, ToolReturn) and isinstance(value.return_value, str)
-
-
-def is_content_list(value: object) -> TypeGuard[list[UserContent]]:
+def _is_content_list(value: object) -> TypeGuard[list[UserContent]]:
     """Whether `value` is a list of content parts, such as text beside a screenshot, as a tool can return."""
     if not isinstance(value, list):
         return False
@@ -174,34 +168,41 @@ def detect_tool_return_content(
     return None, rewritten if replaced else None
 
 
-def detect_content_list_result(detector: TextDetector, result: object) -> GuardrailResult | None:
-    """Run `detector` over a result made of content parts, such as text beside a screenshot.
-
-    The result is a list of parts, or a `ToolReturn` with one as its `return_value`; its images and other files are
-    kept. Returns `None` for any other result.
-    """
-    if is_content_list(result):
-        verdict, rewritten = detect_tool_return_content(detector, result)
-        if verdict is not None:
-            return verdict
-        return GuardrailResult.allow() if rewritten is None else GuardrailResult.replace(list(rewritten))
-    if not isinstance(result, ToolReturn):
-        return None
-    tool_return = cast(ToolReturn[Any], result)
-    if not is_content_list(tool_return.return_value):
-        return None
-    value_verdict, value = detect_tool_return_content(detector, tool_return.return_value)
-    if value_verdict is not None:
-        return value_verdict
-    content_verdict, content = detect_tool_return_content(detector, tool_return.content)
-    if content_verdict is not None:
-        return content_verdict
-    if value is None and content is None:
-        return GuardrailResult.allow()
-    return GuardrailResult.replace(
-        replace(
-            tool_return,
-            return_value=tool_return.return_value if value is None else list(value),
-            content=tool_return.content if content is None else content,
-        )
+def is_checked_tool_return(value: object) -> TypeGuard[ToolReturn[Any]]:
+    """Whether `value` is a `ToolReturn` whose `return_value` is a string or a list of content parts."""
+    return isinstance(value, ToolReturn) and (
+        isinstance(value.return_value, str) or _is_content_list(cast(ToolReturn[Any], value).return_value)
     )
+
+
+def detect_return_value(
+    detector: TextDetector, value: str | list[UserContent]
+) -> tuple[GuardrailResult | None, str | list[UserContent] | None]:
+    """Run `detector` over a tool result's string, or the text of its content parts, keeping images.
+
+    Returns a terminal verdict, or the replacement -- `None` when nothing was redacted.
+    """
+    if isinstance(value, str):
+        verdict = detector(value)
+        if verdict.action not in ('allow', 'replace'):
+            return verdict, None
+        if verdict.action == 'allow':
+            return None, None
+        if not isinstance(verdict.replacement, str):
+            raise UserError('A text detector used with for_tool_result_text() must replace a tool result with text.')
+        return None, verdict.replacement
+    verdict, rewritten = detect_tool_return_content(detector, value)
+    return verdict, None if rewritten is None else list(rewritten)
+
+
+def detect_content_list_result(detector: TextDetector, result: object) -> GuardrailResult | None:
+    """Run `detector` over a result made of content parts, such as text beside a screenshot, keeping the images.
+
+    Returns `None` for any other result.
+    """
+    if not _is_content_list(result):
+        return None
+    verdict, rewritten = detect_return_value(detector, result)
+    if verdict is not None:
+        return verdict
+    return GuardrailResult.allow() if rewritten is None else GuardrailResult.replace(rewritten)
