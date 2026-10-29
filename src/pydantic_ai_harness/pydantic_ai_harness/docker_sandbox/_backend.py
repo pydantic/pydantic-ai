@@ -31,6 +31,7 @@ from collections.abc import Mapping, Sequence
 from typing import Literal
 
 import anyio
+import anyio.to_thread
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -196,7 +197,7 @@ def resolve_executable(executable: str) -> str:
 
 async def remove_container(name: str, *, executable: str = 'docker') -> None:
     """Remove a container this capability created, with its anonymous volumes; a missing one is fine."""
-    executable = resolve_executable(executable)
+    executable = await anyio.to_thread.run_sync(resolve_executable, executable)
     runner = _runner()
     if await _owned_state(runner, executable, name, WorkspaceError) == 'missing':
         return

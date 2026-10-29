@@ -41,7 +41,7 @@ together when it changed. Pinned in the `[playwright]` extra as
   Re-check: `hasattr(playwright.async_api, 'TargetClosedError')` (expect `False`);
   if it becomes `True`, switch to the public import.
 - Missing-binary detection uses `chromium.executable_path` plus an on-disk
-  `os.path.exists` check; the install command is `python -m playwright install
+  existence check; the install command is `python -m playwright install
   chromium`. Verified 2026-08-18. Source:
   <https://playwright.dev/python/docs/browsers#install-browsers>. Re-check:
   confirm `BrowserType.executable_path` exists and `playwright install chromium`

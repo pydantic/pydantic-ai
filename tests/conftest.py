@@ -485,23 +485,21 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # durable capability operations persist their results through them.
     ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path')),
     ('os.mkdir', 'prefect/filesystems.py', 'awrite_path'),
-    # `posixpath.relpath` calls `abspath`, which only reads the current directory for a relative path, and
-    # that read still trips the `os.getcwd` check. The harness relativizes absolute workspace paths with it.
+    # `posixpath.relpath` calls `abspath`, which BlockBuster flags although it only reads the current directory
+    # for a relative path. The harness relativizes absolute workspace paths with it.
     ('os.path.abspath', '<frozen posixpath>', 'relpath'),
     ('os.path.abspath', 'posixpath.py', 'relpath'),
     # Spawning a Monty worker pool locates the worker binary, once per pool.
     ('os.stat', 'pydantic_monty/_binary.py', 'find_monty_binary'),
-    # Inside a Temporal workflow, Code Mode reaches Monty through a blocking portal, so opening the pool and each
-    # Monty call wait on the portal thread. There's no other way to reach Monty there.
-    (
-        'threading.Lock.acquire',
-        'pydantic_ai_harness/_monty_exec.py',
-        ('get_session', 'call_monty', '_release_monty', '_release_pool'),
-    ),
+    # Inside a Temporal workflow, Code Mode reaches Monty through a blocking portal, the only way to reach it
+    # there, so starting and stopping the portal and each call through it wait on the portal thread.
+    ('threading.Lock.acquire', 'anyio/from_thread.py', ('start_blocking_portal', 'call', '__enter__', '__exit__')),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
-    ('os.stat', 'pydantic_ai_harness/docker_sandbox/_backend.py', 'resolve_executable'),
-    ('os.access', 'pydantic_ai_harness/docker_sandbox/_backend.py', 'resolve_executable'),
-    ('os.path.abspath', 'pydantic_ai_harness/docker_sandbox/_backend.py', 'resolve_executable'),
+    *(
+        (func, f'pydantic_ai_harness/docker_sandbox/{module}', constructor)
+        for func in ('os.stat', 'os.access', 'os.path.abspath')
+        for module, constructor in (('_capability.py', '__post_init__'), ('_backend.py', '__init__'))
+    ),
     ('os.stat', 'exa_py/utils.py', '_get_package_version'),
     ('os.path.abspath', 'exa_py/utils.py', '_get_package_version'),
     ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
@@ -519,12 +517,6 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('sqlite3.Connection.execute', 'tests/harness/_postgres_sqlite.py', ('_transaction', 'fetch', '_regclass')),
     ('sqlite3.Cursor.fetchall', 'tests/harness/_postgres_sqlite.py', 'fetch'),
     ('sqlite3.Cursor.fetchone', 'tests/harness/_postgres_sqlite.py', '_regclass'),
-    # Local workspaces that stage log clears by hand, between the commands the Shell capability runs.
-    ('os.stat', 'tests/harness/shell/test_log_limits.py', 'run'),
-    ('os.scandir', 'tests/harness/shell/test_log_limits.py', 'run'),
-    ('io.BufferedWriter.write', 'tests/harness/shell/test_log_limits.py', 'run'),
-    ('io.TextIOWrapper.read', 'tests/harness/shell/test_log_limits.py', 'run'),
-    ('io.TextIOWrapper.write', 'tests/harness/shell/test_log_limits.py', 'run'),
     # The test blocks the agent loop on purpose, to check a run that never starts.
     ('threading.Lock.acquire', 'tests/harness/aws_lambda/test_aws_lambda.py', 'block_loop'),
 ]

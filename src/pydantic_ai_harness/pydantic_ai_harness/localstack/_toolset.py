@@ -419,7 +419,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         rather than only at dispatch, so a durable record of the command is
         bounded too.
         """
-        # Creating and removing the directory touches the disk, so both happen off the event loop.
+        # The directory is created and removed off the event loop.
         work_dir = await anyio.to_thread.run_sync(partial(tempfile.mkdtemp, prefix='harness_aws_'))
         try:
             with (
@@ -460,7 +460,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
                 )
         finally:
             with anyio.CancelScope(shield=True):
-                await anyio.to_thread.run_sync(partial(shutil.rmtree, work_dir, ignore_errors=True))
+                await anyio.to_thread.run_sync(shutil.rmtree, work_dir)
 
         parts: list[str] = []
         if stdout:
