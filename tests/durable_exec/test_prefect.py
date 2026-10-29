@@ -2803,9 +2803,8 @@ async def test_flow_retry_selector_sees_run_ids_and_deadline() -> None:
         return result.output
 
     await flaky()
-    [(flow_run_id, run_id, conversation_id)] = set(attempts)
-    assert run_id.startswith(f'{flow_run_id}:')
-    assert len(run_id.removeprefix(f'{flow_run_id}:')) == 32
+    [(_, run_id, conversation_id)] = set(attempts)
+    assert uuid.UUID(run_id).version == 4
     deadline = selections[0][3]
     assert deadline is not None
     assert selections == [(step, run_id, conversation_id, deadline) for _ in attempts for step in (1, 2)]

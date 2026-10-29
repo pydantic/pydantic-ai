@@ -47,7 +47,7 @@ async def test_legacy_default_run_id_hook(provided: str | None, container: str) 
 
 
 @pytest.mark.parametrize('provided', [None, 'container-run-id'])
-def test_combined_default_run_id_override(provided: str | None) -> None:
+async def test_combined_default_run_id_override(provided: str | None) -> None:
     """A container override owns bootstrap dispatch even when it declines to supply an ID."""
 
     class LegacyCombined(CombinedCapability[object]):
@@ -61,7 +61,7 @@ def test_combined_default_run_id_override(provided: str | None) -> None:
     child = ChildCapability()
     assert child.get_default_run_id() == 'child-run-id'
     capability = LegacyCombined([child])
-    assert capability._get_default_run_id_for_inputs({}) == provided  # pyright: ignore[reportPrivateUsage]
+    assert await capability._get_default_run_id_for_inputs({}) == provided  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize('provided', [None, 'legacy-run-id'])

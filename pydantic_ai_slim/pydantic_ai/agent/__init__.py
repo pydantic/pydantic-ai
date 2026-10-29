@@ -1806,7 +1806,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'deps': deps,
                 'metadata': static_metadata or None,
             }
-            run_id = bootstrap_capability._get_default_run_id_for_inputs(run_inputs)  # pyright: ignore[reportPrivateUsage]
+            run_id = await bootstrap_capability._get_default_run_id_for_inputs(run_inputs)  # pyright: ignore[reportPrivateUsage]
         resolved_run_id = _agent_graph.resolve_run_id(run_id, message_history)
         state = _agent_graph.GraphAgentState(
             message_history=list(message_history) if message_history else [],

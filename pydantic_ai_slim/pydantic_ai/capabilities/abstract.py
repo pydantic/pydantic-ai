@@ -655,7 +655,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def _get_default_run_id_for_inputs(self, inputs: dict[str, object]) -> str | None:
+    async def _get_default_run_id_for_inputs(self, inputs: dict[str, object]) -> str | None:
         """Resolve a bootstrap identity without changing the public no-argument extension point."""
         return self.get_default_run_id()
 

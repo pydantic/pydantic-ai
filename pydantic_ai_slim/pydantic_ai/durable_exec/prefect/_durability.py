@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
+from uuid import uuid4
 
 from prefect import task
 from prefect.context import FlowRunContext
@@ -129,7 +130,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         assert context.flow_run is not None
         return f'{context.flow_run.id}:{_next_flow_sequence(context, "pydantic_ai:default_run_id")}'
 
-    def _get_default_run_id_for_inputs(self, inputs: dict[str, object]) -> str | None:
+    async def _get_default_run_id_for_inputs(self, inputs: dict[str, object]) -> str | None:
         # An existing subclass's public override remains authoritative, including a None result.
         if type(self).get_default_run_id is not PrefectDurability.get_default_run_id:
             return self.get_default_run_id()
@@ -139,9 +140,18 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         assert context.flow_run is not None
         digest = hash_objects(_cacheable_value({'agent': self.name, **inputs}), raise_on_failure=True)
         assert digest is not None
-        run_id = f'{context.flow_run.id}:{digest}'
-        sequence = _next_flow_sequence(context, f'pydantic_ai:default_run_id:{digest}')
-        return f'{run_id}:{sequence}' if sequence else run_id
+        # Keep the input digest internal: a public digest could verify guesses of sensitive inputs.
+        # Reserve the ordinal before awaiting so identical concurrent calls have distinct cache keys.
+        key = f'pydantic_ai:default_run_id:{digest}'
+        sequence = _next_flow_sequence(context, key)
+
+        @task
+        async def default_run_id(sequence_key: str, sequence: int) -> str:
+            return str(uuid4())
+
+        return await default_run_id.with_options(name=f'{self.name}__default_run_id', **default_task_config)(
+            key, sequence
+        )
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None

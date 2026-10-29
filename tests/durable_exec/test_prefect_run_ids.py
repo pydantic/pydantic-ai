@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +18,7 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from prefect import flow
+    from prefect.settings import PREFECT_RESULTS_LOCAL_STORAGE_PATH, PREFECT_TASKS_REFRESH_CACHE, temporary_settings
 
     from pydantic_ai.durable_exec.prefect import PrefectDurability
 
@@ -103,21 +105,47 @@ async def test_flow_retry_preserves_default_ids_after_branch_reordering(input_ki
     await reordered()
     original, retried = attempts
     assert original['left'] != original['right']
+    for run_id, _conversation_id in original.values():
+        assert uuid.UUID(run_id).version == 4
     assert retried == original
     assert len(model_calls) == 2 + int(follow_up)
 
 
 async def test_identical_projected_inputs_get_separate_retry_stable_ids() -> None:
     agent = Agent(TestModel(), name='identical_default_ids', capabilities=[PrefectDurability[object]()])
-    attempts: list[list[str]] = []
+    attempts: list[dict[str, str]] = []
 
     @flow(retries=1)
     async def repeated() -> None:
-        ids: list[str] = []
-        for prompt in ('same', 'different', 'same', 'same'):
+        ids: dict[str, str] = {}
+        for label, prompt in (
+            ('same_first', 'same'),
+            ('different', 'different'),
+            ('same_second', 'same'),
+            ('same_third', 'same'),
+        ):
             # Live resources do not distinguish projected inputs, even when recreated for each call.
             deps: dict[str, object] = {'resource': threading.Lock()}
-            ids.append((await agent.run(prompt, deps=deps)).run_id)
+            ids[label] = (await agent.run(prompt, deps=deps)).run_id
+
+        active = 0
+        peak_active = 0
+
+        # Ordinals follow reservation order, not task labels.
+        async def run_identical(label: str) -> None:
+            nonlocal active, peak_active
+            active += 1
+            peak_active = max(peak_active, active)
+            deps: dict[str, object] = {'resource': threading.Lock()}
+            try:
+                ids[label] = (await agent.run('concurrent', deps=deps)).run_id
+            finally:
+                active -= 1
+
+        async with asyncio.TaskGroup() as group:
+            group.create_task(run_identical('concurrent_a'))
+            group.create_task(run_identical('concurrent_b'))
+        assert peak_active == 2
         attempts.append(ids)
         if len(attempts) == 1:
             raise RuntimeError('retry')
@@ -125,8 +153,10 @@ async def test_identical_projected_inputs_get_separate_retry_stable_ids() -> Non
     await repeated()
     original, retried = attempts
     assert original == retried
-    assert len(set(original)) == len(original)
-    assert original[2:] == [f'{original[0]}:1', f'{original[0]}:2']
+    assert len(set(original.values())) == len(original)
+    for run_id in original.values():
+        assert uuid.UUID(run_id).version == 4
+    assert original['concurrent_a'] != original['concurrent_b']
 
 
 @pytest.mark.parametrize('identity', ['history', 'shared_conversation', 'explicit_conversation'])
@@ -186,23 +216,45 @@ async def test_default_id_static_metadata_precedence_and_factory_lifecycle() -> 
         factory_run_ids.append(ctx.run_id)
         return {'derived_run_id': ctx.run_id}
 
-    @flow
-    async def compare() -> None:
-        merged = await agent.run('same', metadata={'shared': 'run'})
-        with agent.override(metadata={'base': 'kept', 'shared': 'run'}):
-            overridden = await agent.run('same', metadata={'ignored': True})
-        assert overridden.run_id == f'{merged.run_id}:1'
+    attempts: list[dict[str, str]] = []
 
-        with agent.override(metadata=metadata_factory):
-            dynamic = await agent.run('same', metadata={'ignored': True})
-        assert factory_run_ids and set(factory_run_ids) == {dynamic.run_id}
-        assert dynamic.metadata == {'derived_run_id': dynamic.run_id}
-        with agent.override(metadata={}):
-            without_metadata = await agent.run('same')
-        assert without_metadata.run_id == f'{dynamic.run_id}:1'
-        assert dynamic.run_id != merged.run_id
+    @flow(retries=1)
+    async def compare() -> None:
+        ids: dict[str, str] = {}
+        attempts.append(ids)
+        first_order = len(attempts) == 1
+        if first_order:
+            ids['merged'] = (await agent.run('same', metadata={'shared': 'run'})).run_id
+            with agent.override(metadata={'base': 'kept', 'shared': 'run'}):
+                ids['overridden'] = (await agent.run('same', metadata={'ignored': True})).run_id
+            with agent.override(metadata=metadata_factory):
+                dynamic = await agent.run('same', metadata={'ignored': True})
+            ids['dynamic'] = dynamic.run_id
+            assert dynamic.metadata == {'derived_run_id': dynamic.run_id}
+            with agent.override(metadata={}):
+                ids['without_metadata'] = (await agent.run('same')).run_id
+        else:
+            with agent.override(metadata={'base': 'kept', 'shared': 'run'}):
+                ids['overridden'] = (await agent.run('same', metadata={'ignored': True})).run_id
+            with agent.override(metadata={}):
+                ids['without_metadata'] = (await agent.run('same')).run_id
+            ids['merged'] = (await agent.run('same', metadata={'shared': 'run'})).run_id
+            with agent.override(metadata=metadata_factory):
+                dynamic = await agent.run('same', metadata={'ignored': True})
+            ids['dynamic'] = dynamic.run_id
+            assert dynamic.metadata == {'derived_run_id': dynamic.run_id}
+        assert factory_run_ids and factory_run_ids[-1] == ids['dynamic']
+        if first_order:
+            raise RuntimeError('retry')
 
     await compare()
+    original, retried = attempts
+    assert original['merged'] != original['overridden']
+    assert original['dynamic'] != original['without_metadata']
+    assert retried['merged'] == original['overridden']
+    assert retried['overridden'] == original['merged']
+    assert retried['dynamic'] == original['without_metadata']
+    assert retried['without_metadata'] == original['dynamic']
 
 
 @pytest.mark.parametrize('provided', [None, 'custom-prefect-id'])
@@ -238,3 +290,32 @@ async def test_prefect_legacy_default_run_id_override_delegates_to_super() -> No
         assert second.run_id == first.run_id.removesuffix(':0') + ':1'
 
     await delegated()
+
+
+@pytest.mark.parametrize('refresh', [False, True])
+async def test_flow_retry_reallocates_default_ids_after_cache_loss_or_refresh(tmp_path: Path, refresh: bool) -> None:
+    agent = Agent(TestModel(), name='opaque_ids_after_cache_loss', capabilities=[PrefectDurability[object]()])
+    attempts: list[tuple[str, str]] = []
+
+    @flow(retries=1, result_storage=tmp_path)
+    async def retry_without_cached_identity() -> None:
+        with temporary_settings({PREFECT_TASKS_REFRESH_CACHE: refresh and bool(attempts)}):
+            result = await agent.run('same prompt')
+        attempts.append((result.run_id, result.conversation_id))
+        if len(attempts) == 1:
+            if not refresh:
+                # Lose results only in this test's isolated storage, including the identity checkpoint.
+                result_paths: list[Path] = [path for path in tmp_path.rglob('*') if path.is_file()]
+                assert result_paths
+                for path in result_paths:
+                    path.unlink()
+                assert not any(path.is_file() for path in tmp_path.rglob('*'))
+            raise RuntimeError('retry without the cached identity')
+
+    with temporary_settings({PREFECT_RESULTS_LOCAL_STORAGE_PATH: tmp_path, PREFECT_TASKS_REFRESH_CACHE: False}):
+        await retry_without_cached_identity()
+
+    first, retried = attempts
+    assert all(uuid.UUID(run_id).version == 4 for run_id, _ in attempts)
+    assert first[0] != retried[0]
+    assert first[1] != retried[1]
