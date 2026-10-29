@@ -239,10 +239,10 @@ def started_by_installed_package(frame: FrameType | None) -> bool:
     Where a chain of coroutines ends in a frame that isn't one, an event loop is stepping a task, and
     the frames below belong to whatever drives the loop (`uvicorn`, `ipykernel`), not to whoever
     started the run, unless Pydantic AI's own sync methods drive it. `anyio` and `trio` start a task
-    through a coroutine of their own, so their frames mark the same boundary. A run whose starter lies past such a boundary is not attributed
-    to a package: it keeps the banner, as before. So does a run a UI adapter streams: the web
-    framework pulling the stream is installed, but the app that handed it the adapter's response is
-    the user's.
+    through a coroutine of their own, so their frames mark the same boundary. A run whose starter
+    lies past such a boundary is not attributed to a package: it keeps the banner, as before. So does
+    a run a UI adapter streams: the web framework pulling the stream is installed, but the app that
+    handed it the adapter's response is the user's.
 
     Args:
         frame: The frame to start looking outwards from, inside Pydantic AI.
