@@ -261,7 +261,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     async def _jobs_base(self, ctx: RunContext[AgentDepsT]) -> str:
         """The workspace directory holding job and capture files, looked up once per workspace."""
         if (jobs_dir := self._jobs_dirs.get(ctx.workspace)) is None:
-            jobs_dir = self._jobs_dirs[ctx.workspace] = await metadata_dir(ctx.workspace, 'shell')
+            jobs_dir = self._jobs_dirs[ctx.workspace] = await metadata_dir(ctx.workspace, 'shell', temp_fallback=True)
         return jobs_dir
 
     async def _job(self, ctx: RunContext[AgentDepsT], command_id: str) -> Job | None:
