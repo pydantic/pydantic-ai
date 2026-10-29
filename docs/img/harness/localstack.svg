@@ -20,7 +20,7 @@
 <text x="244" y="230" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">localstack_health</text>
 <text x="96" y="238" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">plus instructions</text>
 <text x="96" y="254" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">naming the endpoint</text>
-<line x1="338" y1="202" x2="366" y2="202" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="247" y1="200" x2="366" y2="200" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
 <rect x="370" y="162" width="196" height="80" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
 <text x="468" y="179.7" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">aws_cli check</text>
 <text x="468" y="198.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">allowed_services or</text>
