@@ -8,7 +8,6 @@ from __future__ import annotations as _annotations
 
 import json
 import os
-import subprocess
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -41,17 +40,11 @@ _GITHUB_ENV = {
 
 
 @pytest.fixture(autouse=True)
-def _clean_provenance_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Turn detection back on, from a clean slate: no CI variables, and no `git` checkout around the current directory.
-
-    The suite itself runs in GitHub Actions and in this repository's checkout.
-    """
+def _clean_provenance_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turn detection back on, from a clean slate, since the suite itself runs in GitHub Actions."""
     for name in list(os.environ):
-        if name.startswith(('GITHUB_', 'GITLAB_', 'CI_', 'PYDANTIC_EVALS_', 'GIT_')):
+        if name.startswith(('GITHUB_', 'GITLAB_', 'CI_', 'PYDANTIC_EVALS_')):
             monkeypatch.delenv(name)
-    monkeypatch.chdir(tmp_path)
-    # `git` looks in the current directory but not in its parents.
-    monkeypatch.setenv('GIT_CEILING_DIRECTORIES', str(tmp_path))
 
 
 async def _task(inputs: Any) -> str:
@@ -82,12 +75,13 @@ _GITHUB_REPO_ATTRS = {
 }
 
 
-async def test_github_push(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize('event_name', ['push', 'schedule', 'workflow_dispatch'])
+async def test_github_branch_run(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch, event_name: str):
     _set_env(
         monkeypatch,
         {
             **_GITHUB_ENV,
-            'GITHUB_EVENT_NAME': 'push',
+            'GITHUB_EVENT_NAME': event_name,
             'GITHUB_SHA': 'abc123',
             'GITHUB_REF': 'refs/heads/main',
             'GITHUB_REF_NAME': 'main',
@@ -169,6 +163,7 @@ async def test_github_pull_request(capfire: CaptureLogfire, monkeypatch: pytest.
             'vcs.ref.head.name': 'feature-x',
             'vcs.ref.head.type': 'branch',
             'vcs.ref.base.name': 'main',
+            'vcs.ref.base.revision': 'base-sha',
             'vcs.change.id': '42',
         }
     )
@@ -247,6 +242,33 @@ async def test_github_without_run_id(capfire: CaptureLogfire, monkeypatch: pytes
     )
 
 
+@pytest.mark.parametrize('event_name', ['issue_comment', 'workflow_run', 'merge_group', None])
+async def test_github_event_whose_ref_is_not_under_test(
+    capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch, event_name: str | None
+):
+    """On these events `GITHUB_SHA`/`GITHUB_REF` point at the default branch, not at what the workflow tests.
+
+    Reporting them would make, say, a `/eval` comment on a pull request look like a run on the default branch.
+    """
+    env = {**_GITHUB_ENV, 'GITHUB_SHA': 'main-tip-sha', 'GITHUB_REF_NAME': 'main', 'GITHUB_REF_TYPE': 'branch'}
+    if event_name is not None:
+        env['GITHUB_EVENT_NAME'] = event_name
+    _set_env(monkeypatch, env)
+    assert await _provenance(capfire) == _GITHUB_REPO_ATTRS
+
+
+async def test_github_run_attempt(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
+    """Each re-run of a workflow run is a separate attempt, with its own URL."""
+    _set_env(monkeypatch, {**_GITHUB_ENV, 'GITHUB_RUN_ATTEMPT': '2'})
+    assert await _provenance(capfire) == snapshot(
+        {
+            'vcs.provider.name': 'github',
+            'vcs.repository.url.full': 'https://github.com/acme/widgets',
+            'cicd.pipeline.run.url.full': 'https://github.com/acme/widgets/actions/runs/1234567890/attempts/2',
+        }
+    )
+
+
 _GITLAB_ENV = {
     'GITLAB_CI': 'true',
     'CI_PROJECT_URL': 'https://gitlab.example.com/acme/widgets',
@@ -286,16 +308,17 @@ async def test_gitlab_tag_pipeline(capfire: CaptureLogfire, monkeypatch: pytest.
 
 
 @pytest.mark.parametrize(
-    ('event_type', 'revision'),
+    ('event_type', 'revision', 'base_revision'),
     [
-        ('detached', 'commit-sha'),
+        # GitLab sets no target branch commit in these pipelines.
+        ('detached', 'commit-sha', None),
         # `CI_COMMIT_SHA` is the merge commit GitLab builds, so the source branch head is reported instead.
-        ('merged_result', 'source-head-sha'),
-        ('merge_train', 'source-head-sha'),
+        ('merged_result', 'source-head-sha', 'target-tip-sha'),
+        ('merge_train', 'source-head-sha', 'target-tip-sha'),
     ],
 )
 async def test_gitlab_merge_request_pipeline(
-    capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch, event_type: str, revision: str
+    capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch, event_type: str, revision: str, base_revision: str | None
 ):
     _set_env(
         monkeypatch,
@@ -305,10 +328,17 @@ async def test_gitlab_merge_request_pipeline(
             'CI_MERGE_REQUEST_EVENT_TYPE': event_type,
             'CI_MERGE_REQUEST_SOURCE_BRANCH_NAME': 'feature-x',
             'CI_MERGE_REQUEST_TARGET_BRANCH_NAME': 'main',
-            **({'CI_MERGE_REQUEST_SOURCE_BRANCH_SHA': 'source-head-sha'} if event_type != 'detached' else {}),
+            **(
+                {
+                    'CI_MERGE_REQUEST_SOURCE_BRANCH_SHA': 'source-head-sha',
+                    'CI_MERGE_REQUEST_TARGET_BRANCH_SHA': 'target-tip-sha',
+                }
+                if event_type != 'detached'
+                else {}
+            ),
         },
     )
-    assert await _provenance(capfire) == {
+    expected = {
         **_GITLAB_REPO_ATTRS,
         'vcs.ref.head.revision': revision,
         'vcs.ref.head.name': 'feature-x',
@@ -316,6 +346,9 @@ async def test_gitlab_merge_request_pipeline(
         'vcs.ref.base.name': 'main',
         'vcs.change.id': '7',
     }
+    if base_revision is not None:
+        expected['vcs.ref.base.revision'] = base_revision
+    assert await _provenance(capfire) == expected
 
 
 async def test_gitlab_minimal_env(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
@@ -326,46 +359,7 @@ async def test_gitlab_minimal_env(capfire: CaptureLogfire, monkeypatch: pytest.M
     assert await _provenance(capfire) == snapshot({'vcs.provider.name': 'gitlab', 'vcs.change.id': '7'})
 
 
-def _git(cwd: Path, *args: str) -> str:
-    return subprocess.run(
-        ['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.com', *args],
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-
-
-@pytest.fixture
-def git_checkout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """A `git` checkout as the current directory, outside any CI."""
-    _git(tmp_path, 'init', '--quiet', '--initial-branch=feature-x')
-    _git(tmp_path, 'commit', '--quiet', '--allow-empty', '-m', 'init')
-    monkeypatch.chdir(tmp_path)
-    return tmp_path
-
-
-async def test_git_checkout(capfire: CaptureLogfire, git_checkout: Path):
-    commit_sha = _git(git_checkout, 'rev-parse', 'HEAD')
-    assert await _provenance(capfire) == {
-        'vcs.ref.head.revision': commit_sha,
-        'vcs.ref.head.name': 'feature-x',
-        'vcs.ref.head.type': 'branch',
-    }
-
-
-async def test_git_checkout_detached_head(capfire: CaptureLogfire, git_checkout: Path):
-    _git(git_checkout, 'checkout', '--quiet', '--detach')
-    assert await _provenance(capfire) == {'vcs.ref.head.revision': _git(git_checkout, 'rev-parse', 'HEAD')}
-
-
-@pytest.mark.usefixtures('git_checkout')
-async def test_git_not_installed(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv('PATH', '')
-    assert await _provenance(capfire) == {}
-
-
-@pytest.mark.parametrize('value', ['false', 'FALSE', '0'])
+@pytest.mark.parametrize('value', ['false', 'FALSE', '0', 'no', 'off'])
 async def test_opt_out(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch, value: str):
     _set_env(
         monkeypatch,
