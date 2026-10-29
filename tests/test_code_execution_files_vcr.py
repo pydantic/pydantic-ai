@@ -147,7 +147,7 @@ async def test_anthropic_code_execution_files_behind_carried_thinking(
     assert content_blocks(body, 'text')[0] == snapshot(
         {
             'text': """\
-<assistant_thinking seal="8b4358c1d0b8">
+<assistant_thinking seal="bb02b5be373a">
 They uploaded a CSV, so the sum has to come from the file, not from memory.
 </assistant_thinking>\
 """,

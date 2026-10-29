@@ -1,8 +1,8 @@
 --- expected
 +++ actual
 @@ -58 +58 @@
--     "text": "<system ref=\"40ad65b96846\">Please return text.</system>",
+-     "text": "<system seal=\"779ce87a8537\">Please return text.</system>",
 +     "text": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nPlease return text.\n</retry_feedback>",
 @@ -100 +100 @@
--     "text": "<system ref=\"40ad65b96846\">Please return text.</system>",
+-     "text": "<system seal=\"779ce87a8537\">Please return text.</system>",
 +     "text": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nPlease return text.\n</retry_feedback>",

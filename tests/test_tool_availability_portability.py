@@ -1213,7 +1213,7 @@ def test_a_revealed_tool_is_announced_once_and_the_text_never_moves() -> None:
 
     # Google has no inline system-prompt support, so the announcement arrives `<system>`-tagged.
     assert announcements_of(history) == snapshot(
-        ['<system seal="f5920935ef66">The following tool(s) are now available: `lookup`</system>']
+        ['<system seal="4b065b6c2125">The following tool(s) are now available: `lookup`</system>']
     )
 
     # Three turns later, still exactly one, still the same bytes.
@@ -1224,7 +1224,7 @@ def test_a_revealed_tool_is_announced_once_and_the_text_never_moves() -> None:
             ModelResponse(parts=[TextPart(content='sure')]),
             ModelRequest(parts=[UserPromptPart(content='and again')]),
         ]
-    ) == snapshot(['<system seal="f5920935ef66">The following tool(s) are now available: `lookup`</system>'])
+    ) == snapshot(['<system seal="4b065b6c2125">The following tool(s) are now available: `lookup`</system>'])
 
 
 async def test_unrenderable_delta_raises_user_error_not_assertion(allow_model_requests: None) -> None:

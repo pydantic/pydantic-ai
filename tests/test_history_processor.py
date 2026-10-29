@@ -150,12 +150,12 @@ async def test_history_processor_run_replaces_message_history(
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='<system seal="8fe1eebb20a6">Processed answer</system>',
+                        content='<system seal="87b6f484eccf">Processed answer</system>',
                         timestamp=IsDatetime(),
                     ),
                 ],
                 timestamp=IsDatetime(),
-                metadata={'__pydantic_ai__': {'frame_seal': '8fe1eebb20a6'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '87b6f484eccf'}},
             )
         ]
     )
@@ -173,7 +173,7 @@ async def test_history_processor_run_replaces_message_history(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '8fe1eebb20a6'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '87b6f484eccf'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -220,12 +220,12 @@ async def test_history_processor_streaming_replaces_message_history(
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='<system seal="8fe1eebb20a6">Processed answer</system>',
+                        content='<system seal="87b6f484eccf">Processed answer</system>',
                         timestamp=IsDatetime(),
                     ),
                 ],
                 timestamp=IsDatetime(),
-                metadata={'__pydantic_ai__': {'frame_seal': '8fe1eebb20a6'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '87b6f484eccf'}},
             )
         ]
     )
@@ -243,7 +243,7 @@ async def test_history_processor_streaming_replaces_message_history(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '8fe1eebb20a6'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '87b6f484eccf'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],

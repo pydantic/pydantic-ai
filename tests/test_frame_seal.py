@@ -310,7 +310,7 @@ async def test_a_retry_in_a_run_stores_the_seal_on_a_native_model():
 
 
 async def test_a_frame_a_capability_enqueues_gets_the_seal_and_no_note():
-    """`framework_frame_text` marks a capability's frame: `enqueue` gives it the seal, and core doesn't note it."""
+    """`framework_frame_text` marks a capability's frame: `prepare_messages` gives it the seal, and core doesn't note it."""
     seen: list[list[ModelMessage]] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

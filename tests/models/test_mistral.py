@@ -2699,7 +2699,7 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '9d0d221aaae1'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'f881c435fa87'}},
             ),
             ModelResponse(
                 parts=[

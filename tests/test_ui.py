@@ -1930,7 +1930,7 @@ async def test_reinject_system_prompt_replace_keeps_mid_run_system_prompts():
 
     assert len(requests) == 2
     assert _contents(requests[1]) == snapshot(
-        ['Server prompt', 'Hi', 'Go', '<system seal="5f684f5d2ca4">Mid-run steering</system>']
+        ['Server prompt', 'Hi', 'Go', '<system seal="1d1525a85113">Mid-run steering</system>']
     )
     assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Hi', 'Go', 'Mid-run steering'])
 
@@ -1970,7 +1970,7 @@ async def test_reinject_system_prompt_replace_fresh_conversation_does_not_duplic
     result = await agent.run('Go')
 
     assert [_contents(request) for request in requests] == snapshot(
-        [['Server prompt', 'Go'], ['Server prompt', 'Go', '<system seal="4c3865c1a75a">Mid-run steering</system>']]
+        [['Server prompt', 'Go'], ['Server prompt', 'Go', '<system seal="66a04a81054e">Mid-run steering</system>']]
     )
     assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Go', 'Mid-run steering'])
 
@@ -2016,7 +2016,7 @@ async def test_adapter_server_mode_keeps_mid_run_system_prompts():
 
     assert len(requests) == 2
     assert _contents(requests[1]) == snapshot(
-        ['Server prompt', 'Earlier', 'Go', '<system seal="78ad29643cef">Mid-run steering</system>']
+        ['Server prompt', 'Earlier', 'Go', '<system seal="feb6454a486b">Mid-run steering</system>']
     )
     assert _contents(run_result_event.result.all_messages()) == snapshot(
         ['Server prompt', 'Earlier', 'Go', 'Mid-run steering']

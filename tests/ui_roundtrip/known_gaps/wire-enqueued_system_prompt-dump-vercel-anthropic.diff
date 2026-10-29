@@ -187,7 +187,7 @@
 -     "is_error": false
 -    },
 -    {
--     "text": "<system ref=\"40ad65b96846\">The job runs in the background.</system>",
+-     "text": "<system seal=\"779ce87a8537\">The job runs in the background.</system>",
 -     "type": "text"
 -    }
 -   ]
@@ -236,7 +236,7 @@
 -     "is_error": false
 -    },
 -    {
--     "text": "<system ref=\"40ad65b96846\">The job runs in the background.</system>",
+-     "text": "<system seal=\"779ce87a8537\">The job runs in the background.</system>",
 -     "type": "text"
 -    }
 -   ]

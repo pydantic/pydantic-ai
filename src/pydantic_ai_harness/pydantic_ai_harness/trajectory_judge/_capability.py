@@ -434,7 +434,7 @@ def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextCon
 
     A random `ref`, made once here, ties the note to its frame. Both parts store it in their text (and in
     the metadata), so every later request sends them byte for byte and the prompt cache holds. The frame is marked
-    as the framework's (`framework_frame_text`), so `RunContext.enqueue` gives it the conversation's frame seal,
+    as the framework's (`framework_frame_text`), so it's sent with the conversation's frame seal,
     which every frame on the user channel carries.
     """
     ref = secrets.token_hex(8)

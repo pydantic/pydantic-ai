@@ -52,7 +52,13 @@ from .._file_input import (
     unsupported_file_input,
     unsupported_file_note,
 )
-from .._frame_seal import frame_seal, has_stored_frame_seal, is_framework_frame, with_frame_seal
+from .._frame_seal import (
+    frame_seal,
+    has_stored_frame_seal,
+    is_framework_frame,
+    with_frame_seal,
+    with_frame_seal_on_frame,
+)
 from .._framing import (
     CONVERSATION_SUMMARY_TAG,
     SYSTEM_TAG,
@@ -1958,7 +1964,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 for part in response.parts
             )
             parts, frame_at = self._request_with_lookalike_notes(
-                original, message, first_request=index == first_request_index
+                original, message, seal=seal, first_request=index == first_request_index
             )
             if frame_at is None and carries_thinking:
                 frame_at = len(parts)
@@ -1971,7 +1977,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                         timestamp=message.timestamp or _utils.now_utc(),
                     )
                     parts.insert(frame_at, announcement)
-            if len(parts) != len(message.parts):
+            if len(parts) != len(message.parts) or any(new is not old for new, old in zip(parts, message.parts)):
                 message = replace(message, parts=parts)
                 changed = True
             new_messages.append(message)
@@ -1982,6 +1988,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         authored: ModelRequest,
         request: ModelRequest,
         *,
+        seal: str,
         first_request: bool,
     ) -> tuple[list[ModelRequestPart], int | None]:
         """`request`'s parts with lookalike notes added, and where the announcement goes if this request carries it.
@@ -1997,6 +2004,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         tool_notes: list[SystemPromptPart] = []
         for original, part in zip(authored.parts, request.parts):
             sources = _lookalike_sources(original)
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                # A frame a capability wrote gets the conversation's seal here, on every request, like core's own.
+                content = [with_frame_seal_on_frame(c, seal) if is_framework_frame(c) else c for c in part.content]
+                if any(new is not old for new, old in zip(content, part.content)):
+                    part = replace(part, content=content)
             if _is_tool_result_part(part):
                 if sources:
                     tool_notes.append(
@@ -2015,7 +2027,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                     and isinstance(part, UserPromptPart)
                 )
                 or isinstance(part, CompactionPart)
-                # A frame a capability wrote, as `RunContext.enqueue` gave it the seal.
+                # A frame a capability wrote, sealed above.
                 or (
                     isinstance(part, UserPromptPart)
                     and not isinstance(part.content, str)

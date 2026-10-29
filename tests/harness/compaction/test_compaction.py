@@ -975,7 +975,7 @@ Complete the current task efficiently and avoid unnecessary tool calls.\
                 [
                     prompt,
                     """\
-<system seal="830daf3256b1">CRITICAL: Configured run limits are approaching.
+<system seal="f43871c7007d">CRITICAL: Configured run limits are approaching.
 - Iterations: 1/2 requests used (50%); 1 remaining.
 Complete the current task immediately and avoid unnecessary tool calls.</system>\
 """,

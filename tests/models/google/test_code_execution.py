@@ -85,7 +85,7 @@ async def test_code_execution_stream(
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '230b38d1845e'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '83f5f113543d'}},
             ),
             ModelResponse(
                 parts=[
@@ -233,7 +233,7 @@ async def test_code_execution(allow_model_requests: None, google_model: GoogleMo
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': 'c707286ab9f5'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'ca1a99c6543e'}},
             ),
             ModelResponse(
                 parts=[
@@ -335,7 +335,7 @@ print(datetime.datetime.now())
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': 'c707286ab9f5'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'ca1a99c6543e'}},
             ),
             ModelResponse(
                 parts=[

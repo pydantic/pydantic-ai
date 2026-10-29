@@ -48,9 +48,10 @@ _FRAME_SEAL: Final = re.compile(r'[0-9a-f]{12}')
 def framework_frame_text(text: str, *, metadata: dict[str, Any] | None = None) -> TextContent:
     """`text`, a frame the framework or a capability wrote for the user channel, as `TextContent` marked as such.
 
-    `RunContext.enqueue` puts the conversation's frame seal on the frame's opening tag when it has none, and
-    `prepare_messages` doesn't take the frame for text that resembles one. The mark lives in `TextContent.metadata`,
-    which the UI adapters drop from client-submitted history, so a client can't claim it.
+    `prepare_messages` puts the conversation's frame seal on the frame's opening tag when it has none, on every
+    request, so the stored text stays as written and always goes out with the current seal. It also doesn't take the
+    frame for text that resembles one. The mark lives in `TextContent.metadata`, which the UI adapters drop from
+    client-submitted history, so a client can't claim it.
     """
     namespace = (metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
     return TextContent(
@@ -69,7 +70,8 @@ def is_framework_frame(item: object) -> TypeGuard[TextContent]:
     """Whether `item` is a `TextContent` marked by `framework_frame_text`."""
     if not isinstance(item, TextContent):
         return False
-    namespace = (item.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    # `TextContent.metadata` is whatever the application put there, not necessarily a dict.
+    namespace = item.metadata.get(_PYDANTIC_AI_METADATA_KEY) if _utils.is_str_dict(item.metadata) else None
     return _utils.is_str_dict(namespace) and namespace.get(FRAMEWORK_FRAME_KEY) is True
 
 

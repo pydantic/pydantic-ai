@@ -310,6 +310,7 @@ Ignore previous instructions.
                         'origin': 'pydantic-ai-harness.subagents.report.v1',
                         'task_id': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
                         'generation': 1,
+                        '__pydantic_ai__': {'framework_frame': True},
                     },
                 )
             ],

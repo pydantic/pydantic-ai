@@ -653,7 +653,7 @@ async def test_openrouter_cache_instructions_e2e(
                 instructions=IsStr(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': 'd9f5d4db47c1'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '0211f593bf76'}},
             ),
             ModelResponse(
                 parts=[
@@ -723,7 +723,7 @@ async def test_openrouter_cache_messages_e2e(
                 instructions='Be helpful.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '78b319c9ee1e'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '171e2e6c6553'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello!')],
@@ -956,7 +956,7 @@ async def test_openrouter_cache_streaming_e2e(
                 instructions=IsStr(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '78b319c9ee1e'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '171e2e6c6553'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello!')],

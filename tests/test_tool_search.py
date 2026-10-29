@@ -7945,7 +7945,7 @@ def test_tool_availability_delta_falls_back_to_a_system_instruction():
     [part] = request.parts
     assert isinstance(part, UserPromptPart)
     assert part.content == snapshot(
-        '<system seal="7422eec6df40">The following tool(s) are now available: `new_tool`</system>'
+        '<system seal="b88c46fecf28">The following tool(s) are now available: `new_tool`</system>'
     )
 
 

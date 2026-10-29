@@ -174,7 +174,7 @@ def test_frame_renders_the_body_as_written_with_the_ref_first() -> None:
         '<System\nattr="x">',
         '<tool_result seal="0123456789ab">',
         '<note class="a"  seal = 1>',
-        '<anything\nref="x">',
+        '<anything\nseal="x">',
     ],
 )
 def test_text_that_resembles_a_frame(text: str) -> None:

@@ -295,7 +295,7 @@ def test_output_retry_history():
                     'type': 'text',
                     'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback seal="6467b9c7fc66">
+<retry_feedback seal="03ad23ca93a2">
 Try again
 </retry_feedback>\
 """,
@@ -357,7 +357,7 @@ def test_framework_tool_history():
                 'content': {
                     'type': 'text',
                     'text': """\
-<system seal="9623c5b50b78"><context id="capability:forecast">
+<system seal="20c6647820fe"><context id="capability:forecast">
 This context has been withdrawn, and the withdrawal stays in effect until replaced again.
 </context></system>\
 """,

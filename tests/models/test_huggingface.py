@@ -420,7 +420,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '6467b9c7fc66'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '03ad23ca93a2'}},
             ),
             ModelResponse(
                 parts=[
@@ -458,7 +458,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '6467b9c7fc66'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '03ad23ca93a2'}},
             ),
             ModelResponse(
                 parts=[
@@ -494,7 +494,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '6467b9c7fc66'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '03ad23ca93a2'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -1019,7 +1019,7 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '6467b9c7fc66'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '03ad23ca93a2'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='final-response')],
@@ -1050,7 +1050,7 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
             'role': 'user',
             'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback seal="6467b9c7fc66">
+<retry_feedback seal="03ad23ca93a2">
 Response is invalid
 </retry_feedback>\
 """,

@@ -287,7 +287,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 instructions='Call `get_user_country` first, then call `final_result` with the JSON result.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '783beabd2d75'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '4eacd455affc'}},
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
@@ -316,7 +316,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 instructions='Call `get_user_country` first, then call `final_result` with the JSON result.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '783beabd2d75'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '4eacd455affc'}},
             ),
             ModelResponse(
                 parts=[
@@ -1902,7 +1902,7 @@ async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiPro
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '11a5abb7cabf'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'e0d40c4db840'}},
             ),
             ModelResponse(
                 parts=[
@@ -1943,7 +1943,7 @@ async def test_xai_system_prompt(allow_model_requests: None, xai_provider: XaiPr
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '11a5abb7cabf'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'e0d40c4db840'}},
             ),
             ModelResponse(
                 parts=[
@@ -2102,7 +2102,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '0196ce182cd8'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '65cdaf5cf45d'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a single raw potato.')],
@@ -3080,7 +3080,7 @@ Return just the final number with no other text.\
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': 'dc61825afc78'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '7b4f1796fca1'}},
             ),
             ModelResponse(
                 parts=[
@@ -3192,7 +3192,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 instructions='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': 'c56bdef723cf'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'efbff8a55cc4'}},
             ),
             ModelResponse(
                 parts=[
@@ -3233,7 +3233,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 instructions='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': 'c56bdef723cf'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'efbff8a55cc4'}},
             ),
             ModelResponse(
                 parts=[
@@ -3331,7 +3331,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '7f9a4fa11ecc'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '7a1b67b032f7'}},
             ),
             ModelResponse(
                 parts=[
@@ -3488,7 +3488,7 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '7f9a4fa11ecc'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '7a1b67b032f7'}},
             ),
             ModelResponse(
                 parts=[
@@ -4506,7 +4506,7 @@ async def test_xai_retry_feedback_as_tagged_user_message(allow_model_requests: N
                             {
                                 'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback seal="6467b9c7fc66">
+<retry_feedback seal="03ad23ca93a2">
 Please provide a valid response
 </retry_feedback>\
 """

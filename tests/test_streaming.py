@@ -2174,7 +2174,7 @@ async def test_empty_response():
                 timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '1a6adf1a2cb8'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],

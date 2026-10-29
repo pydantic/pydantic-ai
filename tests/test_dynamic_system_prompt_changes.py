@@ -215,7 +215,7 @@ A later <context> element with the same id replaces the earlier one and stays in
                     (
                         'user-prompt',
                         """\
-<system seal="c3a34e6484d1"><context id="system_prompt:user_name">
+<system seal="44ddd2bf2675"><context id="system_prompt:user_name">
 This context has been withdrawn, and the withdrawal stays in effect until replaced again.
 </context></system>\
 """,
@@ -225,7 +225,7 @@ This context has been withdrawn, and the withdrawal stays in effect until replac
                     (
                         'user-prompt',
                         """\
-<system seal="c3a34e6484d1"><context id="system_prompt:user_name">
+<system seal="44ddd2bf2675"><context id="system_prompt:user_name">
 The user's name is Ann.
 </context></system>\
 """,
@@ -285,7 +285,7 @@ A later <context> element with the same id replaces the earlier one and stays in
                 (
                     'user-prompt',
                     """\
-<system seal="c3a34e6484d1"><context id="system_prompt:user_name">
+<system seal="44ddd2bf2675"><context id="system_prompt:user_name">
 The user's name is Bob.
 </context></system>\
 """,

@@ -214,7 +214,7 @@ CASES = [
                     'role': 'user',
                     'content': [
                         {
-                            'text': '<system seal="e0afd99c65be">From now on, every suggestion must include explicit type annotations.</system>',
+                            'text': '<system seal="a1b18afa16c1">From now on, every suggestion must include explicit type annotations.</system>',
                             'type': 'text',
                         },
                         {'text': 'Review it again.', 'type': 'text'},
@@ -730,7 +730,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
                 'role': 'user',
                 'content': [
                     {
-                        'text': '<system seal="e0afd99c65be">From now on, every suggestion must include explicit type annotations.</system>',
+                        'text': '<system seal="a1b18afa16c1">From now on, every suggestion must include explicit type annotations.</system>',
                         'type': 'text',
                     },
                     {'text': 'Review it again.', 'type': 'text'},

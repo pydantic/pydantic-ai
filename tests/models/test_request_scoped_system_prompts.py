@@ -820,10 +820,10 @@ def test_current_request_scoped_prompts_move_to_the_last_request():
             ModelRequest(
                 parts=[
                     UserPromptPart(content='Are you there?', timestamp=IsDatetime()),
-                    UserPromptPart(content='<system seal="6467b9c7fc66">Reminder A.</system>', timestamp=IsDatetime()),
-                    UserPromptPart(content='<system seal="6467b9c7fc66">Reminder B.</system>', timestamp=IsDatetime()),
+                    UserPromptPart(content='<system seal="03ad23ca93a2">Reminder A.</system>', timestamp=IsDatetime()),
+                    UserPromptPart(content='<system seal="03ad23ca93a2">Reminder B.</system>', timestamp=IsDatetime()),
                 ],
-                metadata={'__pydantic_ai__': {'request_scoped_tail': 2, 'frame_seal': '6467b9c7fc66'}},
+                metadata={'__pydantic_ai__': {'request_scoped_tail': 2, 'frame_seal': '03ad23ca93a2'}},
             ),
         ]
     )
@@ -931,12 +931,12 @@ async def test_bedrock_message_cache_point_goes_before_the_request_scoped_prompt
         [
             {'toolResult': {'toolUseId': 'call_2', 'content': [{'text': 'Oslo: 18C'}], 'status': 'success'}},
             {'cachePoint': {'type': 'default'}},
-            {'text': '<system seal="3baa42f53778">Reminder 2.</system>'},
+            {'text': '<system seal="0e877ab95862">Reminder 2.</system>'},
         ]
     )
     assert 'Reminder 1.' not in str(tool_loop['messages'])
     assert only_reminder['messages'] == snapshot(
-        [{'role': 'user', 'content': [{'text': '<system seal="7422eec6df40">Reminder.</system>'}]}]
+        [{'role': 'user', 'content': [{'text': '<system seal="b88c46fecf28">Reminder.</system>'}]}]
     )
 
 
@@ -967,11 +967,11 @@ async def test_openrouter_message_cache_control_goes_before_the_request_scoped_p
                 'tool_call_id': 'call_2',
                 'content': [{'type': 'text', 'text': 'Oslo: 18C', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
             },
-            {'role': 'user', 'content': '<system seal="3baa42f53778">Reminder 2.</system>'},
+            {'role': 'user', 'content': '<system seal="0e877ab95862">Reminder 2.</system>'},
         ]
     )
     assert only_reminder['messages'] == snapshot(
-        [{'role': 'user', 'content': '<system seal="7422eec6df40">Reminder.</system>'}]
+        [{'role': 'user', 'content': '<system seal="b88c46fecf28">Reminder.</system>'}]
     )
 
 
