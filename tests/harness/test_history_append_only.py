@@ -19,10 +19,10 @@ import anyio
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-from pydantic_ai import Agent, RunContext, Tool
+from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, ToolSearch, Toolset
 from pydantic_ai.capabilities.abstract import leaf_capabilities
-from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextContent, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
@@ -89,6 +89,7 @@ from ..append_only import (
     CLOCK,
     PROVIDERS,
     Allowed,
+    Clock,
     ConversationResult,
     Exempt,
     Fixture,
@@ -267,7 +268,6 @@ FIXTURES: dict[str, Fixture] = {
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),
     'DeduplicateFileReads': _deduplicate_file_reads,
-    'EscalateOnOutputRetry': lambda _: EscalateOnOutputRetry(levels=[EscalationLevel(TestModel())]),
     'FallbackCompaction': lambda _: FallbackCompaction(
         fallback_chain=[SlidingWindowCompaction(max_messages=6, keep_messages=2)]
     ),
@@ -622,7 +622,46 @@ def _delegation_reports(
     return capabilities, scenario, delivered_once
 
 
-CONVERSATIONS = {'DelegationReports': _delegation_reports}
+def _output_escalation(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[object]], Scenario, Callable[[ConversationResult], None]]:
+    escalation = EscalateOnOutputRetry[object](levels=[EscalationLevel(TestModel())])
+
+    def configure(agent: Agent[object, str], clock: Clock) -> None:
+        assert agent.model is not None
+        escalation.levels = (
+            EscalationLevel(agent.model, after_failures=1),
+            EscalationLevel(agent.model),
+        )
+
+        @agent.output_validator
+        def validate(output: str) -> str:
+            if output == 'draft':
+                raise ModelRetry('Finish the draft.')
+            return output
+
+    def check(result: ConversationResult) -> None:
+        assert sum(isinstance(message, ModelResponse) and message.text == 'draft' for message in result.history) == 2
+
+    return (
+        [escalation],
+        Scenario(
+            configure=configure,
+            turns=(
+                Turn(calls=(('look_up', {'topic': 'weather'}),)),
+                Turn(text='draft'),
+                Turn(calls=(('look_up', {'topic': 'news'}),)),
+                Turn(text='ready'),
+                Turn(calls=(('look_up', {'topic': 'sports'}),)),
+                Turn(text='draft'),
+                Turn(text='ready'),
+            ),
+        ),
+        check,
+    )
+
+
+CONVERSATIONS = {'DelegationReports': _delegation_reports, 'EscalateOnOutputRetry': _output_escalation}
 """Capabilities whose behavior needs a conversation of its own, with the check it must also pass."""
 
 

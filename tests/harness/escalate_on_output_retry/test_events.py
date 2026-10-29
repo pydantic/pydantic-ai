@@ -13,8 +13,9 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent, ModelRetry, RunContext, ToolOutput
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation, SelectModel
 from pydantic_ai.messages import CapabilityEvent, ModelMessage
+from pydantic_ai.models import Model, ModelSelectionContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -33,6 +34,38 @@ class RecordRetries(AbstractCapability[object]):
 
 
 class TestOutputRetryEvent:
+    async def test_losing_selector_is_not_evaluated_or_traced(self) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        selections: list[int] = []
+
+        class ObservedEscalation(EscalateOnOutputRetry[object]):
+            def select_model(self, ctx: ModelSelectionContext[object]) -> Model | str:
+                selections.append(ctx.retry)
+                return super().select_model(ctx)
+
+        model = TestModel(custom_output_text='draft')
+        agent = Agent(
+            capabilities=[
+                ObservedEscalation(
+                    levels=[EscalationLevel(TestModel(), after_failures=1), EscalationLevel(TestModel())]
+                ),
+                SelectModel(lambda ctx: model),
+                Instrumentation(settings=InstrumentationSettings(tracer_provider=provider)),
+            ]
+        )
+
+        @agent.output_validator
+        def validate(ctx: RunContext[object], value: str) -> str:
+            if ctx.retry == 0:
+                raise ModelRetry('Finish the draft.')
+            return value
+
+        assert (await agent.run('Answer.')).output == 'draft'
+        assert selections == []
+        assert all(span.name != 'escalate_on_output_retry' for span in exporter.get_finished_spans())
+
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_retry_events_and_single_trace(self, include_content: bool) -> None:
         exporter = InMemorySpanExporter()

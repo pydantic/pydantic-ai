@@ -237,7 +237,7 @@ class OnOutputValidateErrorHookFunc(Protocol):
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: RawOutput, error: ValidationError | ModelRetry) -> Any | Awaitable[Any]: ...
 
 class AfterOutputRetryHookFunc(Protocol[AgentDepsT]):
-    """Protocol for the `after_output_retry` notification hook."""
+    """Protocol for [`after_output_retry`][pydantic_ai.capabilities.AbstractCapability.after_output_retry] hook functions."""
     def __call__(self, ctx: RunContext[AgentDepsT], /, *, retry_context: OutputRetryContext) -> None | Awaitable[None]: ...
 
 class BeforeOutputProcessHookFunc(Protocol):
