@@ -8,7 +8,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness.pydantic_ai_docs._capability import PydanticAIDocs
 
 
-@dataclass
+@dataclass(init=False)
 class PyaiDocs(PydanticAIDocs[AgentDepsT]):
     """Deprecated name for `PydanticAIDocs`.
 
@@ -16,6 +16,9 @@ class PyaiDocs(PydanticAIDocs[AgentDepsT]):
     rename still load when this class is passed via `custom_capability_types`. Specs
     saved through this class keep the old block name; migrate to `PydanticAIDocs` to
     save under the new one.
+
+    `init=False` keeps the inherited `__init__`: one regenerated here would resolve its
+    annotations (`Path`) against this module, hiding every field from the `AgentSpec` schema.
     """
 
     @classmethod

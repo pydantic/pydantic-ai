@@ -182,7 +182,6 @@ if TYPE_CHECKING:
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
-        RealtimeEvent as RealtimeEvent,
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeProviderSession,
@@ -213,7 +212,6 @@ __all__ = (
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
     'ToolDenied',
-    'RealtimeEvent',
 )
 
 _ACTIVE_AGENT_LIMITERS: ContextVar[tuple[tuple[int, _concurrency.ConcurrencyLimiter], ...]] = ContextVar(
@@ -1548,6 +1546,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
                         ),
                         model_name='gpt-5.2',
+                        model_id='openai:gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
                         conversation_id='...',
@@ -2213,7 +2212,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
 
-        def display_banner(*, model: str, tools: int) -> None:
+        def display_agent_banner(*, model: str, tools: int) -> None:
             # Called by the graph once the run's first step has resolved the model it will actually
             # use and the tools it will actually offer, and only when there is a banner to show;
             # everything else is settled here and now.
@@ -2225,6 +2224,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 tools=tools,
                 capabilities=_registered_capability_count(bootstrap_capability),
             )
+
+        # A run a library or platform started on its users' behalf gets no banner, and leaves the claim
+        # for the user's own agents. Decided here, while the frames of whoever called `run()` are still
+        # on the stack, and only when the run could show one: an instrumented run never does, and a
+        # process that has shown one has nothing left to decide. (`run_stream_events()` runs the agent in
+        # a task of its own, so it decides in its caller's stack before instrumentation is known; see
+        # `AgentRunEvents._ensure_started`.)
+        started_by_installed_package = (
+            instrumentation_settings is None
+            and _display.banner_pending()
+            and (
+                binding.started_by_installed_package
+                if binding is not None
+                else _display.started_by_installed_package(inspect.currentframe())
+            )
+        )
+        display_banner = None if started_by_installed_package else display_agent_banner
 
         model_resources = _RunModelResources(
             self._entered_model_ids.copy(),

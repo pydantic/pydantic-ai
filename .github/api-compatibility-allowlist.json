@@ -115,12 +115,6 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/7434"
     },
     {
-      "against": "v2.63.0",
-      "fingerprint": "1954e0e46959570832c95f7cef16531613aa113657be33e8b56c596c696c4ac1",
-      "reason": "Adds the `ModelFallback` capability to `CAPABILITY_TYPES` so agent specs can declare it; every existing entry is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11679"
-    },
-    {
       "against": "v2.60.0",
       "fingerprint": "ac9e0aae6d4638a7d65730859d384c202c5d5cabbce0855e6bbce5122c61551b",
       "reason": "Adds the new `Citations` capability to `CAPABILITY_TYPES`; every existing entry is unchanged.",
@@ -434,6 +428,18 @@
     },
     {
       "against": "v2.63.0",
+      "fingerprint": "7c52c60298d3103deb2c4c5a9c9b14e136c9881cb0ebc8478d71eb50f70cc9ac",
+      "reason": "`pydantic_ai.agent.RealtimeEvent` was only imported under `TYPE_CHECKING`, so importing it at runtime always raised `ImportError`; `RealtimeEvent` is still exported from `pydantic_ai.realtime`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10189"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "ab788952b39a2021c1a9eb1c2009ddb950f83d8876f0e7624346c8dc3294ea8d",
+      "reason": "harness 0.x: adds the 'flagged' value to `SkipReason` for skills an opt-in `Skills(scanner=...)` leaves out; it only appears with a scanner configured, and existing values are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11470"
+    },
+    {
+      "against": "v2.63.0",
       "fingerprint": "ba357493cc5988982484475597d4666626d566ac71a2317e5e91af3c243c196e",
       "reason": "`RepoContextSettings.nested_traversal` keeps its type and default; only its `Field` description changed, to describe nested traversal surfacing every directory between the traversed one and the workspace.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11687"
@@ -569,6 +575,10 @@
     {
       "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
       "symbol": "STRING_SETTINGS"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/capabilities/__init__.py",
+      "symbol": "CAPABILITY_TYPES"
     }
   ]
 }
