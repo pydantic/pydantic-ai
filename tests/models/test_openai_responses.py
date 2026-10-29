@@ -5104,6 +5104,190 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
     )
 
 
+@pytest.mark.parametrize(
+    'base_url',
+    ['https://gateway-a.example/v1', 'https://gateway-b.example/v1'],
+    ids=['same-endpoint', 'other-endpoint'],
+)
+async def test_openai_responses_server_state_scoped_by_endpoint(allow_model_requests: None, base_url: str):
+    """Server-side state from another endpoint with the same `provider_name` isn't sent back.
+
+    `OpenAIProvider` serves any `base_url` as `openai`, so a response from one endpoint must not lend its
+    `previous_response_id` or item IDs to another, which can't look them up. Text and client function calls
+    replay without server-side state. https://github.com/pydantic/pydantic-ai/issues/11508
+    """
+    params = ModelRequestParameters(native_tools=[WebSearchTool()], function_tools=[ToolDefinition(name='lookup')])
+    producer_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseFunctionWebSearch(
+                    id='ws_a',
+                    action=ActionSearch(type='search', query='pydantic'),
+                    status='completed',
+                    type='web_search_call',
+                ),
+                ResponseOutputMessage(
+                    id='msg_a',
+                    content=[ResponseOutputText(text='done', type='output_text', annotations=[])],
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                ),
+                resp.ResponseFunctionToolCall(
+                    id='fc_a', call_id='call_a', name='lookup', arguments='{}', type='function_call', status='completed'
+                ),
+            ]
+        )
+    )
+    cast(MockOpenAIResponses, producer_client).base_url = 'https://gateway-a.example/v1'
+    producer = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=producer_client))
+    first_request = ModelRequest(parts=[UserPromptPart(content='q')])
+    response = await producer.request([first_request], None, params)
+
+    client = MockOpenAIResponses.create_mock(response_message([]))
+    cast(MockOpenAIResponses, client).base_url = base_url
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=client))
+    tool_return = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='ok', tool_call_id='call_a')])
+    history: list[ModelMessage] = [first_request, response, tool_return]
+    await model.request(
+        history,
+        OpenAIResponsesModelSettings(openai_previous_response_id='auto', openai_send_reasoning_ids=True),
+        params,
+    )
+    await model.request(history, OpenAIResponsesModelSettings(openai_send_reasoning_ids=True), params)
+    chained, replayed = get_mock_responses_kwargs(client)
+
+    if base_url == 'https://gateway-a.example/v1':
+        assert (chained.get('previous_response_id'), chained['input']) == snapshot(
+            ('123', [{'type': 'function_call_output', 'call_id': 'call_a', 'output': 'ok'}])
+        )
+        assert replayed['input'] == snapshot(
+            [
+                {'role': 'user', 'content': 'q'},
+                {
+                    'id': 'ws_a',
+                    'action': {'type': 'search', 'query': 'pydantic'},
+                    'status': 'completed',
+                    'type': 'web_search_call',
+                },
+                {
+                    'role': 'assistant',
+                    'id': 'msg_a',
+                    'content': [{'text': 'done', 'type': 'output_text', 'annotations': []}],
+                    'type': 'message',
+                    'status': 'completed',
+                },
+                {'name': 'lookup', 'arguments': '{}', 'call_id': 'call_a', 'type': 'function_call', 'id': 'fc_a'},
+                {'type': 'function_call_output', 'call_id': 'call_a', 'output': 'ok'},
+            ]
+        )
+    else:
+        foreign_input = [
+            {'role': 'user', 'content': 'q'},
+            {'role': 'assistant', 'content': 'done'},
+            {'name': 'lookup', 'arguments': '{}', 'call_id': 'call_a', 'type': 'function_call'},
+            {'type': 'function_call_output', 'call_id': 'call_a', 'output': 'ok'},
+        ]
+        assert 'previous_response_id' not in chained
+        assert chained['input'] == foreign_input
+        assert replayed['input'] == foreign_input
+
+
+def _other_endpoint_history(
+    provider_url: str = 'https://gateway-a.example/v1', **response_fields: Any
+) -> list[ModelMessage]:
+    """A history whose response is from an `openai` endpoint, by default not the one the mock client is at."""
+    return [
+        ModelRequest(parts=[UserPromptPart(content='q')]),
+        ModelResponse(
+            parts=[TextPart(content='done')],
+            provider_name='openai',
+            provider_url=provider_url,
+            provider_response_id='resp_a',
+            **response_fields,
+        ),
+        ModelRequest(parts=[UserPromptPart(content='again')]),
+    ]
+
+
+async def test_response_scoped_tool_call_id_from_other_endpoint(allow_model_requests: None) -> None:
+    """A tool call ID scoped to a response from another endpoint keeps that response's ID, as from another provider."""
+    response_id = f'resp_{"x" * 83}'
+    qualified_call_id = f'{response_id}:call_0'
+    history: list[ModelRequest | ModelResponse] = [
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='tool', args='{}', tool_call_id=qualified_call_id, provider_name='openai')],
+            provider_name='openai',
+            provider_url='https://gateway-a.example/v1',
+            provider_response_id=response_id,
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='tool', content='result', tool_call_id=qualified_call_id)]),
+    ]
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_responses_tool_call_ids_are_response_scoped=True),
+    )
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
+        [
+            {
+                'name': 'tool',
+                'arguments': '{}',
+                'call_id': 'resp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:call_0',
+                'type': 'function_call',
+            },
+            {
+                'type': 'function_call_output',
+                'call_id': 'resp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:call_0',
+                'output': 'result',
+            },
+        ]
+    )
+
+
+async def test_openai_conversation_id_auto_skips_other_endpoint(allow_model_requests: None) -> None:
+    """`openai_conversation_id='auto'` doesn't continue a conversation stored at another endpoint."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        _other_endpoint_history(provider_details={'conversation_id': 'conv_a'}),
+        OpenAIResponsesModelSettings(openai_conversation_id='auto'),
+        ModelRequestParameters(),
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert 'conversation' not in request_kwargs
+    assert request_kwargs['input'] == snapshot(
+        [
+            {'role': 'user', 'content': 'q'},
+            {'role': 'assistant', 'content': 'done'},
+            {'role': 'user', 'content': 'again'},
+        ]
+    )
+
+
+async def test_openai_prompt_cache_comparison_skips_other_endpoint(allow_model_requests: None) -> None:
+    """Prompt cache diagnostics don't compare against a response stored at another endpoint."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_responses_supports_prompt_cache_diagnostics=True),
+    )
+
+    await model.request(_other_endpoint_history(), None, ModelRequestParameters())
+    await model.request(_other_endpoint_history('https://api.openai.com/v1/'), None, ModelRequestParameters())
+
+    other_endpoint, same_endpoint = get_mock_responses_kwargs(mock_client)
+    assert 'prompt_cache_options' not in other_endpoint
+    assert same_endpoint['prompt_cache_options'] == {'comparison_response_id': 'resp_a'}
+
+
 async def test_response_scoped_tool_call_id_with_previous_response(allow_model_requests: None) -> None:
     """The raw provider ID is restored when the qualifying response is held server-side."""
     response_id = f'resp_{"x" * 83}'
