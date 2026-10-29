@@ -172,35 +172,13 @@ Until instrumentation is configured, the first agent run in a process prints a s
 
 ## Errors Fixed in Past Versions
 
-These errors came from bugs that have since been fixed. If you still see one, you may be on an older version: check `pydantic_ai.__version__` and upgrade.
+If an error isn't listed on this page, upgrade to the latest Pydantic AI first: most bugs reported against older versions are already fixed, and the [changelog](https://github.com/pydantic/pydantic-ai/releases) says which release fixed what.
+
+The errors below are listed because they hit applications that pin an older Pydantic AI while one of its dependencies moves on to a new major version, where upgrading Pydantic AI may not be an option right away.
 
 ### `TypeError: Cannot instantiate typing.Union`
 
 Depending on the Python version, the same error reads `TypeError: 'typing.Union' object is not callable`. Every `AnthropicModel` request failed this way with `anthropic` 2.x installed, because Pydantic AI v2.59.0 and older didn't support it while allowing it to be installed. Fixed in v2.60.0. If you can't upgrade yet, pin `anthropic<2`.
-
-### [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]: `status_code: 400, ... 'message': 'Schema is too complex.'`
-
-Anthropic compiles strict schemas, including the output schema of Native Output, into a grammar and rejects them past its size limits. Since v2.63.0, Pydantic AI checks the documented limits before sending, and a structured `output_type` without an explicit output mode falls back to a non-strict output tool when its schema would be too large. If you still see the error on v2.63.0 or later, its message carries a hint: simplify the schema, or use `ToolOutput` without `strict=True` or `PromptedOutput`. See [Schema complexity limits](models/anthropic.md#schema-complexity-limits).
-
-### [`UserError`][pydantic_ai.exceptions.UserError]: `CachePoint cannot be the first content in a user message`
-
-The [Planning](harness/planning.md) and [SystemReminders](harness/system-reminders.md) capabilities of Pydantic AI Harness could put a [`CachePoint`][pydantic_ai.messages.CachePoint] at the start of a user message. On Bedrock this was fixed in Pydantic AI v2.28.0, and on OpenRouter and in the capabilities themselves in v2.57.0 (Pydantic AI Harness 0.57.0). If you place a `CachePoint` at the start of a prompt yourself, it has nothing before it to cache: to cache the instructions or tool definitions, use the `anthropic_cache_instructions` and `anthropic_cache_tool_definitions` settings, or their `bedrock_` equivalents. See [prompt caching](models/anthropic.md#prompt-caching).
-
-### [`UserError`][pydantic_ai.exceptions.UserError]: `Anthropic does not support thinking and output tools at the same time.`
-
-Older versions raised this for [Tool Output](output.md#tool-output) whenever thinking was on, including adaptive thinking on Claude models, which supports it. Fixed for `AnthropicModel` in v2.27.1, and for Claude on Bedrock, where the message starts with `Bedrock does not support`, in v2.46.0.
-
-### [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]: `Invalid response from ... chat completions endpoint: 1 validation error for ChatCompletion choices.0.finish_reason`
-
-OpenAI-compatible providers sometimes end a response with a `finish_reason` outside OpenAI's five values, such as Bedrock Mantle's `guardrail_intervened`, Gemini's `MALFORMED_FUNCTION_CALL` or Z.AI's `sensitive`. Older versions failed the run on such a response, losing its text and usage. Fixed for `ZaiModel` in v2.37.0, and for non-streamed responses from `OpenAIChatModel` and the models built on it, including `OllamaModel`, in v2.61.0, which keeps the raw value in [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details].
-
-### `FallbackModel` doesn't fall back on `json.JSONDecodeError`, `openai.APIError` or botocore's `ReadTimeoutError`
-
-[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] by default, and some provider failures used to escape as other exceptions, so the run failed instead of moving on to the next model. Fixed for Bedrock transport errors such as `ReadTimeoutError` and `EndpointConnectionError` in v2.41.0, and in v2.52.0 for a `200` response with a body that isn't JSON (`OpenAIChatModel`) and an error object inside a stream (`OpenAIChatModel`, `GroqModel` and `HuggingFaceModel`). On older versions, add those exception types to `fallback_on`.
-
-### Gemini `400 INVALID_ARGUMENT`: `Function call is missing a thought_signature` or `Invalid thought signature.`
-
-Gemini rejects a request whose history leaves out a thought signature it issued, or carries one it didn't issue. The first message came from Gemini through an OpenAI-compatible endpoint, where `OpenAIChatModel` didn't send the signatures on tool calls back; fixed in v2.57.0. The second came from a run that switched between Vertex AI and the Gemini API, for example with a fallback model, and replayed one's signatures to the other; fixed in v2.63.0.
 
 ### `ModuleNotFoundError: No module named 'httpx'` when using `MistralModel`
 
