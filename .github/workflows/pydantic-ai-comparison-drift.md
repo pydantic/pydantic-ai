@@ -55,15 +55,15 @@ safe-outputs:
     labels: [comparison-drift]
     close-older-key: "[comparison-drift]"
     close-older-issues: false
-    expires: 7d
-timeout-minutes: 30
+    expires: 30d
+timeout-minutes: 60
 env:
   # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
   # so the agent stops itself and emits a result instead of being killed mid-flight.
   # gh-aw's own `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
-  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
+  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "60"
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1

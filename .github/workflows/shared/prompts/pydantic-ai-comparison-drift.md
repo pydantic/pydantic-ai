@@ -36,8 +36,9 @@ For each page:
 
 1. Read the whole page and identify the competitor, its first-party docs, its
    official repository, and every table row or prose claim about it.
-2. Find the page's `Last checked` date. If it has none, use the date of the
-   page's most recent git change from `git log -1 --format=%cs -- <page>`.
+2. Find the page's `Last checked` date (the line at the bottom of the page).
+   If it has none, use the last 31 days. Do not use the page's git history:
+   an edit to a page is not a re-check of its facts.
 3. Read the competitor repository's releases and the competitor's changelog
    from that date through today. Use only first-party sources. A missing
    changelog is not evidence that nothing changed.
@@ -89,6 +90,9 @@ replacement-ready proposed text. The source cell must link directly to the
 competitor's own docs or repository for competitor claims, and to this
 repository or the Pydantic AI docs for our claims. Use multiple first-party
 links in the source cell when one proposed change contains multiple claims.
+
+For every page you fully re-checked, add a row proposing its `Last checked`
+date be set to today's date, so the next run's review window starts there.
 
 After the table, add a short `## Research notes` section that names each
 competitor's release or changelog window checked and notes any first-party
