@@ -19,6 +19,7 @@ from pydantic_ai._framing import frame_ref_announcement, lookalike_frame_note
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import (
     BinaryContent,
+    CompactionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -309,3 +310,19 @@ async def test_a_retry_in_a_run_stores_the_ref_on_a_native_model():
 
     assert refs(plain.all_messages()) == {None}
     assert refs(retried.all_messages()) == {None, frame_ref(retried.all_messages())}
+
+
+@pytest.mark.skipif(not agui_available(), reason='ag-ui not installed')
+def test_agui_dumps_a_request_with_no_message_to_carry_the_ref():
+    """A request that dumps to no user, system or tool message has nowhere to put the ref; the others still carry it."""
+    history: list[ModelMessage] = [
+        *history_with_a_ref(),
+        ModelRequest(
+            parts=[CompactionPart(content='We said hi.')],
+            metadata={'__pydantic_ai__': {FRAME_REF_KEY: '0123456789ab'}},
+        ),
+    ]
+
+    dumped = AGUIAdapter.dump_messages(history)
+
+    assert dumped[-1].role == 'activity'

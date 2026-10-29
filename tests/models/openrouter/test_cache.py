@@ -406,6 +406,26 @@ async def test_openrouter_cache_instructions_dynamic_only_without_a_static_prefi
     )
 
 
+async def test_openrouter_cache_instructions_system_prompt_only_without_the_announcement(
+    allow_model_requests: None,
+) -> None:
+    """With a system prompt and no instructions or announcement, the breakpoint goes on the system message itself."""
+    mock_client = _done_mock_client()
+    model = OpenRouterModel(
+        'anthropic/claude-sonnet-4.6',
+        provider=OpenRouterProvider(openai_client=mock_client),
+        profile=ModelProfile(supports_inline_system_prompts=True),
+    )
+    agent = Agent(
+        model, system_prompt='Be terse.', model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True)
+    )
+
+    await agent.run('Hi')
+
+    [system, _user] = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert system['content'][-1]['cache_control']['type'] == 'ephemeral'
+
+
 async def test_openrouter_cache_instructions_no_instructions_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
