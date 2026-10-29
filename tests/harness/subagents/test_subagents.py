@@ -82,6 +82,28 @@ async def test_workspace_free_temporal_delegate() -> None:
     assert result == 'worker'
 
 
+async def test_temporal_delegate_with_its_own_model_does_not_read_the_parent_model() -> None:
+    """A Temporal activity's context has no `model`; a delegate with a model of its own doesn't need it."""
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec.temporal import TemporalRunContext
+
+    toolset = SubAgentToolset[object](
+        agents={'worker': SubAgent(Agent[object, str](TestModel(custom_output_text='worker'), name='worker'))},
+        forward_usage=False,
+        inherit_tools=False,
+        shared_capabilities=[],
+        event_stream_handler=None,
+        tool_name='delegate_task',
+        tool_retries=None,
+        contain_errors=False,
+        call_counts={},
+    )
+    result = await toolset.delegate_task(
+        TemporalRunContext[object](deps=None, tool_name='delegate_task'), 'worker', 'hello'
+    )
+    assert result == 'worker'
+
+
 def _delegate_then_finish(agent_name: str, *, retries_before: int = 0) -> FunctionModel:
     """A parent model that delegates to `agent_name` once, then replies with text.
 
