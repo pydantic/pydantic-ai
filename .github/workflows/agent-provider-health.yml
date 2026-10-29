@@ -9,6 +9,7 @@ on:
       - Pydantic AI Attention Triage
       - Pydantic AI Bug Hunter
       - Pydantic AI Community Demand
+      - Pydantic AI Comparison Drift
       - Pydantic AI Docs Drift
       - Pydantic AI Feature Digest
       - CI Review
