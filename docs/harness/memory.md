@@ -127,7 +127,7 @@ If a memory path resolves outside its store, the tool asks the model to correct 
 pip/uv-add asyncpg
 ```
 
-```python {typecheck="skip - asyncpg's pooled connections are untyped proxies, see #10853"}
+```python
 import asyncpg
 
 from pydantic_ai_harness import Memory
