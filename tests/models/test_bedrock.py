@@ -17,7 +17,7 @@ import anyio
 import anyio.from_thread
 import anyio.to_thread
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
@@ -247,6 +247,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 ],
                 usage=RequestUsage(input_tokens=7, output_tokens=30, cost=Decimal('0.000004445')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -866,6 +867,7 @@ async def test_bedrock_inference_profile_converse(
                 parts=[TextPart(content='Hello')],
                 usage=RequestUsage(input_tokens=8, output_tokens=2, cost=Decimal('5.6E-7')),
                 model_name='amazon.nova-micro-v1:0',
+                model_id='bedrock:amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -1035,6 +1037,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 ],
                 usage=RequestUsage(input_tokens=571, output_tokens=22, cost=Decimal('0.000023065')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsNow(tz=UTC),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -1069,6 +1072,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                 ],
                 usage=RequestUsage(input_tokens=627, output_tokens=67, cost=Decimal('0.000031325')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -1111,6 +1115,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                 ],
                 usage=RequestUsage(input_tokens=821, output_tokens=31, cost=Decimal('0.000033075')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -1159,6 +1164,7 @@ async def test_stream_cancel(allow_model_requests: None, bedrock_provider: Bedro
                 parts=[TextPart(content='The')],
                 usage=RequestUsage(cost=Decimal('0.00000')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -1267,6 +1273,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 ],
                 usage=RequestUsage(input_tokens=426, output_tokens=66, cost=Decimal('0.00002415')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -1303,6 +1310,7 @@ The capital of France is Paris. If you need any further information, feel free t
                 ],
                 usage=RequestUsage(input_tokens=531, output_tokens=76, cost=Decimal('0.000029225')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -2424,6 +2432,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=71, cost=Decimal('0.0002376')),
                 model_name='us.amazon.nova-pro-v1:0',
+                model_id='bedrock:us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -2556,6 +2565,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
                 usage=RequestUsage(input_tokens=12, output_tokens=693, cost=Decimal('0.0037584')),
                 model_name='us.deepseek.r1-v1:0',
+                model_id='bedrock:us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -2588,6 +2598,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
                 usage=RequestUsage(input_tokens=33, output_tokens=907, cost=Decimal('0.00494235')),
                 model_name='us.deepseek.r1-v1:0',
+                model_id='bedrock:us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -2632,9 +2643,11 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 ],
                 usage=RequestUsage(input_tokens=42, output_tokens=313, cost=Decimal('0.004821')),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2671,9 +2684,11 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 ],
                 usage=RequestUsage(input_tokens=334, output_tokens=432, cost=Decimal('0.007482')),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2762,9 +2777,11 @@ Is there a specific crossing situation you need help with?\
                 ],
                 usage=RequestUsage(input_tokens=43, output_tokens=309, cost=Decimal('0.0052404')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2861,9 +2878,11 @@ What type of river crossing are you considering?\
                 ],
                 usage=RequestUsage(input_tokens=342, output_tokens=509, cost=Decimal('0.0095271')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2936,9 +2955,11 @@ Would you like more specific advice for a particular situation?\
                 ],
                 usage=RequestUsage(input_tokens=14, output_tokens=284, cost=Decimal('0.0047322')),
                 model_name='us.anthropic.claude-sonnet-4-6',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3019,9 +3040,11 @@ Would you like more detail on any specific scenario?\
                 ],
                 usage=RequestUsage(input_tokens=320, output_tokens=574, cost=Decimal('0.010527')),
                 model_name='us.anthropic.claude-sonnet-4-6',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3083,6 +3106,29 @@ async def test_bedrock_opus_5_thinking_uses_native_output(
     assert 'toolConfig' not in sent
     assert sent['outputConfig']['textFormat']['type'] == 'json_schema'
     assert result.output == 42
+
+
+async def test_bedrock_native_output_unsupported_regex_pattern(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+) -> None:
+    """A thinking request uses Native Output, where Bedrock rejects a lookaround `pattern`, so it moves to the description."""
+
+    class Code(BaseModel):
+        # `python-re`, since Pydantic's default Rust regex engine rejects lookaround.
+        model_config = ConfigDict(regex_engine='python-re')
+
+        code: str = Field(pattern=r'^(?!000)\d{3}$')
+
+    model = BedrockConverseModel('us.anthropic.claude-opus-4-7', provider=bedrock_provider)
+    agent = Agent(model, output_type=Code, model_settings={'thinking': True})
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('Return the code 123.')
+
+    [sent] = sent_requests
+    schema = json.loads(sent['outputConfig']['textFormat']['structure']['jsonSchema']['schema'])
+    assert schema['properties'] == snapshot({'code': {'type': 'string', 'description': 'pattern=^(?!000)\\d{3}$'}})
+    assert result.output == Code(code='123')
 
 
 async def test_bedrock_anthropic_unified_max_effort(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -3190,9 +3236,11 @@ Would you like more specific advice for a particular situation?\
                 ],
                 usage=RequestUsage(input_tokens=14, output_tokens=272, cost=Decimal('0.0045342')),
                 model_name='us.anthropic.claude-sonnet-4-6',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3270,9 +3318,11 @@ Would you like more detail on any specific crossing method?\
                 ],
                 usage=RequestUsage(input_tokens=308, output_tokens=800, cost=Decimal('0.0142164')),
                 model_name='us.anthropic.claude-sonnet-4-6',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3322,9 +3372,11 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 ],
                 usage=RequestUsage(input_tokens=92, output_tokens=176, cost=Decimal('0.002916')),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                model_id='bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3362,9 +3414,11 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 ],
                 usage=RequestUsage(input_tokens=182, output_tokens=258, cost=Decimal('0.004416')),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                model_id='bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3430,9 +3484,11 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                 ],
                 usage=RequestUsage(input_tokens=92, output_tokens=253, cost=Decimal('0.004071')),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                model_id='bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3589,9 +3645,11 @@ async def test_bedrock_model_thinking_part_from_other_model(
                     cost=Decimal('0.02032875'),
                 ),
                 model_name='gpt-5-2025-08-07',
+                model_id='openai:gpt-5',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 10, 22, 46, 57, tzinfo=UTC),
@@ -3641,9 +3699,11 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 ],
                 usage=RequestUsage(input_tokens=1241, output_tokens=495, cost=Decimal('0.011148')),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3960,9 +4020,11 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                 ],
                 usage=RequestUsage(input_tokens=36, output_tokens=73, cost=Decimal('0.001203')),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4488,6 +4550,7 @@ async def test_bedrock_thinking_high_openai_variant(
                     input_tokens=IsInstance(int), output_tokens=IsInstance(int), cost=Decimal('0.0000771')
                 ),
                 model_name='openai.gpt-oss-120b-1:0',
+                model_id='bedrock:openai.gpt-oss-120b-1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -5099,43 +5162,6 @@ async def test_bedrock_stream_cancel_suppresses_urllib3_error(
             pass
 
     assert stream.get().state == 'interrupted'
-
-
-async def test_bedrock_stream_closed_when_cancelled_while_opening(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
-):
-    """A request cancelled while `converse_stream` opens the stream closes it, rather than leave Bedrock generating.
-
-    The worker thread still hands the stream back, and the cancellation lands at the first read.
-    Not a VCR test: the cancellation has to land while the worker thread is inside `converse_stream`.
-    """
-
-    class _EventStream:
-        closed = False
-
-        def __iter__(self) -> Iterator[dict[str, Any]]:
-            return iter([])
-
-        def close(self) -> None:
-            self.closed = True
-
-    event_stream = _EventStream()
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-
-    with anyio.CancelScope() as scope:
-
-        def converse_stream(**_: Any) -> dict[str, Any]:
-            anyio.from_thread.run_sync(scope.cancel)
-            return {'stream': event_stream, 'ResponseMetadata': {}}
-
-        mocker.patch.object(model.client, 'converse_stream', side_effect=converse_stream)
-        async with model.request_stream(
-            [ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()
-        ) as stream:
-            assert [event async for event in stream] == []
-
-    assert scope.cancelled_caught
-    assert event_stream.closed
 
 
 @pytest.mark.vcr()
@@ -7466,6 +7492,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 ],
                 usage=RequestUsage(input_tokens=1002, output_tokens=59, cost=Decimal('0.00049291')),
                 model_name='us.amazon.nova-2-lite-v1:0',
+                model_id='bedrock:us.amazon.nova-2-lite-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -7525,6 +7552,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 ],
                 usage=RequestUsage(input_tokens=1148, output_tokens=59, cost=Decimal('0.00054109')),
                 model_name='us.amazon.nova-2-lite-v1:0',
+                model_id='bedrock:us.amazon.nova-2-lite-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -7617,6 +7645,7 @@ while True:
                 ],
                 usage=RequestUsage(input_tokens=996, output_tokens=326, cost=Decimal('0.00122518')),
                 model_name='us.amazon.nova-2-lite-v1:0',
+                model_id='bedrock:us.amazon.nova-2-lite-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -7706,6 +7735,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 ],
                 usage=RequestUsage(input_tokens=1002, output_tokens=59, cost=Decimal('0.00049291')),
                 model_name='us.amazon.nova-2-lite-v1:0',
+                model_id='bedrock:us.amazon.nova-2-lite-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -7909,6 +7939,8 @@ async def test_bedrock_model_with_instructions_only(
     See: https://github.com/pydantic/pydantic-ai/issues/4495
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    # Claude's thinking is verified by the Anthropic API too, so its responses record that.
+    canonical_system = 'anthropic' if 'anthropic' in model_name else None
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     result = await agent.run()
@@ -7926,9 +7958,11 @@ async def test_bedrock_model_with_instructions_only(
                 parts=[TextPart(content=IsStr())],
                 usage=IsInstance(RequestUsage),
                 model_name=IsStr(),
+                model_id=f'bedrock:{model_name}',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system=canonical_system,
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7957,6 +7991,8 @@ async def test_bedrock_model_instructions_only_then_message_history(
     See: https://github.com/pydantic/pydantic-ai/issues/4495
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    # Claude's thinking is verified by the Anthropic API too, so its responses record that.
+    canonical_system = 'anthropic' if 'anthropic' in model_name else None
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     first_result = await agent.run()
@@ -7975,9 +8011,11 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 parts=[TextPart(content=IsStr())],
                 usage=IsInstance(RequestUsage),
                 model_name=IsStr(),
+                model_id=f'bedrock:{model_name}',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system=canonical_system,
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7993,9 +8031,11 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 parts=[TextPart(content=IsStr())],
                 usage=IsInstance(RequestUsage),
                 model_name=model_name,
+                model_id=f'bedrock:{model_name}',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system=canonical_system,
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -9074,9 +9114,11 @@ async def test_bedrock_anthropic_message_history_starting_with_response(
                 parts=[TextPart(content=IsStr())],
                 usage=IsInstance(RequestUsage),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),

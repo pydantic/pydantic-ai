@@ -197,6 +197,12 @@ agent = Agent(model)
 
 See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry) for setup instructions including Entra ID authentication.
 
+### History across platforms
+
+Every platform verifies Claude's thinking signatures and redacted thinking, so they're sent back whichever client produced them, including [`BedrockConverseModel`](bedrock.md#claude-thinking-from-other-platforms) with a Claude model and a subclass of `AnthropicProvider` that only changes its `name`: all have the `anthropic` [canonical system](../message-history.md#sending-history-to-another-provider). Search, fetch and advisor results go along. Code execution results, and the container and file IDs they refer to, stay with the provider that ran them.
+
+Anthropic Files API file IDs and code execution container IDs aren't sent through the `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients, where [`anthropic_accepts_file_and_container_ids`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_accepts_file_and_container_ids] is `False`: an Anthropic [`UploadedFile`][pydantic_ai.messages.UploadedFile] raises a [`UserError`][pydantic_ai.exceptions.UserError], a [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]'s files aren't uploaded, and no container from the history is reused.
+
 ## Task Budgets (Beta)
 
 Anthropic's [task budgets](https://platform.claude.com/docs/en/build-with-claude/task-budgets) let you give Claude an advisory token budget for a full agentic loop — including thinking, tool calls, tool results, and output — so the model can pace itself and finish gracefully as the budget is consumed. Configure them with [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget], which takes an [`AnthropicTaskBudget`][pydantic_ai.models.anthropic.AnthropicTaskBudget] payload and maps to `output_config.task_budget`.
@@ -574,6 +580,12 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 
 A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from history that can't ride Anthropic's native reasoning channel — most often because its signature didn't survive your storage round trip — is sent as text in a `user` message of its own ahead of the assistant turn it came from, wrapped in an `<assistant_thinking>` tag. That is why a request can carry a `user` turn you never wrote. See [the thinking page](../capabilities/thinking.md#carried-over-thinking) for why the assistant turn is the wrong place for it, and for the opt-out.
 
+## Token counting
+
+[`count_tokens()`][pydantic_ai.models.Model.count_tokens] and [`count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request] use Anthropic's [token counting endpoint](https://platform.claude.com/docs/en/build-with-claude/token-counting). On the `AsyncAnthropic` client, the count includes the definitions of the web search, web fetch, code execution, tool search and advisor tools, so it matches the request's input tokens. The Bedrock, Vertex AI and Foundry clients leave those tools out of the count, as their count endpoints haven't been verified to accept them, and no client counts MCP servers, which the endpoint rejects.
+
+[`anthropic_count_tokens_accepts_server_tools`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_count_tokens_accepts_server_tools] in the model's `profile` controls this. Set it to `False` if your `AsyncAnthropic` client's `base_url` points at a proxy whose count endpoint rejects server tools, or to `True` on a platform client whose count endpoint accepts them. With it off, a request whose function tools are all deferred can't be counted.
+
 ## Batch API
 
 `AnthropicModel` supports [batch processing](../batch.md) through the Claude API's
@@ -618,6 +630,8 @@ See [mid-conversation system prompts](../message-history.md#mid-conversation-sys
 
 !!! note "Placement"
     Anthropic requires a system message to sit between a user turn and the model's reply, so Pydantic AI nudges the position when a history doesn't already satisfy that: an instruction arriving with no user content alongside it gets a minimal `.` user message to follow, and one that would land ahead of another user turn moves to just before the reply it governs. Neither changes which turn the instruction applies to — only where it sits on the wire.
+
+    Claude Haiku 5.5 can read a system message that comes right after a tool result as part of the tool output and ignore it, as [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results) warn. That's where a loaded [on-demand capability](../capabilities/on-demand.md)'s instructions and an instruction change during a tool loop land, so on Haiku 5.5 Pydantic AI ends those tool results with a short text block saying they end there and the system message comes from the application. The profile flag is [`anthropic_distrusts_system_after_tool_result`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_distrusts_system_after_tool_result].
 
 ### Refusals on repeated prompts
 
@@ -712,7 +726,7 @@ Anthropic enforces the check for accounts created on or after 31 August 2026. Fo
 
 **Pydantic AI sets nothing by default**, so an older account keeps replaying its reasoning untouched. Where the check is enforced, the rejected request is retried once with `prefix_mismatch_behavior='drop_block'`: the stale block is dropped, the run continues, and a [`AnthropicStaleThinkingBlockWarning`][pydantic_ai.models.anthropic.AnthropicStaleThinkingBlockWarning] explains what happened. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Models marked [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks] are the only ones that retry. A request whose thinking type isn't `adaptive`, such as `anthropic_thinking={'type': 'between_tools'}`, is not retried, because Anthropic accepts `block_binding` only alongside adaptive thinking: keep that conversation's prefix stable instead.
 
-Anthropic applies the drop to one request only. Its response records the transformation, so Pydantic AI uses that response history to keep sending `drop_block` for the rest of the affected conversation. This avoids another rejected request on every later turn without storing mutable state on the model or changing an unrelated conversation. The same behavior applies to [`count_tokens()`][pydantic_ai.models.Model.count_tokens]: token counting retries the first matching rejection once, and later counts carrying the recovery history send the drop immediately. A recovery seen only while counting applies only to later counts, because that endpoint omits server-side tools and can therefore have a different prefix from inference. An explicit `block_binding` still wins for both counting and inference.
+Anthropic applies the drop to one request only. Its response records the transformation, so Pydantic AI uses that response history to keep sending `drop_block` for the rest of the affected conversation. This avoids another rejected request on every later turn without storing mutable state on the model or changing an unrelated conversation. The same behavior applies to [`count_tokens()`][pydantic_ai.models.Model.count_tokens]: token counting retries the first matching rejection once, and later counts carrying the recovery history send the drop immediately. A recovery seen only while counting applies only to later counts, because counting omits MCP servers, and on Bedrock, Vertex AI and Foundry server-side tools too (see [Token counting](#token-counting)), and can therefore have a different prefix from inference. An explicit `block_binding` still wins for both counting and inference.
 
 The automatic behavior is available through the direct Anthropic API, Pydantic AI Gateway and other `AsyncAnthropic`-compatible proxies, Claude Platform on AWS, both Amazon Bedrock clients (the Bedrock Messages API's `AsyncAnthropicBedrockMantle` and the legacy `AsyncAnthropicBedrock`), and Google Vertex AI. It is not enabled for Microsoft Foundry, where this beta is not currently documented. Explicit settings remain pass-through on every transport.
 
