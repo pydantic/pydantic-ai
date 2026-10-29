@@ -58,7 +58,9 @@ def test_combined_default_run_id_override(provided: str | None) -> None:
         def get_default_run_id(self) -> str:
             return 'child-run-id'
 
-    capability = LegacyCombined([ChildCapability()])
+    child = ChildCapability()
+    assert child.get_default_run_id() == 'child-run-id'
+    capability = LegacyCombined([child])
     assert capability._get_default_run_id_for_inputs({}) == provided  # pyright: ignore[reportPrivateUsage]
 
 
