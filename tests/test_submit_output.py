@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    CallToolsNode,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -24,12 +25,12 @@ from pydantic_ai import (
     NativeOutput,
     PromptedOutput,
     RunContext,
+    RunUsage,
     TextPart,
     ToolCallPart,
     ToolOutput,
     ToolReturnPart,
 )
-from pydantic_ai._agent_graph import CallToolsNode
 from pydantic_ai.agent import EndStrategy
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -371,7 +372,7 @@ async def test_submit_output_misuse():
     with pytest.raises(UserError, match="Tool call 'call-1' already submitted an output"):
         await agent.run('go')
 
-    ctx = RunContext(deps=None, model=FunctionModel(lambda m, i: ModelResponse(parts=[])), usage=None)  # type: ignore[arg-type]
+    ctx = RunContext(deps=None, model=FunctionModel(lambda m, i: ModelResponse(parts=[])), usage=RunUsage())
     assert ctx.output_tool_defs == []
     with pytest.raises(UserError, match='can only be called during an agent run'):
         await ctx.submit_output('final_result', {})
