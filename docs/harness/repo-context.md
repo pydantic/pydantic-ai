@@ -11,6 +11,8 @@ description: "Load a repo's AGENTS.md and CLAUDE.md instruction files into a Pyd
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![RepoContext has three strategies. On by default, the walk-up loads AGENTS.md and CLAUDE.md from the working directory and each ancestor up to home_dir into the instructions, broadest first, once per run. Off by default, the inventory_agent_context tool reports where the .claude, .agents, .codex and .grok roots keep skills, agents and hooks. Off by default, nested traversal reacts to FileSystem reading or listing a directory, such as src/api, and queues a pointer to that directory's AGENTS.md before the next model request.](../img/harness/repo-context.svg)
+
 ## The problem
 
 A repo accumulates CE for whatever coding assistant worked in it: instruction files (`CLAUDE.md`/`AGENTS.md`) scattered across the tree, and assets under `.claude`/`.agents`/`.codex`/`.grok` (skills, sub-agents, hooks). An agent that loads only the top-level instruction file misses the ancestor context and has no idea the rest of the setup exists, so it cannot honor all of it.

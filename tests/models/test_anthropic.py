@@ -897,6 +897,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                     cost=Decimal('0.000044'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -921,6 +922,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                     cost=Decimal('0.000044'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3263,6 +3265,7 @@ async def test_request_stream_fallback_for_high_max_tokens(
                     cost=Decimal('0.000076'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3311,6 +3314,7 @@ async def test_request_structured_response(allow_model_requests: None):
                     cost=Decimal('0.0000224'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3392,6 +3396,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000056'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3432,6 +3437,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000104'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3464,6 +3470,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000224'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3856,6 +3863,7 @@ async def test_stream_structured(allow_model_requests: None):
                     parts=[TextPart(content='FINAL_PAYLOAD')],
                     usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
                     model_name='claude-3-5-haiku-123',
+                    model_id='anthropic:claude-haiku-4-5',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
@@ -4925,6 +4933,7 @@ async def test_anthropic_model_instructions(
                     cost=Decimal('0.000388'),
                 ),
                 model_name='claude-opus-5-5',
+                model_id='anthropic:claude-opus-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -4980,6 +4989,7 @@ This is a simple, practical safety question, so I should give clear step-by-step
                     cost=Decimal('0.008372'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5047,6 +5057,7 @@ I should also include a safety note — something like even knee-deep fast-movin
                     cost=Decimal('0.030544'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5257,6 +5268,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                     cost=Decimal('0.001644'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
+                model_id='anthropic:claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5700,6 +5712,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                     cost=Decimal('0.004548'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
+                model_id='anthropic:claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5770,6 +5783,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                     cost=Decimal('0.003111'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
+                model_id='anthropic:claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5924,6 +5938,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                     cost=Decimal('0.02043875'),
                 ),
                 model_name='gpt-5-2025-08-07',
+                model_id='openai:gpt-5',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5985,6 +6000,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                     cost=Decimal('0.047774'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -6055,6 +6071,7 @@ I should add other practical tips too: staying visible with bright clothing at n
                     cost=Decimal('0.012602'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -7471,6 +7488,7 @@ The page may not be fully up to date, so check a live source like weather.gov or
                     cost=Decimal('0.055228'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -7641,6 +7659,7 @@ Mexico City is at high altitude, so mild days and cool nights are typical. It's 
                     cost=Decimal('0.05243'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -7889,6 +7908,7 @@ The page doesn't state the time it was retrieved, so the "now" reading may be a 
                     cost=Decimal('0.056344'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8544,6 +8564,7 @@ async def test_anthropic_web_fetch_tool(
                     cost=Decimal('0.084032'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8658,6 +8679,7 @@ async def test_anthropic_web_fetch_tool(
                     cost=Decimal('0.084032'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8709,6 +8731,7 @@ The page is about **Pydantic AI**, an agent framework for Python. It mentions se
                     cost=Decimal('0.075198'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8861,6 +8884,7 @@ async def test_anthropic_web_fetch_tool_stream(
                     cost=Decimal('0.083242'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -9783,6 +9807,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                     cost=Decimal('0.016258'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -9868,6 +9893,7 @@ Pydantic AI builds on Pydantic. It uses Pydantic for type-safe structured output
                     cost=Decimal('0.025486'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10039,6 +10065,7 @@ The project also uses AI-assisted development. It keeps agent guidelines in file
                     cost=Decimal('0.012884'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10269,6 +10296,7 @@ async def test_anthropic_code_execution_tool(
                     cost=Decimal('0.012474'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10332,6 +10360,7 @@ async def test_anthropic_code_execution_tool(
                     cost=Decimal('0.01247'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10432,6 +10461,7 @@ async def test_anthropic_code_execution_tool_stream(
                     cost=Decimal('0.013602'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10704,6 +10734,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                     cost=Decimal('0.000834'),
                 ),
                 model_name='gpt-4.1-2025-04-14',
+                model_id='openai:gpt-4.1',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -10848,6 +10879,7 @@ async def test_anthropic_tool_output(
                     cost=Decimal('0.00116'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10890,6 +10922,7 @@ async def test_anthropic_tool_output(
                     cost=Decimal('0.001704'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10967,6 +11000,7 @@ async def test_anthropic_text_output_function(
                     cost=Decimal('0.001028'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11007,6 +11041,7 @@ async def test_anthropic_text_output_function(
                     cost=Decimal('0.001722'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11085,6 +11120,7 @@ Don't include any text or Markdown fencing before or after.
                     cost=Decimal('0.001228'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11121,6 +11157,7 @@ Don't include any text or Markdown fencing before or after.
                     cost=Decimal('0.001252'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11198,6 +11235,7 @@ Don't include any text or Markdown fencing before or after.
                     cost=Decimal('0.001102'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11536,6 +11574,7 @@ async def test_anthropic_text_editor_code_execution_tool(
                     cost=Decimal('0.020992'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -15613,6 +15652,33 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
     assert completion_kwargs['container'] == 'container_from_history'
 
 
+@pytest.mark.parametrize(
+    'base_url', ['https://gateway-a.example', 'https://gateway-b.example'], ids=['same-endpoint', 'other-endpoint']
+)
+async def test_anthropic_container_from_history_scoped_by_endpoint(allow_model_requests: None, base_url: str):
+    """A code execution container from another endpoint with the same `provider_name` isn't reused.
+
+    https://github.com/pydantic/pydantic-ai/issues/11508
+    """
+    producer_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+        ).model_copy(update={'container': BetaContainer(id='container_a', expires_at=datetime(2025, 1, 1))})
+    )
+    cast(MockAnthropic, producer_client).base_url = 'https://gateway-a.example'
+    producer = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=producer_client)))
+    history = (await producer.run('hello')).all_messages()
+
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    cast(MockAnthropic, mock_client).base_url = base_url
+    agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
+    await agent.run('follow up', message_history=history)
+
+    container = get_mock_chat_completion_kwargs(mock_client)[0].get('container')
+    assert container == ('container_a' if base_url == 'https://gateway-a.example' else OMIT)
+
+
 async def test_anthropic_container_setting_false_ignores_history(allow_model_requests: None):
     """Test that anthropic_container=False ignores container_id from history."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
@@ -15776,6 +15842,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                     cost=Decimal('0.012474'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -15829,6 +15896,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                     cost=Decimal('0.01291'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -15972,6 +16040,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                     cost=Decimal('0.000028'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-sonnet-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -16082,6 +16151,7 @@ async def test_stream_cancel(allow_model_requests: None):
                     input_tokens=5, details={'input_tokens': 5, 'output_tokens': 0}, cost=Decimal('0.000005')
                 ),
                 model_name='claude-haiku-4-5-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -16836,6 +16906,7 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
                     cost=Decimal('0.0000456'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -17167,6 +17238,7 @@ async def test_anthropic_model_retrying_after_empty_response(allow_model_request
                     cost=Decimal('0.0000082'),
                 ),
                 model_name='claude-haiku-5-5',
+                model_id='anthropic:claude-haiku-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
