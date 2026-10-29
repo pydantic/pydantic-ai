@@ -118,11 +118,6 @@ class ComputerResult(TypedDict):
     them: `performed` counts the ones that ran, and the summary says what they were. A model adapter then sends the
     summary rather than reporting the model's own actions as run."""
 
-    restarted: NotRequired[bool]
-    """Set when the display restarted since the model's last screenshot, so the windows it saw are gone. When fewer
-    actions ran than were asked and there is no `error`, the rest were held back for this reason. A model adapter then
-    sends the summary, which says so, with the screenshot, as it does for `changed`."""
-
 
 _ComputerContent: TypeAlias = list[str | BinaryImage]
 """What the model sees from a `computer` call; see the module docstring for its order."""

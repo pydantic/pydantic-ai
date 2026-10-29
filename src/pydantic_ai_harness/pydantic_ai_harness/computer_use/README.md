@@ -95,9 +95,6 @@ The actions in a call run in order, and one that fails stops the call: the actio
 result says which action failed and why, ends with a screenshot as usual, and has the error in its `metadata`, a
 `ComputerResult`. A position outside the screen fails the whole call before anything runs.
 When the environment is gone, the run ends with `WorkspaceUnavailableError`.
-When the display restarted since the model's last screenshot, such as after its sandbox was stopped, the call stops
-before its next action that would change the screen, which would land on whatever took the place of the windows the
-model saw, and its result tells the model those windows are gone.
 
 Agents in one process on one screen, such as parallel sub-agents, take turns at it a whole call at a time, so one's
 clicks and typing never land between another's. Agents in separate processes, or in separate durable workflows, don't.
@@ -140,8 +137,8 @@ async def main():
   times out or loses its worker, the result tells the model it may or may not have taken effect. Temporal never
   repeats an action; DBOS, and Prefect when a flow is run again, can repeat the one running when the process crashed;
   Absurd and pgtask retry the whole call.
-- A run attached to the same sandbox through another backend object, such as from another process, may not be told
-  that the display restarted.
+- When the display restarts, such as after its sandbox was stopped, the model isn't told: its next screenshot shows
+  the new screen.
 - Every screenshot rides in each model request, so under Temporal a run passes the 2 MB payload limit after a few
   steps and then stops making progress. Configure Temporal's [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads),
   which keeps large payloads outside the history. `keep_screenshots` doesn't avoid this: it drops screenshots 25 at a
