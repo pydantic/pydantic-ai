@@ -1117,3 +1117,24 @@ def test_bedrock_boolean_defs_preserved(definition: bool):
     original = deepcopy(schema)
     assert BedrockJsonSchemaTransformer(schema).walk() == original
     assert schema == original
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'video'),
+    [
+        ('us.anthropic.claude-sonnet-4-5-20250929-v1:0', False),
+        ('meta.llama4-maverick-17b-instruct-v1:0', False),
+        ('us.mistral.pixtral-large-2502-v1:0', False),
+        ('google.gemma-3-27b-it', False),
+        ('openai.gpt-oss-120b-1:0', False),
+        ('arn:aws:bedrock:us-east-1:123456789012:inference-profile/eu.meta.llama4-scout-17b-instruct-v1:0', False),
+        ('us.amazon.nova-pro-v1:0', True),
+        ('global.amazon.nova-2-lite-v1:0', True),
+        ('amazon.nova-micro-v1:0', False),
+    ],
+)
+def test_only_nova_takes_video(model_name: str, video: bool):
+    """Converse takes the `video` content block only on Amazon Nova, so every other family reports no video."""
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_video_input') is video
