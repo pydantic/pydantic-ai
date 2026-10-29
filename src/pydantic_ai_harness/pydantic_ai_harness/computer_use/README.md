@@ -49,7 +49,8 @@ async def main():
 The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them. Gemini gets `computer` as a function tool, not its own computer use tool, until `GoogleModel` moves to the Interactions API ([#6192](https://github.com/pydantic/pydantic-ai/issues/6192)).
 
 GPT-5.4 and later, except GPT-5.4 nano, on the Responses API of OpenAI, Azure OpenAI and Bedrock Mantle get
-`computer` as OpenAI's native computer tool, the format they were trained on. Every other model that accepts images gets it as a function tool.
+`computer` as OpenAI's native computer tool, the format they were trained on. Every other model that accepts images
+gets it as a function tool.
 
 ## Computer use, Playwright, or Browser Use
 
@@ -80,8 +81,7 @@ far: on Claude, a run costs several times more without it. Set `cache=False` in 
 ## Screen size
 
 A model's profile can limit the size of the screenshots it takes, as `computer_use_screenshot_limit`. GPT's is
-2560x1440, since it clicks less accurately on a larger screen. On a larger
-screen, `ComputerUse` sends the model the screenshot scaled down and scales its positions back up, when the display
+2560x1440, since it clicks less accurately on a larger screen. On a larger screen, `ComputerUse` sends the model the screenshot scaled down and scales its positions back up, when the display
 can scale its screenshots (`SupportsScaledScreenshot`); otherwise the run stops with an error naming the largest
 screen that fits. A zoom into a region larger than the limit fails the call before anything runs, and the result
 names the largest zoom of that shape that fits.
