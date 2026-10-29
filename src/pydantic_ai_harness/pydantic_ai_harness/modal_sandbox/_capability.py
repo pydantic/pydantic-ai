@@ -277,9 +277,10 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     ) -> ModalSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
-        Core reads this signature to generate the spec's JSON schema. Inherited, it would read
-        `__init__`, whose `modal.Image` annotation does not resolve at runtime and drops the whole
-        `ModalSandbox` entry. A spec names an image by its registry tag. `**kwargs` reaches
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
+        to the variadic base `from_spec`, because `__init__`'s `modal.Image` hint is a
+        `TYPE_CHECKING` import, and publishes only the bare `'ModalSandbox'`. A spec names an
+        image by its registry tag. `**kwargs` reaches
         `__init__` unchanged, so deprecated arguments keep their guidance and `defer_loading`
         its refusal.
         """

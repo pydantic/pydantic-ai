@@ -263,9 +263,11 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     ) -> CodeMode[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
-        Core reads this signature to generate the spec's JSON schema. Inherited, it would read
-        `__init__`, whose runtime-only fields (`os_access`, `mount`, `repl_store`, and a
-        `monty_sandbox` factory) have no JSON schema and would drop the whole `CodeMode` entry.
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
+        to the variadic base `from_spec`, because `__init__`'s `AsyncMontyWebsocket` hint is a
+        `TYPE_CHECKING` import, and publishes only the bare `'CodeMode'`. Reading `__init__`
+        would not help: `os_access`, `mount`, `repl_store`, and a `monty_sandbox` factory have
+        no JSON schema, and would drop the keyword form.
         `**kwargs` reaches `__init__` unchanged, so a spec that set anything else still loads.
         """
         return cls(
