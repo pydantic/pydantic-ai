@@ -294,6 +294,7 @@ try:
     from ._message_passes import (
         anchor_system_messages,
         drop_unpaired_native_tool_calls,
+        end_tool_results_before_system_messages,
         place_system_messages_before_generation,
     )
     from ._native_tools import (
@@ -432,6 +433,13 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicVertex,
     AsyncAnthropicFoundry,
 )
+# Neither Bedrock API serves Anthropic's code execution tool. Verified live on every Claude model tried, with both
+# `code_execution_20250825` and `code_execution_20260120`: the legacy InvokeModel API (`AsyncAnthropicBedrock`) rejects
+# them with a 400 ("tool type ... is not supported for this model", or on older models "Input tag ... does not match
+# any of the expected tags"), and the Bedrock Messages API (`AsyncAnthropicBedrockMantle`) with a 400 ("tool type ...
+# is not supported for this model"). Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic` subclass) is a
+# separate transport and keeps the tool. https://github.com/pydantic/pydantic-ai/issues/11513
+_CODE_EXECUTION_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
 # Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
 # Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
 # fall back to the `<system>`-tagged user rendering. Verified on Bedrock rather than assumed: with
@@ -1047,6 +1055,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {WebFetchTool}
         if isinstance(client, _ADVISOR_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {AdvisorTool}
+        if isinstance(client, _CODE_EXECUTION_UNSUPPORTED_CLIENTS):
+            supported_native_tools = supported_native_tools - {CodeExecutionTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
@@ -1912,7 +1922,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return OMIT
         previous_message_id: str | None = None
         for message in reversed(messages):
-            if isinstance(message, ModelResponse) and message.provider_name == self.system:
+            if isinstance(message, ModelResponse) and self.accepts_server_state(message):
                 if (response_id := message.provider_response_id) and response_id.startswith('msg_'):
                     previous_message_id = response_id
                 break
@@ -1958,7 +1968,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return None, False
 
         for m in reversed(messages):
-            if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
+            if isinstance(m, ModelResponse) and self.accepts_server_state(m) and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
                     return cid, True
         return None, False
@@ -2645,6 +2655,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         place_system_messages_before_generation(anthropic_messages)
         anchor_system_messages(anthropic_messages)
         self._add_container_uploads(anthropic_messages, model_request_parameters)
+        # After the container uploads, which skip turns of only tool results, so the block doesn't move them.
+        if self.profile.get('anthropic_distrusts_system_after_tool_result', False):
+            end_tool_results_before_system_messages(anthropic_messages)
         check_citations_tool_choice(
             model_settings, model_request_parameters, anthropic_messages, map_context.include_citations
         )
@@ -3113,6 +3126,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         Search, fetch and advisor results carry their state inline, encrypted where it's sensitive, so they're
         sent to any client that accepts the response's stateless data. Code execution and MCP results refer to
         state kept by the account that ran them, such as a container, so they only go back to the same provider.
+        They're judged by `provider_name` alone, not by `accepts_server_state`, until a live check against two
+        endpoints shows whether an endpoint rejects blocks from another: the one exception to judging server-side
+        state by endpoint. The container itself is judged by endpoint in `_get_container`.
         """
         if part.tool_name in _STATELESS_NATIVE_TOOL_KINDS:
             return self.accepts_stateless_artifacts(message, part)

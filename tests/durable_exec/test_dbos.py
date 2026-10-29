@@ -50,14 +50,25 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import MCP, BatchModelRequests, Capability, DynamicCapability, Hooks, WrapperCapability
+from pydantic_ai.capabilities import (
+    MCP,
+    BatchModelRequests,
+    Capability,
+    DynamicCapability,
+    Hooks,
+    ModelFallback,
+    WrapperCapability,
+)
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
+from pydantic_ai.durable_exec._utils import mark_streamed_before_failing, streamed_before_failing
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelAPIError,
     ModelHTTPError,
+    ModelRequestTimeout,
     ModelRetry,
     RunCancelled,
     RunTimedOut,
@@ -97,6 +108,7 @@ from ..realtime_connections import InferredConnection
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
     from dbos._error import DBOSAwaitedWorkflowCancelledError
+    from dbos._serialization import DBOSDefaultSerializer, deserialize_exception, serialize_exception
 
     from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
     from pydantic_ai.durable_exec.dbos import (
@@ -1760,6 +1772,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                     cost=Decimal('0.0006375'),
                 ),
                 model_name=IsStr(),
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -1811,6 +1824,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                     cost=Decimal('0.0005225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -1913,6 +1927,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                     cost=Decimal('0.0006375'),
                 ),
                 model_name=IsStr(),
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -1964,6 +1979,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                     cost=Decimal('0.0005225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -2036,6 +2052,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                     cost=Decimal('0.0002875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -2086,6 +2103,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                     cost=Decimal('0.0003875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -2128,6 +2146,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                     cost=Decimal('0.00039'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -2462,12 +2481,13 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     agent = Agent(_durability_fn_model, name='durability_simple', capabilities=[DBOSDurability()])
 
     @DBOS.workflow()
-    async def run_durable_agent() -> str:
+    async def run_durable_agent() -> tuple[str, str | None]:
         result = await agent.run('Hello DBOS')
-        return result.output
+        return result.output, result.response.model_id
 
     output = await run_durable_agent()
-    assert output == 'Echo: Hello DBOS'
+    # The response records the model the request went to, not the DBOS wrapper around it.
+    assert output == ('Echo: Hello DBOS', _durability_fn_model.model_id)
 
 
 async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: DBOS) -> None:
@@ -4277,7 +4297,7 @@ def test_dbos_durability_get_ordering() -> None:
 
     durability = DBOSDurability()
     ordering = durability.get_ordering()
-    assert ordering == CapabilityOrdering(position='innermost')
+    assert ordering == CapabilityOrdering(position='innermost', wrapped_by=(ModelFallback,))
 
 
 def test_dbos_durability_get_serialization_name() -> None:
@@ -6034,3 +6054,91 @@ async def test_dbos_timeout_outside_workflow(dbos: DBOS) -> None:
     """Outside a workflow the capability is transparent: the run's own clock starts the deadline."""
     with pytest.raises(RunTimedOut):
         await timed_out_agent.run('Hello', timeout=0)
+
+
+def _late_stream_failure_agent(name: str, *, fail_after_output: bool, answered: list[str]) -> Agent[object, str]:
+    """An agent whose model fails partway through a stream, or before it, with a `ModelFallback` to another model."""
+
+    async def primary(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        if fail_after_output:
+            yield 'partial'
+        raise ModelAPIError('primary', 'stream broke')
+
+    async def backup(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        answered.append('backup')
+        yield 'from backup'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _event in stream:
+            pass
+
+    return Agent(
+        FunctionModel(stream_function=primary, model_name='primary'),
+        deps_type=object,
+        name=name,
+        capabilities=[
+            ModelFallback('backup'),
+            DBOSDurability(
+                models={'backup': FunctionModel(stream_function=backup, model_name='backup')},
+                event_stream_handler=handler,
+            ),
+        ],
+    )
+
+
+async def test_dbos_stream_failing_after_output_does_not_fall_back(dbos: DBOS) -> None:
+    """A stream that fails after producing output in its step is raised, not fallen back from, and its usage counts.
+
+    The step delivers the output to the event handler before the workflow sees the stream, as outside durable
+    execution, where only a stream that fails before its first event falls back.
+    """
+    answered: list[str] = []
+    agent = _late_stream_failure_agent('dbos_late_stream_failure', fail_after_output=True, answered=answered)
+
+    @DBOS.workflow()
+    async def run_workflow() -> RunUsage:
+        usage = RunUsage()
+        with pytest.raises(ModelAPIError, match='stream broke'):
+            await agent.run('hello', usage=usage)
+        return usage
+
+    usage = await run_workflow()
+    assert answered == []
+    # As without durable execution: the interrupted response is committed with its usage.
+    assert usage == RunUsage(input_tokens=50, output_tokens=1, requests=1)
+
+
+async def test_dbos_stream_failing_before_output_falls_back(dbos: DBOS) -> None:
+    """A stream that fails before producing any output still falls back to the next model."""
+    answered: list[str] = []
+    agent = _late_stream_failure_agent('dbos_early_stream_failure', fail_after_output=False, answered=answered)
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('hello')).output
+
+    assert await run_workflow() == 'from backup'
+    assert answered == ['backup']
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        ModelAPIError('primary', 'stream broke'),
+        ModelHTTPError(503, 'primary', 'overloaded'),
+        ModelRequestTimeout('primary', 5),
+    ],
+    ids=lambda error: type(error).__name__,
+)
+def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError) -> None:
+    """A step that failed after its stream produced output is raised on replay with what the stream produced.
+
+    DBOS records a step's error by pickling it and raises the unpickled copy when a recovered workflow replays the
+    step, so the run treats it as a stream that failed after it started, as the run that recorded it did.
+    """
+    partial = ModelResponse(parts=[TextPart('partial')], usage=RequestUsage(input_tokens=5, output_tokens=1))
+    mark_streamed_before_failing(error, partial)
+    recorded, serialization = serialize_exception(error, None, DBOSDefaultSerializer)
+    replayed = deserialize_exception(recorded, serialization, DBOSDefaultSerializer)
+    assert type(replayed) is type(error)
+    assert streamed_before_failing(replayed) == partial

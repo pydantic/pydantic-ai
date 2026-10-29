@@ -5,9 +5,11 @@ It works in the run's workspace, on this machine or in a sandbox. It is a regula
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![Coder is a bundle of other capabilities. FileSystem gives the model read_file, write_file, edit_file, list_files and grep; Shell gives it shell; SubAgents gives it delegate_task, which hands a sub-task to a fresh run of the same agent; RepoContext loads AGENTS.md and CLAUDE.md into the instructions. Plumbing the model never calls clears old tool results, caps tool output at 64,000 characters, repairs malformed tool arguments and turns on prompt caching. All of it works in the run's workspace: a LocalWorkspace on this machine or a cloud sandbox.](https://pydantic.dev/docs/ai/img/harness/coder.svg)
+
 ## Usage
 
-Install the Coder extra to include ripgrep (`rg`), which backs the `list_files` and `grep` tools:
+Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, and ripgrep (`rg`), which backs the `list_files` and `grep` tools. Without the extra, importing `Coder` raises an `ImportError` naming it:
 
 uv:
 
@@ -140,6 +142,7 @@ Then the plumbing, which the agent never calls directly:
 8. [`RepairToolArguments`](https://pydantic.dev/docs/ai/harness/repair-tool-arguments/) repairs malformed JSON tool arguments before normal validation (see below).
 9. Prompt caching, the same as [`Caching()`](https://pydantic.dev/docs/ai/capabilities/caching/) unless the model, the agent, or a capability listed before
    `Coder` already sets `cache` (see below). Pass `caching=False` to leave it out.
+10. Strict mode off for `Coder`'s own tools (see below). Pass `strict=None` to leave it out.
 
 Every tool comes from `FileSystem`, `Shell`, or `SubAgents`; those pages document each one in full. Build the same
 agent from the pieces to change any setting, for example to keep content hashes, add `list_directory`,
@@ -171,6 +174,11 @@ to. The delegate starts without this conversation, so the agent passes it everyt
 everything the agent has -- the same model, workspace, instructions, and capabilities, including an approval
 gate, guardrail, or audit hook bound next to `Coder`, so those see the commands a delegate runs too. A
 delegate can delegate in turn, up to three levels counting the top-level run (`SubAgents.max_depth`).
+
+`Coder`'s instructions tell the agent to use `delegate_task` only when the user or applicable `AGENTS.md`
+instructions explicitly ask for sub-agents, delegation, or parallel agent work, the rule Codex gives its models for
+`spawn_agent`. A delegate explores the project again from a fresh context, so delegation the user did not ask for
+multiplies tool calls and cost. To have the agent delegate, ask for it in the prompt, in `AGENTS.md`, or in `instructions=`.
 
 Only what is bound to the `Agent` carries over to a delegate; capabilities, toolsets, instructions, and model
 settings passed to `run()` do not. So bind `Coder` with `Agent(capabilities=[...])`: passing it to `run()`
@@ -232,6 +240,20 @@ Each attempt emits a `repair_tool_arguments` span through `ctx.tracer`, without 
 contents. Other Coder operations rely on core tool spans and on the events its `FileSystem` and `Shell`
 capabilities emit.
 
+## Strict tool schemas
+
+`Coder` turns off [strict mode](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode) for its own tools by setting their `strict` to `False`.
+Left unset, OpenAI constrains tool-call arguments to the schema whenever it is strict-compatible, and
+Gemini 2.5 and newer uses its `VALIDATED` function-calling mode. `Coder` relies on [tool argument
+repair](#tool-argument-repair) and validation retries instead, so a malformed or invalid argument is repaired
+or corrected from the error message. Anthropic and Bedrock leave strict mode off unless a tool asks
+for it, so nothing changes there.
+
+`Coder(strict=True)` forces strict mode on its tools, and `Coder(strict=None)` leaves the choice to the
+provider. Tools bound next to `Coder`, and tools that set `strict` themselves, keep their own value.
+Gemini's mode is request-wide: while a `Coder` tool has `strict=False`, the whole request stays on
+`AUTO`, including tools bound next to `Coder`.
+
 ## Prompt caching
 
 `Coder` turns on [prompt caching](https://pydantic.dev/docs/ai/capabilities/caching/) by setting the unified `cache` model setting to `True`. A coding run
@@ -264,7 +286,11 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 ## Upgrading
 
+`json-repair` moved from the base install to the `coder` and `repair-tool-arguments` extras. If you install plain `pydantic-ai-harness`, importing `Coder` or `coder_agent` raises an `ImportError`: install `pydantic-ai-harness[coder]`, or add `coder` to the extras you already use. If you use `RepairToolArguments` on its own, install `pydantic-ai-harness[repair-tool-arguments]`.
+
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
+
+`Coder` now turns off strict mode for its own tools; pass `strict=None` to keep the provider's default (see [Strict tool schemas](#strict-tool-schemas)).
 
 This release makes the workspace the single place that decides where an agent works. Removed arguments are still accepted, emit a `HarnessDeprecationWarning` naming the fix, and are ignored.
 

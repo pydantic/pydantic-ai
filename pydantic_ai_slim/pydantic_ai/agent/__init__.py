@@ -182,7 +182,6 @@ if TYPE_CHECKING:
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
-        RealtimeEvent as RealtimeEvent,
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeProviderSession,
@@ -213,7 +212,6 @@ __all__ = (
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
     'ToolDenied',
-    'RealtimeEvent',
 )
 
 _ACTIVE_AGENT_LIMITERS: ContextVar[tuple[tuple[int, _concurrency.ConcurrencyLimiter], ...]] = ContextVar(
@@ -1548,6 +1546,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
                         ),
                         model_name='gpt-5.2',
+                        model_id='openai:gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
                         conversation_id='...',
@@ -2086,10 +2085,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The ids of the models this run has checked for a thinking override, so each warns once per run.
         thinking_checked_model_ids: set[int] = set()
 
-        # Build model settings resolver using per-run capability. Shared with `realtime_session` via
-        # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
-        # base for a graph run). Resolved per model-request step here; once at connect in a session.
-        def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
+        # Build model settings resolver using per-run capability, via `_resolve_layered_model_settings`
+        # (agent -> capability -> run order, on the step model's own settings). Resolved per model-request step.
+        def get_model_settings(run_context: RunContext[AgentDepsT]) -> _agent_graph.StepModelSettings:
             # A capability can select a different model per step, so the base is the step's live
             # `run_context.model` settings, not a captured initial model. A graph run always uses a
             # request-response `Model` here; realtime has its own settings path and never reaches this.
@@ -2121,7 +2119,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         ),
                     ]
                 )
-            return _layer_model_settings(
+            return _resolve_layered_model_settings(
                 run_context,
                 (agent_model_settings, cap_model_settings, run_model_settings),
                 base=step_model.settings if isinstance(step_model, models.Model) else None,
@@ -2214,7 +2212,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
 
-        def display_banner(*, model: str, tools: int) -> None:
+        def display_agent_banner(*, model: str, tools: int) -> None:
             # Called by the graph once the run's first step has resolved the model it will actually
             # use and the tools it will actually offer, and only when there is a banner to show;
             # everything else is settled here and now.
@@ -2226,6 +2224,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 tools=tools,
                 capabilities=_registered_capability_count(bootstrap_capability),
             )
+
+        # A run a library or platform started on its users' behalf gets no banner, and leaves the claim
+        # for the user's own agents. Decided here, while the frames of whoever called `run()` are still
+        # on the stack, and only when the run could show one: an instrumented run never does, and a
+        # process that has shown one has nothing left to decide. (`run_stream_events()` runs the agent in
+        # a task of its own, so it decides in its caller's stack before instrumentation is known; see
+        # `AgentRunEvents._ensure_started`.)
+        started_by_installed_package = (
+            instrumentation_settings is None
+            and _display.banner_pending()
+            and (
+                binding.started_by_installed_package
+                if binding is not None
+                else _display.started_by_installed_package(inspect.currentframe())
+            )
+        )
+        display_banner = None if started_by_installed_package else display_agent_banner
 
         model_resources = _RunModelResources(
             self._entered_model_ids.copy(),
@@ -5469,27 +5484,28 @@ class _ResolvedRunCapabilities(Generic[AgentDepsT]):
     """The run's own capabilities after `for_run`, combined, or `None` when the run passed none."""
 
 
-def _layer_model_settings(
+def _resolve_layered_model_settings(
     run_context: RunContext[AgentDepsT],
     layers: Sequence[AgentModelSettings[AgentDepsT] | None],
     *,
-    base: ModelSettings | None = None,
-) -> ModelSettings | None:
+    base: ModelSettings | None,
+) -> _agent_graph.StepModelSettings:
     """Merge model-settings layers left-to-right, stamping `run_context.model_settings` before each.
 
-    Each layer is a static `ModelSettings`, a callable resolved against the run context, or `None`.
-    Stamping the merged-so-far onto `run_context.model_settings` before a callable layer runs lets it
-    observe the previous layers — the agent -> capability -> run order both `iter` (per model-request
-    step) and `realtime_session` (once, at connect) rely on. `base` is the model's own settings for a
-    graph run; a realtime model has none, so it defaults to `None`.
+    Each layer is a static `ModelSettings`, a callable resolved against the run context, or `None`, and is
+    resolved once. Stamping the merged-so-far onto `run_context.model_settings` before a callable layer runs
+    lets it observe the previous layers, in the agent -> capability -> run order. `base` is the step model's
+    own settings. The layers are also merged without `base`, for an attempt the step moves to another model.
     """
     merged = base
+    layered: ModelSettings | None = None
     run_context.model_settings = merged
     for layer in layers:
         resolved = layer(run_context) if callable(layer) else layer
         merged = merge_model_settings(merged, resolved)
+        layered = merge_model_settings(layered, resolved)
         run_context.model_settings = merged
-    return merged
+    return _agent_graph.StepModelSettings(merged=merged, layered=layered)
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:

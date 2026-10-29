@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="594" viewBox="0 0 880 594" role="img" aria-labelledby="t d">
+<title id="t">Researcher: a ready-made web research stack</title>
+<desc id="d">Researcher combines research instructions with four capabilities. WebSearch and WebFetch use the model provider&#x27;s native search and fetch, or duckduckgo_search and web_fetch where the model has none. SubAgents adds delegate_task, which hands a sub-question to a &#x27;researcher&#x27; sub-agent with its own search, fetch and output limits. ToolOutputLimits spills oversized tool results to the run workspace, where read_tool_result reads them.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="593" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Researcher: a ready-made web research stack</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">One combined capability: research instructions plus search, page fetching, a research sub-agent and output limits. Use it</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">as it is, or take it apart.</text>
+<rect x="212" y="140" width="372" height="274" rx="14" fill="none" stroke="#B417B7" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="226" y="132" width="109.1" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="233" y="144" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">RESEARCHER</text>
+<rect x="228" y="170" width="171.7" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="313.9" y="186.3" font-size="12" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">WebSearch(local=True)</text>
+<text x="228" y="211" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">native search, or duckduckgo_search as the fallback</text>
+<rect x="228" y="232" width="164.4" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="310.2" y="248.3" font-size="12" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">WebFetch(local=True)</text>
+<text x="228" y="273" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">native fetch, or web_fetch to read result pages</text>
+<rect x="228" y="294" width="83.9" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="269.9" y="310.3" font-size="12" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">SubAgents</text>
+<text x="228" y="335" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">delegate_task hands a sub-question to &#x27;researcher&#x27;</text>
+<rect x="228" y="356" width="135.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="295.6" y="372.3" font-size="12" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">ToolOutputLimits</text>
+<text x="228" y="397" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">spills big results; read_tool_result reads them</text>
+<rect x="32" y="164" width="112" height="36" rx="18" fill="#092224"/>
+<text x="88" y="187" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="32" y="234" width="112" height="110" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="88" y="250" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">instructions</text>
+<text x="88" y="268.9" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">search broadly,</text>
+<text x="88" y="285.4" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">read the</text>
+<text x="88" y="302" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">sources, cite</text>
+<text x="88" y="318.5" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">every claim</text>
+<text x="88" y="335.1" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">with a link</text>
+<line x1="88" y1="232" x2="88" y2="202" stroke="#B417B7" stroke-width="1.6" marker-end="url(#al)"/>
+<line x1="148" y1="176" x2="225" y2="176" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="225" y1="188" x2="148" y2="188" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<path d="M 188 176 L 188 360 Q 188 368 196 368 L 225 368" stroke="#092224" stroke-width="1.6" fill="none" marker-end="url(#ai)"/>
+<line x1="188" y1="244" x2="225" y2="244" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="188" y1="306" x2="225" y2="306" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="640" y="160" width="208" height="106" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="652" y="199.1" font-size="13.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the web</text>
+<text x="652" y="218.3" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">search results and pages,</text>
+<text x="652" y="234.9" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">natively or from this process</text>
+<rect x="640" y="282" width="208" height="50" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="652" y="301.2" font-size="13" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">&#x27;researcher&#x27; sub-agent</text>
+<text x="652" y="320.3" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">own search, fetch and limits</text>
+<rect x="640" y="350" width="208" height="56" rx="10" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.4"/>
+<text x="652" y="372.2" font-size="13" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">run workspace</text>
+<text x="652" y="391.3" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">.pydantic-ai-harness/tool-output/</text>
+<line x1="403.7" y1="182" x2="636" y2="182" stroke="#0E9C86" stroke-width="1.6" marker-end="url(#aa)"/>
+<line x1="396.4" y1="244" x2="636" y2="244" stroke="#0E9C86" stroke-width="1.6" marker-end="url(#aa)"/>
+<line x1="315.9" y1="306" x2="636" y2="306" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="367.1" y1="368" x2="636" y2="368" stroke="#7B57E8" stroke-width="1.6" marker-end="url(#ap)"/>
+<rect x="32" y="454" width="816" height="32" rx="8" fill="#FFFFFF" stroke="#092224" stroke-width="1.3"/>
+<text x="44" y="474.5" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">answer</text>
+<text x="101.9" y="474.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">claims backed by the sources read, each with a direct link; set output_type for structured findings</text>
+<rect x="32" y="496" width="816" height="32" rx="8" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.3"/>
+<text x="44" y="516.5" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">no workspace</text>
+<text x="145.8" y="516.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the run fails at its start; or pass Researcher(store=LocalFileStore())</text>
+<rect x="32" y="547" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="558" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="547" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="558" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">parts of Researcher</text>
+<rect x="262.2" y="547" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="282.2" y="558" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the web</text>
+<rect x="347.6" y="547" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="367.6" y="558" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">sub-agent and answer</text>
+<rect x="514.4" y="547" width="14" height="14" rx="4" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="534.4" y="558" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">spilled results</text>
+<rect x="636.3" y="547" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="656.3" y="558" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">requirement</text>
+</svg>
