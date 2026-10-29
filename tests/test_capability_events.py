@@ -392,7 +392,8 @@ async def test_prefixed_capability_tool_emission_stamps_attribution() -> None:
     """A capability tool exposed through `prefix_tools()` still emits under its capability.
 
     `PrefixedToolset` hands the tool the unprefixed name as `ctx.tool_name`, while the tool manager
-    holds it under the prefixed name, so resolving the owner must account for the prefix.
+    holds it under the prefixed name, so resolving the owner must account for the prefix. The event
+    keeps stamping `ctx.tool_name`, which stays the tool's own name inside the wrapper.
     """
     capability = Capability[Any](id='files')
 
