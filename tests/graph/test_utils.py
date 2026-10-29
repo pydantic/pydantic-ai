@@ -1,15 +1,36 @@
 import inspect
 from collections.abc import Generator
+from importlib.util import find_spec
 from threading import Thread
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from pydantic_graph._utils import get_event_loop, infer_obj_name, run_until_complete
+from pydantic_graph._utils import get_event_loop, get_traceparent, infer_obj_name, logfire_span, run_until_complete
 from pydantic_graph.exceptions import UnsupportedEventLoopError
 
 from .._inline_snapshot import snapshot
 from ..conftest import undrivable_event_loop
+
+if TYPE_CHECKING:
+    from logfire.testing import CaptureLogfire
+
+
+@pytest.mark.skipif(find_spec('logfire') is None, reason='logfire not installed')
+def test_get_traceparent_from_logfire_span(capfire: 'CaptureLogfire'):
+    with logfire_span('test traceparent') as span:
+        traceparent = get_traceparent(span)
+
+    (exported_span,) = (
+        span
+        for span in capfire.exporter.exported_spans
+        if span.attributes and span.attributes.get('logfire.span_type') == 'span'
+    )
+    span_context = exported_span.context
+    assert span_context is not None
+    assert traceparent == (
+        f'00-{span_context.trace_id:032x}-{span_context.span_id:016x}-{span_context.trace_flags:02x}'
+    )
 
 
 def test_get_event_loop_in_thread():
