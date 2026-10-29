@@ -238,24 +238,41 @@ class InstrumentationSettings:
                 ]
                 message = replace(message, parts=projected_parts)
             if isinstance(message, ModelRequest):
-                # A baseline records what the request's instructions were and contributes nothing to a trace,
-                # so it's left out before grouping rather than becoming an empty system message.
-                request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]
-                for role, group in itertools.groupby(
-                    request_parts, key=functools.partial(_otel_message_role, version=self.version)
-                ):
-                    message_parts: list[_otel_messages.MessagePart] = []
-                    for part in group:
-                        if hasattr(part, 'otel_message_parts'):
-                            message_parts.extend(part.otel_message_parts(self))
-
-                    result.append(_otel_messages.ChatMessage(role=role, parts=message_parts))
+                for role, group in self._request_part_groups(message):
+                    result.append(
+                        _otel_messages.ChatMessage(
+                            role=role, parts=[otel_part for _, otel_parts in group for otel_part in otel_parts]
+                        )
+                    )
             elif isinstance(message, ModelResponse):  # pragma: no branch
                 otel_message = _otel_messages.OutputMessage(role='assistant', parts=message.otel_message_parts(self))
                 if message.finish_reason is not None:
                     otel_message['finish_reason'] = message.finish_reason
                 result.append(otel_message)
         return result
+
+    def _request_part_groups(
+        self, message: ModelRequest
+    ) -> list[tuple[_otel_messages.Role, list[tuple[ModelRequestPart, list[_otel_messages.MessagePart]]]]]:
+        """The OTel messages a request's parts make: each one's role, and each of its parts with the OTel parts it records.
+
+        Shared by `messages_to_otel_messages` and `_span_input_messages`, which lines its result up with this.
+        """
+        # A baseline records what the request's instructions were and contributes nothing to a trace,
+        # so it's left out before grouping rather than becoming an empty system message.
+        request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]
+        return [
+            (
+                role,
+                [
+                    (part, part.otel_message_parts(self) if hasattr(part, 'otel_message_parts') else [])
+                    for part in group
+                ],
+            )
+            for role, group in itertools.groupby(
+                request_parts, key=functools.partial(_otel_message_role, version=self.version)
+            )
+        ]
 
     def _span_input_messages(
         self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str], current_request_start: int
@@ -278,19 +295,9 @@ class InstrumentationSettings:
                 expected.append(None)
                 continue
             mark = index < current_request_start and _holds_request_scoped_prompt(message)
-            request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]
-            for _, group in itertools.groupby(
-                request_parts, key=functools.partial(_otel_message_role, version=self.version)
-            ):
+            for _, group in self._request_part_groups(message):
                 expected.append(
-                    [
-                        _is_request_scoped(part)
-                        for part in group
-                        if hasattr(part, 'otel_message_parts')
-                        for _ in part.otel_message_parts(self)
-                    ]
-                    if mark
-                    else None
+                    [_is_request_scoped(part) for part, otel_parts in group for _ in otel_parts] if mark else None
                 )
         if len(expected) != len(otel_messages) or any(
             marks is not None
