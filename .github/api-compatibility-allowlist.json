@@ -437,6 +437,12 @@
       "fingerprint": "7c52c60298d3103deb2c4c5a9c9b14e136c9881cb0ebc8478d71eb50f70cc9ac",
       "reason": "`pydantic_ai.agent.RealtimeEvent` was only imported under `TYPE_CHECKING`, so importing it at runtime always raised `ImportError`; `RealtimeEvent` is still exported from `pydantic_ai.realtime`.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10189"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "ab788952b39a2021c1a9eb1c2009ddb950f83d8876f0e7624346c8dc3294ea8d",
+      "reason": "harness 0.x: adds the 'flagged' value to `SkipReason` for skills an opt-in `Skills(scanner=...)` leaves out; it only appears with a scanner configured, and existing values are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11470"
     }
   ],
   "model_name_literals": [

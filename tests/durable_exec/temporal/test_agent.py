@@ -3545,6 +3545,7 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert sorted(field.name for field in fields(copied)) == snapshot(
         [
             '_anchored_evidence',
+            '_dispatched_tool_name',
             '_durable_operations',
             '_run_capabilities_by_id',
             '_run_held_toolsets',
