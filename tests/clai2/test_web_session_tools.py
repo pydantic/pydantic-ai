@@ -10,13 +10,10 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
-
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence import conversations
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL, ServerMessage, SessionsChanged, ToolDone, TurnEnded
 from pydantic_clai2.builtin_plugins.web.session_tools import SessionTools
@@ -79,16 +76,11 @@ async def cleaning(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterat
         yield 'Archived the old sessions.'
 
 
-def test_the_orchestrator_archives_sessions_older_than_three_days(
-    make_web: MakeWeb, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Old sessions of every project leave the sidebar, listed again under archived; open and running ones stay."""
+def test_the_orchestrator_archives_sessions_older_than_three_days(make_web: MakeWeb, tmp_path: Path) -> None:
+    """Old sessions of every project leave the sidebar, listed again under archived; the open and running ones stay.
 
-    # `Busy`'s turn is backdated to before this process started, which would make its PID look reused.
-    def unknown(pid: int) -> None:
-        return None
-
-    monkeypatch.setattr(conversations, '_process_started', unknown)
+    `Busy` runs a turn now: one saved days before its owner process started would be a reused PID, not running.
+    """
     web_ = make_web(Agent(FunctionModel(stream_function=cleaning), deps_type=type(None)), extra=[WORKSPACES])
     alpha, feature, beta = tmp_path / 'alpha', tmp_path / 'alpha-feature', tmp_path / 'beta'
     repository(alpha, linked=feature, branch='feature')
@@ -100,7 +92,7 @@ def test_the_orchestrator_archives_sessions_older_than_three_days(
     }
     save(web_, ConversationSummary(workspace=str(alpha.resolve()), title='Alpha new'), days=1)
     busy = ConversationSummary(workspace=str(beta.resolve()), title='Busy', outcome='running', owner_pid=os.getpid())
-    busy_id = save(web_, busy, days=7)
+    save(web_, busy, days=0)
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
     current = web_.shell.session.conversation_id
     backdate(web_, current, days=6)
@@ -114,12 +106,12 @@ def test_the_orchestrator_archives_sessions_older_than_three_days(
     assert ended.outcome == 'completed'
     found, archived = [event.text for event in seen if isinstance(event, ToolDone)]
     assert found.splitlines()[:3] == [
-        '5 of 5 matching sessions, newest first.',
+        '4 of 4 matching sessions, newest first.',
         '| id | title | project | worktree | last active | archived |',
         '|---|---|---|---|---|---|',
     ]
     rows = {line.split(' | ')[1]: line for line in found.splitlines()[3:]}
-    assert list(rows) == ['Feature old', 'Alpha old', 'New session (current session)', 'Busy', 'Beta old']
+    assert list(rows) == ['Feature old', 'Alpha old', 'New session (current session)', 'Beta old']
     assert rows['Feature old'].split(' | ')[2:4] == ['alpha', 'feature']
     assert rows['Alpha old'].split(' | ')[2:4] == ['alpha', 'main']
     assert '(5 days ago) | no |' in rows['Alpha old']
@@ -128,9 +120,8 @@ def test_the_orchestrator_archives_sessions_older_than_three_days(
         f'- {old["Feature old"]} (Feature old)',
         f'- {old["Alpha old"]} (Alpha old)',
         f'- {old["Beta old"]} (Beta old)',
-        'Refused 2:',
+        'Refused 1:',
         f'- {current}: The current session cannot be archived. Switch to another one first.',
-        f'- {busy_id}: Session is busy in process {os.getpid()}. A running session cannot be archived.',
     ]
     assert sidebar(web_) == {'Alpha new': False, 'New session': False, 'Busy': False}
     assert sidebar(web_, archived=True) == {

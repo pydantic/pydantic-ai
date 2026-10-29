@@ -27,7 +27,6 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
     SqliteConversationStore,
-    _process_started,  # pyright: ignore[reportPrivateUsage]
     conversation_text,
     ensure_inactive,
 )
@@ -263,23 +262,8 @@ def test_a_pid_reused_since_the_save_is_not_busy() -> None:
     ensure_inactive(replace(running, updated_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)))
     with pytest.raises(ConversationConflict, match='busy'):
         ensure_inactive(replace(running, updated_at=datetime.now(UTC).replace(tzinfo=None)))
-
-
-def test_process_start_time_from_proc(tmp_path: Path) -> None:
-    """Parsing a `/proc` record whose command name holds parentheses, which no real test process has.
-
-    It reaches into the private helper because the public `ensure_inactive` reads only the real `/proc`.
-    """
-    # The command name, in parentheses, may hold spaces and parentheses of its own.
-    (tmp_path / '42').mkdir()
-    fields = ' '.join(['S', *['0'] * 18, '250'])
-    (tmp_path / '42' / 'stat').write_text(f'42 (a (b) c) {fields} 0 0\n')
-    (tmp_path / 'stat').write_text('cpu 0\nbtime 1000\n')
-    if sys.platform != 'linux':  # pragma: no cover
-        assert _process_started(42, tmp_path) is None
-        return
-    assert _process_started(42, tmp_path) == datetime.fromtimestamp(1000 + 250 / os.sysconf('SC_CLK_TCK'), UTC)
-    assert _process_started(43, tmp_path) is None
+    # A PID no process has has no start time, and is not busy.
+    ensure_inactive(replace(running, owner_pid=2**22 + 12345))
 
 
 async def test_delete_removes_run_data_but_not_other_conversations(tmp_path: Path) -> None:

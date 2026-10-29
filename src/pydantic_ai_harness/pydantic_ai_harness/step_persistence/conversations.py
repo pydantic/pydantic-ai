@@ -128,26 +128,31 @@ _CLOCK_SLACK = timedelta(seconds=2)
 """How much later than a save its own process may seem to start: Linux times processes in whole seconds and ticks."""
 
 
-_ORDERS = {
-    'updated_at': 'updated_at',
-    # Both from the metadata, so both are in its one timestamp format and compare as text.
-    'created_at': "coalesce(json_extract(metadata, '$.created_at'), json_extract(metadata, '$.updated_at'))",
-}
+_CREATED = "coalesce(json_extract(metadata, '$.created_at'), json_extract(metadata, '$.updated_at'))"
+"""A conversation's creation time, or its last activity when saved before `created_at` existed.
+
+Both come from the metadata, so both are in its one timestamp format and compare as text.
+"""
+
+_ORDERS = {'updated_at': 'updated_at', 'created_at': _CREATED}
 """The SQL each `listing(order_by=...)` sorts by."""
 
 
-def _process_started(pid: int, proc: Path = Path('/proc')) -> datetime | None:
+def _process_started(pid: int) -> datetime | None:
     """When process `pid` started, from Linux's `/proc`; `None` elsewhere or when it cannot be read."""
     if sys.platform != 'linux':  # pragma: no cover
         return None
     try:
-        stat = (proc / str(pid) / 'stat').read_text()
+        stat = Path(f'/proc/{pid}/stat').read_text(encoding='utf-8', errors='replace')
         boot = next(
-            int(line.split()[1]) for line in (proc / 'stat').read_text().splitlines() if line.startswith('btime ')
+            int(line.split()[1])
+            for line in Path('/proc/stat').read_text(encoding='utf-8').splitlines()
+            if line.startswith('btime ')
         )
     except (OSError, StopIteration):
         return None
-    # The command name, in parentheses, may hold spaces; `starttime` is the 22nd field, the 20th after it.
+    # The command name, in parentheses, may hold spaces and parentheses of its own, so the fields after it start at
+    # the last `)`; `starttime` is the 22nd field, the 20th after it.
     ticks = int(stat.rpartition(')')[2].split()[19])
     return datetime.fromtimestamp(boot + ticks / os.sysconf('SC_CLK_TCK'), UTC)
 
@@ -224,6 +229,8 @@ class SqliteConversationStore:
             )
             # `updated_at` is stored after the transcript, so ordering by it without an index reads every transcript.
             conn.execute('CREATE INDEX IF NOT EXISTS conversations_updated_at ON conversations (updated_at DESC, id)')
+            # As `listing(order_by='created_at')` sorts, so it reads no more of the table than the default order does.
+            conn.execute(f'CREATE INDEX IF NOT EXISTS conversations_created_at ON conversations ({_CREATED} DESC, id)')
             with conn:
                 yield conn
         finally:
