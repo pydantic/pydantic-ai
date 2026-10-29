@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import threading
 import time
 from datetime import UTC, datetime
@@ -807,7 +806,7 @@ class TestIntegration:
         mock_transport = AsyncMock(spec=httpx.AsyncBaseTransport)
         mock_response_fail = Mock(spec=httpx.Response)
         mock_response_fail.status_code = 429
-        mock_response_fail.headers = {'retry-after': '1'}
+        mock_response_fail.headers = {'retry-after': '2'}
         mock_response_success = Mock(spec=httpx.Response)
         mock_response_success.status_code = 200
 
@@ -821,26 +820,29 @@ class TestIntegration:
             if response.status_code == 429:
                 raise httpx.HTTPStatusError('Rate limited', request=request, response=response)
 
+        sleep_calls: list[float] = []
+
+        async def sleep(seconds: int | float) -> None:
+            sleep_calls.append(float(seconds))
+
         config = RetryConfig(
             retry=retry_if_exception_type(httpx.HTTPStatusError),
             wait=wait_retry_after(max_wait=5),  # Short max_wait for tests
             stop=stop_after_attempt(3),
+            sleep=sleep,
             reraise=True,
         )
         transport = AsyncTenacityTransport(config, mock_transport, validate_response)
 
         request = httpx.Request('GET', 'https://example.com')
 
-        # Time the request to ensure retry-after wait was respected
-        start_time = asyncio.get_running_loop().time()
         result = await transport.handle_async_request(request)
-        end_time = asyncio.get_running_loop().time()
 
         assert result is mock_response_success
         assert mock_transport.handle_async_request.call_count == 2
         assert validation_calls == [429, 200]  # First call failed, second succeeded
-        # Should have waited approximately 1 second (allow some tolerance)
-        assert 0.8 <= (end_time - start_time) <= 2.0
+        # The header's 2 s, not the 1 s the exponential fallback would wait first.
+        assert sleep_calls == [2.0]
 
     def test_sync_transport_with_wait_retry_after(self):
         """Test TenacityTransport with wait_retry_after strategy."""

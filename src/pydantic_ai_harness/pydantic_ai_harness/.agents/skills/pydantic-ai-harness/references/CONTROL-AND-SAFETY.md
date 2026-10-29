@@ -21,6 +21,7 @@ judge model. All are
 | Get human approval for some tool calls, decided per call | `ToolGuardrail` returning `GuardrailResult.approve()` |
 | Get human approval for a whole tool | core `requires_approval=True` (core skill) |
 | Detect indirect prompt injection in emails/web pages returned by tools | `PromptInjectionDefender` |
+| Keep injected instructions, exfiltration commands, hidden text out of memory and skills | `Memory(scanner=ArtifactScanner())`, `Skills(..., scanner=ArtifactScanner())` |
 | Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
 | Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
 | Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with `ask_permissions` in a `HandleDeferredToolCalls` handler |
@@ -265,6 +266,37 @@ Gotchas: `defense` plus `block_high_risk` or `semantic_detection` raises `UserEr
 `ModelRetry` messages, `ToolReturn.metadata`, mapping keys, media. A withheld result carries
 diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). With a custom ML
 `defense`, call `defense.warmup_tier2()` at startup.
+
+## ArtifactScanner
+
+Pattern scanner for agent-written artifacts that later sessions load: memory files and skills. Not a
+capability; pass it to `Memory(scanner=...)` and `Skills(scanner=...)`, or call `scan()` directly.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import ArtifactScanner, Memory, Skills
+
+scanner = ArtifactScanner()  # threats=[...] narrows; extra_patterns={'name': regex} adds 'custom' ones
+agent = Agent(
+    'anthropic:claude-sonnet-5-5',
+    capabilities=[LocalWorkspace('.'), Memory(scanner=scanner), Skills('.agents/skills', scanner=scanner)],
+)
+result = scanner.scan('Ignore previous instructions', source='notes.md')
+result.flagged, result.summary()  # True, 'injection (ignore_instructions)'
+```
+
+Threats: `injection`, `role_override`, `exfiltration`, `html_comment`, `invisible_unicode` (plus
+`custom` for `extra_patterns`). With a scanner: `write_memory` refuses flagged text with a
+`ToolFailed`-style result (nothing stored); a flagged `MEMORY.md` is replaced by a notice in the
+snapshot; `read_memory` refuses a flagged file; flagged `search_memory` snippets become a notice; a
+flagged skill is skipped with a `UserWarning` and `SkippedSkill(reason='flagged', scan=...)`.
+Each decision emits an `artifact_scan flagged` span (source and excerpts only with `trace_include_content`).
+
+Gotchas: regex only, so paraphrases slip through and quoted attacks false-positive. `html_comment`
+flags linter directives in skills; narrow `threats` there. Memory files read via `FileSystem` and
+bundled skill files are not scanned. Subclass and override `scan` to plug in another detector.
 
 ## ToolCallJudge
 

@@ -224,6 +224,8 @@ class YouSearch(AbstractCapability[AgentDepsT]):
         timeout_ms: int = DEFAULT_SEARCH_TIMEOUT_MS,
         native: bool = False,
         id: str | None = 'you_search',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> YouSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -243,4 +245,6 @@ class YouSearch(AbstractCapability[AgentDepsT]):
             timeout_ms=timeout_ms,
             native=native,
             id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

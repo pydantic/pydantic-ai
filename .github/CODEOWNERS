@@ -4,15 +4,15 @@
 # `@pydantic/pydantic-ai-admin` is not an owner: it also holds repo admins outside the Pydantic AI team, so its admins are named instead.
 
 # Dependencies, at any depth
-pyproject.toml            @DouweM @adtyavrdhn @pydantic/pydantic-ai-maintain
-uv.lock                   @DouweM @adtyavrdhn @pydantic/pydantic-ai-maintain
+pyproject.toml            @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+uv.lock                   @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 
 # CI config
-/.github/workflows/       @DouweM @adtyavrdhn @pydantic/pydantic-ai-maintain
-/.github/actions/         @DouweM @adtyavrdhn @pydantic/pydantic-ai-maintain
-/.github/scripts/         @DouweM @adtyavrdhn @pydantic/pydantic-ai-maintain
-/.pre-commit-config.yaml  @DouweM @adtyavrdhn @pydantic/pydantic-ai-maintain
-/Makefile                 @DouweM @adtyavrdhn @pydantic/pydantic-ai-maintain
+/.github/workflows/       @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+/.github/actions/         @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+/.github/scripts/         @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+/.pre-commit-config.yaml  @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
+/Makefile                 @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 
 # This file. Unowned, a PR could drop an owner and the next PR change that path unreviewed.
-/.github/CODEOWNERS       @DouweM @adtyavrdhn @pydantic/pydantic-ai-maintain
+/.github/CODEOWNERS       @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
