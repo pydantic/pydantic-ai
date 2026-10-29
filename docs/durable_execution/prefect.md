@@ -372,6 +372,16 @@ This prevents requests from being retried multiple times at different layers. Th
 
 If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.agent.Agent.run] in a flow, the defaults are derived from the flow run rather than generated at random, so a flow retry gives each agent run the same IDs as the attempt before it.
 
+With [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability], the default `run_id` has the form `<flow run id>:<input digest>`. The digest covers the agent's name, prompt, message history, dependencies and static metadata, using the same value projection as [task caching](#caching-and-idempotency). Runs with different projected inputs keep their IDs even when concurrent branches reach them in a different order on retry. Repeated calls with identical projected inputs get an ordinal suffix (`:1`, `:2`, and so on); their IDs still depend on the order of those identical calls.
+
+Metadata callbacks receive the run's IDs, so their returned values do not participate in the digest. Static agent, spec and run metadata follow their normal merge and override precedence. Non-serializable dependency and metadata values are replaced with the cache projection's sentinel, so they do not distinguish runs. Pass distinct, retry-stable `run_id=` values when your branches differ only in values excluded by this projection.
+
+!!! warning "Default ID format migration"
+
+    Input-derived IDs replace the earlier `<flow run id>:<arrival counter>` defaults for every run using `PrefectDurability`, including sequential runs. The default `conversation_id` derived from each run ID changes with it. Treat these defaults as opaque identifiers; pass `run_id=` and `conversation_id=` explicitly if your application requires a particular format or existing externally stored IDs.
+
+    Let in-flight flows finish before upgrading if their stored records or durable capability/workspace tasks must retain their current IDs. Retrying a flow across this change computes new defaults and can re-execute tasks keyed by those IDs. Model and tool caches continue to use their existing input projection. Explicit IDs, conversation IDs inherited from message history, and execution outside a flow keep their existing behavior.
+
 ## Caching and Idempotency
 
 Prefect 3.0 provides built-in caching and transactional semantics. A task whose result is already recorded under the same cache key loads that result instead of re-executing, so a retried flow run replays the model requests and tool calls that completed. A task interrupted before its result was recorded runs again, even if its external side effect already happened, so side-effecting tools should be idempotent (for example, by passing an idempotency key to the external service).

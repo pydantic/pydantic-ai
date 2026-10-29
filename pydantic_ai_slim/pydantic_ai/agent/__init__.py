@@ -1783,10 +1783,27 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # resolved, as before), so its `ModelSelectionContext` sees the run's ids, deadline and usage limits
         # like later steps' do. Inside a durable workflow or flow, the durability capability supplies the
         # default ids, so a re-execution of this code gets the same ones.
-        resolved_run_id = _agent_graph.resolve_run_id(
-            run_id if run_id is not None else bootstrap_capability.get_default_run_id(),
-            message_history,
-        )
+        if run_id is None:
+            metadata_override = self._override_metadata.get()
+            metadata_sources = (
+                (metadata_override.value,)
+                if metadata_override is not None
+                else (self._metadata, resolved.metadata if resolved is not None else None, metadata)
+            )
+            # Metadata factories receive the run's IDs, so their output cannot determine those IDs.
+            # Keep their evaluation in the normal RunContext lifecycle below.
+            static_metadata: dict[str, object] = {}
+            for metadata_source in metadata_sources:
+                if metadata_source is not None and not callable(metadata_source):
+                    static_metadata.update(metadata_source)
+            run_inputs: dict[str, object] = {
+                'prompt': user_prompt,
+                'messages': list(message_history) if message_history else [],
+                'deps': deps,
+                'metadata': static_metadata or None,
+            }
+            run_id = bootstrap_capability._get_default_run_id_for_inputs(run_inputs)  # pyright: ignore[reportPrivateUsage]
+        resolved_run_id = _agent_graph.resolve_run_id(run_id, message_history)
         state = _agent_graph.GraphAgentState(
             message_history=list(message_history) if message_history else [],
             usage=usage,

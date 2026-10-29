@@ -331,6 +331,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_default_run_id(self) -> str | None:
         return self.wrapped.get_default_run_id()
 
+    def _get_default_run_id_for_inputs(self, inputs: dict[str, object]) -> str | None:
+        if type(self).get_default_run_id is not WrapperCapability.get_default_run_id:
+            return self.get_default_run_id()
+        return self.wrapped._get_default_run_id_for_inputs(inputs)
+
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return self.wrapped.get_default_conversation_id(run_id)
 

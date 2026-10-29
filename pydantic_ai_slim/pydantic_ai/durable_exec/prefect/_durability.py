@@ -7,6 +7,7 @@ from typing import Any, Literal, cast
 
 from prefect import task
 from prefect.context import FlowRunContext
+from prefect.utilities.hashing import hash_objects
 
 from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler
@@ -25,6 +26,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import ToolsetTool
 
+from ._cache_policies import _cacheable_value  # pyright: ignore[reportPrivateUsage]
 from ._model import _stamp_response_provenance  # pyright: ignore[reportPrivateUsage]
 from ._operation_backend import PrefectOperationBackend, PrefectOperationConfig
 from ._toolset import with_non_retryable_errors
@@ -32,7 +34,7 @@ from ._types import TaskConfig, default_task_config
 
 
 def _next_flow_sequence(context: FlowRunContext, key: str) -> int:
-    """Return the next zero-based count of `key` in this flow attempt; a retry rebuilds it in the same order."""
+    """Return the next zero-based count of `key` in this flow attempt; retries rebuild the counters."""
     sequence = context.task_run_dynamic_keys.get(key, 0)
     assert isinstance(sequence, int)
     context.task_run_dynamic_keys[key] = sequence + 1
@@ -126,6 +128,20 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             return None
         assert context.flow_run is not None
         return f'{context.flow_run.id}:{_next_flow_sequence(context, "pydantic_ai:default_run_id")}'
+
+    def _get_default_run_id_for_inputs(self, inputs: dict[str, object]) -> str | None:
+        # An existing subclass's public override remains authoritative, including a None result.
+        if type(self).get_default_run_id is not PrefectDurability.get_default_run_id:
+            return self.get_default_run_id()
+        context = FlowRunContext.get()
+        if context is None:
+            return None
+        assert context.flow_run is not None
+        digest = hash_objects(_cacheable_value({'agent': self.name, **inputs}), raise_on_failure=True)
+        assert digest is not None
+        run_id = f'{context.flow_run.id}:{digest}'
+        sequence = _next_flow_sequence(context, f'pydantic_ai:default_run_id:{digest}')
+        return f'{run_id}:{sequence}' if sequence else run_id
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None

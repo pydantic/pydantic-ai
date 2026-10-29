@@ -566,6 +566,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 return run_id
         return None
 
+    def _get_default_run_id_for_inputs(self, inputs: dict[str, object]) -> str | None:
+        if type(self).get_default_run_id is not CombinedCapability.get_default_run_id:
+            return self.get_default_run_id()
+        for capability in reversed(self._dispatch):
+            if (run_id := capability._get_default_run_id_for_inputs(inputs)) is not None:
+                return run_id
+        return None
+
     def get_default_conversation_id(self, run_id: str) -> str | None:
         for capability in reversed(self._dispatch):
             if (conversation_id := capability.get_default_conversation_id(run_id)) is not None:

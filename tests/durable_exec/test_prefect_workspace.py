@@ -145,7 +145,7 @@ async def test_prefect_default_ids_without_a_workspace_survive_a_flow_retry() ->
     first, second = attempts[0]
     assert attempts[1] == attempts[0]
     assert len({*first, *second}) == 4
-    assert first[0].endswith(':0') and second[0].endswith(':1')
+    assert all(len(run_id.rsplit(':', 1)[-1]) == 32 for run_id, _ in (first, second))
     # Outside a flow, the agent keeps generating fresh UUID7s.
     outside = await agent.run('Outside.')
     assert [uuid.UUID(outside.run_id).version, uuid.UUID(outside.conversation_id).version] == [7, 7]
@@ -253,7 +253,7 @@ async def test_prefect_default_ids_reach_through_a_wrapped_durability_capability
         return result.run_id, result.conversation_id
 
     run_id, conversation_id = await run()
-    assert run_id.endswith(':0')
+    assert len(run_id.rsplit(':', 1)[-1]) == 32
     assert uuid.UUID(conversation_id).version == 5
 
 
