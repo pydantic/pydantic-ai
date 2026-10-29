@@ -1,11 +1,11 @@
 name: PR Gates
 
-# Merge gates a script answers from the pull request's metadata, each reported as its own check
-# so it can be made required. `.github/workflows/AGENTS.md` ("PR Gates") documents them. The
-# logic, and its tests, live in `.github/scripts/pr_gates.py`.
+# Read-only compatibility gate, evaluated with the pull request copy of the script.
+# `.github/workflows/AGENTS.md` documents this gate and its trust boundary.
+# The logic and tests live in `.github/scripts/pr_gates.py`.
 #
 # No `paths:` filter: a required check that never runs stays pending and blocks the merge, so
-# every PR event runs every gate.
+# every listed PR event runs the compatibility gate.
 
 on:
   pull_request:

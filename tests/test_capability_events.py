@@ -669,7 +669,7 @@ async def test_pre_set_capability_id_is_preserved():
 
 
 async def test_emission_with_unresolvable_tool_name_attributes_nothing():
-    """A context whose `tool_name` no longer resolves in the tool manager attributes no capability.
+    """A context whose tool no longer resolves in the tool manager attributes no capability.
 
     This can happen when a context copy outlives a dynamic toolset change; the emission still
     succeeds for a `CustomEvent`, un-attributed.
@@ -680,7 +680,7 @@ async def test_emission_with_unresolvable_tool_name_attributes_nothing():
 
     @agent.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        stale = dc.replace(ctx, tool_name='vanished')
+        stale = dc.replace(ctx, tool_name='vanished', _dispatched_tool_name='vanished')
         await stale.emit(BridgeEvent())
         return 'ok'
 

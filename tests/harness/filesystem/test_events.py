@@ -944,6 +944,22 @@ class TestFileChangeRequests:
         assert (tmp_path / 'target.txt').read_text() == 'new\n'
         assert any(isinstance(event, FileWrittenEvent) for event in events)
 
+    async def test_invalid_utf8_text_keeps_the_hash_handshake_on_edit(self, tmp_path: Path) -> None:
+        """An edit of valid text next to an invalid byte is guarded by the hash `read_file` reported."""
+        (tmp_path / 'target.txt').write_bytes(b'a\xffb\nold\n')
+        reported = hashlib.sha256(b'a\xffb\nold\n').hexdigest()[:12]
+
+        events = await _run_and_collect(
+            tmp_path,
+            'edit_file',
+            json.dumps({'path': 'target.txt', 'old_text': 'old', 'new_text': 'new', 'expected_hash': reported}),
+        )
+
+        assert (tmp_path / 'target.txt').read_bytes() == b'a\xffb\nnew\n'
+        (edited,) = [event for event in events if isinstance(event, FileEditedEvent)]
+        assert edited.content_hash == hashlib.sha256(b'a\xffb\nnew\n').hexdigest()[:12]
+        assert edited.diff == '--- a/target.txt\n+++ b/target.txt\n@@ -1,2 +1,2 @@\n a\ufffdb\n-old\n+new'
+
     @pytest.mark.parametrize('appeared', ['other\n', ''])
     async def test_file_that_appeared_while_announced_is_refused(self, tmp_path: Path, appeared: str) -> None:
         """A write announced as creating the file does not overwrite one that appeared in the meantime.
