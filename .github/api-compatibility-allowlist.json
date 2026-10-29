@@ -425,6 +425,12 @@
       "fingerprint": "4f48f3cbafd028241e3620a3564f13cde10fcf648b18bd76b1a881f743ec9241",
       "reason": "False positive: `Planning` still inherits `wrap_model_request` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the fallback plan record is now added in `before_model_request`.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "0ebfc0d0d25c2f768c0ec1c2604912ca16fa2cb12507e9c5da73a71953048f14",
+      "reason": "False positive: Griffe compares the expression assigned to `Case.evaluators`. `Evaluator` instances are kept unchanged; only plain functions, newly accepted, are wrapped in `FunctionEvaluator`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10292"
     }
   ],
   "model_name_literals": [
