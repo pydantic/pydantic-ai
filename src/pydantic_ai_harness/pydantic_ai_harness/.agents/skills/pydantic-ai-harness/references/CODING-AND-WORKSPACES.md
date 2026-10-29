@@ -91,7 +91,8 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
 `repo_context=True`, `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
-is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`.
+is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`,
+`strict=False`.
 
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
   `sub_agents=False`. Delegates re-run the bound agent (same model, workspace, and neighbouring
@@ -109,6 +110,12 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
   the model, in `Agent(model_settings=...)`, or by a `Caching` listed before `Coder` wins, as do a later
   capability and run-level `model_settings`: `model_settings={'cache': False}` turns it off,
   `{'cache': '1h'}` keeps it longer. `Coder(caching=False)` leaves the default out.
+- **Strict tool schemas are off by default** (`strict=False` on Coder's own tools): unset, OpenAI
+  constrains arguments to strict-compatible schemas and Gemini 2.5+ uses `VALIDATED` mode; Coder relies
+  on `RepairToolArguments` and validation retries instead. `Coder(strict=True)` forces strict mode,
+  `strict=None` leaves it to the provider. Tools bound next to Coder keep their own `strict`, but on
+  Gemini a `strict=False` tool keeps the whole request on `AUTO`. See
+  <https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode>.
 - Your own `ClearToolResults` / `TieredCompaction` / `WarnNearLimits` next to `Coder` run as well (no id
   clash), each at its own trigger. List your `ToolOutputLimits` **after** `Coder` so it sees raw returns;
   listed before, it sees Coder's 64,000-char result. For `shell`, bands must sit under ~16,000 chars.
