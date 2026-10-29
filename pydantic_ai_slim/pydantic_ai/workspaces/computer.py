@@ -134,15 +134,12 @@ _KEY_ALIASES = {
     'prtsc': 'printscreen',
     'apps': 'menu',
     'contextmenu': 'menu',
-    # X keysyms, as Claude's computer tool writes keys, matched without case.
+    # X keysyms, as Claude's computer tool writes keys, matched without case. A left-hand modifier is the modifier;
+    # right-hand ones are refused, left free to name keys of their own, such as AltGr.
     'control_l': 'ctrl',
-    'control_r': 'ctrl',
     'shift_l': 'shift',
-    'shift_r': 'shift',
     'alt_l': 'alt',
-    'alt_r': 'alt',
     'super_l': 'super',
-    'super_r': 'super',
     'print': 'printscreen',
     'caps_lock': 'capslock',
     'num_lock': 'numlock',
@@ -157,7 +154,6 @@ _KEY_ALIASES = {
     'xf86audionext': 'medianext',
     'xf86audioprev': 'mediaprev',
     'meta_l': 'super',
-    'meta_r': 'super',
     # X keysyms for punctuation, as in `ctrl+plus`.
     'plus': '+',
     'minus': '-',
@@ -193,13 +189,9 @@ _KEY_ALIASES = {
     'asciitilde': '~',
     # DOM `key` and `code` spellings, as browser automation writes keys.
     'controlleft': 'ctrl',
-    'controlright': 'ctrl',
     'shiftleft': 'shift',
-    'shiftright': 'shift',
     'altleft': 'alt',
-    'altright': 'alt',
     'metaleft': 'super',
-    'metaright': 'super',
     'numpadenter': 'numpad_enter',
     **{f'numpad{operator}': f'numpad_{operator}' for operator in _NUMPAD_OPERATORS},
     'audiovolumemute': 'volumemute',
