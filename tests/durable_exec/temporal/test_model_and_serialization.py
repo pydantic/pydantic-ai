@@ -1700,6 +1700,7 @@ def test_temporal_model_canonical_system_follows_active_model():
 
     assert (temporal_model.canonical_system, temporal_model.compatible_systems) == ('test', frozenset())
     assert not temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+    assert not temporal_model.accepts_server_state(anthropic_response)
     assert temporal_model._model_for_response(anthropic_response) is default_model  # pyright: ignore[reportPrivateUsage]
 
     with temporal_model.using_model('alt'):
@@ -1713,6 +1714,7 @@ def test_temporal_model_canonical_system_follows_active_model():
     with temporal_model.using_model('anthropic:claude-sonnet-4-5'):
         assert (temporal_model.canonical_system, temporal_model.compatible_systems) == ('anthropic', frozenset())
         assert temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+        assert temporal_model.accepts_server_state(anthropic_response)
         assert temporal_model._model_for_response(anthropic_response) is temporal_model  # pyright: ignore[reportPrivateUsage]
 
 
