@@ -23,6 +23,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Realtime voice | Hosted cascaded speech pipeline or [Realtime voice mode](https://elevenlabs.io/docs/eleven-agents/customization/realtime-models) | [Speech-to-speech](../realtime/overview.md), five providers |
 | Evals | [Simulation, next-reply, and tool-call tests](https://elevenlabs.io/docs/eleven-agents/customization/agent-testing) | [Pydantic Evals](../evals.md) |
 | Image generation | None documented | [Image Generation](../image-generation.md) |
+| Enterprise support | With an [ElevenLabs Enterprise plan](https://elevenlabs.io/enterprise) | [For the framework itself](../enterprise-support.md), no platform required |
 
 ## Voice agents, side by side
 
