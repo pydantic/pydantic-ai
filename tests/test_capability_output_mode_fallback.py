@@ -7,7 +7,7 @@ rejection and the Tool Output attempt that follows it are recorded in
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections import OrderedDict
 
 import pytest
 from pydantic import BaseModel
@@ -30,12 +30,7 @@ class Survey(BaseModel):
     answer: int
 
 
-@pytest.fixture(autouse=True)
-def forget_rejected_schemas() -> Iterator[None]:
-    """The schemas a process remembers are module state, which would carry over from one test to the next."""
-    output_mode_fallback._too_complex_schemas.clear()  # pyright: ignore[reportPrivateUsage]
-    yield
-    output_mode_fallback._too_complex_schemas.clear()  # pyright: ignore[reportPrivateUsage]
+pytestmark = pytest.mark.usefixtures('remembered_output_schemas')
 
 
 def schema_model(
@@ -182,7 +177,7 @@ async def test_same_model_is_attempted_in_tool_output_before_model_fallback():
 
 
 @FALLS_BACK_TO_TOOL_OUTPUT
-async def test_later_steps_of_the_run_use_tool_output():
+async def test_later_steps_of_the_run_use_tool_output(remembered_output_schemas: OrderedDict[str, None]):
     """The mode a run's first request inferred is kept for later requests, but not once that mode was rejected."""
     modes: list[OutputMode] = []
     calls = 0
@@ -208,7 +203,7 @@ async def test_later_steps_of_the_run_use_tool_output():
     @agent.tool_plain
     def look_up() -> str:
         # Forgotten by the process, as under durable execution: the run still remembers.
-        output_mode_fallback._too_complex_schemas.clear()  # pyright: ignore[reportPrivateUsage]
+        remembered_output_schemas.clear()
         return 'found'
 
     result = await agent.run('Answer the survey.')
@@ -218,12 +213,14 @@ async def test_later_steps_of_the_run_use_tool_output():
 
 
 @FALLS_BACK_TO_TOOL_OUTPUT
-async def test_durable_runs_dont_use_schemas_other_runs_rejected(monkeypatch: pytest.MonkeyPatch):
+async def test_durable_runs_dont_use_schemas_other_runs_rejected(
+    monkeypatch: pytest.MonkeyPatch, remembered_output_schemas: OrderedDict[str, None]
+):
     """Workflow code has to make the same choices when it's replayed, by a process that may not remember them."""
     modes: list[OutputMode] = []
     agent = Agent(schema_model(modes), output_type=Survey, capabilities=[OutputModeFallback()])
     await agent.run('Answer the survey.')
-    remembered = dict(output_mode_fallback._too_complex_schemas)  # pyright: ignore[reportPrivateUsage]
+    remembered = dict(remembered_output_schemas)
 
     monkeypatch.setattr(RunContext, 'in_durable_context', property(lambda self: True))
     modes.clear()
@@ -231,7 +228,7 @@ async def test_durable_runs_dont_use_schemas_other_runs_rejected(monkeypatch: py
 
     assert result.output == Survey(answer=1)
     assert modes == ['native', 'tool']
-    assert output_mode_fallback._too_complex_schemas == remembered  # pyright: ignore[reportPrivateUsage]
+    assert remembered_output_schemas == remembered
 
 
 @FALLS_BACK_TO_TOOL_OUTPUT

@@ -20,7 +20,7 @@ from ...exceptions import (
 from .. import (
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
 )
-from .._anthropic_schema_limits import SCHEMA_TOO_COMPLEX_HINT, is_schema_too_complex_error
+from .._anthropic_schema_limits import SCHEMA_TOO_COMPLEX_HINT, reports_schema_too_complex
 from .._transport_errors import transport_error_message
 
 # https://platform.claude.com/docs/en/api/errors#http-errors
@@ -126,14 +126,7 @@ def api_error(
         suggested_model_id = None
         if error_type == 'not_found_error' and error_message == f'model: {model_name}':
             suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        reported = reported_error_body(body)
-        hint = (
-            SCHEMA_TOO_COMPLEX_HINT
-            if status_code == 400
-            and _utils.is_str_dict(reported)
-            and is_schema_too_complex_error(reported.get('message'))
-            else None
-        )
+        hint = SCHEMA_TOO_COMPLEX_HINT if status_code == 400 and reports_schema_too_complex(body) else None
         return ModelHTTPError.for_category(
             category or _model_errors.http_status_category(status_code, error_message),
             status_code=status_code,

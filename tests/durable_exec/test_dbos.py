@@ -8,6 +8,7 @@ import sys
 import time
 import uuid
 import warnings
+from collections import OrderedDict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
@@ -59,7 +60,6 @@ from pydantic_ai.capabilities import (
     ModelFallback,
     OutputModeFallback,
     WrapperCapability,
-    output_mode_fallback,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
@@ -6146,7 +6146,9 @@ class _Survey(BaseModel):
 @pytest.mark.moves_cache_prefix(
     reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
 )
-async def test_dbos_output_mode_fallback_remembers_rejected_schemas_only_within_the_run(dbos: DBOS) -> None:
+async def test_dbos_output_mode_fallback_remembers_rejected_schemas_only_within_the_run(
+    dbos: DBOS, remembered_output_schemas: OrderedDict[str, None]
+) -> None:
     """Workflow code has to make the same choices when it's replayed, by a process that may not remember them.
 
     So each workflow's first request still infers Native Output, and its later requests use Tool Output.
@@ -6183,8 +6185,7 @@ async def test_dbos_output_mode_fallback_remembers_rejected_schemas_only_within_
     async def run_workflow() -> _Survey:
         return (await agent.run('Answer the survey.')).output
 
-    output_mode_fallback._too_complex_schemas.clear()  # pyright: ignore[reportPrivateUsage]
     assert await run_workflow() == _Survey(answer=1)
     assert await run_workflow() == _Survey(answer=1)
     assert modes == ['native', 'tool', 'tool'] * 2
-    assert not output_mode_fallback._too_complex_schemas  # pyright: ignore[reportPrivateUsage]
+    assert not remembered_output_schemas

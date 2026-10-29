@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
@@ -8,10 +9,10 @@ from typing import TYPE_CHECKING
 from pydantic_core import to_json
 
 from pydantic_ai._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
-from pydantic_ai._utils import is_str_dict, replace_no_init
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import ModelHTTPError, RetryModelRequest
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models._anthropic_schema_limits import is_schema_too_complex_error
+from pydantic_ai.models._anthropic_schema_limits import reports_schema_too_complex
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability, CapabilityOrdering
@@ -27,6 +28,8 @@ _MAX_REMEMBERED_SCHEMAS = 256
 
 _too_complex_schemas: OrderedDict[str, None] = OrderedDict()
 """The output schemas, per model, that this process saw rejected in Native Output, most recently seen last."""
+_too_complex_schemas_lock = threading.Lock()
+"""Guards `_too_complex_schemas`, which agents running in different threads share."""
 
 
 @dataclass
@@ -84,9 +87,7 @@ class OutputModeFallback(AbstractCapability[AgentDepsT]):
         if params.output_mode != 'auto' or params.output_object is None or not params.output_tools:
             return request_context
         key = _schema_key(request_context.model, params.output_object)
-        if key in self._run_schemas or (not ctx.in_durable_context and key in _too_complex_schemas):
-            if key in _too_complex_schemas:
-                _too_complex_schemas.move_to_end(key)
+        if key in self._run_schemas or (not ctx.in_durable_context and _recall(key)):
             return replace(request_context, model_request_parameters=params.with_default_output_mode('tool'))
         self._attempt_schema = key
         return request_context
@@ -99,10 +100,7 @@ class OutputModeFallback(AbstractCapability[AgentDepsT]):
             raise error
         self._run_schemas.add(key)
         if not ctx.in_durable_context:
-            _too_complex_schemas[key] = None
-            _too_complex_schemas.move_to_end(key)
-            if len(_too_complex_schemas) > _MAX_REMEMBERED_SCHEMAS:
-                _too_complex_schemas.popitem(last=False)
+            _remember(key)
         raise RetryModelRequest()
 
 
@@ -111,13 +109,26 @@ def _schema_key(model: Model, output_object: OutputObjectDefinition) -> str:
     return f'{model.model_id}:{schema}'
 
 
+def _recall(key: str) -> bool:
+    """Whether this process remembers the schema as rejected, which keeps it from being forgotten soon."""
+    with _too_complex_schemas_lock:
+        if key not in _too_complex_schemas:
+            return False
+        _too_complex_schemas.move_to_end(key)
+        return True
+
+
+def _remember(key: str) -> None:
+    with _too_complex_schemas_lock:
+        _too_complex_schemas[key] = None
+        _too_complex_schemas.move_to_end(key)
+        if len(_too_complex_schemas) > _MAX_REMEMBERED_SCHEMAS:
+            _too_complex_schemas.popitem(last=False)
+
+
 def _is_schema_too_complex(error: Exception) -> bool:
     """Whether the provider rejected the request because its strict schemas are too complex to compile."""
-    if not isinstance(error, ModelHTTPError) or error.status_code != 400:
-        return False
-    # The direct API wraps the error in an `error` object; Bedrock reports it at the top level.
-    reported = error.body.get('error', error.body) if is_str_dict(error.body) else None
-    return is_str_dict(reported) and is_schema_too_complex_error(reported.get('message'))
+    return isinstance(error, ModelHTTPError) and error.status_code == 400 and reports_schema_too_complex(error.body)
 
 
 def _sent_native_output(request_context: ModelRequestContext) -> bool:
