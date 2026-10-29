@@ -5,9 +5,12 @@ from typing import Literal, assert_never, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIModelProfile,
+    _is_computer_use_model,  # pyright: ignore[reportPrivateUsage]
+    openai_model_profile,
+)
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 try:
@@ -77,7 +80,7 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
             supported_native_tools=frozenset(),
             # OpenAI's native `computer` tool works on the `/openai/v1` endpoint as on OpenAI's own API, for the
             # models that take it there (verified live 2026-10-22 on gpt-5.6-luna).
-            openai_supports_computer_tool=response_scoped and ToolSearchTool in base.get('supported_native_tools', ()),
+            openai_supports_computer_tool=response_scoped and _is_computer_use_model(base),
         ),
     )
 

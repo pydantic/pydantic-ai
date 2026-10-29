@@ -294,9 +294,10 @@ try:
         without_unanswered_tool_calls,
     )
     from ._computer import (
+        COMPUTER_ACTION_COUNTS,
         COMPUTER_NOT_EXECUTED,
         COMPUTER_TOOL_BETAS,
-        RETURN_NOTHING,
+        RETURNS_OUTPUT,
         NativeComputer,
         computer_member,
         map_computer_member,
@@ -2809,8 +2810,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     request_part, request_context.tool_availability_blocks, map_context
                 )
             elif isinstance(request_part, ToolReturnPart):
-                if (blocks := map_context.computer_calls.get(_guard_tool_call_id(t=request_part))) is not None:
-                    request_context.user_content_params.extend(await self._map_computer_results(request_part, blocks))
+                if (call := map_context.computer_calls.get(_guard_tool_call_id(t=request_part))) is not None:
+                    request_context.user_content_params.extend(await self._map_computer_results(request_part, call))
                 else:
                     request_context.user_content_params.append(
                         await self._map_tool_return_part(request_part, map_context)
@@ -3132,7 +3133,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # Sent back as the calls they came as; toolset member calls each need their own result.
             toolset: dict[str, Any] = {}
             if map_context.computer_tool_sent == 'computer_toolset_20260801':
-                map_context.computer_calls[_guard_tool_call_id(t=part)] = blocks
+                map_context.computer_calls[_guard_tool_call_id(t=part)] = details
                 toolset = {'toolset_name': 'computer'}
             assistant_content_params.extend(
                 BetaToolUseBlockParam(
@@ -3737,7 +3738,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return NativeComputer(name, version)
 
     async def _map_computer_results(
-        self, part: ToolReturnPart, blocks: list[dict[str, Any]]
+        self, part: ToolReturnPart, details: dict[str, Any]
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """One result per toolset member call, as the toolset requires.
 
@@ -3762,12 +3763,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             image = await self._map_file_to_content_block(cast(BinaryContent, item), 'tool returns')
             return cast(beta_tool_result_block_param.Content, image)
 
+        blocks: list[dict[str, Any]] = details['computer_blocks']
         if part.outcome != 'success':
             text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
             return [result(block, True, text) for block in blocks]
-        # Each member may have become several actions, such as a key sequence.
-        member_actions = [map_computer_member(*computer_member(block, 'computer_toolset_20260801')) for block in blocks]
-        ends = list(itertools.accumulate(len(actions) for actions in member_actions))
+        # Each member may have become several actions, such as a key sequence. A call stored before the counts were
+        # recorded is mapped again.
+        counts: list[int] = details.get(COMPUTER_ACTION_COUNTS) or [
+            len(map_computer_member(*computer_member(block, 'computer_toolset_20260801'))) for block in blocks
+        ]
+        ends = list(itertools.accumulate(counts))
         raw_metadata: Any = part.metadata
         # A result without its metadata, such as one rebuilt by a UI, reads as every call having run, and the last
         # one carries the summary, which says if one failed.
@@ -3791,14 +3796,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             ]
         last_ran = max((index for index, end in enumerate(ends) if end <= performed), default=-1)
         results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
-        for index, (block, actions) in enumerate(zip(blocks, member_actions)):
-            start = ends[index] - len(actions)
+        for index, (block, count) in enumerate(zip(blocks, counts)):
+            start = ends[index] - count
             if ends[index] <= performed:
-                returned = [
-                    await content_block(outputs.pop(0))
-                    for action in actions
-                    if action['type'] not in RETURN_NOTHING and outputs
-                ]
+                returned = [await content_block(outputs.pop(0))] if block['name'] in RETURNS_OUTPUT and outputs else []
                 if index == last_ran and isinstance(screen, str):
                     # The screenshot was left out of this request: the call gets the text saying why.
                     text = ' '.join(item for item in (content[0], screen) if isinstance(item, str))
@@ -4056,8 +4057,9 @@ class _MapMessagesContext:
     system_prompt_parts: list[str] = field(default_factory=list[str])
     anthropic_messages: list[BetaMessageParam] = field(default_factory=list[BetaMessageParam])
     rendered_tool_additions: set[str] = field(default_factory=set[str])
-    # Computer calls sent back as toolset member calls, by call ID: their results must be one per member call.
-    computer_calls: dict[str, list[dict[str, Any]]] = field(default_factory=dict[str, list[dict[str, Any]]])
+    # The `provider_details` of computer calls sent back as toolset member calls, by call ID: their results must be one
+    # per member call.
+    computer_calls: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
 
 
 @dataclass
