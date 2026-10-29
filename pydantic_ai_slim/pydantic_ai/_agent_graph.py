@@ -50,7 +50,6 @@ from pydantic_ai._utils import (
     cancel_and_drain,
     dataclasses_no_defaults_repr,
     fill_run_metadata,
-    generate_tool_call_id,
     is_str_dict,
     now_utc,
 )
@@ -2134,6 +2133,12 @@ def _record_carried_attempts(
     if attempts := carried_attempts(error):
         _record_attempts_usage(ctx.state.usage, attempts)
         request_context._usage_response_ledger.attempts.extend(attempts)  # pyright: ignore[reportPrivateUsage]
+
+
+_RUN_SUBMISSION_TOOL_CALL_ID = 'pyd_ai_run_output_submission'
+"""The tool call ID output hooks see for a submission made outside a tool call.
+
+Fixed rather than generated, so workflow code that a durable engine replays makes the same submission."""
 
 
 class _OutputSubmitted(Exception):
@@ -4758,7 +4763,7 @@ class _GraphOutputSubmitter(Generic[DepsT]):
                 raise exceptions.ModelRetry(f'Unknown output tool {tool_name!r}.')
             elif target.route == 'tool':
                 output = await self._submit_to_output_tool(
-                    tool_name, args, tool_call_id=generate_tool_call_id(), for_run=True
+                    tool_name, args, tool_call_id=_RUN_SUBMISSION_TOOL_CALL_ID, for_run=True
                 )
             else:
                 output = await self._submit_as_text(target, args, for_run=True)
