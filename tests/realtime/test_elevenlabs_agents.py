@@ -40,6 +40,7 @@ from pydantic_ai.messages import (
     RealtimeSessionErrorEvent,
     RetryInfo,
     SpeechPart,
+    SpeechTimestamp,
     TextContent,
     TextPart,
     TextPartDelta,
@@ -52,6 +53,7 @@ from pydantic_ai.realtime.codec import (
     AudioDelta,
     CommitAudio,
     InputTranscript,
+    OutputSpeechTimestamps,
     OutputTranscript,
     ResponseDone,
     SessionUsage,
@@ -63,6 +65,7 @@ from pydantic_ai.realtime.lifecycle import (
     AnswersRevised,
     InputAdded,
     InputLost,
+    OutputItemCut,
     RealtimeFrame,
     ResponseEnded,
     ResponseStarted,
@@ -358,7 +361,7 @@ def test_profile() -> None:
         supports_async_tool_calls=False,
         supports_tool_return_schema=False,
         emits_input_speech_events=False,
-        output_speech_timestamp_granularity=None,
+        output_speech_timestamp_granularity='word',
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=False,
@@ -2510,6 +2513,241 @@ async def test_corrections_after_the_replies_ended_revise_what_history_recorded(
         (None, {'original_transcript': answer}, 'interrupted'),
     ]
     assert [type(message) for message in session.all_messages()] == [type(message) for message in before]
+
+
+def _aligned_audio(text: str, *, event_id: int = 1) -> dict[str, Any]:
+    """An audio frame timing `text`, a stretch of speech of its own, at 100 ms a character from the stretch's start."""
+    return {
+        'type': 'audio',
+        'audio_event': {
+            'audio_base_64': base64.b64encode(b'\x00\x01').decode(),
+            'event_id': event_id,
+            'alignment': {
+                'chars': list(text),
+                'char_start_times_ms': [index * 100 for index in range(len(text))],
+                'char_durations_ms': [100] * len(text),
+            },
+        },
+    }
+
+
+def _timed_connection(
+    incoming: Sequence[dict[str, Any] | str], *, strip_audio_tags: bool = True
+) -> ElevenLabsAgentsRealtimeConnection:
+    ws = FakeWebSocket(list(incoming))
+    return ElevenLabsAgentsRealtimeConnection(
+        ws,  # type: ignore[arg-type]
+        conversation_id='conv_1',
+        strip_audio_tags=strip_audio_tags,
+        speech_timestamps=True,
+    )
+
+
+async def test_speech_timestamps_group_aligned_characters_into_words() -> None:
+    """Each stretch is timed from its own start, and one can end mid-word (verified live).
+
+    A stretch starts where the ones before it ended, as a frame without an `alignment` doesn't move it; a word split
+    between stretches runs from its first character to its last, and the response's last word ends with its audio.
+    """
+    incoming = [
+        _aligned_audio('Hi the'),
+        {'type': 'audio', 'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 1}},
+        _aligned_audio('re. Bye'),
+        {
+            'type': 'agent_response',
+            'agent_response_event': {'agent_response': 'Hi there. Bye', 'response_id': 'resp_1', 'event_id': 1},
+        },
+        _VOICED,
+    ]
+    events = await collect_codec_events(_timed_connection(incoming))
+    assert events == [
+        AudioDelta(data=b'\x00\x01'),
+        OutputSpeechTimestamps([SpeechTimestamp(text='Hi', start_ms=0, duration_ms=200)]),
+        AudioDelta(data=b'\x00\x01'),
+        AudioDelta(data=b'\x00\x01'),
+        OutputSpeechTimestamps([SpeechTimestamp(text='there.', start_ms=300, duration_ms=600)]),
+        OutputTranscript(text='Hi there. Bye', is_final=True, item_id='resp_1'),
+        OutputSpeechTimestamps([SpeechTimestamp(text='Bye', start_ms=1000, duration_ms=300)]),
+        ResponseDone(provider_response_id='resp_1', provider_details=_CONVERSATION),
+        _VOICED_USAGE,
+    ]
+
+    # Without `output_speech_timestamps`, the alignment is ignored.
+    events, _ = await _events(incoming)
+    assert not any(isinstance(event, OutputSpeechTimestamps) for event in events)
+
+
+async def test_speech_timestamps_start_over_with_each_response() -> None:
+    """The response that calls a tool and the one answering its result are timed in their own audio, in one turn."""
+    events = await collect_codec_events(
+        _timed_connection(
+            [
+                _aligned_audio('One moment.', event_id=10),
+                _tool_call_frame('get_weather'),
+                _aligned_audio('Sunny.', event_id=10),
+                {'type': 'agent_response', 'agent_response_event': {'agent_response': 'Sunny.', 'event_id': 10}},
+                _VOICED,
+            ]
+        )
+    )
+    assert [event for event in events if isinstance(event, (OutputSpeechTimestamps, SessionUsage, ResponseDone))] == [
+        OutputSpeechTimestamps([SpeechTimestamp(text='One', start_ms=0, duration_ms=300)]),
+        OutputSpeechTimestamps([SpeechTimestamp(text='moment.', start_ms=400, duration_ms=700)]),
+        SessionUsage(usage=RequestUsage(), response_scoped=True),
+        OutputSpeechTimestamps([SpeechTimestamp(text='Sunny.', start_ms=0, duration_ms=600)]),
+        ResponseDone(provider_details=_CONVERSATION),
+        _VOICED_USAGE,
+    ]
+
+
+@pytest.mark.parametrize(
+    'strip_audio_tags, words',
+    [
+        (True, ['Hi', 'there', '[Your', 'Name]', '[1]', 'Hello', f'[{"a" * 30}', 'b' * 30, '[unclosed']),
+        (
+            False,
+            [
+                '[laughs]',
+                'Hi',
+                '[strong',
+                'accent]',
+                'there',
+                '[Your',
+                'Name]',
+                '[1]',
+                '[laughs][sighs]Hello',
+                f'[{"a" * 30}',
+                'b' * 30,
+                '[unclosed',
+            ],
+        ),
+    ],
+)
+async def test_speech_timestamps_leave_out_stripped_audio_tags(strip_audio_tags: bool, words: list[str]) -> None:
+    """An expressive voice's audio tags are timed (verified live), and go as from the transcript, wherever they are."""
+    text = f'[laughs] Hi [strong accent] there [Your Name] [1] [laughs][sighs]Hello [{"a" * 30} {"b" * 30} [unclosed'
+    events = await collect_codec_events(
+        _timed_connection(
+            [
+                _aligned_audio(text),
+                {'type': 'agent_response', 'agent_response_event': {'agent_response': text}},
+                _VOICED,
+            ],
+            strip_audio_tags=strip_audio_tags,
+        )
+    )
+    timed = [
+        timestamp.text
+        for event in events
+        if isinstance(event, OutputSpeechTimestamps)
+        for timestamp in event.timestamps
+    ]
+    assert timed == words
+
+
+def _cut_off(response_id: str, text: str, heard: str, *, when: str, event_id: int) -> list[dict[str, Any]]:
+    """An agent message timed word by word that a barge-in cuts off, as recorded live for each moment it can land.
+
+    Its audio ends mid-word, so its last word is timed only once its response ends.
+    """
+
+    def response(said: str) -> dict[str, Any]:
+        return {
+            'type': 'agent_response',
+            'agent_response_event': {'agent_response': said, 'event_id': event_id, 'response_id': response_id},
+        }
+
+    interruption = {'type': 'interruption', 'interruption_event': {'event_id': event_id + 1}}
+    if when == 'generated':
+        # The text that follows is already cut down to what was heard, with no correction.
+        return [_aligned_audio(text, event_id=event_id), interruption, response(heard)]
+    return [
+        _aligned_audio(text, event_id=event_id),
+        response(text),
+        *([_VOICED] if when == 'ended' else []),
+        interruption,
+        _correction(response_id, text, heard),
+    ]
+
+
+@pytest.mark.parametrize('when', ['ended', 'voiced', 'generated'])
+async def test_a_barge_in_drops_the_timestamps_of_the_words_not_heard(when: str) -> None:
+    """The heard text of a message a barge-in cuts off says where its playback stopped: before its first unheard word.
+
+    Verified live, where ElevenLabs' cut-down text matched the timed words one for one, whether the barge-in landed
+    after the message's response ended, while its audio was still coming, or while it was still being generated. A
+    message heard in full keeps them all.
+    """
+    ws = FakeWebSocket(
+        [
+            HANDSHAKE_FRAME,
+            *_cut_off('resp_1', 'Hello there friend.', 'Hello there...', when=when, event_id=1),
+            _correction('resp_unknown', 'Gone.', ''),
+            *_cut_off('resp_2', 'Bye.', 'Bye.', when=when, event_id=3),
+        ]
+    )
+    ws.hold_open = True
+    model = _model(RestRecorder(agent_json()))
+    settings = ElevenLabsAgentsRealtimeModelSettings(output_speech_timestamps=True)
+    with patched_connect(ws):
+        async with Agent().realtime(model, model_settings=settings).session() as session:
+            interruptions = 0
+            with anyio.fail_after(10):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, RealtimeResponseInterruptedEvent):
+                        interruptions += 1
+                        if interruptions == 2:
+                            break
+                # The corrections make no event of their own: they only revise history.
+                await ws.drained.wait()
+
+    parts = [
+        part
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ]
+    assert [(part.transcript, part.interrupted_at_ms, part.timestamps) for part in parts] == [
+        (
+            'Hello there...',
+            1200,
+            [
+                SpeechTimestamp(text='Hello', start_ms=0, duration_ms=500),
+                SpeechTimestamp(text='there', start_ms=600, duration_ms=500),
+            ],
+        ),
+        ('Bye.', None, [SpeechTimestamp(text='Bye.', start_ms=0, duration_ms=400)]),
+    ]
+
+
+async def test_a_barge_in_finds_the_words_of_recent_messages_only() -> None:
+    """A barge-in cuts the messages of the turn under way, so the words of older ones aren't kept to cut."""
+    incoming: list[dict[str, Any]] = []
+    for turn in range(10):
+        incoming += [
+            _aligned_audio('Hi there.', event_id=turn),
+            {
+                'type': 'agent_response',
+                'agent_response_event': {
+                    'agent_response': 'Hi there.',
+                    'event_id': turn,
+                    'response_id': f'resp_{turn}',
+                },
+            },
+            _VOICED,
+        ]
+    incoming += [
+        {'type': 'interruption', 'interruption_event': {'event_id': 10}},
+        _correction('resp_0', 'Hi there.', 'Hi...'),
+        _correction('resp_9', 'Hi there.', 'Hi...'),
+    ]
+    connection = _timed_connection(incoming)
+    cuts = [event async for frame in connection.frames() for event in frame if isinstance(event, OutputItemCut)]
+    assert cuts == [
+        OutputItemCut(item_id='resp_0', heard_transcript='Hi...'),
+        OutputItemCut(item_id='resp_9', heard_transcript='Hi...', heard_ms=300),
+    ]
 
 
 async def test_client_tool_call_maps_to_tool_call_with_serialized_args() -> None:
