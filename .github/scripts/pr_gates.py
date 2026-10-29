@@ -135,6 +135,7 @@ def _legacy_waivers(github: GitHub, ref: str) -> set[tuple[str, str]]:
     """The `(against, fingerprint)` of each waiver that `ALLOWLIST` still lists at `ref`.
 
     Before waivers moved to their own files, `allowed_breakages` held them all; moving one out adds no waiver.
+    Transitional: only the PR that moved them has a merge base still listing any, so remove this once it merges.
     """
     if (text := github.file_text(ALLOWLIST, ref)) is None:
         return set()
