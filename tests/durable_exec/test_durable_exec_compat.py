@@ -189,6 +189,7 @@ def test_public_engine_builder_exports() -> None:
         'ParameterTransport',
         'ParameterTransports',
         'ResultCodec',
+        'StepPolicy',
         'ToolsetCallToolParams',
         'ToolsetGetToolsParams',
         'revalidate_function_call',
@@ -552,9 +553,32 @@ def test_render_task_name_matrix_and_assembly_completeness(workspace: bool) -> N
     Agent(TestModel(), name='compat', toolsets=list(_synthetic_toolsets()), capabilities=capabilities)
 
     names = app.registered_task_names
-    expected = RENDER_TASK_NAMES | (JOURNAL_WORKSPACE_NAMES if workspace else set[str]())
+    # Render task options are fixed per task, so the workspace's at-most-once action has its own task.
+    render_workspace_names = JOURNAL_WORKSPACE_NAMES | {'compat__capability__workspace.call.act'}
+    expected = RENDER_TASK_NAMES | (render_workspace_names if workspace else set[str]())
     assert set(names) == expected
     assert len(names) == len(expected)
+    if workspace:
+        act = app.options['compat__capability__workspace.call.act']
+        assert (act.retry and act.retry.max_retries, act.timeout_seconds) == (0, 180)
+
+
+@pytest.mark.parametrize(('configured', 'expected'), [(60, 180), (600, 600)])
+def test_render_action_raises_a_shorter_configured_timeout_and_keeps_a_longer_one(
+    configured: int, expected: int
+) -> None:
+    pytest.importorskip('render')
+    pytest.importorskip('pydantic_ai_harness')
+    from render.workflows import Options
+
+    from pydantic_ai_harness import RenderWorkflows
+
+    from ..harness.render.conftest import RecordingWorkflows
+
+    app = RecordingWorkflows()
+    durability = RenderWorkflows(app, capability_options=Options(timeout_seconds=configured))
+    Agent(TestModel(), name='compat', capabilities=[durability, CompatWorkspaceSupplier()])
+    assert app.options['compat__capability__workspace.call.act'].timeout_seconds == expected
 
 
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:

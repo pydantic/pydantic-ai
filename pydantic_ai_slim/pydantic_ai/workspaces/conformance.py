@@ -8,20 +8,42 @@ Requires pytest and the anyio pytest plugin.
 from __future__ import annotations
 
 import posixpath
+import struct
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 
 import anyio
 import pytest
 
+from .computer import (
+    Click,
+    ComputerAction,
+    Drag,
+    HoldKeys,
+    MouseDown,
+    MouseUp,
+    MoveMouse,
+    Point,
+    PressKeys,
+    Region,
+    Scroll,
+    TypeText,
+)
 from .protocol import (
+    Display,
     SupportsCommands,
+    SupportsCursorPosition,
+    SupportsDisplay,
     SupportsRealpath,
+    SupportsScaledScreenshot,
+    SupportsZoom,
     WorkspaceBackend,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 from .workspace import Workspace
 
@@ -32,6 +54,26 @@ def _commands(backend: WorkspaceBackend) -> SupportsCommands:
     if not isinstance(backend, SupportsCommands):
         pytest.skip('backend does not implement SupportsCommands')
     return backend
+
+
+def _display(backend: WorkspaceBackend) -> Display:
+    display = backend.display if isinstance(backend, SupportsDisplay) else None
+    if not isinstance(display, Display):
+        pytest.skip('backend has no display')
+    return display
+
+
+def _png_size(png: bytes) -> tuple[int, int]:
+    # The PNG signature, then the IHDR chunk, whose first fields are the image's width and height.
+    assert png[:8] == b'\x89PNG\r\n\x1a\n' and png[12:16] == b'IHDR'
+    return struct.unpack('>II', png[16:24])
+
+
+@dataclass(frozen=True)
+class _UnknownAction:
+    """An action kind no backend knows, standing in for one added to `ComputerAction` after the backend was written."""
+
+    type: str = 'conformance_unknown_action'
 
 
 @asynccontextmanager
@@ -545,3 +587,86 @@ class WorkspaceBackendSuite:
         await destroy_environment(backend)
         with pytest.raises(WorkspaceUnavailableError):
             await attach_backend(backend.ref).working_dir()
+
+    async def test_display_is_the_same_object_each_time(self, backend: WorkspaceBackend) -> None:
+        """Before and after the display starts, so state keyed on it, such as a lock, survives the first call."""
+        display = _display(backend)
+        await display.screenshot()
+        assert isinstance(backend, SupportsDisplay) and backend.display is display
+
+    async def test_screenshot_is_a_png_of_the_display_size(self, backend: WorkspaceBackend) -> None:
+        display = _display(backend)
+        width, height = await display.display_size()
+        assert width > 0 and height > 0
+        assert _png_size(await display.screenshot()) == (width, height)
+
+    async def test_every_action_is_performed_or_refused_as_unsupported(self, backend: WorkspaceBackend) -> None:
+        """A backend may lack an action kind, but must refuse it with `WorkspaceUnsupportedActionError`."""
+        display = _display(backend)
+        width, height = await display.display_size()
+        x, y = width // 2, height // 2
+        actions: list[ComputerAction] = [
+            MoveMouse(x=x, y=y),
+            Click(x=x, y=y),
+            Click(count=2),
+            Click(button='right', modifiers=('shift',)),
+            PressKeys(keys=('escape',)),
+            Scroll(x=x, y=y, direction='down'),
+            Scroll(direction='left', amount=1),
+            Drag(path=(Point(x=x, y=y), Point(x=x + 10, y=y + 10))),
+            MouseDown(),
+            MouseUp(),
+            TypeText(text='a'),
+            PressKeys(keys=('backspace',)),
+            HoldKeys(keys=('shift',), seconds=0.1),
+        ]
+        for action in actions:
+            with suppress(WorkspaceUnsupportedActionError):
+                await display.act(action)
+
+    async def test_an_unknown_action_type_is_refused(self, backend: WorkspaceBackend) -> None:
+        display = _display(backend)
+        with pytest.raises(WorkspaceUnsupportedActionError):
+            await display.act(_UnknownAction())  # pyright: ignore[reportArgumentType]
+
+    async def test_zoom_is_a_png_of_the_region(self, backend: WorkspaceBackend) -> None:
+        display = _display(backend)
+        if not isinstance(display, SupportsZoom):
+            pytest.skip('backend cannot zoom')
+        width, height = await display.display_size()
+        region_width, region_height = width // 2, height // 4
+        png = await display.zoom(Region(left=0, top=0, right=region_width, bottom=region_height))
+        # Full resolution: on a display whose screenshots are scaled down, the capture is larger than the region.
+        zoom_width, zoom_height = _png_size(png)
+        assert zoom_width >= region_width and zoom_height >= region_height
+        assert abs(zoom_width * region_height - zoom_height * region_width) <= region_width + region_height
+
+    async def test_a_scaled_screenshot_is_a_png_of_the_size_asked(self, backend: WorkspaceBackend) -> None:
+        display = _display(backend)
+        if not isinstance(display, SupportsScaledScreenshot):
+            pytest.skip('backend cannot scale screenshots')
+        width, height = await display.display_size()
+        # A size that isn't an exact ratio of the display's, so a display that scales by a ratio has to round.
+        size = (max(1, width * 2 // 3), max(1, height * 2 // 3))
+        scaled_width, scaled_height = _png_size(await display.scaled_screenshot(*size))
+        # Never larger, so the screenshot stays within what the model takes; rounding down loses at most a pixel.
+        assert 0 <= size[0] - scaled_width <= 1 and 0 <= size[1] - scaled_height <= 1
+
+    async def test_the_cursor_position_is_on_the_screen(self, backend: WorkspaceBackend) -> None:
+        display = _display(backend)
+        if not isinstance(display, SupportsCursorPosition):
+            pytest.skip('backend cannot report the pointer position')
+        width, height = await display.display_size()
+        point = await display.cursor_position()
+        assert 0 <= point.x < width and 0 <= point.y < height
+
+    async def test_moving_the_mouse_puts_the_pointer_there(self, backend: WorkspaceBackend) -> None:
+        """An action takes effect, in screenshot pixels: the pointer ends where it was moved, give or take a pixel."""
+        display = _display(backend)
+        if not isinstance(display, SupportsCursorPosition):
+            pytest.skip('backend cannot report the pointer position')
+        width, height = await display.display_size()
+        for x, y in ((width // 3, height // 3), (width * 2 // 3, height * 3 // 4)):
+            await display.act(MoveMouse(x=x, y=y))
+            point = await display.cursor_position()
+            assert abs(point.x - x) <= 1 and abs(point.y - y) <= 1, f'moved to ({x}, {y}), pointer at {point}'

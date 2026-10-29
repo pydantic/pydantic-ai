@@ -247,6 +247,13 @@ engine provides a suitable at-most-once mode. Test replay and recovery, resource
 control-flow exceptions, persisted-output upgrades, and ordinary execution outside the durable
 runtime before publishing an integration.
 
+An operation can declare a [`StepPolicy`][pydantic_ai.durable_exec.StepPolicy] for some kinds of
+invocation: its `policies`, keyed by what its `policy_key` returns for an invocation, and read with
+`operation.policy(params)`. The workspace operation uses them to run an action at most once with its own
+timeout. Map `repeatable=False` onto the engine's at-most-once mode, and raise the attempt timeout to at
+least `timeout`, keeping a longer one the user configured. A `CallableOperationBackend` overrides
+`apply_policy`; an engine whose options are fixed at registration registers a unit per kind with a policy.
+
 A replayed or recovered run must also get the same identity. Inside the durable context, override
 [`get_default_run_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_run_id] to return a
 replay-stable ID, such as one derived from the workflow instance ID, and return

@@ -16,7 +16,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Never, TypeAlias, assert_never, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Never,
+    TypeAlias,
+    assert_never,
+    cast,
+)
 
 import anyio
 from pydantic import ConfigDict
@@ -29,7 +37,10 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
     CommandResult,
+    ComputerAction,
     FileEntry,
+    Point,
+    Region,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -39,10 +50,11 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
     WrapperWorkspace,
 )
 
-from ._operation import CacheIdentity, CapabilityOperationId
+from ._operation import CacheIdentity, CapabilityOperationId, StepPolicy
 from ._operation_backend import in_durable_unit
 
 if TYPE_CHECKING:
@@ -55,10 +67,49 @@ WORKSPACE_OPERATION_ID = CapabilityOperationId('workspace', operation='call')
 
 # Base64 for `bytes`: Temporal's payload converter serializes by runtime type, ignoring annotations.
 _BYTES_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64')
+# Calls and results refuse fields they don't have, so an older worker fails a newer call instead of dropping its options.
+# So that only records using a new field fail: a field added later is left out of serialized data while it holds its
+# default (`Field(exclude_if=...)`), and a new result field never changes what an existing one means (JPEG bytes
+# would get their own field, not `data`), since engines that pickle results skip the check.
+_JOURNAL_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64', extra='forbid')
 
+# A `computer` call is one journaled step per method below, so a display fact added later, such as which screen a
+# screenshot came from, rides on an existing call's result as a field left out at its default: a new method would
+# add a step that histories recorded before it don't have, and replaying them would fail.
 WorkspaceMethod: TypeAlias = Literal[
-    'ensure', 'run', 'read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove', 'exists', 'realpath'
+    'ensure',
+    'run',
+    'read_bytes',
+    'write_bytes',
+    'stat',
+    'list_dir',
+    'make_dir',
+    'remove',
+    'exists',
+    'realpath',
+    'display_size',
+    'screenshot',
+    'act',
+    'zoom',
+    'scaled_screenshot',
+    'cursor_position',
 ]
+
+WORKSPACE_CALL_POLICIES: Mapping[str, StepPolicy] = {
+    'display_size': StepPolicy(),
+    'screenshot': StepPolicy(),
+    'zoom': StepPolicy(),
+    'scaled_screenshot': StepPolicy(),
+    'cursor_position': StepPolicy(),
+    'act': StepPolicy(repeatable=False, timeout=180),
+}
+"""How an engine may repeat each kind of workspace call: a look at the display may run again, an action runs at most
+once, for up to 180 seconds (above the 150 the X11 displays allow one).
+
+A method not listed runs under the engine's config for capability operations unchanged, and a failure the engine
+gives up on reaches the caller as the engine raised it. Commands and file methods aren't listed: whether one may run
+again depends on which of its errors are transient, which isn't settled.
+"""
 
 
 @pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
@@ -67,6 +118,8 @@ class WorkspaceCallError:
 
     type: str
     message: str
+    bases: tuple[str, ...] = ()
+    """The names of `type`'s base classes, nearest first, so a version that doesn't know `type` raises a base."""
     stdout: str = ''
     stderr: str = ''
     limit: int | None = None
@@ -81,7 +134,7 @@ class WorkspaceCallError:
     reason: str | None = None
 
 
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
+@pydantic_dataclass(frozen=True, kw_only=True, config=_JOURNAL_CONFIG)
 class WorkspaceCallResult:
     """The journaled outcome of a call: the field for the method's return shape, or the error."""
 
@@ -90,11 +143,13 @@ class WorkspaceCallResult:
     flag: bool = False
     entries: list[FileEntry] = field(default_factory=list[FileEntry])
     command: CommandResult | None = None
+    size: tuple[int, int] | None = None
+    point: Point | None = None
     ref: WorkspaceRef | None = None
     error: WorkspaceCallError | None = None
 
 
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
+@pydantic_dataclass(frozen=True, kw_only=True, config=_JOURNAL_CONFIG)
 class WorkspaceCall:
     """One `Workspace` method call: the method and the arguments it takes."""
 
@@ -105,8 +160,11 @@ class WorkspaceCall:
     shell: bool = False
     env: dict[str, str] | None = None
     timeout: float | None = None
+    action: ComputerAction | None = None
+    region: Region | None = None
+    size: tuple[int, int] | None = None
 
-    async def execute(self, workspace: Workspace) -> WorkspaceCallResult:
+    async def execute(self, workspace: Workspace) -> WorkspaceCallResult:  # noqa: C901
         match self.method:
             case 'ensure':
                 # `working_dir()` is the one operation every backend has, and it creates or attaches;
@@ -142,6 +200,22 @@ class WorkspaceCall:
                 return WorkspaceCallResult(flag=await workspace.exists(self.path))
             case 'realpath':
                 return WorkspaceCallResult(text=await workspace.realpath(self.path))
+            case 'display_size':
+                return WorkspaceCallResult(size=await workspace.display_size())
+            case 'screenshot':
+                return WorkspaceCallResult(data=await workspace.screenshot())
+            case 'act':
+                assert self.action is not None
+                await workspace.act(self.action)
+                return WorkspaceCallResult()
+            case 'zoom':
+                assert self.region is not None
+                return WorkspaceCallResult(data=await workspace.zoom(self.region))
+            case 'scaled_screenshot':
+                assert self.size is not None
+                return WorkspaceCallResult(data=await workspace.scaled_screenshot(*self.size))
+            case 'cursor_position':
+                return WorkspaceCallResult(point=await workspace.cursor_position())
         assert_never(self.method)
 
 
@@ -166,6 +240,7 @@ _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
     WorkspaceUnavailableError,
     WorkspaceReadOnlyError,
     WorkspaceOutputLimitError,
+    WorkspaceUnsupportedActionError,
     WorkspaceError,
     FileNotFoundError,
     NotADirectoryError,
@@ -191,10 +266,12 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
     ):
         # Transient OS failures belong to the engine's retry path, not the journaled result.
         return None
+    bases = tuple(base.__name__ for base in error_type.__mro__[1:] if issubclass(base, Exception))
     if isinstance(error, OSError) and not isinstance(error, WorkspaceError):
         return WorkspaceCallError(
             type=error_type.__name__,
             message=str(error),
+            bases=bases,
             errno=error.errno,
             strerror=error.strerror,
             filename=error.filename,
@@ -204,6 +281,7 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
         return WorkspaceCallError(
             type=error_type.__name__,
             message=str(error),
+            bases=bases,
             encoding=error.encoding,
             object=error.object,
             start=error.start,
@@ -212,18 +290,27 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
         )
     if isinstance(error, WorkspaceOutputLimitError):
         return WorkspaceCallError(
-            type=error_type.__name__, message=str(error), limit=error.limit, stdout=error.stdout, stderr=error.stderr
+            type=error_type.__name__,
+            message=str(error),
+            bases=bases,
+            limit=error.limit,
+            stdout=error.stdout,
+            stderr=error.stderr,
         )
     if isinstance(error, WorkspaceTimeoutError):
         return WorkspaceCallError(
-            type=error_type.__name__, message=str(error), stdout=error.stdout, stderr=error.stderr
+            type=error_type.__name__, message=str(error), bases=bases, stdout=error.stdout, stderr=error.stderr
         )
-    return WorkspaceCallError(type=error_type.__name__, message=str(error))
+    return WorkspaceCallError(type=error_type.__name__, message=str(error), bases=bases)
 
 
 def raise_error(error: WorkspaceCallError) -> Never:
-    """Re-raise an error that crossed a durable boundary as data, with its original type."""
-    error_type = cast(type[Exception], _EXPECTED_ERRORS_BY_NAME[error.type])
+    """Re-raise an error that crossed a durable boundary as data, with its original type.
+
+    A type this version doesn't know, journaled by a newer one, is raised as its nearest base this version knows.
+    """
+    known = next((name for name in (error.type, *error.bases) if name in _EXPECTED_ERRORS_BY_NAME), None)
+    error_type = cast(type[Exception], _EXPECTED_ERRORS_BY_NAME[known] if known else WorkspaceError)
     if error_type is WorkspaceOutputLimitError:
         assert error.limit is not None
         raise WorkspaceOutputLimitError(error.message, limit=error.limit, stdout=error.stdout, stderr=error.stderr)
@@ -348,6 +435,40 @@ class DurableWorkspace(WrapperWorkspace):
             return await self.wrapped.realpath(path)
         return (await self._call(WorkspaceCall(method='realpath', path=path))).text
 
+    async def display_size(self) -> tuple[int, int]:
+        if not self._in_container():
+            return await self.wrapped.display_size()
+        size = (await self._call(WorkspaceCall(method='display_size'))).size
+        assert size is not None
+        return size
+
+    async def screenshot(self) -> bytes:
+        if not self._in_container():
+            return await self.wrapped.screenshot()
+        return (await self._call(WorkspaceCall(method='screenshot'))).data
+
+    async def act(self, action: ComputerAction) -> None:
+        if not self._in_container():
+            return await self.wrapped.act(action)
+        await self._call(WorkspaceCall(method='act', action=action))
+
+    async def zoom(self, region: Region) -> bytes:
+        if not self._in_container():
+            return await self.wrapped.zoom(region)
+        return (await self._call(WorkspaceCall(method='zoom', region=region))).data
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        if not self._in_container():
+            return await self.wrapped.scaled_screenshot(width, height)
+        return (await self._call(WorkspaceCall(method='scaled_screenshot', size=(width, height)))).data
+
+    async def cursor_position(self) -> Point:
+        if not self._in_container():
+            return await self.wrapped.cursor_position()
+        point = (await self._call(WorkspaceCall(method='cursor_position'))).point
+        assert point is not None
+        return point
+
     async def _call(self, call: WorkspaceCall) -> WorkspaceCallResult:
         await self._ensure()
         return await self._dispatch(call, ref=self._ref)
@@ -364,9 +485,21 @@ class DurableWorkspace(WrapperWorkspace):
 
     async def _dispatch(self, call: WorkspaceCall, *, ref: WorkspaceRef | None) -> WorkspaceCallResult:
         ctx = self._run_context()
-        result = await self._durability._call_workspace(  # pyright: ignore[reportPrivateUsage]
-            WorkspaceCallParams(run_context=ctx, ref=ref, call=call)
-        )
+        try:
+            result = await self._durability._call_workspace(  # pyright: ignore[reportPrivateUsage]
+                WorkspaceCallParams(run_context=ctx, ref=ref, call=call)
+            )
+        except Exception as error:
+            # The engine gave up on a call with a policy: report it like any other failure of that call. A
+            # configuration error, such as no capability supplying the workspace, isn't the call failing.
+            if (policy := WORKSPACE_CALL_POLICIES.get(call.method)) is None or isinstance(error, UserError):
+                raise
+            if policy.repeatable:
+                raise WorkspaceError(f'The {call.method} call failed ({type(error).__name__}).') from error
+            raise WorkspaceError(
+                f'The {call.method} call did not finish, so it may or may not have taken effect '
+                f'({type(error).__name__}).'
+            ) from error
         if result.error is not None:
             raise_error(result.error)
         return result

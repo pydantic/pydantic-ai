@@ -3,7 +3,8 @@
 A backend implements [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] plus
 [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both, and optionally
-[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath]. Every backend must:
+[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] and
+[`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. Every backend must:
 
 - run commands and file operations against one filesystem, when it supports both;
 - report the real exit code: a non-zero exit is a result, never an exception;
@@ -32,12 +33,19 @@ from typing import Protocol, TypeAlias, runtime_checkable
 
 from pydantic_ai.messages import WorkspaceRef
 
+from .computer import ComputerAction, Point, Region
+
 # These protocols are frozen once released: conformance is structural, so adding a member
 # would silently break every existing backend. New operations go on concrete types or on new
 # optional `Supports*` protocols. New fields on `CommandResult` and `FileEntry` must carry
 # defaults so backends keep constructing them.
+#
+# The display methods don't gain parameters either, since wrappers override them. An operation that changes the
+# display is a new `ComputerAction` type, so `act` carries it through read-only and durable wrappers; one that reads
+# the display, like `SupportsZoom`, is a new protocol with its own `Workspace` and `DurableWorkspace` methods.
 __all__ = (
     'CommandResult',
+    'Display',
     'FileEntry',
     'WorkspaceBackend',
     'WorkspaceCommand',
@@ -47,9 +55,14 @@ __all__ = (
     'WorkspaceReadOnlyError',
     'WorkspaceTimeoutError',
     'WorkspaceUnavailableError',
+    'WorkspaceUnsupportedActionError',
     'SupportsCommands',
+    'SupportsCursorPosition',
+    'SupportsDisplay',
     'SupportsFilesystem',
     'SupportsRealpath',
+    'SupportsScaledScreenshot',
+    'SupportsZoom',
 )
 
 
@@ -77,7 +90,11 @@ class WorkspaceOutputLimitError(WorkspaceError):
 
 
 class WorkspaceUnavailableError(WorkspaceError):
-    """The environment is gone or unusable (terminated, expired, not found), so retrying can't succeed."""
+    """This backend can't reach its environment: it is gone, paused, stopped, or not permitted.
+
+    Retrying the same call can't succeed. Whether the environment can be resumed by its ref is the business of
+    whoever manages its lifecycle.
+    """
 
 
 class WorkspaceTimeoutError(WorkspaceError, TimeoutError):
@@ -94,6 +111,10 @@ class WorkspaceReadOnlyError(WorkspaceError, PermissionError):
 
     Raised by [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] and wrappers like it.
     """
+
+
+class WorkspaceUnsupportedActionError(WorkspaceError):
+    """A [`Display`][pydantic_ai.workspaces.Display] can't perform this kind of action."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -215,6 +236,92 @@ class SupportsRealpath(Protocol):
         target. Keep missing components as written. A loop must not hang; a returned path through a loop
         must stay inside the directory holding it (or raise `OSError`). Return an absolute, normalized path.
         """
+        ...
+
+
+@runtime_checkable
+class Display(Protocol):
+    """A graphical display: screenshots, mouse, and keyboard.
+
+    It can come from a different source than the backend's commands, such as this machine's screen beside a local
+    workspace, and may start on its first call. It can also implement
+    [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom],
+    [`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot] and
+    [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition].
+    """
+
+    async def display_size(self) -> tuple[int, int]:
+        """The next screenshot's `(width, height)` in pixels: the coordinate space of every action.
+
+        It can change between calls, for example when a phone rotates.
+        """
+        ...
+
+    async def screenshot(self) -> bytes:
+        """Capture the whole display as PNG bytes, at the size `display_size` reports."""
+        ...
+
+    async def act(self, action: ComputerAction) -> None:
+        """Perform one action on the display.
+
+        Raise [`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError] for an
+        action kind, or a value, the display can't perform exactly: new kinds can be added to
+        [`ComputerAction`][pydantic_ai.workspaces.ComputerAction] without changing this protocol.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsDisplay(Protocol):
+    """Optional: the environment's graphical [`Display`][pydantic_ai.workspaces.Display].
+
+    Without it, or when `display` is `None`, the `Workspace` display methods raise `UserError`.
+    """
+
+    @property
+    def display(self) -> Display | None:
+        """This environment's display, or `None` for an environment without one, decided without I/O.
+
+        It is the same object for the backend's lifetime, through restarts and reconnects.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsZoom(Protocol):
+    """Optional on a [`Display`][pydantic_ai.workspaces.Display]: a closer look at part of the display."""
+
+    async def zoom(self, region: Region) -> bytes:
+        """Capture the region as PNG bytes, at the display's full resolution.
+
+        The region is in screenshot pixels. On a display whose screenshots are scaled down, the capture shows detail
+        the screenshot lost.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsScaledScreenshot(Protocol):
+    """Optional on a [`Display`][pydantic_ai.workspaces.Display]: the whole display, scaled down.
+
+    For a model that takes smaller screenshots than the display: actions stay in `display_size` pixels.
+    """
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        """Capture the whole display as PNG bytes of at most `width` by `height` pixels.
+
+        A display that scales by a ratio may round down, by at most one pixel on each side; callers read the size
+        from the PNG.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsCursorPosition(Protocol):
+    """Optional on a [`Display`][pydantic_ai.workspaces.Display]: where the pointer is."""
+
+    async def cursor_position(self) -> Point:
+        """The pointer's position in screenshot pixels."""
         ...
 
 

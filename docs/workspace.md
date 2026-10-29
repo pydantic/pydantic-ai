@@ -232,8 +232,9 @@ working directories.
 
 A bad path raises the usual error, such as `FileNotFoundError` or `IsADirectoryError`. Catch it and
 raise `ModelRetry` so the model can try again; uncaught, it ends the run, except on Temporal, where it
-follows the activity retry policy (see [Durable execution](#durable-execution)). An environment that is gone,
-such as a sandbox deleted during a command, raises `WorkspaceUnavailableError` and ends the run.
+follows the activity retry policy (see [Durable execution](#durable-execution)). An environment the backend can't
+reach, such as a sandbox deleted or paused during a command, raises `WorkspaceUnavailableError` and ends the run,
+since retrying the call can't succeed.
 A command killed by a signal while its environment stays live returns its exit code instead.
 
 ## Read-only access
@@ -248,7 +249,8 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.', read_o
 ```
 
 A refused change raises [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError].
-Commands are refused too, because a command could change files. A capability can check
+Commands are refused too, because a command could change files. On a workspace with a display,
+screenshots are allowed and mouse and keyboard actions are refused. A capability can check
 [`ctx.workspace.read_only`][pydantic_ai.workspaces.Workspace.read_only] to leave its write tools out.
 
 For a single run, wrap its workspace in `ReadOnlyWorkspace` and pass it as `workspace=`, as the
@@ -527,6 +529,41 @@ and `ctx.workspace.run` raises `UserError`. Shell-derived reads require regular 
 With both, they must reach the same environment. A filesystem-only backend whose storage can hold
 symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#resolving-symlinks).
 
+### Controlling a display
+
+A backend whose environments can have a graphical display implements
+[`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: a `display` property that returns a
+[`Display`][pydantic_ai.workspaces.Display], or `None` for an environment without one, decided without I/O.
+It returns the same object for the backend's lifetime. The display can come from elsewhere, such as this
+machine's screen beside a local workspace.
+
+- A `Display` has `display_size`, `screenshot` (PNG bytes), and `act`, which performs one
+  [`ComputerAction`][pydantic_ai.workspaces.ComputerAction] such as a click or a key press. Tools reach them as
+  `ctx.workspace.screenshot()` and `ctx.workspace.act(...)`.
+- Optional on the display: [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom], to capture part of it at full
+  resolution; [`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot], to capture all of it
+  smaller for a model with a screenshot limit; and
+  [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition].
+- Refuse what the display can't do exactly with
+  [`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError], including action
+  kinds added later; [`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this.
+- Coordinates are pixels of the screenshot. Report the screen's real size: a computer-use tool fits a larger screen
+  to the model's
+  [`computer_use_screenshot_limit`][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_limit].
+
+Key names and text limits are on each action; see the [API reference](api/workspaces.md).
+`LocalWorkspace` has no display.
+
+Under [durable execution](durable_execution/overview.md), each display call made in workflow code is its own
+durable step. A look, such as a screenshot, retries under the engine's retry config. An action runs at most once,
+with a timeout of at least 180 seconds: if it fails, times out or loses its worker, the call raises a
+[`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] saying the action may or may not have taken effect,
+instead of running it again. Some engines go further than this:
+
+- DBOS, and Prefect when a flow is run again, can repeat the action that was running when the process crashed.
+- DBOS steps have no timeout, so a hung action holds the workflow.
+- DBOS can't replay a workflow in which two agents used a display at the same time.
+
 ### Resolving symlinks
 
 `Workspace.realpath` answers "which file does this path really lead to?". Code that keeps an agent
@@ -666,6 +703,9 @@ Before shipping a backend, use the suite to check:
   indefinitely delay a finished command.
 - File operations preserve bytes, follow symlinks where appropriate, and report path errors;
   understand containment limits: a working directory is not a jail, and symlinks may cross roots.
+- A display's screenshot is its declared size, a scaled screenshot is at most the size asked for, a
+  zoom keeps the region's shape at full resolution, and moving the mouse puts the pointer there, when the display
+  reports the pointer position.
 - Supply `attach_backend`, `destroy_environment`, and an independent `destructive_backend` to check
   reattachment, a destroyed reference, and destruction during a command. These optional rules
   skip when their fixtures are absent.

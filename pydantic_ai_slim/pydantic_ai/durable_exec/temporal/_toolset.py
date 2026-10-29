@@ -33,6 +33,7 @@ from pydantic_ai.workspaces import (
     WorkspaceReadOnlyError,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 
 from ._run_context import TemporalRunContext
@@ -172,11 +173,12 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
         PydanticUserError.__name__,
         UnexpectedModelBehavior.__name__,
         FallbackExceptionGroup.__name__,
-        # A retry cannot fix a workspace timeout, output flood, read-only refusal, or lost environment;
-        # restarting a command could repeat its already-completed side effects.
+        # A retry cannot fix a workspace timeout, output flood, read-only refusal, unsupported display action,
+        # or lost environment; restarting a command could repeat its already-completed side effects.
         WorkspaceTimeoutError.__name__,
         WorkspaceOutputLimitError.__name__,
         WorkspaceReadOnlyError.__name__,
+        WorkspaceUnsupportedActionError.__name__,
         WorkspaceUnavailableError.__name__,
         # An over-limit payload is deterministic, so Temporal's default unlimited retries would resend the
         # same oversized result forever and hang the workflow instead of ever surfacing an error (#7110).

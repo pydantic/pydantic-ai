@@ -1162,6 +1162,11 @@ navigation:
             slug: "api/pydantic-ai/common_tools"
             aliases:
               - "api/common_tools"
+          - page: "computer_use"
+            path: "api/computer_use.md"
+            slug: "api/pydantic-ai/computer_use"
+            aliases:
+              - "api/computer_use"
           - page: "concurrency"
             path: "api/concurrency.md"
             slug: "api/pydantic-ai/concurrency"

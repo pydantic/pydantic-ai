@@ -24,9 +24,19 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceBackend, WorkspaceReadOnlyError, WorkspaceRef
+from pydantic_ai.workspaces import (
+    Click,
+    HoldKeys,
+    PressKeys,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceError,
+    WorkspaceReadOnlyError,
+    WorkspaceRef,
+)
 
-from ..workspace_fakes import InMemoryProvider
+from ..workspace_fakes import FAKE_SCREENSHOT, InMemoryProvider
 
 
 class ScenarioFailed(Exception):
@@ -103,15 +113,34 @@ class ScenarioAgents:
     local: Agent[None, str]
     amnesiac: Agent[None, str]
     uncaught: Agent[None, str]
+    display: Agent[None, str]
+    retries: bool
+    """Whether the engine retries a failed workspace call for `display`."""
 
     def all(self) -> list[Agent[None, str]]:
-        return [self.fresh, self.plain, self.read_only, self.explicit, self.local, self.amnesiac, self.uncaught]
+        return [
+            self.fresh,
+            self.plain,
+            self.read_only,
+            self.explicit,
+            self.local,
+            self.amnesiac,
+            self.uncaught,
+            self.display,
+        ]
 
 
 def scenario_agents(
-    durability: Callable[[], AbstractCapability[Any]], *, prefix: str, provider: InMemoryProvider
+    durability: Callable[[], AbstractCapability[Any]],
+    *,
+    prefix: str,
+    provider: InMemoryProvider,
+    retrying: Callable[[], AbstractCapability[Any]] | None = None,
 ) -> ScenarioAgents:
-    """The agents every scenario uses, named `<prefix><role>`, each with a fresh `durability()`."""
+    """The agents every scenario uses, named `<prefix><role>`, each with a fresh `durability()`.
+
+    `display` takes `retrying()` instead, when the engine can be configured to retry a failed workspace call.
+    """
     workspaces = provider.capability
     local_dir = os.path.join(os.environ.get('TMPDIR', '/tmp'), f'pydantic_ai_{prefix}local_workspace')
     return ScenarioAgents(
@@ -148,6 +177,8 @@ def scenario_agents(
         uncaught=Agent(
             TestModel(), name=f'{prefix}uncaught', capabilities=[ReadMissingInHook(), workspaces(), durability()]
         ),
+        display=Agent(TestModel(), name=f'{prefix}display', capabilities=[workspaces(), (retrying or durability)()]),
+        retries=retrying is not None,
     )
 
 
@@ -239,7 +270,7 @@ _BINARY = b'\xff\xfe\x00\x01binary\x80'
 async def _error_of(call: Awaitable[Any]) -> str:
     try:
         await call
-    except (OSError, UnicodeDecodeError, TypeError) as error:
+    except (OSError, UnicodeDecodeError, TypeError, WorkspaceError) as error:
         return type(error).__name__
     return 'none'  # pragma: no cover
 
@@ -256,7 +287,9 @@ async def binary(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dic
         decoded = error.object == _BINARY
     else:  # pragma: no cover
         decoded = False
+    await workspace.act(PressKeys(keys=('ctrl', 's')))
     return {
+        'display': [*await workspace.display_size(), (await workspace.screenshot()) == FAKE_SCREENSHOT],
         'round_trip': (await workspace.read_bytes('blob.bin')) == _BINARY,
         'size': (await workspace.stat('blob.bin')).size,
         'exists': [await workspace.exists('blob.bin'), await workspace.exists('nope')],
@@ -265,8 +298,22 @@ async def binary(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dic
             await _error_of(workspace.stat('sub/gone.txt')),
             await _error_of(workspace.remove('missing.txt')),
             await _error_of(workspace.run('echo hi')),
+            await _error_of(workspace.act(HoldKeys(keys=('shift',), seconds=1))),
         ],
     }
+
+
+async def display_faults(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dict[str, Any]:
+    workspace = (await agents.display.run('Nothing to do.')).workspace
+    assert isinstance(workspace, DurableWorkspace)
+    screenshot = await workspace.screenshot()
+    try:
+        await workspace.act(Click(x=1, y=2))
+    except WorkspaceError as error:
+        acted = str(error)
+    else:
+        acted = 'acted'
+    return {'screenshot': screenshot == FAKE_SCREENSHOT, 'act': acted}
 
 
 async def local(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dict[str, Any]:
@@ -290,7 +337,19 @@ async def uncaught(agents: ScenarioAgents, arg: str | None, engine_id: str) -> s
 
 SCENARIOS: dict[str, Scenario] = {
     scenario.__name__: scenario
-    for scenario in (fresh, multi_turn, two_agents, run_id, read_only, explicit, binary, local, amnesiac, uncaught)
+    for scenario in (
+        fresh,
+        multi_turn,
+        two_agents,
+        run_id,
+        read_only,
+        explicit,
+        binary,
+        display_faults,
+        local,
+        amnesiac,
+        uncaught,
+    )
 }
 
 
@@ -358,15 +417,30 @@ async def check_explicit_rejected(kind: str, type: str, fragment: str, run: Runn
 
 
 async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
-    """Bytes and the expected errors cross the durable boundary unchanged."""
+    """Bytes, display calls (a screenshot is bytes too) and the expected errors cross the durable boundary unchanged."""
     assert await run('binary', None) == {
+        'display': [1280, 800, True],
         'round_trip': True,
         'size': 11,
         'exists': [True, False],
         'decode_error_keeps_bytes': True,
-        'errors': ['FileNotFoundError', 'FileNotFoundError', 'TypeError'],
+        'errors': ['FileNotFoundError', 'FileNotFoundError', 'TypeError', 'WorkspaceUnsupportedActionError'],
     }
     assert agents.provider.environments['env-1']['/remote/blob.bin'] == _BINARY
+    assert agents.provider.actions == [PressKeys(keys=('ctrl', 's'))]
+
+
+async def check_display_faults(run: Runner, agents: ScenarioAgents) -> None:
+    """An action whose unit failed after it took effect isn't run again, and is reported as possibly done.
+
+    A screenshot that failed is retried where the engine retries.
+    """
+    agents.provider.lose_next_action = True
+    agents.provider.fail_next_screenshot = agents.retries
+    result = await run('display_faults', None)
+    assert result['act'].startswith('The act call did not finish, so it may or may not have taken effect')
+    assert result['screenshot'] is True
+    assert agents.provider.actions == [Click(x=1, y=2)]
 
 
 async def check_local(run: Runner, agents: ScenarioAgents) -> None:
@@ -420,6 +494,7 @@ CASES: dict[str, Check] = {
         check_explicit_rejected, 'dead_ref', 'WorkspaceUnavailableError', "environment 'expired' does not exist"
     ),
     'binary': check_binary,
+    'display_faults': check_display_faults,
     'local': check_local,
     'amnesiac': partial(check_failure, 'amnesiac', 'UserError', 'which the run just created'),
     'uncaught': partial(check_failure, 'uncaught', 'FileNotFoundError', '/remote/missing.txt'),

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import posixpath
+import struct
+import zlib
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Protocol
+from typing import Any, Protocol, Self
 
 import anyio
 
@@ -10,16 +12,41 @@ from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.workspaces import (
     CommandResult,
+    ComputerAction,
     FileEntry,
+    MoveMouse,
+    Point,
     ReadOnlyWorkspace,
+    Region,
     SupportsCommands,
+    SupportsCursorPosition,
+    SupportsDisplay,
     SupportsFilesystem,
+    SupportsScaledScreenshot,
+    SupportsZoom,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceRef,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
+
+
+def _png(width: int, height: int) -> bytes:
+    """A complete black RGB PNG of the given size."""
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+
+    rows = b''.join(b'\x00' + bytes(width * 3) for _ in range(height))
+    header = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
+
+
+FAKE_DISPLAY_SIZE = (1280, 800)
+FAKE_SCREENSHOT = _png(*FAKE_DISPLAY_SIZE)
+"""A screenshot of the fake display."""
 
 
 def _add_parent_directories(directories: set[str], path: str) -> None:
@@ -320,6 +347,27 @@ class DecliningWorkspaceCapability(AbstractCapability[Any]):
         return None
 
 
+class DisplayOnlyBackend(FilesystemOnlyWorkspaceBackend, SupportsDisplay):
+    """A provider backend's files and display, without zoom, scaling or the pointer position."""
+
+    def __init__(self, inner: ProviderBackend) -> None:
+        super().__init__(inner)
+        self._display = inner
+
+    @property
+    def display(self) -> Self:
+        return self
+
+    async def display_size(self) -> tuple[int, int]:
+        return await self._display.display_size()
+
+    async def screenshot(self) -> bytes:
+        return await self._display.screenshot()
+
+    async def act(self, action: ComputerAction) -> None:
+        await self._display.act(action)
+
+
 class InMemoryProvider:
     """A fake remote provider: environments live here, so a backend built anywhere can reattach by ref.
 
@@ -335,11 +383,17 @@ class InMemoryProvider:
         self.environments: dict[str, dict[str, bytes]] = {}
         self.directories: dict[str, set[str]] = {}
         self.log: list[str] = []
+        self.actions: list[ComputerAction] = []
+        # Faults the next display calls meet, on whichever backend serves them.
+        self.fail_next_screenshot = False
+        self.lose_next_action = False
 
     def reset(self) -> None:
         self.environments.clear()
         self.directories.clear()
         self.log.clear()
+        self.actions.clear()
+        self.fail_next_screenshot = self.lose_next_action = False
 
     def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
         return ProviderBackend(self, ref)
@@ -348,7 +402,15 @@ class InMemoryProvider:
         return ProviderWorkspaces(self, read_only=read_only)
 
 
-class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class ProviderBackend(
+    WorkspaceBackend,
+    SupportsCommands,
+    SupportsFilesystem,
+    SupportsDisplay,
+    SupportsZoom,
+    SupportsScaledScreenshot,
+    SupportsCursorPosition,
+):
     def __init__(self, provider: InMemoryProvider, ref: WorkspaceRef | None) -> None:
         self._provider = provider
         self._ref = ref
@@ -357,6 +419,9 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     @property
     def ref(self) -> WorkspaceRef | None:
         return self._ref
+
+    async def _display_call(self) -> None:
+        await self._files()
 
     async def _files(self) -> dict[str, bytes]:
         await anyio.sleep(0)
@@ -436,6 +501,45 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # The environment has no symlinks, so resolving a path only normalizes it.
         await self._files()
         return posixpath.normpath(path)
+
+    @property
+    def display(self) -> Self:
+        return self
+
+    async def display_size(self) -> tuple[int, int]:
+        await self._display_call()
+        return FAKE_DISPLAY_SIZE
+
+    async def screenshot(self) -> bytes:
+        if self._provider.fail_next_screenshot:
+            self._provider.fail_next_screenshot = False
+            raise RuntimeError('the screenshot failed')
+        await self._display_call()
+        return FAKE_SCREENSHOT
+
+    async def act(self, action: ComputerAction) -> None:
+        await self._display_call()
+        # Everything but `hold_key`, so tests can see an action kind refused.
+        if action.type not in {'click', 'move', 'drag', 'mouse_down', 'mouse_up', 'scroll', 'type', 'keypress'}:
+            raise WorkspaceUnsupportedActionError(f'the fake display cannot perform {action.type!r}')
+        self._provider.actions.append(action)
+        if self._provider.lose_next_action:
+            # The action took effect, and then its worker was lost.
+            self._provider.lose_next_action = False
+            raise RuntimeError('the worker was lost')
+
+    async def zoom(self, region: Region) -> bytes:
+        await self._display_call()
+        return _png(region.right - region.left, region.bottom - region.top)
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        await self._display_call()
+        return _png(width, height)
+
+    async def cursor_position(self) -> Point:
+        await self._display_call()
+        moves = [action for action in self._provider.actions if isinstance(action, MoveMouse)]
+        return Point(x=moves[-1].x, y=moves[-1].y) if moves else Point(x=640, y=400)
 
 
 class ProviderWorkspaces(AbstractCapability[Any]):

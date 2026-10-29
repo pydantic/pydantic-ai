@@ -12,7 +12,13 @@ import anyio.to_thread
 import pytest
 
 from pydantic_ai.workspaces import (
+    ComputerAction,
     LocalWorkspaceBackend,
+    Point,
+    Region,
+    SupportsCursorPosition,
+    SupportsScaledScreenshot,
+    SupportsZoom,
     WorkspaceBackend,
     WorkspaceRef,
     local as local_module,
@@ -20,6 +26,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 
 from .workspace_fakes import (
+    DisplayOnlyBackend,
     FakeWorkspace,
     FilesystemOnlyWorkspaceBackend,
     InMemoryProvider,
@@ -125,6 +132,19 @@ class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
         return _local_destroy_environment()
 
 
+class _ProviderFilesAndDisplay(DisplayOnlyBackend, SupportsZoom, SupportsScaledScreenshot, SupportsCursorPosition):
+    """The provider's files and display, without its stub `run`."""
+
+    async def zoom(self, region: Region) -> bytes:
+        return await self._display.zoom(region)
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        return await self._display.scaled_screenshot(width, height)
+
+    async def cursor_position(self) -> Point:
+        return await self._display.cursor_position()
+
+
 class TestProviderBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def enforces_parent_file_errors(self) -> bool:
@@ -140,7 +160,7 @@ class TestProviderBackend(WorkspaceBackendSuite):
 
     @pytest.fixture
     def backend(self, provider: InMemoryProvider) -> WorkspaceBackend:
-        return FilesystemOnlyWorkspaceBackend(provider.backend(None))
+        return _ProviderFilesAndDisplay(provider.backend(None))
 
     @pytest.fixture
     def fresh_backend(self, provider: InMemoryProvider) -> Callable[[], WorkspaceBackend]:
@@ -177,3 +197,74 @@ async def test_native_realpath_rule_runs_without_commands() -> None:
     await rule(_NormalizingRealpathBackend(FakeWorkspace('normalizing-realpath')))
     with pytest.raises(AssertionError):
         await rule(_RelativeRealpathBackend(FakeWorkspace('relative-realpath')))
+
+
+@pytest.mark.anyio
+async def test_the_zoom_and_pointer_checks_skip_a_display_without_them() -> None:
+    suite = WorkspaceBackendSuite()
+    backend = DisplayOnlyBackend(InMemoryProvider().backend(None))
+    for check in (
+        suite.test_zoom_is_a_png_of_the_region,
+        suite.test_a_scaled_screenshot_is_a_png_of_the_size_asked,
+        suite.test_the_cursor_position_is_on_the_screen,
+        suite.test_moving_the_mouse_puts_the_pointer_there,
+    ):
+        with pytest.raises(pytest.skip.Exception):
+            await check(backend)
+
+
+@pytest.mark.anyio
+async def test_the_display_check_fails_a_backend_with_a_new_display_each_time() -> None:
+    class NewDisplayEachTime(DisplayOnlyBackend):
+        @property
+        def display(self) -> DisplayOnlyBackend:
+            return DisplayOnlyBackend(self._display)
+
+    backend = NewDisplayEachTime(InMemoryProvider().backend(None))
+    with pytest.raises(AssertionError):
+        await WorkspaceBackendSuite().test_display_is_the_same_object_each_time(backend)
+
+
+@pytest.mark.anyio
+async def test_the_zoom_check_allows_a_full_resolution_capture_of_the_region() -> None:
+    """On a display whose screenshots are scaled down, a zoom at full resolution is larger than the region."""
+
+    class ScaledZoom(_ProviderFilesAndDisplay):
+        async def zoom(self, region: Region) -> bytes:
+            return await super().zoom(Region(left=0, top=0, right=region.right * 2, bottom=region.bottom * 2))
+
+    class StretchedZoom(_ProviderFilesAndDisplay):
+        async def zoom(self, region: Region) -> bytes:
+            return await super().zoom(Region(left=0, top=0, right=region.right * 2, bottom=region.bottom))
+
+    rule = WorkspaceBackendSuite().test_zoom_is_a_png_of_the_region
+    await rule(ScaledZoom(InMemoryProvider().backend(None)))
+    with pytest.raises(AssertionError):
+        await rule(StretchedZoom(InMemoryProvider().backend(None)))
+
+
+@pytest.mark.anyio
+async def test_the_pointer_check_fails_a_display_that_ignores_actions() -> None:
+    class InertDisplay(_ProviderFilesAndDisplay):
+        async def act(self, action: ComputerAction) -> None:
+            pass
+
+    rule = WorkspaceBackendSuite().test_moving_the_mouse_puts_the_pointer_there
+    await rule(_ProviderFilesAndDisplay(InMemoryProvider().backend(None)))
+    with pytest.raises(AssertionError, match='pointer at'):
+        await rule(InertDisplay(InMemoryProvider().backend(None)))
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('extra', [None, 1], ids=['full-size', 'one-pixel-over'])
+async def test_the_scaled_screenshot_check_fails_a_display_larger_than_asked(extra: int | None) -> None:
+    class TooLarge(_ProviderFilesAndDisplay):
+        async def scaled_screenshot(self, width: int, height: int) -> bytes:
+            if extra is None:
+                return await self.screenshot()
+            return await super().scaled_screenshot(width + extra, height)
+
+    with pytest.raises(AssertionError):
+        await WorkspaceBackendSuite().test_a_scaled_screenshot_is_a_png_of_the_size_asked(
+            TooLarge(InMemoryProvider().backend(None))
+        )

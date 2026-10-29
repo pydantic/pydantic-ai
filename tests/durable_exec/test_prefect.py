@@ -140,6 +140,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
@@ -4962,6 +4963,7 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
         WorkspaceTimeoutError('slow'),
         WorkspaceOutputLimitError('loud', limit=1),
         WorkspaceReadOnlyError('read-only'),
+        WorkspaceUnsupportedActionError('no such action'),
         WorkspaceUnavailableError('gone'),
     ):
         assert await condition(None, None, _State(error)) is False
@@ -5549,3 +5551,16 @@ def test_rebuilt_request_policy_follows_the_run(
             assert policy is not None
             assert policy.include_content is run_include_content
     assert include_content_ctx.get() is None
+
+
+@pytest.mark.parametrize(('configured', 'expected'), [(None, 180), (60, 180), (600, 600)])
+def test_prefect_action_raises_a_shorter_configured_timeout_and_keeps_a_longer_one(
+    configured: int | None, expected: int
+) -> None:
+    from pydantic_ai.durable_exec._workspace import WORKSPACE_CALL_POLICIES
+    from pydantic_ai.durable_exec.prefect._operation_backend import PrefectOperationBackend
+
+    backend = PrefectDurability().get_durable_operation_backend()
+    assert isinstance(backend, PrefectOperationBackend)
+    config = TaskConfig() if configured is None else TaskConfig(timeout_seconds=configured)
+    assert backend.apply_policy(config, WORKSPACE_CALL_POLICIES['act']).get('timeout_seconds') == expected
