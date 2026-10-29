@@ -34,7 +34,7 @@ _RUN_URL_ATTR = 'cicd.pipeline.run.url.full'
 
 # GitHub Actions events whose `GITHUB_SHA` and `GITHUB_REF` are the code the workflow checks out by default.
 # Other events, such as `issue_comment` and `workflow_run`, point them at the default branch, while the workflow
-# usually checks out a pull request, so a run there would look like a run on the default branch.
+# usually checks out a pull request, so a run there would look like a run on that branch.
 _GITHUB_REF_EVENTS = frozenset({'push', 'schedule', 'workflow_dispatch', 'release'})
 
 _PULL_REQUEST_REF_RE = re.compile(r'refs/pull/(\d+)/')
@@ -135,7 +135,8 @@ def _github_actions_attributes(env: Mapping[str, str]) -> dict[str, str]:
         number = None
 
     if event_name == 'pull_request_target':
-        # These runs check out the default branch by default, so whether the PR head is the code under test
+        # These runs check out the default branch by default (the PR's base branch on older GitHub Enterprise
+        # Server versions), so whether the PR head is the code under test
         # is unknown, and its commit and branch are omitted rather than possibly misreported.
         commit_sha = head_name = None
 

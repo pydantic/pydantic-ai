@@ -155,7 +155,7 @@ To let a run be compared with an earlier run of the same experiment, such as the
 
 Detection reads the CI's environment variables and, for GitHub Actions pull request events, the event payload file at `GITHUB_EVENT_PATH`. If the payload can't be read, the commit is left out rather than reported as the merge commit that the workflow builds. Detection runs only when the experiment span is recording, and it never fails the evaluation.
 
-On GitHub Actions, the commit and branch are recorded for `push`, `schedule`, `workflow_dispatch`, `release`, and pull request events. Other events, such as `issue_comment`, `workflow_run`, and `pull_request_target`, point `GITHUB_SHA` at the default branch, while the workflow usually checks out a pull request, so their commit and branch are left out. If your workflow checks out the pull request head on such an event, set the commit and branch yourself. On `pull_request_target`, take them from the event payload:
+On GitHub Actions, the commit and branch are recorded for `push`, `schedule`, `workflow_dispatch`, `release`, and pull request events. Other events, such as `issue_comment`, `workflow_run`, and `pull_request_target`, point `GITHUB_SHA` at the default branch (for `pull_request_target` on older GitHub Enterprise Server versions, at the pull request's base branch), while the workflow usually checks out a pull request, so their commit and branch are left out. If your workflow checks out the pull request head on such an event, set the commit and branch yourself. On `pull_request_target`, take them from the event payload:
 
 ```yaml
 env:
