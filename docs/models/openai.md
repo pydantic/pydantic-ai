@@ -612,7 +612,7 @@ all at once when it arrives.
 
 ## Responses WebSockets
 
-A run that makes many requests, such as one with a tool loop, can send them over one [Responses WebSocket](https://developers.openai.com/api/docs/guides/websocket-mode) instead of a new HTTP request each time. Install the existing OpenAI WebSocket dependencies:
+A run that makes many requests, such as one with a tool loop, can send them over one [Responses WebSocket](https://developers.openai.com/api/docs/guides/websocket-mode) instead of a new HTTP request each time. Install the OpenAI WebSocket dependencies:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[openai-realtime]"
@@ -677,7 +677,7 @@ A model that can never open a socket sends every request over HTTP and warns wit
 Request settings map to `response.create`. The socket has these limits:
 
 - The `websockets` library opens the socket, not the SDK client's `http_client`, so that client's proxy and CA bundle don't apply. The socket takes its proxy from the environment, such as `HTTPS_PROXY`, and Python's default TLS settings.
-- `OpenAIResponsesModel(..., websocket_connection_options=...)` passes options such as `compression` or `write_limit` to `websockets`. Unless you set them, `max_size` and `max_queue` are `None`, lifting the limits on message size and unread frames: an event such as an image generation result can exceed the 1 MiB default, and the socket has to keep reading, and answering the server's keepalive pings, while the rest of a response closed early waits to be discarded.
+- [`OpenAIResponsesModel(..., websocket_connection_options=...)`][pydantic_ai.models.openai.OpenAIResponsesModel] passes options such as `compression` or `write_limit` to `websockets`. Unless you set them, `max_size` and `max_queue` are `None`, lifting the limits on message size and unread frames: an event such as an image generation result can exceed the 1 MiB default, and the socket has to keep reading, and answering the server's keepalive pings, while the rest of a response closed early waits to be discarded.
 - Compaction and token counting use HTTP. A socket request rejected with status 408, 409, 429 or 5xx before its first response event retries up to the SDK client's `max_retries`, overridden by [`max_retries`][pydantic_ai.settings.ModelSettings.max_retries] on the model, agent or run. Retries respect `Retry-After` and `retry-after-ms`; otherwise they use exponential backoff. Set `max_retries=0` when a durable engine owns retries. Disconnects and errors after response events start propagate to the caller.
 
 Responses WebSockets carry ordinary text and tool-call responses. They are separate from [Realtime sessions](../realtime/openai.md) for audio and live interaction. See the [OpenAI WebSocket guide](https://developers.openai.com/api/docs/guides/websocket-mode) for endpoint behavior and connection-local state.
