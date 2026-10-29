@@ -3026,7 +3026,7 @@ class _ResponsesWebSocketState:
     leases: int = 0
     contexts: int = 0
     reusable: bool = False
-    """A scope outside a durable unit has held this state open for reuse across requests."""
+    """An agent run or an outer model scope has made this state reusable across requests."""
     in_flight: int = 0
     socket: ResponsesWebSocket | None = None
     open_lock: anyio.Lock | None = None
