@@ -73,8 +73,6 @@ class VirtualScreen:
         self._cookie: str | None = None
         self._starts = 0
         """How many times the screen started, each time without the windows it had."""
-        self._unshown: int | None = None
-        """The start no display call has completed on yet, so every backend on the screen counts it until one does."""
 
     async def display(self) -> str:
         """The screen's `DISPLAY`, such as `:3`, once it's running."""
@@ -87,7 +85,6 @@ class VirtualScreen:
                     await self.stop()
                     raise
                 self._starts += 1
-                self._unshown = self._starts
             elif self._processes[-1].poll() is not None:
                 # Only the window manager exited, such as from its menu's Exit: another keeps the screen's windows.
                 await self._start_window_manager(self._display)
@@ -228,7 +225,7 @@ class LocalDesktopBackend(LocalWorkspaceBackend):
             raise ValueError('pass either `real_screen=True` or a `screen`, not both')
         super().__init__(working_dir, env=env)
         self._screen = None if real_screen else screen or _shared_screen()
-        self._display = ManagedDisplay(self._start_display, screen_key=self._screen_key, shown=self._shown)
+        self._display = ManagedDisplay(self._start_display, screen_key=self._screen_key)
 
     def _screen_key(self) -> object | None:
         # Every workspace on this machine that uses the session's screen shares its `DISPLAY`, whatever its directory.
@@ -244,14 +241,11 @@ class LocalDesktopBackend(LocalWorkspaceBackend):
             )
         if self._screen is None:
             return _session_env()
+        starts = self._screen._starts  # pyright: ignore[reportPrivateUsage]
         display = await self._screen.display()
-        if (unshown := self._screen._unshown) is not None:  # pyright: ignore[reportPrivateUsage]
-            self._display.started_fresh(unshown)
+        if self._screen._starts != starts:  # pyright: ignore[reportPrivateUsage]
+            self._display.started_fresh()
         return self._screen._env(display)  # pyright: ignore[reportPrivateUsage]
-
-    async def _shown(self, generation: int) -> None:
-        if self._screen is not None and self._screen._unshown == generation:  # pyright: ignore[reportPrivateUsage]
-            self._screen._unshown = None  # pyright: ignore[reportPrivateUsage]
 
     async def run(
         self,
