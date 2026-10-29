@@ -235,10 +235,10 @@ def started_by_installed_package(frame: FrameType | None) -> bool:
 
     Below an event loop, or a task an `asyncio`, `anyio` or `trio` runner starts, the frames belong to
     whatever drives the loop (`uvicorn`, `ipykernel`), not to whoever started the run, unless Pydantic
-    AI's own sync methods drive it. A run whose starter
-    lies past such a boundary is not attributed to a package: it keeps the banner, as before. So
-    does a run a UI adapter streams: the web framework pulling the stream is installed, but the app
-    that handed it the adapter's response is the user's.
+    AI's own sync methods drive it. A run whose starter lies past such a boundary is not attributed
+    to a package: it keeps the banner, as before. So does a run a UI adapter streams: the web
+    framework pulling the stream is installed, but the app that handed it the adapter's response is
+    the user's.
 
     Args:
         frame: The frame to start looking outwards from, inside Pydantic AI.
