@@ -2877,8 +2877,16 @@ async def test_early_rejection_retry_budget(
     assert socket.close_count == 1
 
 
-@pytest.mark.parametrize('max_retries', [1, 2])
-@pytest.mark.parametrize('http_rejection', [False, True])
+@pytest.mark.parametrize('instrument,expected_transports', [(False, []), (True, ['http', 'websocket'])])
+@pytest.mark.parametrize(
+    'max_retries,http_rejection,expected_error,expected_http_attempts',
+    [
+        pytest.param(1, False, None, 1, id='exhausted-budget-http-success'),
+        pytest.param(1, True, 503, 1, id='exhausted-budget-http-error'),
+        pytest.param(2, False, None, 1, id='remaining-budget-http-success'),
+        pytest.param(2, True, None, 2, id='remaining-budget-http-retry'),
+    ],
+)
 async def test_rejected_request_overflows_to_http_when_retry_capacity_is_busy(
     allow_model_requests: None,
     sockets: SocketHarness,
@@ -2886,6 +2894,11 @@ async def test_rejected_request_overflows_to_http_when_retry_capacity_is_busy(
     monkeypatch: pytest.MonkeyPatch,
     max_retries: int,
     http_rejection: bool,
+    expected_error: int | None,
+    expected_http_attempts: int,
+    instrument: bool,
+    expected_transports: list[str],
+    capfire: CaptureLogfire,
 ):
     monkeypatch.setattr('pydantic_ai.models._openai_responses_websocket.ACTIVE_RESPONSE_LIMIT', 1)
     socket = sockets.pending[0]
@@ -2907,6 +2920,7 @@ async def test_rejected_request_overflows_to_http_when_retry_capacity_is_busy(
 
     monkeypatch.setattr(anyio, 'sleep', sleep)
     agent = Agent(websocket_model(http.provider(), settings=OpenAIResponsesModelSettings(max_retries=max_retries)))
+    agent.instrument = instrument
     if http_rejection:
         http.replies.append(
             httpx2.Response(
@@ -2921,10 +2935,10 @@ async def test_rejected_request_overflows_to_http_when_retry_capacity_is_busy(
     outputs: list[str] = []
 
     async def first() -> None:
-        if http_rejection and max_retries == 1:
+        if expected_error is not None:
             with pytest.raises(ModelHTTPError) as error:
                 await agent.run('rejected')
-            assert error.value.status_code == 503
+            assert error.value.status_code == expected_error
         else:
             result = await agent.run('rejected')
             assert result.output == 'from HTTP'
@@ -2949,8 +2963,15 @@ async def test_rejected_request_overflows_to_http_when_retry_capacity_is_busy(
 
     assert outputs == ['sibling finished']
     assert len(socket.sent) == 2
-    assert len(http.requests) == (2 if http_rejection and max_retries == 2 else 1)
+    assert len(http.requests) == expected_http_attempts
     assert socket.close_count == 1
+    logfire.force_flush()
+    chat_transports: list[object] = [
+        span['attributes'].get('pydantic_ai.transport')
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'chat'
+    ]
+    assert chat_transports == expected_transports
 
 
 async def test_context_closed_after_its_loop_stops_drops_the_socket(

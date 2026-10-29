@@ -657,7 +657,7 @@ The socket belongs to the [`OpenAIResponsesModel`][pydantic_ai.models.openai.Ope
 - A provider error, a failed or incomplete response, or a stream closed early ends only that request; the socket stays open. A transport failure during a request closes the socket and raises [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError], as over HTTP, so [`ModelFallback`](../capabilities/model-fallback.md) can take over. The request after it opens a new socket. Pydantic AI doesn't resend a request after a disconnect, since the provider may have acted on it.
 - OpenAI closes a socket after 60 minutes. Ten minutes before that, new requests open a new socket, and the old one closes once its responses finish. If the server closed the socket while it was idle, the request hadn't been sent, so it moves to a new socket once.
 
-These requests use HTTP instead, without a warning. The `pydantic_ai.transport` attribute, which is `'websocket'` on the `chat` span of a request sent over the socket, shows which transport each request used:
+These requests use HTTP instead, without a warning. The `pydantic_ai.transport` attribute on a request's `chat` span is `'websocket'` for a socket request, or `'http'` if a socket retry overflows to HTTP. Other HTTP requests leave it unset:
 
 - a request outside an agent run, `async with agent:` or `async with model:`, such as a direct [`model.request()`][pydantic_ai.models.Model.request], which has nothing to keep a socket open for
 - a request in a [durable execution](../durable_execution/overview.md) activity, step or task without an explicit model or agent context that outlives the unit on its event loop; see [worker-owned Temporal connections](../durable_execution/temporal.md#responses-websocket-connections)

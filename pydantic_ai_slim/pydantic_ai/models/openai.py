@@ -4526,6 +4526,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 )
                 retry = await self._reserve_websocket_lane(asyncio.get_running_loop(), messages, given_settings)
                 if retry is None:
+                    if (span := current_model_request_span()) is not None:
+                        span.set_attribute('pydantic_ai.transport', 'http')
                     http_settings: OpenAIResponsesModelSettings = {
                         **given_settings,
                         'max_retries': max_retries - websocket_stream.rejection_retries - 1,
