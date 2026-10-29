@@ -884,7 +884,7 @@ embedder = Embedder('{{ openai:embedding }}', instrument=True)
 Embedder.instrument_all()
 ```
 
-See the [Debugging and Monitoring guide](logfire.md) for more details on using Logfire with Pydantic AI.
+See the [Debugging and Monitoring guide](logfire.md#using-logfire) for Logfire setup and more details on using it with Pydantic AI.
 
 ## Two-stage retrieval with rerankers
 

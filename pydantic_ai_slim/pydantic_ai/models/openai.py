@@ -4634,7 +4634,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         ):
             return None
         for message in reversed(messages):
-            if isinstance(message, ModelResponse) and message.provider_name == self.system:
+            if isinstance(message, ModelResponse) and self.accepts_server_state(message):
                 if message.provider_details and message.provider_details.get('compaction'):
                     return None
                 response_id = message.provider_response_id
@@ -4654,7 +4654,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         trimmed_messages: list[ModelMessage] = []
         for index in range(len(messages) - 1, -1, -1):
             m = messages[index]
-            if isinstance(m, ModelResponse) and m.provider_name == self.system:
+            if isinstance(m, ModelResponse) and self.accepts_server_state(m):
                 # Responses from the stateless `/compact` endpoint can't be used as
                 # `previous_response_id`, so the compaction acts as a hard chain boundary:
                 # the next request must pass the `CompactionPart` via the `input` array
@@ -4719,7 +4719,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> tuple[str | None, list[ModelMessage]]:
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
-            if isinstance(m, ModelResponse) and m.provider_name == self.system:
+            if isinstance(m, ModelResponse) and self.accepts_server_state(m):
                 candidate = m.provider_details and m.provider_details.get('conversation_id')
                 if (
                     pydantic_ai_conversation_id is not None
@@ -4877,7 +4877,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
-                response_from_same_provider = message.provider_name == self.system
+                # Server-side state is only sent back to the endpoint that created it. A part from this provider in a
+                # response from another (or none) has no endpoint of its own, so it's judged by name as before.
+                same_endpoint = message.provider_name != self.system or self.accepts_server_state(message)
+                response_from_same_provider = message.provider_name == self.system and same_endpoint
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
@@ -4894,11 +4897,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         client_tool_search_active=client_tool_search_active,
                     )
                 for item in response_parts:
-                    from_same_provider = item.provider_name == self.system or (
-                        item.provider_name is None and message.provider_name == self.system
+                    from_same_provider = same_endpoint and (
+                        item.provider_name == self.system
+                        or (item.provider_name is None and message.provider_name == self.system)
                     )
-                    response_id_from_same_provider = message.provider_name == self.system or (
-                        message.provider_name is None and item.provider_name == self.system
+                    response_id_from_same_provider = same_endpoint and (
+                        message.provider_name == self.system
+                        or (message.provider_name is None and item.provider_name == self.system)
                     )
                     response_from_same_provider |= response_id_from_same_provider
                     # Two distinct gates. For native tool items whose state lives server-side
