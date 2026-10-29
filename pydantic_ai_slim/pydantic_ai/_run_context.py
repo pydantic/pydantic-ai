@@ -990,7 +990,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end). From a `before_model_request`
+                    or a redirect if the agent would otherwise end; at a deferred-tool pause the
+                    content is added to the history instead, unless every call in the paused step
+                    was deferred). From a `before_model_request`
                     hook, that's the request being prepared. In a realtime session, an active
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.

@@ -34,15 +34,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.messages import (
-    ModelRequest,
-    TextContent,
-    ToolCallPart,
-    ToolReturn,
-    ToolReturnPart,
-    UserContent,
-    UserPromptPart,
-)
+from pydantic_ai.messages import ModelRequest, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -429,9 +421,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         from pydantic_graph import End
 
         if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests):
-            # Finished tasks are kept in the history rather than enqueued, so that a deferred-tool pause
-            # is not turned into another model request by the end-of-run drain.
-            self._keep_arrived(ctx)
+            # At a deferred-tool pause the end-of-run drain records arrived results in the history when the
+            # step's own request ends it. After a step whose calls all deferred it would turn them into
+            # another model request instead, so finished tasks are left unswept.
+            if isinstance(ctx.messages[-1], ModelRequest):
+                for outcome in self._arrived():
+                    self._deliver(ctx, outcome)
             return result
 
         for outcome in self._arrived():
@@ -453,16 +448,6 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             raise outcome
         ctx.enqueue(*outcome.content)
         self._unsettled.append(outcome)
-
-    def _keep_arrived(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Add results that arrived before a deferred-tool pause to the history, where a resumed run sees them."""
-        parts: list[UserPromptPart] = []
-        for outcome in self._arrived():
-            if isinstance(outcome, BaseException):
-                raise outcome
-            parts.append(UserPromptPart(list(outcome.content)))
-        if parts:
-            ctx.messages.append(ModelRequest(parts=parts, run_id=ctx.run_id, conversation_id=ctx.conversation_id))
 
     def _settle(self, ctx: RunContext[AgentDepsT]) -> None:
         """Charge delivered calls to the tool manager whose retry counts the next step carries over.

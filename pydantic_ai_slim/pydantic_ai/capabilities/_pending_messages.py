@@ -9,7 +9,7 @@ from pydantic_ai._enqueue import deliver_asap_messages, run_queue, stamped_messa
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import EnqueuedMessagesEvent, ModelRequest
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_graph import End
 
 if TYPE_CHECKING:
@@ -84,7 +84,9 @@ def drain_pending_messages_at_end(
     The last resulting request becomes the redirect
     [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s request; any
     earlier ones are appended to `ctx.messages` so they appear in history before the
-    redirect. Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]
+    redirect. When the run pauses for deferred tools and the step's own request ends the
+    history, every resulting message is appended to `ctx.messages` instead, and the run ends.
+    Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]
     per drained [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order.
     """
     if not isinstance(result, End):
@@ -120,11 +122,18 @@ def drain_pending_messages_at_end(
             'Enqueued content must end with a `ModelRequest` so the agent has a request to respond to, '
             f'but the last queued message is a `{type(final).__name__}`.'
         )
+    # A run pausing for deferred tools hands control back to the caller, so the drained messages are
+    # recorded instead of redirected, as long as the step's own request ends the history: after a
+    # response whose calls all deferred, a request would read as interrupting those calls on resume.
+    record = isinstance(result.data.output, DeferredToolRequests) and isinstance(ctx.messages[-1], ModelRequest)
     for pending, pending_messages in stamped:
         for message in pending_messages:
-            if message is not final:
+            if record or message is not final:
                 ctx.messages.append(message)
         ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
             EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
         )
+    if record:
+        run_queue(ctx).close()
+        return result
     return ModelRequestNode(request=final)

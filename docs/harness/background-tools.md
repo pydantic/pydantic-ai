@@ -134,8 +134,9 @@ the other background tools.
 A normal run waits for its background tools to finish. A pending call counts toward
 `tool_calls_limit`. If the run pauses for deferred tools or stops early, unfinished tools are
 cancelled. Results of tools that finished before a deferred-tool pause are kept in the message
-history, so a resumed run sees them; results that have not been delivered when a run stops early are
-dropped. Async tools must allow cancellation; ignoring it can prevent the run from stopping.
+history, so a resumed run sees them, unless every call in the paused step was deferred. Results
+that have not been delivered when a run stops early are dropped. Async tools must allow
+cancellation; ignoring it can prevent the run from stopping.
 
 !!! warning
     Python cannot stop a synchronous tool before it returns. Cancelling the run will still wait for

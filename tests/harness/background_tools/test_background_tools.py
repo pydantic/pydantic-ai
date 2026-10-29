@@ -1210,7 +1210,7 @@ ends with &lt;/tool_result
         assert resumed.output == 'done'
         assert _follow_up_seen(resumed_with, 'fast value')
 
-    async def test_result_finished_during_a_fully_deferred_step_is_kept(self) -> None:
+    async def test_fully_deferred_pause_leaves_its_calls_pending(self) -> None:
         release = asyncio.Event()
         slow_done = asyncio.Event()
 
@@ -1241,9 +1241,10 @@ ends with &lt;/tool_result
         result = await agent.run('go')
 
         assert isinstance(result.output, DeferredToolRequests)
+        # A request after the response would make a resumed run treat its deferred call as interrupted.
         last = result.all_messages()[-1]
-        assert isinstance(last, ModelRequest)
-        assert _follow_up_seen([last], 'slow value')
+        assert isinstance(last, ModelResponse)
+        assert [call.tool_name for call in last.tool_calls] == ['needs_approval']
 
     async def test_error_finished_before_a_deferred_pause_still_ends_the_run(self) -> None:
         failed = asyncio.Event()
