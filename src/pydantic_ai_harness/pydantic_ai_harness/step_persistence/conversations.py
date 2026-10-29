@@ -128,6 +128,14 @@ _CLOCK_SLACK = timedelta(seconds=2)
 """How much later than a save its own process may seem to start: Linux times processes in whole seconds and ticks."""
 
 
+_ORDERS = {
+    'updated_at': 'updated_at',
+    # Both from the metadata, so both are in its one timestamp format and compare as text.
+    'created_at': "coalesce(json_extract(metadata, '$.created_at'), json_extract(metadata, '$.updated_at'))",
+}
+"""The SQL each `listing(order_by=...)` sorts by."""
+
+
 def _process_started(pid: int, proc: Path = Path('/proc')) -> datetime | None:
     """When process `pid` started, from Linux's `/proc`; `None` elsewhere or when it cannot be read."""
     if sys.platform != 'linux':  # pragma: no cover
@@ -313,18 +321,27 @@ class SqliteConversationStore:
         offset: int = 0,
         archived: bool | None = None,
         forked_from: str | None = None,
+        order_by: Literal['updated_at', 'created_at'] = 'updated_at',
     ) -> list[ConversationSummary]:
         """Page summaries without loading transcripts. Search includes title, tags and conversation text.
 
         `archived=False` leaves archived conversations out, `True` lists only those, and `None` lists both.
-        `forked_from` lists only conversations whose `forked_from` is that ID.
+        `forked_from` lists only conversations whose `forked_from` is that ID. Pages are newest first by last
+        activity, or with `order_by='created_at'` by creation, so a page holds the same conversations however
+        recently each was active; one saved before `created_at` existed sorts by its last activity.
         """
         if limit < 1 or offset < 0:
             raise ValueError('limit must be positive and offset nonnegative')
-        return await run_sync(self._listing, query, limit, offset, archived, forked_from)
+        return await run_sync(self._listing, query, limit, offset, archived, forked_from, order_by)
 
     def _listing(
-        self, query: str, limit: int, offset: int, archived: bool | None, forked_from: str | None
+        self,
+        query: str,
+        limit: int,
+        offset: int,
+        archived: bool | None,
+        forked_from: str | None,
+        order_by: Literal['updated_at', 'created_at'],
     ) -> list[ConversationSummary]:
         # Every row matches an empty query, and searching reads each transcript, so only a real query searches.
         search = 'instr(casefold(search_text || metadata), casefold(?)) > 0 AND ' if query else ''
@@ -333,7 +350,7 @@ class SqliteConversationStore:
             rows = conn.execute(
                 f'SELECT metadata FROM conversations WHERE {search}{fork}'
                 "(? IS NULL OR (json_extract(metadata, '$.archived_at') IS NOT NULL) = ?) "
-                'ORDER BY updated_at DESC, id LIMIT ? OFFSET ?',
+                f'ORDER BY {_ORDERS[order_by]} DESC, id LIMIT ? OFFSET ?',
                 (
                     *([query] if query else []),
                     *([forked_from] if forked_from is not None else []),

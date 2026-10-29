@@ -30,33 +30,34 @@ with; it stays saved, and clicking it resumes it. The launch directory's `.env` 
 The sidebar lists the sessions `/resume` shows. **Projects** groups them by project (the Git
 repository, named after its main checkout's folder), each row showing its branch when the project
 has sessions on more than one; **Recent** lists every project's sessions in one list. A folder
-outside Git is a project of its own. Projects are listed by name and sessions newest created
-first, so a row never moves when you select it, a turn ends, a session is renamed, or the list
-refreshes; a new session appears at the top. A session remembers its checkout when it is
-saved, so one from a worktree you have since removed stays with its project; sessions whose folder
-is gone fold into **Removed worktrees** at the bottom, closed until you open it. When two rows of one project or list share a
-title, each shows a short ID. Click one to switch to it, even while other sessions run turns: the row is selected at
-once, and each session you open stays live and keeps working while you look at another.
+outside Git is a project of its own. Projects are listed by name and sessions newest created first,
+so a row never moves when you select it, a turn ends, a session is renamed, or the list refreshes; a
+new session appears at the top. A session remembers its checkout when it is saved, so one from a
+worktree you have since removed stays with its project; sessions whose folder is gone fold into
+**Removed worktrees** at the bottom, closed until you open it. When two rows of one project or list
+share a title, each shows a short ID. Click one to switch to it, even while other sessions run
+turns: the row is selected at once, and each session you open stays live and keeps working while you
+look at another.
 
 Each row has one status mark. A spinner, with how long the turn has run, means a turn runs here
-(ringed when input waits behind it); a hollow ring means another CLAI runs it, named with its process
-ID in the tooltip; **Needs input** means it waits for your answer; a bold title with a dot means it
-changed since you last looked (open it, or use **Mark as read**); a red or amber dot means its last
-turn failed or was interrupted. **Attention** (Cmd/Ctrl+Alt+U) lists only the sessions running,
-waiting for you, or unread. Use a session's menu to rename, fork, archive, or delete it, or to
-archive every session of its branch, and a project's menu to archive all its chats; these skip the
-open and running sessions, and are off during a search, which lists only some of them. Archiving hides a session from the sidebar and `/resume`
-without deleting anything; **Archived** lists archived sessions, each with **Unarchive** in its
-menu. The shown session and running ones cannot be archived, and resuming an archived one, or a new
-turn in it, unarchives it. A session open in CLAI cannot be deleted. A
-session whose directory is gone, such as a removed worktree, opens read-only; so does, with `/web`
-from a terminal, a session saved in another directory, since the terminal works where it started.
-Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no
-other, Cmd/Ctrl+K searches sessions (Down moves to the results, Enter opens the first), Cmd/Ctrl+Shift+O
-starts a new one, Cmd/Ctrl+B hides the sidebar. In the session list, Up and Down move between rows,
-Enter opens one, and Left and Right fold and open a project.
-As in the terminal, Up on the composer's first line recalls the session's sent prompts, newest first,
-and Down on its last line steps back toward your unsent draft.
+(ringed when input waits behind it); a hollow ring means another CLAI runs it, named with its
+process ID in the tooltip; **Needs input** means it waits for your answer; a bold title with a dot
+means it changed since you last looked (open it, or use **Mark as read**); a red or amber dot means
+its last turn failed or was interrupted. **Attention** (Cmd/Ctrl+Alt+U) lists only the sessions
+running, waiting for you, or unread. Use a session's menu to rename, fork, archive, or delete it, or
+to archive every session of its branch, and a project's menu to archive all its chats; these skip
+the open and running sessions, and are off during a search, which lists only some of them. Archiving
+hides a session from the sidebar and `/resume` without deleting anything; **Archived** lists
+archived sessions, each with **Unarchive** in its menu. The shown session and running ones cannot be
+archived, and resuming an archived one, or a new turn in it, unarchives it. A session open in CLAI
+cannot be deleted. A session whose directory is gone, such as a removed worktree, opens read-only;
+so does, with `/web` from a terminal, a session saved in another directory, since the terminal works
+where it started. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's
+turn and no other, Cmd/Ctrl+K searches sessions (Down moves to the results, Enter opens the first),
+Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar. In the session list, Up and Down
+move between rows, Enter opens one, and Left and Right fold and open a project. As in the terminal,
+Up on the composer's first line recalls the session's sent prompts, newest first, and Down on its
+last line steps back toward your unsent draft.
 
 While a turn runs, the composer works as the terminal's prompt does. Enter queues your message for
 after the turn. Alt+Enter (Option+Enter on a Mac), or the bolt button beside Send, steers the running
