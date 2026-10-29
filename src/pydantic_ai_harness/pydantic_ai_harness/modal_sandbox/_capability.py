@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Never
+from typing import TYPE_CHECKING, Any, Never
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
@@ -258,6 +258,45 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.warn_if_no_tools = warn_if_no_tools
         self._warned_no_tools = False
         self._sandbox_id_ref = _sandbox_id_ref(removed_arguments.get('sandbox_id'))
+
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        image: str | None = None,
+        app_name: str = DEFAULT_APP_NAME,
+        create_app_if_missing: bool = True,
+        sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
+        idle_timeout: int | None = None,
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+        warn_if_no_tools: bool = True,
+        **kwargs: Any,
+    ) -> ModalSandbox[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
+        to the variadic base `from_spec`, because `__init__`'s `modal.Image` hint is a
+        `TYPE_CHECKING` import, and publishes only the bare `'ModalSandbox'`. A spec names an
+        image by its registry tag. `**kwargs` reaches
+        `__init__` unchanged, so deprecated arguments keep their guidance and `defer_loading`
+        its refusal.
+        """
+        return cls(
+            id=id,
+            description=description,
+            image=image,
+            app_name=app_name,
+            create_app_if_missing=create_app_if_missing,
+            sandbox_timeout=sandbox_timeout,
+            idle_timeout=idle_timeout,
+            working_dir=working_dir,
+            env=env,
+            warn_if_no_tools=warn_if_no_tools,
+            **kwargs,
+        )
 
     def backend(self, ref: WorkspaceRef) -> ModalSandboxBackend:
         """Construct a backend for a stored Modal ref without opening the sandbox."""

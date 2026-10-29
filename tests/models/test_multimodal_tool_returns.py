@@ -203,6 +203,8 @@ NOTED_IN_TOOL_RESULTS: frozenset[tuple[ProviderName, FileType]] = frozenset(
         ('anthropic', 'video'),
         ('bedrock_nova', 'audio'),
         ('bedrock_claude', 'audio'),
+        ('bedrock_claude', 'video'),
+        ('openai_chat', 'audio'),
         ('openai_chat', 'video'),
         ('openai_responses', 'audio'),
         ('openai_responses', 'video'),

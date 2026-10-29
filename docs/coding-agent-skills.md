@@ -10,7 +10,7 @@ If you're building Pydantic AI applications with a coding agent, you can install
 
 When your coding agent creates a new Pydantic AI application, the skill has it set up [Pydantic Logfire](logfire.md) for observability, so you can see every agent run, model request, and tool call from the first version. If your company sends production telemetry to another OpenTelemetry backend, production stays there, and the skill still offers you a personal Logfire project for [local development](logfire.md#local-development). It also knows the [Pydantic AI Gateway](gateway.md), one key for models from several providers, and the `gateway/` model strings that use it.
 
-For the rest of Logfire, such as instrumenting the rest of your application, querying traces, or running evals, the [`pydantic/skills`](https://github.com/pydantic/skills) repository has Logfire skills too: install the `logfire` plugin, or point your agent at [pydantic.dev/ai-setup.md](https://pydantic.dev/ai-setup.md) for the guided setup.
+For the rest of Logfire, such as instrumenting the rest of your application, querying traces, or running evals, the [`pydantic/skills`](https://github.com/pydantic/skills) repository has Logfire skills too: install the `logfire` plugin, or run `uvx logfire-cli wizard --task pydantic-ai` for the guided setup.
 
 !!! note
     If you want to give your Pydantic AI agent its own skills, see the Pydantic AI Harness [`Skills`](harness/skills.md) capability.
@@ -57,8 +57,13 @@ Add `--claude` to also install into `.claude/skills/` alongside the default `.ag
 
 This installation also includes [migration skills](framework-migration.md) for moving applications from other agent frameworks to Pydantic AI.
 
+## Next steps
+
+With the skill installed, ask your coding agent to build your first agent, or read the [Agents guide](agent.md) to see what it will write.
+
 ## See Also
 
 - [`pydantic/skills`](https://github.com/pydantic/skills): source repository
 - [agentskills.io](https://agentskills.io): the open standard for agent skills
 - [library-skills.io](https://library-skills.io): install agent skills bundled with your project's dependencies
+- [Built with Pydantic AI](built-with.md): open source systems your coding agent can study for how to structure a large application, and libraries that build on Pydantic AI
