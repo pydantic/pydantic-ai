@@ -508,6 +508,7 @@ print(response.all_messages())
         parts=[TextPart(content='The capital of France is Paris.')],
         usage=RequestUsage(cost=Decimal('0.000182'), input_tokens=56, output_tokens=7),
         model_name='{{ anthropic:medium.name }}',
+        model_id='fallback:{{ openai:medium }},{{ anthropic:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',

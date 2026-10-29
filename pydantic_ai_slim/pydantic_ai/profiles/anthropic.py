@@ -192,6 +192,18 @@ class AnthropicModelProfile(ModelProfile, total=False):
     guide](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
     """
 
+    anthropic_distrusts_system_after_tool_result: bool
+    """Whether the model can read a mid-conversation `system` entry that directly follows a tool result as part of the tool output. Default: `False`.
+
+    Claude Haiku 5.5 can read a `{'role': 'system'}` entry that directly follows a `tool_result` as part of the tool
+    output, and so not follow it, as [Anthropic's
+    docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results)
+    note. That's where a loaded on-demand capability's instructions and an instruction change during a tool loop
+    land. When True, `AnthropicModel` ends that user turn with a short text block saying the tool results end
+    there and the system message comes from the application. Measured live, that block took Haiku 5.5 from 12 to
+    64 of 64 runs following a rule change; Sonnet 5.5 and Opus 5.5 followed it without the block.
+    """
+
     anthropic_accepts_file_and_container_ids: bool
     """Whether the API accepts Anthropic Files API file IDs and code execution container IDs. Default: `True`.
 
@@ -462,6 +474,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # Sonnet 5.5 rejects `{'type': 'disabled'}` with a 400 that names `{'type': 'between_tools'}` as the way to turn
     # thinking off, and accepts it live on the Anthropic API and Bedrock.
     disables_thinking_with_between_tools = model_name.startswith('claude-sonnet-5-5')
+    distrusts_system_after_tool_result = model_name.startswith('claude-haiku-5-5')
 
     # The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
     # other Anthropic models which only reject forcing alongside extended thinking. Anthropic's
@@ -569,6 +582,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
         anthropic_disallows_top_effort_when_thinking_disabled=disallows_top_effort_when_thinking_disabled,
         anthropic_disables_thinking_with_between_tools=disables_thinking_with_between_tools,
+        anthropic_distrusts_system_after_tool_result=distrusts_system_after_tool_result,
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,

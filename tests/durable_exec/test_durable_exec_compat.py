@@ -766,6 +766,7 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
                     'cost': None,
                 },
                 'model_name': None,
+                'model_id': None,
                 'timestamp': '2020-01-01T00:00:00Z',
                 'kind': 'response',
                 'provider_name': None,
