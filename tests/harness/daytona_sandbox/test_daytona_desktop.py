@@ -243,19 +243,17 @@ async def test_an_action_after_the_sandbox_restarted_starts_the_desktop_before_a
     backend, sandbox = await _started(fake_daytona)
     assert backend.display is not None
     await Workspace(backend).screenshot()
-    starts = backend.display.starts
 
     sandbox.computer_use.stop_with_sandbox()
     with pytest.raises(WorkspaceError):
         await Workspace(backend).act(Click(x=1, y=1))
     # The next action starts the desktop again, and doesn't run on the new screen.
-    with pytest.raises(WorkspaceError, match='The display restarted before this action'):
+    with pytest.raises(WorkspaceError, match='The display was not running and started for this action'):
         await Workspace(backend).act(Click(x=1, y=1))
     await Workspace(backend).act(Click(x=1, y=1))
 
     assert not sandbox.computer_use.broken
     assert sandbox.desktop_calls[-2:] == ['start', 'click 1 1 left clicks=1 modifiers=[]']
-    assert backend.display.starts == starts + 1
 
 
 async def test_a_desktop_that_stopped_answering_ends_the_run(fake_daytona: FakeDaytona) -> None:

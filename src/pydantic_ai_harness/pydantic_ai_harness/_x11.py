@@ -153,24 +153,8 @@ _CAPTURE_SCALED = (
 STARTED = 'pydantic-ai-display-started'
 """What a start script prints when it started a new X server, rather than finding one running."""
 
-_GENERATION = '/tmp/.pydantic-ai-display-generation'
-"""Counts the X server starts in the environment, so every backend object on it numbers them alike."""
-
-_UNSHOWN = '/tmp/.pydantic-ai-display-unshown'
-"""Holds the generation of a start no display call has completed on yet, until one does."""
-
-RECORD_START = (
-    f'generation=$(($(cat {_GENERATION} 2>/dev/null || echo 0) + 1)); echo $generation > {_GENERATION}; '
-    f'echo $generation > {_UNSHOWN}; echo {STARTED}; '
-)
-"""What a start script runs once a new X server answers: numbers the start, keeps it as not yet shown, and prints
-`STARTED`."""
-
-_REPORT_UNSHOWN = f'; if [ -e {_UNSHOWN} ]; then echo "{STARTED} $(cat {_UNSHOWN})"; fi'
-"""Appended to a start script: prints `STARTED` and the generation of a start no call has completed on, whichever
-backend object made it, such as one whose durable unit failed."""
-
-_FORGET_UNSHOWN = f'if [ "$(cat {_UNSHOWN} 2>/dev/null)" = "$1" ]; then rm -f {_UNSHOWN}; fi'
+RECORD_START = f'echo {STARTED}; '
+"""What a start script runs once a new X server answers: prints `STARTED`."""
 
 
 def _keysym(key: str) -> str:
@@ -276,32 +260,18 @@ def x11_display(
 
     async def start() -> X11Computer:
         width, height = size
-        result = await backend.run(['sh', '-c', script + _REPORT_UNSHOWN, 'sh', f'{width}x{height}'], timeout=30)
+        result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], timeout=30)
         if result.exit_code != 0:
             raise WorkspaceUnavailableError(
                 f'Could not start the display in {where()}: it needs Xvfb, xdotool, xmodmap, scrot and setsid '
                 f'({(result.stderr or result.stdout).strip()})'
             )
-        if generation := _unshown_generation(result.stdout):
-            display.started_fresh(generation)
+        if STARTED in result.stdout.splitlines():
+            display.started_fresh()
         return X11Computer(backend)
 
-    async def shown(generation: int) -> None:
-        await backend.run(['sh', '-c', _FORGET_UNSHOWN, 'sh', str(generation)], timeout=30)
-
-    display = ManagedDisplay(start, screen_key=screen_key, shown=shown)
+    display = ManagedDisplay(start, screen_key=screen_key)
     return display
-
-
-def _unshown_generation(output: str) -> int | None:
-    """The generation of the start `_REPORT_UNSHOWN` printed, if it printed one."""
-    for line in output.splitlines():
-        match line.split():
-            case [marker, generation] if marker == STARTED and generation.isdigit():
-                return int(generation)
-            case _:
-                pass
-    return None
 
 
 class X11Computer:

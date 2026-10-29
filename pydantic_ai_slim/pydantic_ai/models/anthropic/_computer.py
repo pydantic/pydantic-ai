@@ -98,9 +98,6 @@ RETURNS_OUTPUT = frozenset({'zoom', 'cursor_position'})
 COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 """The result Anthropic asks for on each member call after one that failed."""
 
-COMPUTER_HELD_BACK = 'Not executed: the display restarted, so this action was held back.'
-"""The result of a member call that didn't run because the display restarted; another call's result says more."""
-
 _COMPUTER_CLICKS = {
     'left_click': ('left', 1),
     'right_click': ('right', 1),
