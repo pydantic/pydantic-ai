@@ -128,6 +128,10 @@ def test_run_griffe_reports_real_griffe_findings(tmp_path: Path, monkeypatch: py
         run_griffe('missing_pkg', '.', 'v1')
 
 
+def test_load_waivers_treats_a_missing_directory_as_empty(tmp_path: Path):
+    assert load_waivers(tmp_path / 'waivers') == {}
+
+
 def test_load_allowlist_and_waivers(tmp_path: Path):
     finding = Finding('pydantic_ai', 'messages.py', 12, 'RequestPart: Attribute value was changed: Old -> New')
     allowlist = _write_allowlist(

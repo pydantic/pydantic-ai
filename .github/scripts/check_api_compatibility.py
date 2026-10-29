@@ -193,6 +193,9 @@ def load_allowlist(path: Path) -> tuple[set[tuple[str, str]], set[tuple[str, str
 
 def load_waivers(directory: Path) -> dict[str, Waiver]:
     """The waivers in `directory`, by fingerprint. Any other file in it is an error."""
+    # Git doesn't track an empty directory, so it is missing from a checkout once every waiver is pruned.
+    if not directory.exists():
+        return {}
     return dict(read_waiver(path, path.read_text(encoding='utf-8')) for path in sorted(directory.iterdir()))
 
 
