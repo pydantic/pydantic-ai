@@ -780,6 +780,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 retry=ctx.retries.get(exposed, 0),
                 max_retries=max_retries,
                 _tool_name_path=(),
+                # A listing nested in a tool call must not inherit that call's tool manager name.
+                _dispatched_tool_name=None,
             )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:

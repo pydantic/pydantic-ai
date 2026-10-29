@@ -188,7 +188,6 @@ if TYPE_CHECKING:
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
-        RealtimeEvent as RealtimeEvent,
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeProviderSession,
@@ -220,7 +219,6 @@ __all__ = (
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
     'ToolDenied',
-    'RealtimeEvent',
 )
 
 _ACTIVE_AGENT_LIMITERS: ContextVar[tuple[tuple[int, _concurrency.ConcurrencyLimiter], ...]] = ContextVar(

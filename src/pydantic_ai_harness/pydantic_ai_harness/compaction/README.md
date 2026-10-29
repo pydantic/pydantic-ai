@@ -14,6 +14,8 @@ alternative: they work with every model and keep the compaction logic (and its c
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/compaction/)
 
+![Compaction runs in the before_model_request hook, between the message history and the model. TieredCompaction runs its tiers in order: DeduplicateFileReads and ClearToolResults cost no model call, SummarizingCompaction makes one. After each tier it re-measures the history and stops as soon as it fits target_tokens, so in this example the summary tier never runs. The shortened history persists into the run.](https://pydantic.dev/docs/ai/img/harness/compaction.svg)
+
 ## The menu
 
 | Component | Cost | What it does | Reach for it when |

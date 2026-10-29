@@ -15,6 +15,7 @@ from collections.abc import Callable
 import pytest
 from inline_snapshot import snapshot
 
+import pydantic_ai.agent
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
@@ -135,6 +136,16 @@ def test_new_public_dataclasses_are_keyword_only(public_dataclasses: dict[str, l
         assert stale_entries == set(), (
             f'`_KW_ONLY_ALLOWLIST` entries no longer offend and must be removed: {sorted(stale_entries)}'
         )
+
+
+def test_agent_module_all_exports_resolve_at_runtime():
+    """Every name in `pydantic_ai.agent.__all__` must be bound at runtime, not only under `TYPE_CHECKING`.
+
+    A star-import resolves each `__all__` entry with `getattr`, so an entry that type checkers can see but
+    the module never binds makes `from pydantic_ai.agent import *` raise `AttributeError`.
+    """
+    unresolved = [name for name in pydantic_ai.agent.__all__ if not hasattr(pydantic_ai.agent, name)]
+    assert unresolved == []
 
 
 _AGENT_IMPLEMENTATIONS: dict[str, type] = {

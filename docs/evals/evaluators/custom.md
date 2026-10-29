@@ -31,6 +31,43 @@ class ExactMatch(Evaluator):
 - Implement `evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput`
 - Return `bool`, `int`, `float`, `str`, [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason], or `dict` of these
 
+## Function Evaluators
+
+For a check that doesn't need parameters, a plain sync or async function that takes an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] works anywhere a list of evaluators is accepted, including [online evaluation](../online-evaluation.md#onlineevaluator):
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import EvaluatorContext
+
+
+def exact_match(ctx: EvaluatorContext[str, str]) -> bool:
+    return ctx.output == ctx.expected_output
+
+
+async def word_count(ctx: EvaluatorContext[str, str]) -> int:
+    return len(ctx.output.split())
+
+
+def shout(text: str) -> str:
+    return text.upper()
+
+
+dataset = Dataset(
+    name='shouting',
+    cases=[Case(name='greeting', inputs='hello world', expected_output='HELLO WORLD')],
+    evaluators=[exact_match, word_count],
+)
+report = dataset.evaluate_sync(shout, progress=False)
+print(report.cases[0].assertions['exact_match'].value)
+#> True
+print(report.cases[0].scores['word_count'].value)
+#> 2
+```
+
+Results are named after the function, and it can return anything an `evaluate` method can. To set a different name or a [version](../online-evaluation.md#evaluator-versioning), wrap the function in a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator] yourself, as in `FunctionEvaluator(exact_match, evaluation_name='matches', version='v2')`.
+
+A Python function has no serialized form, so a dataset with a function evaluator can't be [saved to a file](../how-to/dataset-serialization.md). Use an `Evaluator` subclass for evaluators that need to be saved, or that take parameters.
+
 ## EvaluatorContext
 
 The context provides all information about the case execution:
