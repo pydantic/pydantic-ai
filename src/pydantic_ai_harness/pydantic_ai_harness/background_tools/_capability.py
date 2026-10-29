@@ -498,3 +498,21 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         # `result` is bound: the group re-raises the run's own exception, and no task cancels the group.
         assert result is not None
         return result
+
+
+def has_live_background_tools(ctx: RunContext[Any]) -> bool:
+    """Whether this run still has background tools running.
+
+    A run that pauses for deferred tools cancels its live background tools, so a deferred-tool
+    handler can check this to wait for them before letting the run pause.
+    """
+    live = False
+
+    def visit(capability: AbstractCapability[Any]) -> None:
+        nonlocal live
+        if isinstance(capability, BackgroundTools) and capability._live:  # pyright: ignore[reportPrivateUsage]
+            live = True
+
+    assert ctx.root_capability is not None, 'A run always has its root capability.'
+    ctx.root_capability.apply(visit)
+    return live
