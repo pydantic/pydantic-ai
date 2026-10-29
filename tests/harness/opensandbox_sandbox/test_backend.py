@@ -160,6 +160,16 @@ class TestLifecycle:
             await backend.run(['true'])
         assert 'secret-wrong-key' not in str(raised.value)
 
+    async def test_a_create_the_server_rejects_as_invalid_is_unavailable(
+        self, server: FakeOpenSandbox, working_dir: str
+    ) -> None:
+        """Such as an invalid `resource`; the server made no sandbox, so none is looked up."""
+        server.refuse = (400, 'SANDBOX::INVALID_PARAMETER')
+        backend = _create(server, working_dir, resource={'cpu': 'lots'})
+        with pytest.raises(WorkspaceUnavailableError, match='Could not create an OpenSandbox sandbox'):
+            await backend.run(['true'])
+        assert server.requests == ['POST /v1/sandboxes']
+
     async def test_a_server_failure_on_create_stays_transient(self, server: FakeOpenSandbox, working_dir: str) -> None:
         """A 5xx, such as an image the server could not pull, propagates for a durable engine to retry."""
         server.refuse = (500, 'DOCKER::SANDBOX_IMAGE_PULL_FAILED')
@@ -248,15 +258,6 @@ class TestLifecycle:
             server.stopping = True
             await server.kill(backend.ref.id)
 
-    async def test_an_unrelated_error_on_a_running_sandbox_is_not_delayed(
-        self, server: FakeOpenSandbox, working_dir: str
-    ) -> None:
-        """Only a broken stream waits for the server to catch up; a refused request answers at once."""
-        backend = _create(server, working_dir)
-        await backend.run(['rm', '-rf', working_dir])
-        with anyio.fail_after(1), pytest.raises(WorkspaceUnavailableError, match='refused the command'):
-            await backend.run(['true'])
-
     async def test_a_sandbox_the_sdk_killed_after_a_failed_create_is_not_recorded(
         self, server: FakeOpenSandbox, working_dir: str
     ) -> None:
@@ -283,6 +284,25 @@ class TestWorkingDir:
         backend = _create(server, f'{working_dir}/file/sub')
         with pytest.raises(WorkspaceError, match='Could not create or enter the working directory'):
             await backend.run(['true'])
+
+    async def test_one_a_command_deleted_fails_later_commands_but_not_the_sandbox(
+        self, server: FakeOpenSandbox, working_dir: str
+    ) -> None:
+        """execd refuses a missing working directory; the sandbox is fine, so the error is the command's.
+
+        Only a broken stream waits for the server to catch up with a kill: this asks for the sandbox's state once.
+        """
+        backend = _create(server, f'{working_dir}/project')
+        await backend.run(['rm', '-r', f'{working_dir}/project'])
+        assert backend.ref is not None
+        state = f'GET /v1/sandboxes/{backend.ref.id}'
+        asked = server.requests.count(state)
+        with pytest.raises(WorkspaceError, match='working directory does not exist') as raised:
+            await backend.run(['true'])
+        assert not isinstance(raised.value, WorkspaceUnavailableError)
+        assert server.requests.count(state) == asked + 1
+        Path(working_dir, 'project').mkdir()
+        assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
 
 
 class TestServerErrors:
@@ -373,20 +393,31 @@ class TestSandboxTimeout:
         await attached.run(['true'])
         assert [sandbox_id for sandbox_id, _ in server.renewals] == [created.ref.id]
 
-    async def test_use_renews_it_once_half_has_passed(
-        self, server: FakeOpenSandbox, working_dir: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        now = 0.0
-        monkeypatch.setattr(_backend, 'time', types.SimpleNamespace(monotonic=lambda: now))
+    async def test_every_operation_after_the_create_renews_it(self, server: FakeOpenSandbox, working_dir: str) -> None:
         backend = _create(server, working_dir, sandbox_timeout=600)
         await backend.run(['true'])
-        now = 300.0
-        await backend.run(['true'])
         assert server.renewals == []
-        now = 301.0
         await backend.run(['true'])
         await backend.run(['true'])
-        assert len(server.renewals) == 1
+        assert backend.ref is not None
+        assert [sandbox_id for sandbox_id, _ in server.renewals] == [backend.ref.id] * 2
+
+    async def test_one_that_ran_out_is_unavailable(self, server: FakeOpenSandbox, working_dir: str) -> None:
+        backend = _create(server, working_dir, sandbox_timeout=600)
+        await backend.run(['true'])
+        assert backend.ref is not None
+        await server.kill(backend.ref.id)
+        with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+            await backend.run(['true'])
+
+    async def test_a_server_failure_on_renewal_stays_transient(self, server: FakeOpenSandbox, working_dir: str) -> None:
+        backend = _create(server, working_dir, sandbox_timeout=600)
+        await backend.run(['true'])
+        server.refuse = (503, 'UNAVAILABLE')
+        with pytest.raises(SandboxApiException):
+            await backend.run(['true'])
+        server.refuse = None
+        assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
 
 
 class TestTransport:

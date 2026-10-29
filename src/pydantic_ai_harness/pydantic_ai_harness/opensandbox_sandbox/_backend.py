@@ -193,9 +193,9 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         env: Environment variables every command gets; the per-call `env` goes on top. Nothing is read from the host.
         resource: Resource limits for a new sandbox, such as `{'cpu': '500m', 'memory': '1Gi'}`; `None` keeps the
             SDK's default of one CPU and 2 GiB.
-        sandbox_timeout: Seconds a sandbox may go unused before the server deletes it, files included. An
-            operation that starts once half of it has passed renews it, so a single command must finish within
-            it. `None` keeps it until it is destroyed.
+        sandbox_timeout: Seconds a sandbox may go unused before the server deletes it, files included. Every
+            operation renews it as it starts, so a single command must finish within it. `None` keeps it until it
+            is destroyed.
     """
 
     def __init__(
@@ -227,7 +227,6 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._sandbox_timeout = sandbox_timeout
         self._sandbox: Sandbox | None = None
         self._resolved_working_dir: str | None = None
-        self._renewed_at = 0.0
         self._lock = anyio.Lock()
         self._operations = 0
         self._close_after_operation = False
@@ -241,7 +240,8 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         """The `opensandbox.Sandbox`, for features the workspace API does not cover.
 
         On a backend with no sandbox yet this creates one, or attaches to the one `ref` names, just like the
-        first operation. It stays usable until the backend is closed.
+        first operation. It shares the backend's transport, so it stops working once the backend closes: at
+        `aclose()`, and, for a backend `OpenSandbox` built that no run owns, after each operation.
         """
         # Not an operation: a backend that closes after each operation would close the handle it returns.
         _require_asyncio()
@@ -296,8 +296,8 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
             if sandbox is None:
                 sandbox = await self._create() if self._ref is None else await self._attach(self._ref.id)
                 self._sandbox = sandbox
-                self._renewed_at = time.monotonic()
-            elif self._sandbox_timeout is not None and time.monotonic() - self._renewed_at > self._sandbox_timeout / 2:
+            elif self._sandbox_timeout is not None:
+                # The server only has an expiry time, so each operation moves it a full timeout away.
                 await self._renew(sandbox)
             if self._resolved_working_dir is None:
                 self._resolved_working_dir = await self._enter_working_dir(sandbox)
@@ -386,8 +386,13 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _renew(self, sandbox: Sandbox) -> None:
         assert self._sandbox_timeout is not None
-        await sandbox.renew(timedelta(seconds=self._sandbox_timeout))
-        self._renewed_at = time.monotonic()
+        try:
+            await sandbox.renew(timedelta(seconds=self._sandbox_timeout))
+        except SandboxApiException as error:
+            # A sandbox whose timeout ran out between operations.
+            if error.status_code == 404:
+                raise _unavailable(sandbox.id) from error
+            raise
 
     async def _enter_working_dir(self, sandbox: Sandbox) -> str:
         if self._working_dir is None:
@@ -491,7 +496,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         await stop_shielded(stop, grace=_STOP_TIMEOUT)
 
     async def _translate(self, sandbox: Sandbox, error: SandboxException) -> Exception:
-        """A gone sandbox is unavailable and a refused request is the caller's; anything else stays transient."""
+        """A gone sandbox is unavailable and a request execd refused is the command's error; the rest stays transient."""
         try:
             # Only a broken stream waits for the server to catch up with a kill.
             await self._raise_if_gone(
@@ -499,8 +504,10 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
             )
         except WorkspaceUnavailableError as gone:
             return gone
-        if isinstance(error, SandboxApiException) and (refused := _refusal(error, 'OpenSandbox refused the command')):
-            return refused
+        if isinstance(error, SandboxApiException) and error.status_code == 400:
+            # execd validates the request, such as a working directory a command has since deleted: the sandbox
+            # is fine, so this is the command's error.
+            return WorkspaceError(f'OpenSandbox refused the command: {error}')
         return error
 
     async def _raise_if_gone(self, sandbox: Sandbox, *, settle: float = _GONE_SETTLE) -> None:

@@ -47,12 +47,14 @@ def _no_real_server(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPa
     """Point the SDK's default server at a name that cannot resolve, for every test but the live tier.
 
     The SDK falls back to `localhost:8080`, where a developer may run a real server: a unit test that forgets
-    the fake's `connection` must fail instead of creating real sandboxes there.
+    the fake's `connection` must fail instead of creating real sandboxes there. The SDK also posts each create's
+    latency through a client of its own that skips the configured transport, as a task left running.
     """
     if 'opensandbox_live' in request.keywords:  # pragma: no cover - live tier runs without coverage
         return
     monkeypatch.setenv('OPEN_SANDBOX_DOMAIN', 'unit-tests-use-the-fake-server.invalid')
     monkeypatch.delenv('OPEN_SANDBOX_API_KEY', raising=False)
+    monkeypatch.setenv('OPENSANDBOX_DISABLE_METRICS', '1')
 
 
 if _HAS_OPENSANDBOX:  # pragma: no branch - the fixture cannot be defined without the SDK the fake runs

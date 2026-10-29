@@ -153,7 +153,7 @@ async def remove_sandbox(ref: WorkspaceRef) -> None:
 
 Destroying a sandbox that is already gone returns quietly. `OpenSandbox()` without an `image` attaches to and destroys sandboxes by ref, and leaves a run without a ref to the agent's other workspace capabilities.
 
-To have the server clean up for you, set `sandbox_timeout`: a sandbox unused for that many seconds is deleted, files included. An operation that starts once half of it has passed renews it, so a long run keeps its sandbox, but a single command must finish within it: set it above your longest command. Without it, a sandbox lives until it is destroyed.
+To have the server clean up for you, set `sandbox_timeout`: a sandbox unused for that many seconds is deleted, files included. Every operation renews it as it starts, so a long run keeps its sandbox, but a single command must finish within it: set it above your longest command. Without it, a sandbox lives until it is destroyed.
 
 A failed run returns no result, so there is no ref to store. Destroy the sandbox in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up), or create the backend yourself as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run). Every sandbox the capability creates carries a `pydantic-ai-create` metadata entry, so one left without a stored ref can be found by listing the server's sandboxes.
 
@@ -163,7 +163,7 @@ On a timeout or cancellation, the command and the processes it started are stopp
 
 Each command is a request to the sandbox that takes about a fifth of a second, and file operations run as commands, so reading or writing a large file takes several seconds per MiB. Keep large data out of the workspace or fetch it from inside the sandbox.
 
-A sandbox that is gone, or destroyed mid-command, raises `WorkspaceUnavailableError`. Other errors from the server, such as an image it can't pull, are raised as the SDK reports them.
+A sandbox that is gone, or destroyed mid-command, raises `WorkspaceUnavailableError`. A command whose working directory has been deleted raises `WorkspaceError`. Other errors from the server, such as an image it can't pull, are raised as the SDK reports them.
 
 The OpenSandbox SDK runs on asyncio only, so under Trio the capability raises `UserError`.
 
@@ -183,13 +183,15 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 | `image` | Image for a new sandbox, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and destroys sandboxes by ref. |
 | `connection` | The SDK's `ConnectionConfig` for your server. Default: `None`, which reads `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`. |
 | `resource` | Resource limits for a new sandbox, such as `{'cpu': '500m', 'memory': '1Gi'}`. Default: `None`, one CPU and 2 GiB. |
-| `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included; operations renew it, and a single command must finish within it. Default: `None`, kept until destroyed. |
+| `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included; every operation renews it, and a single command must finish within it. Default: `None`, kept until destroyed. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
 
 ## Telemetry
 
 `OpenSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` (`opensandbox`) and `pydantic_ai.workspace.id`. Each command or file operation a tool makes runs inside that tool call's span. Creating a sandbox logs its ID at `INFO` (`Created OpenSandbox sandbox <id>`) on the `pydantic_ai_harness.opensandbox_sandbox._backend` logger.
+
+The OpenSandbox SDK reports how long each create took to your server's `/metrics/events`. Set `OPENSANDBOX_DISABLE_METRICS=1`, or pass `ConnectionConfig(disable_metrics=True)`, to turn that off.
 
 ## API reference
 

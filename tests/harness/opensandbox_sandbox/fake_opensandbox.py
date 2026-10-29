@@ -37,7 +37,8 @@ import httpx
 from opensandbox.config import ConnectionConfig
 
 API_KEY = 'fake-key'
-DOMAIN = 'opensandbox.fake'
+DOMAIN = 'opensandbox.invalid'
+"""A name that cannot resolve, so a request that skips the fake's transport fails instead of leaving the host."""
 EXECD_PORT = 44772
 _NOT_FOUND = 'DOCKER::SANDBOX_NOT_FOUND'
 _DRAIN_GRACE = 0.05
@@ -198,6 +199,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         return _json(204)
 
     def _renew(self, sandbox_id: str, body: dict[str, str]) -> httpx.Response:
+        if sandbox_id not in self.sandboxes:
+            return _error(404, _NOT_FOUND, f'Sandbox {sandbox_id} not found.')
         self.sandboxes[sandbox_id].expires_at = body['expiresAt']
         self.renewals.append((sandbox_id, body['expiresAt']))
         return _json(200, {'expiresAt': body['expiresAt']})
@@ -356,16 +359,23 @@ class _EventStream(httpx.AsyncByteStream):
 
 
 class OwnedTransport(httpx.AsyncBaseTransport):
-    """What the SDK builds for itself when its config has no transport: the server's, counting how often it closes."""
+    """What the SDK builds for itself when its config has no transport: the server's, counting how often it closes.
+
+    Unlike httpx's own, which opens new connections when used after closing, it refuses, so a closed handle that
+    is used again fails the test.
+    """
 
     def __init__(self, server: FakeOpenSandbox) -> None:
         self._server = server
+        self._closed = False
         server.opened_transports += 1
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        assert not self._closed, f'request on a closed transport: {request.method} {request.url}'
         return await self._server.handle_async_request(request)
 
     async def aclose(self) -> None:
+        self._closed = True
         self._server.closed_transports += 1
 
 

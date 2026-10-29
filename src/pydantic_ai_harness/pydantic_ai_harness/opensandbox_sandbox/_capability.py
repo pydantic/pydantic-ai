@@ -49,7 +49,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     A run with no reference creates a fresh sandbox on your OpenSandbox server, on whichever runtime it uses
     (Docker or Kubernetes). Pass a `WorkspaceRef` to attach to a sandbox created earlier. Ending a run does not
     delete the sandbox: remove it with [`destroy`][pydantic_ai_harness.opensandbox_sandbox.OpenSandbox.destroy],
-    or set `sandbox_timeout`. Commands run under `sh -c` as the image's user. Outbound network access is the
+    or set `sandbox_timeout`. Commands run as the image's user. Outbound network access is the
     server's policy.
 
     This capability supplies the workspace only. Compose it with capabilities that use it, such as `Coder`,
@@ -73,8 +73,8 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     default of one CPU and 2 GiB."""
 
     sandbox_timeout: int | None = None
-    """Seconds a sandbox may go unused before the server deletes it, files included. An operation that starts once
-    half of it has passed renews it, so a single command must finish within it. `None` keeps it until it is destroyed."""
+    """Seconds a sandbox may go unused before the server deletes it, files included. Every operation renews it as it
+    starts, so a single command must finish within it. `None` keeps it until it is destroyed."""
 
     working_dir: str | None = '/workspace'
     """Absolute directory commands start in and relative paths resolve against, created on first use if
