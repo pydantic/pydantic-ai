@@ -327,7 +327,9 @@ the install command, e.g. `pydantic-monty is required for CodeMode. Install it w
 **Asserting a `SystemReminders` reminder.** A plain firing is a `ModelRequest` holding one
 `SystemPromptPart(scope='request')` in `result.all_messages()`, whose content is the reminder text
 (wrapped in `<tag>` only when `Reminder(tag=...)` is set); inside a `FunctionModel` script the model
-sees only the current one, as `<system>`-tagged user text at the end of the last request. An
+sees only the current one, as `<system>`-tagged user text at the end of the last request. A
+`Reminder(scope='conversation')` firing is a `SystemPromptPart` with the default `scope='conversation'`
+instead, which every later request sends again. An
 `LLMReminder` firing is instead a lasting record: a `SystemPromptPart` note (no `scope='request'`) and
 the generated text as user-channel `TextContent` in `<generated_reminder model="...">`, both re-sent on
 every later request. `interval` counts model requests from 1; `LLMReminder` fires only every

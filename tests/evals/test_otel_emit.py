@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from inline_snapshot import snapshot
 
 from ..conftest import try_import
 
@@ -47,6 +48,9 @@ if TYPE_CHECKING or imports_successful():
         return name
 
 
+_RUN_ID = '00000000-0000-4000-8000-000000000000'
+
+
 def test_emits_event_with_parent_span(capfire: CaptureLogfire):
     span_ref = SpanReference(trace_id='0' * 31 + '1', span_id='0' * 15 + '2')
 
@@ -58,6 +62,7 @@ def test_emits_event_with_parent_span(capfire: CaptureLogfire):
             results=[_result('Correctness', True, reason='looks right')],
             failures=[],
             target=_target(),
+            scoring_run_id=_RUN_ID,
         )
     finally:
         _otel_context.detach(token)
@@ -81,11 +86,62 @@ def test_emits_event_with_parent_span(capfire: CaptureLogfire):
     assert record.span_id == 2
 
 
+def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
+    """Every event carries the shared run id, and a score type derived from the value type."""
+    failure = EvaluatorFailure(name='Judge', error_message='boom', error_stacktrace='tb', source=_spec('Judge'))
+    emit_otel_events(
+        results=[_result('Passed', True), _result('Accuracy', 1), _result('Tone', 'pass')],
+        failures=[failure],
+        target=_target('f'),
+        scoring_run_id=_RUN_ID,
+    )
+
+    records = [dict(r.log_record.attributes or {}) for r in capfire.log_exporter.get_finished_logs()]
+    assert records == snapshot(
+        [
+            {
+                'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
+                'gen_ai.evaluation.target': 'f',
+                'gen_ai.evaluation.name': 'Passed',
+                'gen_ai.evaluation.evaluator.source': '{"name":"Passed","arguments":null}',
+                'gen_ai.evaluation.score.value': 1.0,
+                'gen_ai.evaluation.score.label': 'pass',
+                'logfire.scorer.score_type': 'pass_fail',
+            },
+            {
+                'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
+                'gen_ai.evaluation.target': 'f',
+                'gen_ai.evaluation.name': 'Accuracy',
+                'gen_ai.evaluation.evaluator.source': '{"name":"Accuracy","arguments":null}',
+                'gen_ai.evaluation.score.value': 1.0,
+                'logfire.scorer.score_type': 'numeric',
+            },
+            {
+                'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
+                'gen_ai.evaluation.target': 'f',
+                'gen_ai.evaluation.name': 'Tone',
+                'gen_ai.evaluation.evaluator.source': '{"name":"Tone","arguments":null}',
+                'gen_ai.evaluation.score.label': 'pass',
+                'logfire.scorer.score_type': 'categorical',
+            },
+            {
+                'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
+                'gen_ai.evaluation.target': 'f',
+                'gen_ai.evaluation.name': 'Judge',
+                'gen_ai.evaluation.evaluator.source': '{"name":"Judge","arguments":null}',
+                'error.type': 'pydantic_evals.EvaluatorFailure',
+                'gen_ai.evaluation.explanation': 'boom',
+            },
+        ]
+    )
+
+
 def test_bool_false_emits_fail_label(capfire: CaptureLogfire):
     emit_otel_events(
         results=[_result('X', False)],
         failures=[],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -98,6 +154,7 @@ def test_numeric_score_only(capfire: CaptureLogfire):
         results=[_result('X', 0.73)],
         failures=[],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -110,6 +167,7 @@ def test_string_label_only(capfire: CaptureLogfire):
         results=[_result('X', 'excellent')],
         failures=[],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -130,6 +188,7 @@ def test_failure_emits_error_type_and_no_score(capfire: CaptureLogfire):
         results=[],
         failures=[failure],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     record = capfire.log_exporter.get_finished_logs()[0].log_record
@@ -147,6 +206,7 @@ def test_evaluator_version_attribute(capfire: CaptureLogfire):
         results=[_result('X', True, evaluator_version='v2')],
         failures=[],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -158,6 +218,7 @@ def test_no_version_attribute_when_none(capfire: CaptureLogfire):
         results=[_result('X', True)],
         failures=[],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -176,6 +237,7 @@ def test_failure_carries_evaluator_version(capfire: CaptureLogfire):
         results=[],
         failures=[failure],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -187,6 +249,7 @@ def test_empty_results_and_failures_emits_nothing(capfire: CaptureLogfire):
         results=[],
         failures=[],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     assert list(capfire.log_exporter.get_finished_logs()) == []
@@ -205,6 +268,7 @@ def test_failure_error_type_surfaces_actual_exception_class(capfire: CaptureLogf
         results=[],
         failures=[failure],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -222,6 +286,7 @@ def test_failure_without_error_message_omits_explanation(capfire: CaptureLogfire
         results=[],
         failures=[failure],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -236,6 +301,7 @@ def test_non_scalar_value_yields_no_score_attrs(capfire: CaptureLogfire):
         results=[_result('X', value=None)],
         failures=[],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -255,6 +321,7 @@ def test_body_formatting_for_score_types(capfire: CaptureLogfire):
         ],
         failures=[],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     bodies = [r.log_record.body for r in capfire.log_exporter.get_finished_logs()]
@@ -286,6 +353,7 @@ def test_failure_body(capfire: CaptureLogfire):
             ),
         ],
         target=_target('f'),
+        scoring_run_id=_RUN_ID,
     )
 
     bodies = [r.log_record.body for r in capfire.log_exporter.get_finished_logs()]
@@ -301,6 +369,7 @@ def test_baggage_attached_to_event_attributes(capfire: CaptureLogfire):
             results=[_result('X', True)],
             failures=[],
             target=_target('f'),
+            scoring_run_id=_RUN_ID,
         )
     finally:
         _otel_context.detach(token)
@@ -320,6 +389,7 @@ def test_baggage_does_not_overwrite_standard_attrs(capfire: CaptureLogfire):
             results=[_result('X', True)],
             failures=[],
             target=_target('real_target'),
+            scoring_run_id=_RUN_ID,
         )
     finally:
         _otel_context.detach(token)
@@ -327,6 +397,27 @@ def test_baggage_does_not_overwrite_standard_attrs(capfire: CaptureLogfire):
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
     assert attrs['gen_ai.evaluation.target'] == 'real_target'
     assert attrs['gen_ai.evaluation.score.label'] == 'pass'
+
+
+def test_baggage_cannot_set_logfire_scorer_attrs(capfire: CaptureLogfire):
+    """Baggage keys in the reserved `logfire.scorer.*` namespace are dropped, even where the record omits that key."""
+    ctx = _baggage.set_baggage('logfire.scorer.score_type', 'numeric')
+    ctx = _baggage.set_baggage('logfire.scorer.id', 'spoofed', ctx)
+    token = _otel_context.attach(ctx)
+    try:
+        emit_otel_events(
+            results=[],
+            failures=[EvaluatorFailure(name='X', error_message='boom', error_stacktrace='tb', source=_spec('X'))],
+            target=_target('f'),
+            scoring_run_id=_RUN_ID,
+        )
+    finally:
+        _otel_context.detach(token)
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert 'logfire.scorer.score_type' not in attrs
+    assert 'logfire.scorer.id' not in attrs
+    assert attrs['logfire.scorer.run_id'] == _RUN_ID
 
 
 def test_include_baggage_false_skips_snapshot(capfire: CaptureLogfire):
@@ -338,6 +429,7 @@ def test_include_baggage_false_skips_snapshot(capfire: CaptureLogfire):
             results=[_result('X', True)],
             failures=[],
             target=_target('f'),
+            scoring_run_id=_RUN_ID,
             include_baggage=False,
         )
     finally:
