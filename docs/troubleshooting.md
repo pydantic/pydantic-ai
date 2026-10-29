@@ -1,10 +1,44 @@
 ---
-description: "Fix common Pydantic AI errors: event loop errors in Jupyter, missing API keys and extras, V1 to V2 upgrade errors, Bedrock model routes, provider HTTP errors, usage limits and retries, unprocessed tool calls, Temporal toolset IDs, and errors fixed in past versions."
+description: "Debug a Pydantic AI agent that misbehaves without an error: read what the model saw in a trace, where the cause usually is, and which failures are silent. Plus fixes for errors users report: Jupyter event loops, API keys and extras, V1 to V2 upgrades, Bedrock model routes, provider HTTP errors, usage limits and retries, Temporal toolset IDs, and errors fixed in past versions."
 ---
 
 # Troubleshooting
 
-Below are suggestions on how to fix some common errors you might encounter while using Pydantic AI. If the issue you're experiencing is not listed below or addressed in the documentation, please feel free to ask in the [Pydantic Slack](help.md) or create an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues).
+This page starts with how to debug an agent that does the wrong thing without raising an error, then lists errors users have reported, with their fixes. If your problem isn't covered here or elsewhere in the documentation, ask in the [Pydantic Slack](help.md) or create an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues).
+
+## Debugging an agent that misbehaves
+
+Most agent problems don't raise an error. The run finishes, but the agent called the wrong tool, ignored an instruction, looped, or gave a worse answer than you expected. The cause is almost always in what the model was sent, so start from that rather than from your code. The same process works when you hand the problem to a coding agent: "find out why my agent does X" goes much faster when the agent can read the run.
+
+### Look at what the model saw
+
+1. **Reproduce it in one run.** Use the same prompt, `message_history`, dependencies, model and settings. A problem that only shows up in a long conversation usually needs that history.
+2. **Record the run.** With [Pydantic Logfire](logfire.md), `logfire.configure()` and `logfire.instrument_pydantic_ai()` record every run as a trace. Each model request span carries the instructions (`gen_ai.system_instructions`), the messages as sent (`gen_ai.input.messages`), the tool definitions with their descriptions and schemas (`gen_ai.tool.definitions`), the response and its token usage. Each tool call gets a span with its arguments and result, and the agent run span has the whole history (`pydantic_ai.all_messages`). Your coding agent can query these traces itself through the [Logfire MCP server](https://pydantic.dev/docs/logfire/guides/mcp-server/), and the [free tier](logfire.md#local-development) is enough for local debugging. The instrumentation is plain OpenTelemetry, so the same spans can go to [any OpenTelemetry backend](logfire.md#using-opentelemetry) instead.
+3. **Without a backend**, read the messages: [`result.all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] after the run, or [`capture_run_messages()`][pydantic_ai.capture_run_messages] when the run raises (see [Model errors](agent.md#model-errors)). Each [`ModelRequest`][pydantic_ai.messages.ModelRequest] carries the instructions it was sent with, but not the tool definitions.
+4. **Read the run in order.** Check the instructions and tool descriptions first: are they what you meant, and do they mention the tool you expected? Then, for each response, check which tools the model called and with what arguments, what each tool returned, and whether any [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] sent an error back to the model. Last, check [`model_name`][pydantic_ai.messages.ModelResponse.model_name] on each response, the usage, and where the run stopped.
+5. **Pin it down in a test.** [`FunctionModel`][pydantic_ai.models.function.FunctionModel] replays the model responses you saw, so you can check your tools, validators and history processing without calling a model, and [`Agent.override()`][pydantic_ai.agent.Agent.override] swaps the model, dependencies or toolsets in your application code. See [Unit testing](testing.md). To check that a prompt or tool description change helps across many inputs, not just the one you looked at, use [Pydantic Evals](evals.md).
+
+### Where the cause usually is
+
+- **The model ignores an instruction or picks the wrong tool.** Read the instructions and tool definitions as sent. A tool's description comes from its [docstring](tools.md#docstrings), and its parameter descriptions from the docstring's arguments section; dynamic instructions and capabilities can add text you didn't write yourself.
+- **A tool is never called.** Check whether it was offered at all: it's missing from `gen_ai.tool.definitions` when a [`prepare` function](tools-advanced.md#tool-prepare) or [`PrepareTools`](capabilities/prepare-tools.md) returned `None` for it, or when it belongs to an [on-demand capability](capabilities/on-demand.md) or [Tool Search](capabilities/tool-search.md) that the model hasn't loaded yet.
+- **The answer changed after a validation error.** A failed argument validation, a tool or [output validator](output.md#output-validator-functions) raising [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or output that doesn't match `output_type` is sent back to the model, which tries again and may take a different route. See [Retries](retries.md).
+- **The agent forgets earlier context.** [History processors](message-history.md#processing-message-history) and [compaction](capabilities/compaction.md) replace the history the model sees. Compare `gen_ai.input.messages` on the model request span with the history you passed in.
+- **A setting has no effect.** See the next section: some settings are dropped for models that don't support them.
+- **Another model answered.** With [`ModelFallback`](capabilities/model-fallback.md) or [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], the response's `model_name` says which model answered and [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] lists the ones that failed before it.
+- **The run stops early.** A [usage limit](agent.md#usage-limits) raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded]; a tool that needs approval or is deferred ends the run with [`DeferredToolRequests`](deferred-tools.md) as its output.
+
+### Failures that raise no error
+
+These don't raise an exception, so they only show up in the trace, the message history or a warning:
+
+- **`thinking` is dropped for a model whose profile doesn't support it.** The unified [`thinking`](capabilities/thinking.md) setting is only passed on when the model's profile sets `supports_thinking` or `thinking_always_enabled`, and is removed without a warning otherwise. This is common for model names behind OpenAI-compatible servers that Pydantic AI doesn't recognize. If the model does support it, override the profile with a partial `profile=` dict, as described under [Model Providers](#model-providers) below.
+- **Unsupported tuning settings are ignored.** Settings like `temperature` or `seed` that a model doesn't support are skipped silently, so the same settings work across models. Only settings that change what a request guarantees (`timeout`, `max_retries`, `stop_sequences`, `parallel_tool_calls=False`, `extra_headers` and `extra_body`) emit an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], and a warning is easy to miss in server logs: turn it into an error with `warnings.filterwarnings('error', category=UnsupportedSettingWarning)` while debugging.
+- **Retries hide tool errors.** A tool that fails with `ModelRetry` or invalid arguments and then succeeds on the next attempt leaves no trace outside the message history, and a tool's retry count resets each time it succeeds. A [capability](capabilities/overview.md) implementing `on_tool_execute_error` can also turn an exception into a tool result. See [Auditing rejected tool calls](retries.md#auditing-rejected-tool-calls) to find these.
+- **History processors drop messages.** A processor or compaction step that removes too much leaves the model without context, with no error. Mutating messages in place instead of building new ones emits a best-effort [`MessageHistoryMutatedWarning`][pydantic_ai.exceptions.MessageHistoryMutatedWarning].
+- **Deferred and approval-required tools pause the run.** The run ends normally with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output instead of the output you expected; see [Deferred Tools](deferred-tools.md).
+- **Cost isn't priced.** [`cost`][pydantic_ai.usage.RunUsage.cost] is `None` for models that [genai-prices](https://github.com/pydantic/genai-prices) has no price for, including models newer than your install. A run with a `cost_limit` emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] instead of failing, and [`UsageLimitUnavailableWarning`][pydantic_ai.exceptions.UsageLimitUnavailableWarning] when responses omit usage under a token or cost limit. See [Usage Limits](agent.md#usage-limits).
+- **Fallback switches models.** A failed model is skipped without an error as long as a later one answers, so you may be running on your second choice. Check `failed_attempts`.
 
 ## Jupyter Notebook Errors
 
@@ -155,6 +189,26 @@ The [Planning](harness/planning.md) and [SystemReminders](harness/system-reminde
 ### [`UserError`][pydantic_ai.exceptions.UserError]: `Anthropic does not support thinking and output tools at the same time.`
 
 Older versions raised this for [Tool Output](output.md#tool-output) whenever thinking was on, including adaptive thinking on Claude models, which supports it. Fixed for `AnthropicModel` in v2.27.1, and for Claude on Bedrock, where the message starts with `Bedrock does not support`, in v2.46.0.
+
+### [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]: `Invalid response from ... chat completions endpoint: 1 validation error for ChatCompletion choices.0.finish_reason`
+
+OpenAI-compatible providers sometimes end a response with a `finish_reason` outside OpenAI's five values, such as Bedrock Mantle's `guardrail_intervened`, Gemini's `MALFORMED_FUNCTION_CALL` or Z.AI's `sensitive`. Older versions failed the run on such a response, losing its text and usage. Fixed for `ZaiModel` in v2.37.0, and for non-streamed responses from `OpenAIChatModel` and the models built on it, including `OllamaModel`, in v2.61.0, which keeps the raw value in [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details].
+
+### `FallbackModel` doesn't fall back on `json.JSONDecodeError`, `openai.APIError` or botocore's `ReadTimeoutError`
+
+[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] by default, and some provider failures used to escape as other exceptions, so the run failed instead of moving on to the next model. Fixed for Bedrock transport errors such as `ReadTimeoutError` and `EndpointConnectionError` in v2.41.0, and in v2.52.0 for a `200` response with a body that isn't JSON (`OpenAIChatModel`) and an error object inside a stream (`OpenAIChatModel`, `GroqModel` and `HuggingFaceModel`). On older versions, add those exception types to `fallback_on`.
+
+### Gemini `400 INVALID_ARGUMENT`: `Function call is missing a thought_signature` or `Invalid thought signature.`
+
+Gemini rejects a request whose history leaves out a thought signature it issued, or carries one it didn't issue. The first message came from Gemini through an OpenAI-compatible endpoint, where `OpenAIChatModel` didn't send the signatures on tool calls back; fixed in v2.57.0. The second came from a run that switched between Vertex AI and the Gemini API, for example with a fallback model, and replayed one's signatures to the other; fixed in v2.63.0.
+
+### `ModuleNotFoundError: No module named 'httpx'` when using `MistralModel`
+
+`mistralai` 3 no longer depends on `httpx`, which `MistralModel` imported before v2.63.0, so a fresh install with the `mistral` extra failed at import. Fixed in v2.63.0, which requires `mistralai>=3.1.0`. If you can't upgrade yet, pin `mistralai<3`.
+
+### `PydanticSchemaGenerationError: Unable to generate pydantic-core schema for <class 'temporalio.workflow._event_groups.EventGroup'>`
+
+Importing `pydantic_ai.durable_exec.temporal` failed this way with `temporalio` 1.34.0, which added a type to the activity configuration that Pydantic AI couldn't build a schema for. Fixed in v2.53.0. If you can't upgrade yet, pin `temporalio<1.34`.
 
 ## Monitoring HTTPX Requests
 
