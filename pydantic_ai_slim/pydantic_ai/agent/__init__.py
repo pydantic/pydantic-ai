@@ -2228,11 +2228,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # for the user's own agents. Decided here, while the frames of whoever called `run()` are still
         # on the stack, and only when the run could show one: an instrumented run never does, and a
         # process that has shown one has nothing left to decide.
+        # `run_stream_events()` runs the agent in a task of its own, so it decides in its caller's stack.
         display_banner = (
             None
             if instrumentation_settings is None
             and _display.banner_pending()
-            and _display.started_by_installed_package(inspect.currentframe())
+            and (
+                binding.started_by_installed_package
+                if binding is not None
+                else _display.started_by_installed_package(inspect.currentframe())
+            )
             else display_agent_banner
         )
 

@@ -904,6 +904,44 @@ async def test_banner_is_not_shown_for_an_async_run_an_installed_package_started
     assert _display.banner_pending() is True
 
 
+_STREAM_EVENTS_SOURCE = (
+    'async def run(agent):\n'
+    '    async with agent.run_stream_events("hello") as events:\n'
+    '        async for _ in events:\n'
+    '            pass\n'
+)
+
+
+async def test_banner_is_not_shown_for_run_stream_events_an_installed_package_iterates(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+):
+    """`run_stream_events()` runs the agent in its own task, so the caller's stack is read before it starts."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    namespace: dict[str, Any] = {'__name__': 'some_library.runner'}
+    exec(compile(_STREAM_EVENTS_SOURCE, '/venv/lib/python3.13/site-packages/some_library/runner.py', 'exec'), namespace)
+
+    await namespace['run'](Agent(TestModel()))
+
+    assert stderr.getvalue() == ''
+    assert _display.banner_pending() is True
+
+
+async def test_banner_is_shown_for_a_run_a_ui_adapter_streams_to_an_installed_server(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+):
+    """The web framework pulling a UI adapter's stream is installed, but the app serving it is the user's."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    adapter: dict[str, Any] = {'__name__': 'pydantic_ai.ui.some_adapter'}
+    exec(compile(_STREAM_EVENTS_SOURCE, 'pydantic_ai/ui/some_adapter.py', 'exec'), adapter)
+    server: dict[str, Any] = {'__name__': 'some_server.responses'}
+    source = 'async def respond(stream, agent):\n    await stream(agent)\n'
+    exec(compile(source, '/venv/lib/python3.13/site-packages/some_server/responses.py', 'exec'), server)
+
+    await server['respond'](adapter['run'], Agent(TestModel(), name='support_agent'))
+
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
 def test_banner_is_shown_for_a_run_whose_starter_is_past_an_event_loop(
     monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
 ):
