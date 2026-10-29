@@ -5,7 +5,7 @@ from collections.abc import Iterator, Sequence
 from typing import Literal, assert_never
 
 from . import exceptions, messages
-from ._frame_ref import frame_ref
+from ._frame_seal import frame_seal
 from ._mcp_compat import mcp_field, mcp_field_value, mcp_optional_field
 from .models import (
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
@@ -123,7 +123,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
         sampling_msgs.append(mcp_types.SamplingMessage(role=role, content=content))
 
     system_prompt: list[str] = []
-    ref = frame_ref(pai_messages)
+    seal = frame_seal(pai_messages)
     for pai_message in pai_messages:
         if isinstance(pai_message, messages.ModelRequest):
             request_start = len(sampling_msgs)
@@ -131,7 +131,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
             if pai_message.instructions is not None:
                 system_prompt.append(pai_message.instructions)
 
-            for part in _sendable_request_parts(pai_message.parts, ref=ref):
+            for part in _sendable_request_parts(pai_message.parts, seal=seal):
                 if isinstance(part, (messages.InstructionBaselinePart, messages.InstructionDeltaPart)):
                     raise _unprojected_instruction_delta_error()
                 if isinstance(part, messages.SystemPromptPart):

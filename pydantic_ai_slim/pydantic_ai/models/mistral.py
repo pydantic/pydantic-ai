@@ -12,7 +12,7 @@ from pydantic import JsonValue
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils
 from .._file_input import TEXT_DOCUMENT_MEDIA_TYPES
-from .._frame_ref import frame_ref
+from .._frame_seal import frame_seal
 from .._http import HTTPTimeout
 from .._run_context import RunContext
 from .._utils import (
@@ -664,15 +664,15 @@ class MistralModel(Model[Mistral]):
             return UNSET
         return _MISTRAL_REASONING_EFFORT_MAP[thinking]
 
-    async def _map_user_message(self, message: ModelRequest, *, ref: str) -> AsyncIterable[MistralMessages]:
+    async def _map_user_message(self, message: ModelRequest, *, seal: str) -> AsyncIterable[MistralMessages]:
         file_content: list[UserContent] = []
-        for part in _sendable_request_parts(message.parts, ref=ref):
+        for part in _sendable_request_parts(message.parts, seal=seal):
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, files = _tool_return_text_and_files(part, ref=ref)
+                tool_text, files = _tool_return_text_and_files(part, seal=seal)
                 file_content.extend(files)
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,
@@ -695,10 +695,10 @@ class MistralModel(Model[Mistral]):
     ) -> list[MistralMessages]:
         """Just maps a `pydantic_ai.Message` to a `MistralMessage`."""
         mistral_messages: list[MistralMessages] = []
-        ref = frame_ref(messages)
+        seal = frame_seal(messages)
         for message in messages:
             if isinstance(message, ModelRequest):
-                async for msg in self._map_user_message(message, ref=ref):
+                async for msg in self._map_user_message(message, seal=seal):
                     mistral_messages.append(msg)
             elif isinstance(message, ModelResponse):
                 content_chunks: list[MistralContentChunk] = []

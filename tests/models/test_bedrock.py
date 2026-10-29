@@ -62,8 +62,8 @@ from pydantic_ai import (
     VideoUrl,
     WebCitationSource,
 )
-from pydantic_ai._frame_ref import frame_ref
-from pydantic_ai._framing import frame_ref_announcement
+from pydantic_ai._frame_seal import frame_seal
+from pydantic_ai._framing import frame_seal_announcement
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool
 from pydantic_ai.exceptions import (
@@ -239,7 +239,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '2816440b9658'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '2816440b9658'}},
             ),
             ModelResponse(
                 parts=[
@@ -1026,7 +1026,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '54a7b45cfedc'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '54a7b45cfedc'}},
             ),
             ModelResponse(
                 parts=[
@@ -1059,7 +1059,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '54a7b45cfedc'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '54a7b45cfedc'}},
             ),
             ModelResponse(
                 parts=[
@@ -1104,7 +1104,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '54a7b45cfedc'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '54a7b45cfedc'}},
             ),
             ModelResponse(
                 parts=[
@@ -1159,7 +1159,7 @@ async def test_stream_cancel(allow_model_requests: None, bedrock_provider: Bedro
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '11a5abb7cabf'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '11a5abb7cabf'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='The')],
@@ -1259,7 +1259,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '11a5abb7cabf'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '11a5abb7cabf'}},
             ),
             ModelResponse(
                 parts=[
@@ -1297,7 +1297,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '11a5abb7cabf'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '11a5abb7cabf'}},
             ),
             ModelResponse(
                 parts=[
@@ -2423,7 +2423,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '11a5abb7cabf'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '11a5abb7cabf'}},
             ),
             ModelResponse(
                 parts=[
@@ -3650,7 +3650,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '36fc896eca60'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '36fc896eca60'}},
             ),
             ModelResponse(
                 parts=[
@@ -7465,7 +7465,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': 'd3920a34d15d'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'd3920a34d15d'}},
             ),
             ModelResponse(
                 parts=[
@@ -7525,7 +7525,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': 'd3920a34d15d'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'd3920a34d15d'}},
             ),
             ModelResponse(
                 parts=[
@@ -7707,7 +7707,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': 'd3920a34d15d'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'd3920a34d15d'}},
             ),
             ModelResponse(
                 parts=[
@@ -7950,7 +7950,7 @@ async def test_bedrock_model_with_instructions_only(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '7422eec6df40'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '7422eec6df40'}},
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
@@ -8003,7 +8003,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '7422eec6df40'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '7422eec6df40'}},
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
@@ -8023,7 +8023,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '7422eec6df40'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '7422eec6df40'}},
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
@@ -8057,7 +8057,7 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
 
     assert system_prompt == [
         {'text': 'You are helpful.'},
-        {'text': frame_ref_announcement(frame_ref(messages), system_role=False)},
+        {'text': frame_seal_announcement(frame_seal(messages), system_role=False)},
     ]
     text_blocks = [
         block['text']
@@ -8066,7 +8066,7 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
         for block in msg['content']
         if 'text' in block
     ]
-    assert f'<system ref="{frame_ref(messages)}">Now be terse.</system>' in text_blocks
+    assert f'<system seal="{frame_seal(messages)}">Now be terse.</system>' in text_blocks
     assert 'You are helpful.' not in text_blocks
 
 
@@ -8082,7 +8082,7 @@ async def test_bedrock_system_prompt_after_user_part_stays_in_messages(bedrock_p
 
     assert system_prompt == []
     assert bedrock_messages == [
-        {'role': 'user', 'content': [{'text': 'x'}, {'text': f'<system ref="{frame_ref(messages)}">mid</system>'}]},
+        {'role': 'user', 'content': [{'text': 'x'}, {'text': f'<system seal="{frame_seal(messages)}">mid</system>'}]},
     ]
 
 
@@ -8465,7 +8465,7 @@ async def test_bedrock_mistral_tool_return_image_deferred_to_separate_turn(bedro
                 'role': 'user',
                 'content': [
                     {
-                        'text': '<tool_result ref="581e13ef0c9b" tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'
+                        'text': '<tool_result seal="581e13ef0c9b" tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'
                     },
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
                     {'text': '</tool_result>'},
@@ -8524,12 +8524,12 @@ async def test_bedrock_mistral_two_tool_returns_images_grouped_then_deferred(bed
                 'role': 'user',
                 'content': [
                     {
-                        'text': '<tool_result ref="581e13ef0c9b" tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'
+                        'text': '<tool_result seal="581e13ef0c9b" tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'
                     },
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
                     {'text': '</tool_result>'},
                     {
-                        'text': '<tool_result ref="581e13ef0c9b" tool_name="get_photo" tool_call_id="getphoto2" file_id="d003ad">'
+                        'text': '<tool_result seal="581e13ef0c9b" tool_name="get_photo" tool_call_id="getphoto2" file_id="d003ad">'
                     },
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
                     {'text': '</tool_result>'},
@@ -8578,7 +8578,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                         }
                     },
                     {
-                        'text': '<tool_result ref="dc39c0a2a6e6" tool_name="get_report" tool_call_id="t1" file_id="49d492">'
+                        'text': '<tool_result seal="dc39c0a2a6e6" tool_name="get_report" tool_call_id="t1" file_id="49d492">'
                     },
                     {
                         'document': {
@@ -8731,7 +8731,7 @@ async def test_bedrock_empty_history_prepended_for_anthropic(bedrock_provider: B
     )
     assert system_prompt == [
         {'text': 'Generate a short greeting.'},
-        {'text': frame_ref_announcement(frame_ref(messages), system_role=False)},
+        {'text': frame_seal_announcement(frame_seal(messages), system_role=False)},
     ]
     assert bedrock_messages == snapshot([{'role': 'user', 'content': [{'text': '.'}]}])
 

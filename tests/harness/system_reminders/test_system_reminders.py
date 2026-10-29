@@ -167,12 +167,12 @@ def _llm_reminder(text: str, model: str = 'function:fn:') -> str:
     return f'{_LLM_NOTE}\n\n{_llm_data(text, model)}'
 
 
-_FRAME_REF_OPENER = re.compile(r'<system ref="[0-9a-f]{12}">')
+_FRAME_SEAL_OPENER = re.compile(r'<system seal="[0-9a-f]{12}">')
 
 
 def _unref(text: str) -> str:
-    """`text` with the conversation's frame ref left out of each `<system ref="...">` tag, so assertions name the tag."""
-    return _FRAME_REF_OPENER.sub('<system>', text)
+    """`text` with the conversation's frame seal left out of each `<system seal="...">` tag, so assertions name the tag."""
+    return _FRAME_SEAL_OPENER.sub('<system>', text)
 
 
 def _sent_texts(messages: list[ModelMessage]) -> list[str]:
@@ -1031,7 +1031,7 @@ class TestLLMReminder:
         wrapped = [
             _unref(part.content)
             for part in user_parts
-            if isinstance(part.content, str) and part.content.startswith('<system ref=')
+            if isinstance(part.content, str) and part.content.startswith('<system seal=')
         ]
         assert wrapped == [f'<system>{_GOAL_NOTE if source == "goal" else _LLM_NOTE}</system>']
         quoted = [part.content for part in user_parts if not isinstance(part.content, str)]

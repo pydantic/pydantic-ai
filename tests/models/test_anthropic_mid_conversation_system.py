@@ -41,8 +41,8 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._frame_ref import frame_ref
-from pydantic_ai._framing import frame_ref_announcement
+from pydantic_ai._frame_seal import frame_seal
+from pydantic_ai._framing import frame_seal_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import ToolDefinition
 
@@ -201,10 +201,10 @@ CASES = [
     Case(
         id='inline-system-unsupported',
         model='claude-sonnet-5',
-        # The instructions also end with what the `<system ref>` tag means, on every request from the first.
+        # The instructions also end with what the `<system seal>` tag means, on every request from the first.
         expected_system=[
             {'text': 'You are a code reviewer.', 'type': 'text'},
-            {'text': frame_ref_announcement(frame_ref(message_history()), system_role=False), 'type': 'text'},
+            {'text': frame_seal_announcement(frame_seal(message_history()), system_role=False), 'type': 'text'},
         ],
         expected_messages=snapshot(
             [
@@ -214,7 +214,7 @@ CASES = [
                     'role': 'user',
                     'content': [
                         {
-                            'text': '<system ref="e0afd99c65be">From now on, every suggestion must include explicit type annotations.</system>',
+                            'text': '<system seal="e0afd99c65be">From now on, every suggestion must include explicit type annotations.</system>',
                             'type': 'text',
                         },
                         {'text': 'Review it again.', 'type': 'text'},
@@ -720,7 +720,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
     call_kwargs = foundry_client.beta.messages.create.call_args.kwargs
     assert call_kwargs['system'] == [
         {'text': 'You are a code reviewer.', 'type': 'text'},
-        {'text': frame_ref_announcement(frame_ref(message_history()), system_role=False), 'type': 'text'},
+        {'text': frame_seal_announcement(frame_seal(message_history()), system_role=False), 'type': 'text'},
     ]
     assert call_kwargs['messages'] == snapshot(
         [
@@ -730,7 +730,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
                 'role': 'user',
                 'content': [
                     {
-                        'text': '<system ref="e0afd99c65be">From now on, every suggestion must include explicit type annotations.</system>',
+                        'text': '<system seal="e0afd99c65be">From now on, every suggestion must include explicit type annotations.</system>',
                         'type': 'text',
                     },
                     {'text': 'Review it again.', 'type': 'text'},

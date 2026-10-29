@@ -176,11 +176,11 @@ def test_snowflake_replays_foreign_thinking_as_tags(provider: SnowflakeProvider)
     model = SnowflakeModel('claude-sonnet-4-6', provider=provider)
     response = ModelResponse(parts=[ThinkingPart(content='foreign reasoning', provider_name='other', id='xyz')])
     assert model._map_model_response(response) is None  # pyright: ignore[reportPrivateUsage]
-    assert model._map_carried_thinking(response, ref='0123456789ab') == snapshot(  # pyright: ignore[reportPrivateUsage]
+    assert model._map_carried_thinking(response, seal='0123456789ab') == snapshot(  # pyright: ignore[reportPrivateUsage]
         {
             'role': 'user',
             'content': """\
-<assistant_thinking ref="0123456789ab">
+<assistant_thinking seal="0123456789ab">
 foreign reasoning
 </assistant_thinking>\
 """,

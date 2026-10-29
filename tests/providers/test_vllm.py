@@ -6,8 +6,8 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRequest, ThinkingPart, UserPromptPart
-from pydantic_ai._frame_ref import frame_ref
-from pydantic_ai._framing import frame_ref_announcement
+from pydantic_ai._frame_seal import frame_seal
+from pydantic_ai._framing import frame_seal_announcement
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import UserError
@@ -219,9 +219,9 @@ async def test_vllm_provider_merges_leading_system_messages(allow_model_requests
     assert [message['role'] for message in messages] == ['system', 'user']
     system_content = messages[0]['content']
     # The default profile takes no mid-conversation system messages, so the instructions end by saying what
-    # `<system ref="...">` means.
+    # `<system seal="...">` means.
     assert system_content.startswith('Answer accurately.')
-    assert system_content.endswith(frame_ref_announcement(frame_ref(result.all_messages()), system_role=False))
+    assert system_content.endswith(frame_seal_announcement(frame_seal(result.all_messages()), system_role=False))
     assert '"city"' in system_content
 
 

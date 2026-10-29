@@ -587,7 +587,7 @@ def test_text_content_in_request(allow_model_requests: None):
             )
         ]
     )
-    assert list(CohereModel._map_user_message(req, ref='0123456789ab')) == snapshot(  # pyright: ignore[reportPrivateUsage]
+    assert list(CohereModel._map_user_message(req, seal='0123456789ab')) == snapshot(  # pyright: ignore[reportPrivateUsage]
         [
             UserChatMessageV2(
                 content=[
@@ -603,7 +603,7 @@ def test_text_content_in_request(allow_model_requests: None):
 
 def test_cache_point_silently_skipped_user_prompt_part(allow_model_requests: None):
     req = ModelRequest(parts=[UserPromptPart(content=['Hello there!', CachePoint()])])
-    assert list(CohereModel._map_user_message(req, ref='0123456789ab')) == snapshot(  # pyright: ignore[reportPrivateUsage]
+    assert list(CohereModel._map_user_message(req, seal='0123456789ab')) == snapshot(  # pyright: ignore[reportPrivateUsage]
         [
             UserChatMessageV2(
                 content=[
@@ -648,7 +648,7 @@ def test_multimodal_tool_return(file: MultiModalContent):
     """
     req = ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=['Here it is.', file], tool_call_id='1')])
     with pytest.raises(NotImplementedError, match='Files are not supported in Cohere tool returns'):
-        list(CohereModel._map_user_message(req, ref='0123456789ab'))  # pyright: ignore[reportPrivateUsage]
+        list(CohereModel._map_user_message(req, seal='0123456789ab'))  # pyright: ignore[reportPrivateUsage]
 
 
 def test_model_status_error(allow_model_requests: None) -> None:

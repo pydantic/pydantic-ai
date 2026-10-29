@@ -609,7 +609,7 @@ async def _seed_request_items(
             if part.content:
                 items.append(
                     _message_item(
-                        'user', [_text_content('input_text', _conversation_summary_text(part.content, ref=None))]
+                        'user', [_text_content('input_text', _conversation_summary_text(part.content, seal=None))]
                     )
                 )
         elif isinstance(part, SpeechPart):

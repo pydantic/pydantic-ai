@@ -43,8 +43,8 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai._frame_ref import frame_ref
-from pydantic_ai._framing import frame_ref_announcement
+from pydantic_ai._frame_seal import frame_seal
+from pydantic_ai._framing import frame_seal_announcement
 from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -3133,14 +3133,14 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     else:
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
-    # Foundry serves no mid-conversation system messages, so the instructions end with what `<system ref>` means.
-    ref = frame_ref(messages)
+    # Foundry serves no mid-conversation system messages, so the instructions end with what `<system seal>` means.
+    seal = frame_seal(messages)
     assert rendered_requests == snapshot(
         [
             {
                 'system': [
                     {'type': 'text', 'text': 'leading'},
-                    {'type': 'text', 'text': frame_ref_announcement(ref, system_role=False)},
+                    {'type': 'text', 'text': frame_seal_announcement(seal, system_role=False)},
                 ],
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
@@ -3148,7 +3148,7 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
                     {
                         'role': 'user',
                         'content': [
-                            {'text': f'<system ref="{ref}">mid</system>', 'type': 'text'},
+                            {'text': f'<system seal="{seal}">mid</system>', 'type': 'text'},
                             {'text': 'second', 'type': 'text'},
                         ],
                     },

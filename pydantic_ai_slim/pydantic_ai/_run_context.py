@@ -23,6 +23,7 @@ from . import _utils, messages as _messages
 from ._cancel import current_run_clock
 from ._context_size import context_tokens
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._frame_seal import frame_seal, is_framework_frame, with_frame_seal_on_frame
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 
@@ -1014,6 +1015,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 '`enqueue` is only available during an agent run (from tools, capability hooks, or '
                 '`AgentRun.enqueue`). This `RunContext` has no pending-message queue to drain.'
             )
+        if any(_has_framework_frame(item) for item in content):
+            # A frame a capability wrote carries the conversation's seal, taken now and stored with the content.
+            seal = frame_seal(self.messages)
+            content = tuple(_with_ref_on_frames(item, seal) for item in content)
         pending = PendingMessage.from_content(
             *content,
             priority=priority,
@@ -1146,3 +1151,17 @@ def set_current_run_context(run_context: RunContext[Any]) -> Generator[None]:
         yield
     finally:
         _CURRENT_RUN_CONTEXT.reset(token)
+
+
+def _has_framework_frame(item: EnqueueContent) -> bool:
+    if isinstance(item, _messages.UserPromptPart):
+        return not isinstance(item.content, str) and any(is_framework_frame(c) for c in item.content)
+    return is_framework_frame(item)
+
+
+def _with_ref_on_frames(item: EnqueueContent, seal: str) -> EnqueueContent:
+    """`item` with `seal` on every frame a capability wrote in it, as marked by `framework_frame_text`."""
+    if isinstance(item, _messages.UserPromptPart) and not isinstance(item.content, str):
+        content = [with_frame_seal_on_frame(c, seal) if is_framework_frame(c) else c for c in item.content]
+        return dataclasses.replace(item, content=content)
+    return with_frame_seal_on_frame(item, seal) if is_framework_frame(item) else item

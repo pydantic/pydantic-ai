@@ -27,8 +27,8 @@ from cassetter import Cassette
 from pydantic import BaseModel, JsonValue
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput
-from pydantic_ai._frame_ref import frame_ref
-from pydantic_ai._framing import frame_ref_announcement
+from pydantic_ai._frame_seal import frame_seal
+from pydantic_ai._framing import frame_seal_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -444,7 +444,7 @@ async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests:
     await Agent(model, instructions='Stable instructions.', model_settings={'cache': '1h'}).run('Hi')
 
     request = create.call_args.kwargs
-    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions end with the frame ref
+    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions end with the frame seal
     # announcement; the breakpoint goes after the instructions every conversation shares, ahead of it.
     system_message, announcement = request['messages'][:2]
     assert system_message == {
@@ -455,7 +455,7 @@ async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests:
     }
     assert announcement == {
         'role': 'system',
-        'content': frame_ref_announcement(frame_ref([ModelRequest(parts=[UserPromptPart('Hi')])]), system_role=False),
+        'content': frame_seal_announcement(frame_seal([ModelRequest(parts=[UserPromptPart('Hi')])]), system_role=False),
     }
 
 

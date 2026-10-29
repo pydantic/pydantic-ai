@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from pydantic_ai._frame_seal import framework_frame_text
 from pydantic_ai._framing import TOOL_RESULT_TAG, close_tag, neutralize_tags, open_tag
 from pydantic_ai.messages import TextContent, UserContent
 from pydantic_ai_harness._provenance import tagged_text
@@ -35,7 +36,8 @@ def escape_tool_result_body(text: str) -> str:
 
 
 def make_background_completion(text: str, task_id: str) -> TextContent:
-    return TextContent(text, metadata={'origin': _BACKGROUND_RESULT_ORIGIN, 'tool_call_id': task_id})
+    """The completion as a frame the framework wrote, so `RunContext.enqueue` gives it the conversation's frame seal."""
+    return framework_frame_text(text, metadata={'origin': _BACKGROUND_RESULT_ORIGIN, 'tool_call_id': task_id})
 
 
 def get_background_completion(content: str | Sequence[UserContent] | None) -> TextContent | None:

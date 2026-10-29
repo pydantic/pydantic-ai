@@ -43,7 +43,7 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
-from pydantic_ai._frame_ref import frame_ref
+from pydantic_ai._frame_seal import frame_seal
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestPart
@@ -138,8 +138,8 @@ class TurnReminder(AbstractCapability[Any]):
 
 
 def unref(value: Any) -> Any:
-    """`value` with the conversation's frame ref left out of every `<system ref="...">` tag, so assertions name the tag."""
-    return json.loads(re.sub(r'<system ref=\\"[0-9a-f]{12}\\">', '<system>', json.dumps(value)))
+    """`value` with the conversation's frame seal left out of every `<system seal="...">` tag, so assertions name the tag."""
+    return json.loads(re.sub(r'<system seal=\\"[0-9a-f]{12}\\">', '<system>', json.dumps(value)))
 
 
 def weather_agent(model: Any, **kwargs: Any) -> Agent[None, str]:
@@ -820,10 +820,10 @@ def test_current_request_scoped_prompts_move_to_the_last_request():
             ModelRequest(
                 parts=[
                     UserPromptPart(content='Are you there?', timestamp=IsDatetime()),
-                    UserPromptPart(content='<system ref="6467b9c7fc66">Reminder A.</system>', timestamp=IsDatetime()),
-                    UserPromptPart(content='<system ref="6467b9c7fc66">Reminder B.</system>', timestamp=IsDatetime()),
+                    UserPromptPart(content='<system seal="6467b9c7fc66">Reminder A.</system>', timestamp=IsDatetime()),
+                    UserPromptPart(content='<system seal="6467b9c7fc66">Reminder B.</system>', timestamp=IsDatetime()),
                 ],
-                metadata={'__pydantic_ai__': {'request_scoped_tail': 2, 'frame_ref': '6467b9c7fc66'}},
+                metadata={'__pydantic_ai__': {'request_scoped_tail': 2, 'frame_seal': '6467b9c7fc66'}},
             ),
         ]
     )
@@ -931,12 +931,12 @@ async def test_bedrock_message_cache_point_goes_before_the_request_scoped_prompt
         [
             {'toolResult': {'toolUseId': 'call_2', 'content': [{'text': 'Oslo: 18C'}], 'status': 'success'}},
             {'cachePoint': {'type': 'default'}},
-            {'text': '<system ref="3baa42f53778">Reminder 2.</system>'},
+            {'text': '<system seal="3baa42f53778">Reminder 2.</system>'},
         ]
     )
     assert 'Reminder 1.' not in str(tool_loop['messages'])
     assert only_reminder['messages'] == snapshot(
-        [{'role': 'user', 'content': [{'text': '<system ref="7422eec6df40">Reminder.</system>'}]}]
+        [{'role': 'user', 'content': [{'text': '<system seal="7422eec6df40">Reminder.</system>'}]}]
     )
 
 
@@ -967,11 +967,11 @@ async def test_openrouter_message_cache_control_goes_before_the_request_scoped_p
                 'tool_call_id': 'call_2',
                 'content': [{'type': 'text', 'text': 'Oslo: 18C', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
             },
-            {'role': 'user', 'content': '<system ref="3baa42f53778">Reminder 2.</system>'},
+            {'role': 'user', 'content': '<system seal="3baa42f53778">Reminder 2.</system>'},
         ]
     )
     assert only_reminder['messages'] == snapshot(
-        [{'role': 'user', 'content': '<system ref="7422eec6df40">Reminder.</system>'}]
+        [{'role': 'user', 'content': '<system seal="7422eec6df40">Reminder.</system>'}]
     )
 
 
@@ -1121,17 +1121,17 @@ def test_anthropic_bedrock_lookback_breakpoint_skips_the_request_scoped_entry():
 def duplicate_text_history(lasting: ModelRequestPart | None = None) -> list[ModelMessage]:
     """A tool round whose lasting text is the same as the request-scoped reminder after it, as rendered.
 
-    By default the lasting text is user text, carrying the conversation's frame ref as the reminder does. On a model
+    By default the lasting text is user text, carrying the conversation's frame seal as the reminder does. On a model
     without mid-conversation system messages, `lasting` is a lasting `SystemPromptPart` with the reminder's text.
     """
-    ref = frame_ref([ModelRequest(parts=[UserPromptPart('Weather in Paris?')])])
+    seal = frame_seal([ModelRequest(parts=[UserPromptPart('Weather in Paris?')])])
     return [
         ModelRequest(parts=[UserPromptPart('Weather in Paris?')]),
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1')]),
         ModelRequest(
             parts=[
                 ToolReturnPart('get_weather', 'Paris: 18C', tool_call_id='call_1'),
-                lasting or UserPromptPart(f'<system ref="{ref}">Reminder.</system>'),
+                lasting or UserPromptPart(f'<system seal="{seal}">Reminder.</system>'),
             ]
         ),
         ModelRequest(parts=[SystemPromptPart('Reminder.', scope='request')]),

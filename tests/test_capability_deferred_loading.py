@@ -1135,7 +1135,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '54fa5d187346'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '54fa5d187346'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
@@ -1400,7 +1400,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': 'b87cd9b680db'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'b87cd9b680db'}},
             ),
             ModelResponse(
                 parts=[
@@ -1441,7 +1441,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': 'b87cd9b680db'}},
+                metadata={'__pydantic_ai__': {'frame_seal': 'b87cd9b680db'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],

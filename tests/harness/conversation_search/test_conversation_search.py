@@ -482,14 +482,14 @@ class TestSnapshotHistorySource:
         assert (await _search(source, 'PELICAN', scope='conversation', conversation_id='c1')).count('[score:') == 1
         assert 'Todo status: done.' in await _search(source, 'done', scope='conversation', conversation_id='c1')
 
-    def test_a_stored_frame_ref_does_not_change_the_message_hash(self) -> None:
-        """Core stores the frame ref on a request just before sending it, which can be after a snapshot holds it."""
+    def test_a_stored_frame_seal_does_not_change_the_message_hash(self) -> None:
+        """Core stores the frame seal on a request just before sending it, which can be after a snapshot holds it."""
         parts = [UserPromptPart('hi')]
 
         def request(metadata: dict[str, Any] | None) -> ModelRequest:
             return ModelRequest(parts=parts, metadata=metadata)
 
-        namespace = {'frame_ref': '0123456789ab'}
+        namespace = {'frame_seal': '0123456789ab'}
         assert message_hash(request({'app': 1, '__pydantic_ai__': namespace})) == message_hash(request({'app': 1}))
         assert message_hash(request({'__pydantic_ai__': namespace})) == message_hash(request(None))
         assert message_hash(request({'__pydantic_ai__': {**namespace, 'other': True}})) != message_hash(request(None))

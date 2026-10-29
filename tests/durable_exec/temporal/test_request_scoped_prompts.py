@@ -83,12 +83,12 @@ def _model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     # Runs in the model activity, on the request the workflow prepared for it.
     _seen_by_model.append(
         [
-            # The conversation's frame ref is left out of the tag, so the assertions below name it.
-            re.sub(r'^<system ref="[0-9a-f]{12}">', '<system>', str(part.content))
+            # The conversation's frame seal is left out of the tag, so the assertions below name it.
+            re.sub(r'^<system seal="[0-9a-f]{12}">', '<system>', str(part.content))
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, UserPromptPart) and str(part.content).startswith('<system ref=')
+            if isinstance(part, UserPromptPart) and str(part.content).startswith('<system seal=')
         ]
     )
     if len(_seen_by_model) == 1:

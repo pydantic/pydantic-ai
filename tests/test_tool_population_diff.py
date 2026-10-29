@@ -218,7 +218,7 @@ async def test_newcomer_history_shape():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '8a95dc5922be'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '8a95dc5922be'}},
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='later', args={}, tool_call_id='c2')],
@@ -235,7 +235,7 @@ async def test_newcomer_history_shape():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_ref': '8a95dc5922be'}},
+                metadata={'__pydantic_ai__': {'frame_seal': '8a95dc5922be'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],

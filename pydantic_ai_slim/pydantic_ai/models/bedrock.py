@@ -74,7 +74,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
-from pydantic_ai._frame_ref import frame_ref
+from pydantic_ai._frame_seal import frame_seal
 from pydantic_ai._gateway_cost import fill_gateway_header_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
@@ -1771,7 +1771,7 @@ class BedrockConverseModel(Model[BaseClient]):
         # the grouped tool results; the merge pass below then separates it with a synthetic assistant turn.
         # Media that this model does allow alongside a `toolResult` stays co-located in the same turn.
         deferred_media_content: list[ContentBlockUnionTypeDef] = []
-        ref = frame_ref(messages)
+        seal = frame_seal(messages)
 
         def flush_deferred_media() -> None:
             if deferred_media_content:
@@ -1780,7 +1780,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         for message in messages:
             if isinstance(message, ModelRequest):
-                for part in _sendable_request_parts(message.parts, ref=ref):
+                for part in _sendable_request_parts(message.parts, seal=seal):
                     if isinstance(part, SystemPromptPart):
                         if part.content:  # pragma: no branch
                             system_prompt.append({'text': part.content})
@@ -1865,7 +1865,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                     # This media lands on a user turn, so it is framed with the call it
                                     # came from — see `_tool_result_provenance_tags`.
                                     open_tag, close_tag = _tool_result_provenance_tags(
-                                        part.tool_name, part.tool_call_id, item.identifier, ref=ref
+                                        part.tool_name, part.tool_call_id, item.identifier, seal=seal
                                     )
                                     framed_media: list[ContentBlockUnionTypeDef] = [
                                         {'text': open_tag},
@@ -1934,7 +1934,9 @@ class BedrockConverseModel(Model[BaseClient]):
                                 }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile, ref=ref)
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(
+                                item.content, profile, seal=seal
+                            )
                             if not carry_in_user_turn:
                                 content.append({'text': thinking_text})
                             elif item.content:

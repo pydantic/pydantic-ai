@@ -90,7 +90,7 @@ async def test_openrouter_responses_claude_accepts_carried_thinking(
             {
                 'role': 'user',
                 'content': """\
-<assistant_thinking ref="df11f97fd249">
+<assistant_thinking seal="df11f97fd249">
 The lookup came back with 8.1 for the 10-year, so a 1% move in yields is worth roughly 8% of price.
 </assistant_thinking>\
 """,

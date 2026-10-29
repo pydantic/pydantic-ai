@@ -66,7 +66,7 @@ class FunctionModel(InMemoryBatchModel):
     supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
     # Nor is there a model to tell what the `<system>` tag means, and the announcement would show up in every
     # history a test inspects.
-    _announces_frame_ref = False
+    _announces_frame_seal = False
 
     function: FunctionDef | None
     stream_function: StreamFunctionDef | None
@@ -450,7 +450,7 @@ def _estimate_usage(  # noqa: C901
     response_tokens = 0
     for message in messages:
         if isinstance(message, ModelRequest):
-            for part in _sendable_request_parts(message.parts, ref=None):
+            for part in _sendable_request_parts(message.parts, seal=None):
                 if isinstance(part, SystemPromptPart | UserPromptPart):
                     request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):

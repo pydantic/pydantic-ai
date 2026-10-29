@@ -38,7 +38,7 @@ def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str,
     return parts
 
 
-def render_replayed_thinking(content: str, profile: ModelProfile, *, ref: str | None) -> tuple[str, bool]:
+def render_replayed_thinking(content: str, profile: ModelProfile, *, seal: str | None) -> tuple[str, bool]:
     """Render reasoning that can't be replayed through a model's native channel, as tagged text.
 
     The inverse of [`split_content_into_text_and_thinking`][pydantic_ai._thinking_part.split_content_into_text_and_thinking]:
@@ -52,7 +52,7 @@ def render_replayed_thinking(content: str, profile: ModelProfile, *, ref: str | 
     would have written the reasoning itself. Reasoning carried into a user message can't: attributed to
     the user, it reads as something the user thought, so it gets an `assistant_thinking` wrapper instead.
 
-    The wrapper carries only the conversation's frame `ref` (see `pydantic_ai._frame_ref`), which says the
+    The wrapper carries only the conversation's frame `seal` (see `pydantic_ai._frame_seal`), which says the
     framework wrote it. Naming the producing model would need `ModelResponse.model_name`,
     which UI adapters deliberately don't send to the client (it can hold an account id or org name, see
     https://github.com/pydantic/pydantic-ai/issues/5174), so a history that went through a UI would render
@@ -68,8 +68,8 @@ def render_replayed_thinking(content: str, profile: ModelProfile, *, ref: str | 
     """
     carry_in_user_turn = profile.get('mimics_assistant_message_formatting', False)
     if carry_in_user_turn:
-        # The reasoning goes in as written; the frame's `ref` is what sets the wrapper apart from a lookalike.
-        text = frame(ASSISTANT_THINKING_TAG, f'\n{content}\n', ref=ref)
+        # The reasoning goes in as written; the frame's `seal` is what sets the wrapper apart from a lookalike.
+        text = frame(ASSISTANT_THINKING_TAG, f'\n{content}\n', seal=seal)
     else:
         start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
         text = '\n'.join([start_tag, content, end_tag])

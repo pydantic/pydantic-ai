@@ -39,7 +39,7 @@ from inline_snapshot import snapshot
 from pydantic import AnyUrl, BaseModel, model_serializer
 
 from pydantic_ai import Agent, ToolOutput
-from pydantic_ai._frame_ref import frame_ref
+from pydantic_ai._frame_seal import frame_seal
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -440,8 +440,8 @@ async def test_anthropic_foreign_thinking_roundtrip_wire_stable(
         bodies.append(json.dumps(get_mock_chat_completion_kwargs(client)[0]['messages']))
 
     original_body, roundtripped_body = bodies
-    ref = frame_ref([*history, ModelRequest(parts=[UserPromptPart('Reply with exactly: OK')])])
-    assert f'<assistant_thinking ref=\\"{ref}\\">\\n17 * 23 is 391.\\n</assistant_thinking>' in original_body
+    seal = frame_seal([*history, ModelRequest(parts=[UserPromptPart('Reply with exactly: OK')])])
+    assert f'<assistant_thinking seal=\\"{seal}\\">\\n17 * 23 is 391.\\n</assistant_thinking>' in original_body
     assert roundtripped_body == original_body
 
 
@@ -475,7 +475,7 @@ async def test_anthropic_foreign_thinking_roundtrip_wire_stable(
             marks=pytest.mark.skipif(
                 not ag_ui_reasoning_successful(),
                 # Before 0.1.11 the installed SDK has no `encrypted_value`, so the feedback reloads as plain user
-                # text without the frame ref its fence was sent with (`dump_messages` warns about this).
+                # text without the frame seal its fence was sent with (`dump_messages` warns about this).
                 reason='ag-ui-protocol < 0.1.11 (no `encrypted_value` carrier)',
             ),
         ),

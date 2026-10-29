@@ -11,7 +11,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
-from .._frame_ref import frame_ref
+from .._frame_seal import frame_seal
 from .._gateway_cost import gateway_reported_cost
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
@@ -617,10 +617,10 @@ class GroqModel(Model[AsyncGroq]):
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         groq_messages: list[chat.ChatCompletionMessageParam] = []
-        ref = frame_ref(messages)
+        seal = frame_seal(messages)
         for message in messages:
             if isinstance(message, ModelRequest):
-                async for item in self._map_user_message(message, ref=ref):
+                async for item in self._map_user_message(message, seal=seal):
                     groq_messages.append(item)
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
@@ -699,16 +699,16 @@ class GroqModel(Model[AsyncGroq]):
         return response_format_param
 
     async def _map_user_message(
-        self, message: ModelRequest, *, ref: str
+        self, message: ModelRequest, *, seal: str
     ) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         file_content: list[UserContent] = []
-        for part in _sendable_request_parts(message.parts, ref=ref):
+        for part in _sendable_request_parts(message.parts, seal=seal):
             if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_file_content = _tool_return_text_and_files(part, ref=ref)
+                tool_text, tool_file_content = _tool_return_text_and_files(part, seal=seal)
                 file_content.extend(tool_file_content)
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',

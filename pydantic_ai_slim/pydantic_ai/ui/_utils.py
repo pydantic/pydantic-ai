@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Final
 
-from pydantic_ai._frame_ref import FRAME_REF_KEY
 from pydantic_ai._mcp_apps import MCPAppToolResult
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import ModelMessage
@@ -13,7 +12,6 @@ from pydantic_ai.messages import ModelMessage
 INTERNAL_METADATA_KEY = '__pydantic_ai__'
 """Reserved key in UI message metadata for state the adapters own; never read from client-controlled metadata."""
 _UI_MESSAGE_ID_KEY = 'ui_message_id'
-_ADAPTER_STATE_KEYS: Final = frozenset({_UI_MESSAGE_ID_KEY, FRAME_REF_KEY})
 
 MCP_APPS_UI_TYPE: Final = 'mcp-apps'
 """Name of the UI event that carries an MCP Apps record: the AG-UI activity type and the Vercel AI `data-*` suffix.
@@ -44,17 +42,16 @@ def get_ui_message_id(message: ModelMessage) -> str | None:
     return ui_message_id if isinstance(ui_message_id, str) else None
 
 
-def without_adapter_state(message: ModelMessage) -> ModelMessage:
-    """Return a copy of `message` without the state `load_messages` keeps in the reserved namespace.
+def without_ui_message_id(message: ModelMessage) -> ModelMessage:
+    """Return a copy of `message` without the UI message id kept by `set_ui_message_id`.
 
-    That's the UI message id kept by `set_ui_message_id` and a request's frame ref (`pydantic_ai._frame_ref`).
     Leaves out the reserved namespace, and then `metadata` itself, if nothing else is left in them.
     """
     metadata = message.metadata
     namespace = (metadata or {}).get(INTERNAL_METADATA_KEY)
-    if metadata is None or not is_str_dict(namespace) or not _ADAPTER_STATE_KEYS & namespace.keys():
+    if metadata is None or not is_str_dict(namespace) or _UI_MESSAGE_ID_KEY not in namespace:
         return message
-    rest = {key: value for key, value in namespace.items() if key not in _ADAPTER_STATE_KEYS}
+    rest = {key: value for key, value in namespace.items() if key != _UI_MESSAGE_ID_KEY}
     new_metadata = {key: value for key, value in metadata.items() if key != INTERNAL_METADATA_KEY}
     if rest:
         new_metadata[INTERNAL_METADATA_KEY] = rest

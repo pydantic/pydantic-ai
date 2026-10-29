@@ -7,7 +7,6 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
-from pydantic_ai._frame_ref import is_frame_ref, store_frame_ref, stored_frame_ref
 from pydantic_ai._mcp_apps import get_mcp_app_tool_result
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
@@ -15,7 +14,6 @@ from pydantic_ai.messages import (
     Citation,
     ForceDownloadMode,
     ModelMessage,
-    ModelRequest,
     ProviderDetailsDelta,
     TextPart,
     ToolReturnPart,
@@ -76,7 +74,7 @@ class _PydanticAIMessageMetadata(BaseModel):
     through Vercel AI `UIMessage.metadata`. Adding a field here extends the wire format;
     field changes need a deprecation cycle.
 
-    Only `timestamp` and a request's frame ref are carried. `UIMessage.metadata` is client-controlled, so dumping
+    Only `timestamp` is carried. `UIMessage.metadata` is client-controlled, so dumping
     server fields can leak infrastructure details (e.g. `provider_url`) and loading them
     trusts client input (e.g. a forged `provider_response_id` chaining into another user's
     conversation via OpenAI's `previous_response_id='auto'`). Exposing more fields needs an
@@ -86,10 +84,6 @@ class _PydanticAIMessageMetadata(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
     timestamp: datetime | None = None
-    frame_ref: str | None = None
-    """The conversation's frame ref a `ModelRequest` stores (see `pydantic_ai._frame_ref`), so a client-held history
-    renders its frames with the same ref on the next turn. A client choosing it only changes what the application's
-    frames carry: text that resembles a frame gets a note whatever its ref."""
 
 
 def tool_return_output(part: BaseToolReturnPart) -> Any:
@@ -280,7 +274,7 @@ def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:
         else {}
     )
 
-    pydantic_metadata = _PydanticAIMessageMetadata(timestamp=message.timestamp, frame_ref=stored_frame_ref(message))
+    pydantic_metadata = _PydanticAIMessageMetadata(timestamp=message.timestamp)
     if pydantic_metadata_dump := pydantic_metadata.model_dump(mode='json', exclude_defaults=True):
         metadata[PROVIDER_METADATA_KEY] = pydantic_metadata_dump
     return metadata
@@ -314,12 +308,6 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 
     if pydantic_metadata.timestamp is not None:
         message.timestamp = pydantic_metadata.timestamp
-    if (
-        isinstance(message, ModelRequest)
-        and pydantic_metadata.frame_ref is not None
-        and is_frame_ref(pydantic_metadata.frame_ref)
-    ):
-        store_frame_ref(message, pydantic_metadata.frame_ref)
 
 
 # Data-carrying chunk types that have a direct UIMessagePart counterpart in the
