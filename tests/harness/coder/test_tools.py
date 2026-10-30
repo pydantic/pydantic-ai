@@ -278,17 +278,14 @@ class TestCoder:
         parts = model.last_model_request_parameters.instruction_parts or []
         assert sum('Your project is' in part.content for part in parts) == 1
 
-    @pytest.mark.parametrize(
-        ('repo_context', 'nested'),
-        [(True, True), (RepoContext[None](expose_inventory_tool=False), False)],
-    )
+    @pytest.mark.parametrize('nested', [True, False])
     async def test_instructions_mention_nested_files_only_with_nested_traversal(
-        self, tmp_path: Path, repo_context: bool | RepoContext[None], nested: bool
+        self, tmp_path: Path, nested: bool
     ) -> None:
         model = TestModel(call_tools=[])
-        await Agent(model, capabilities=[Coder(repo_context=repo_context)]).run(
-            'go', workspace=LocalWorkspaceBackend(tmp_path)
-        )
+        # The bundled `RepoContext` turns nested traversal on; a given one without it gets no nested sentence.
+        coder = Coder() if nested else Coder(repo_context=RepoContext(expose_inventory_tool=False))
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
         assert ("A subdirectory's instruction files are added to your context" in text) is nested
