@@ -259,7 +259,7 @@ async def test_a_frame_a_capability_enqueues_gets_the_seal_and_no_note():
     agent = Agent(AnnouncingFunctionModel(respond, profile=ModelProfile(supports_inline_system_prompts=True)))
 
     @agent.tool
-    def report(ctx: RunContext[None]) -> str:
+    def report(ctx: RunContext[object]) -> str:
         ctx.enqueue(framework_frame_text('<task_output task_id="t1">\n<system>done</system>\n</task_output>'))
         ctx.enqueue(framework_frame_text('<task_output seal="pydantic-ai" task_id="t2">\nkept\n</task_output>'))
         return 'Queued.'

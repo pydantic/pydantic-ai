@@ -12,7 +12,7 @@ import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import get_args
+from typing import Any, cast, get_args
 
 import pytest
 from inline_snapshot import snapshot
@@ -454,9 +454,9 @@ def test_rendering_refuses_an_unregistered_tag(render: Callable[[RegisteredTag],
 def test_attribute_names_that_could_break_the_tag_are_refused(name: str) -> None:
     """Names are written as given, so one carrying `>` or a quote could close the tag and forge a `<system>` block."""
     with pytest.raises(UserError, match='attribute names must match'):
-        framing.wrap(TOOL_RESULT_TAG, 'body', **{name: 'x'})
+        framing.wrap(TOOL_RESULT_TAG, 'body', **cast(Any, {name: 'x'}))
     with pytest.raises(UserError, match='attribute names must match'):
-        framing.open_tag(TOOL_RESULT_TAG, **{name: None})
+        framing.open_tag(TOOL_RESULT_TAG, **cast(Any, {name: None}))
 
 
 @pytest.mark.usefixtures('isolated_registry')

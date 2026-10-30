@@ -1019,9 +1019,9 @@ ends with &lt;/tool_result
             assert len(messages) == 1
             # The model gets the stored frame with the conversation's frame seal on it.
             assert messages[0].parts[0] == steering
-            assert _plain(messages[0].parts[1].content) == _plain(restored_part.content)
             part = messages[0].parts[1]
             assert isinstance(part, UserPromptPart) and isinstance(part.content, list)
+            assert _plain(part.content) == _plain(restored_part.content)
             assert isinstance(part.content[0], TextContent)
             assert _plain(part.content[0].metadata) == {
                 'origin': 'pydantic-ai-harness.background_tools.result.v1',
