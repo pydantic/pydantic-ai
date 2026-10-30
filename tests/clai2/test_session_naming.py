@@ -341,3 +341,44 @@ async def test_templated_sessions_get_their_own_titles_not_the_prompt_prefix(tmp
         named = await store.get(conversation_id=(await store.save(summary=named.summary, messages=named.messages)).id)
     assert await namer.name(conversation_id=named.summary.id, client=client)
     assert prompts[-1].startswith('Previous title: Fix issue 11281\n')
+
+
+async def test_templated_sessions_in_one_workspace_get_titles_that_differ_beyond_case(tmp_path: Path) -> None:
+    """Prompts differing only in their last word must not end up with titles differing only in case."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    template = 'Templated stress prompt for round three of the web UI test, please answer with exactly one word: {}'
+    elsewhere = await store.save(
+        summary=ConversationSummary(workspace='/elsewhere'),
+        messages=[ModelRequest(parts=[UserPromptPart(template.format('charlie'))])],
+    )
+    sessions = [
+        await store.save(
+            summary=ConversationSummary(workspace='/a'),
+            messages=[ModelRequest(parts=[UserPromptPart(template.format(word))])],
+        )
+        for word in ('alpha', 'bravo', 'delta')
+    ]
+    prompts: list[str] = []
+    styles = iter(
+        ['Web UI Stress Test Round Three', 'Web UI stress test round three', 'web ui stress test round three']
+    )
+
+    async def generate(prompt: str) -> NamingResult:
+        """Like the model in the report: drops the distinguishing word, in whatever casing."""
+        prompts.append(prompt)
+        return NamingResult(name=SessionName(title=next(styles, 'Web UI stress test round three')))
+
+    namer, client = SessionNamer(store=store), NamingClient(generate=generate)
+    assert await namer.name(conversation_id=elsewhere.id, client=client)
+    for summary in sessions:
+        assert await namer.name(conversation_id=summary.id, client=client)
+    titles = [(await store.get(conversation_id=s.id)).summary.title for s in sessions]
+    assert titles == [
+        'Web UI stress test round three',
+        'web ui stress test round three (2)',
+        'Web UI stress test round three (3)',
+    ]
+    # The namer is told its siblings' titles in this workspace, and only those, so it can tell them apart.
+    assert 'Web UI Stress Test Round Three' not in prompts[1]
+    assert '- Web UI stress test round three\n' in prompts[2]
+    assert '- web ui stress test round three (2)\n' in prompts[3]
