@@ -33,8 +33,6 @@ from .messages import (
     ModelRequestAttempt,
     ModelResponse,
     ModelResponseStreamEvent,
-    TextPart,
-    ThinkingPart,
 )
 from .models._request_timeout import stream_under_deadline
 
@@ -103,27 +101,6 @@ FallbackOn = (
 and [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]."""
 
 
-def has_no_actionable_output(response: ModelResponse) -> bool:
-    """Whether `response` has no output the agent can act on: no parts, or only thinking and empty text.
-
-    The agent loop doesn't accept such a response: it raises `ContentFilterError` for one the content filter ended,
-    and otherwise asks the model again. A `TextPart` with empty content carries no text output; adapters preserve such
-    parts (e.g. when a gateway returns a text item with `text: null`) so their IDs round-trip.
-    """
-    return all(
-        isinstance(part, ThinkingPart) or (isinstance(part, TextPart) and not part.content) for part in response.parts
-    )
-
-
-def refused_with_content_filter_error(response: ModelResponse, *, any_content_filter: bool) -> bool:
-    """Whether the run would end on `ContentFilterError` for `response`, were it accepted.
-
-    The agent raises it for a response the content filter ended with no output it could act on, and, with
-    `RaiseContentFilterError` (`any_content_filter`), for any response the content filter ended.
-    """
-    return response.finish_reason == 'content_filter' and (any_content_filter or has_no_actionable_output(response))
-
-
 class ResponseRejected(Exception):
     """Raised within a `FallbackExceptionGroup` when model responses are rejected by a response handler."""
 
@@ -152,12 +129,13 @@ class FallbackPredicates:
     exception_handlers: list[ExceptionHandler]
     response_handlers: list[ResponseHandler]
     content_filter: bool = False
-    """Whether `fallback_on` names `ContentFilterError`, so a response the run would raise it for is rejected.
+    """Whether `fallback_on` names `ContentFilterError`, so a response the provider's content filter ended is rejected.
 
     The agent only raises `ContentFilterError` once a response is accepted, too late to fall back from the error, so the
-    exception type also stands for the response it would be raised for (see `refused_with_content_filter_error`).
-    Unlike a response handler, it's not one that streamed responses skip with a warning: a streamed response's finish
-    reason is only known once it has been streamed, so a streamed refusal is accepted.
+    exception type stands for any response with `finish_reason='content_filter'`, with or without partial output,
+    which the provider says to discard. Unlike a response handler, it's not one that streamed responses skip with a
+    warning: a streamed response's finish reason is only known once it has been streamed, so a streamed refusal is
+    accepted.
     """
 
     @classmethod
@@ -209,17 +187,9 @@ class FallbackPredicates:
         else:
             self.exception_handlers.append(handler)
 
-    async def should_fallback(self, value: Exception | ModelResponse, *, any_content_filter: bool = False) -> bool:
-        """Check if any handler wants to trigger fallback.
-
-        `any_content_filter` says whether the run raises `ContentFilterError` for any response the content filter
-        ended, as it does with `RaiseContentFilterError`, rather than only for one with no output.
-        """
-        if (
-            self.content_filter
-            and isinstance(value, ModelResponse)
-            and refused_with_content_filter_error(value, any_content_filter=any_content_filter)
-        ):
+    async def should_fallback(self, value: Exception | ModelResponse) -> bool:
+        """Check if any handler wants to trigger fallback."""
+        if self.content_filter and isinstance(value, ModelResponse) and value.finish_reason == 'content_filter':
             return True
         handlers = self.exception_handlers if isinstance(value, Exception) else self.response_handlers
         for handler in handlers:
@@ -324,12 +294,9 @@ class FallbackChain:
     rejected_responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
     log: AttemptLog = field(default_factory=AttemptLog)
 
-    async def falls_back(self, failure: Exception | ModelResponse, *, any_content_filter: bool = False) -> bool:
-        """Whether `fallback_on` moves on from `failure`, an error or a response, noting it for the group if so.
-
-        See `FallbackPredicates.should_fallback` for `any_content_filter`.
-        """
-        if not await self.predicates.should_fallback(failure, any_content_filter=any_content_filter):
+    async def falls_back(self, failure: Exception | ModelResponse) -> bool:
+        """Whether `fallback_on` moves on from `failure`, an error or a response, noting it for the group if so."""
+        if not await self.predicates.should_fallback(failure):
             return False
         if isinstance(failure, Exception):
             self.exceptions.append(failure)

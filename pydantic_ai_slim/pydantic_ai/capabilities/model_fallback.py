@@ -14,7 +14,6 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability, AgentModel, CapabilityOrdering
-from .content_filter import RaiseContentFilterError
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -122,13 +121,11 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             models: The models to attempt after the one selected for the request step. When the
                 agent has no model of its own, the first of these is used for the first attempt.
             fallback_on: Conditions that trigger fallback to the next model. Defaults to any
-                [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], and a refusal the run would end on with
-                [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]: a response the model's content
-                filter ended (`finish_reason='content_filter'`) with no text or tool calls, or, with
-                [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError], any response the
-                content filter ended. Naming `ContentFilterError` stands for those responses, as the error is only
-                raised once a response is accepted. Pass `fallback_on=(ModelAPIError,)` to have a refusal end the run
-                instead. Accepts:
+                [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], and a refusal: a response the model's
+                content filter ended (`finish_reason='content_filter'`), with or without partial text, which naming
+                [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] stands for, as the error is only
+                raised once a response is accepted. Pass `fallback_on=(ModelAPIError,)` to keep the old behavior: an
+                empty refusal ends the run with `ContentFilterError`, and one with text is the output. Accepts:
 
                 - A tuple of exception types: `(ModelRateLimitError, ModelUnavailableError)`
                 - An exception handler (sync or async): `lambda exc: isinstance(exc, MyError)`
@@ -281,9 +278,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             # A streamed response has already reached the consumer, so it's accepted without consulting
             # the response handlers, with a warning when there are any, as `FallbackModel` does.
             self._chain.warn_if_streamed_responses_unjudged()
-        if request_context.streaming or not await self._chain.falls_back(
-            response, any_content_filter=_raises_on_any_content_filter(ctx)
-        ):
+        if request_context.streaming or not await self._chain.falls_back(response):
             # A suspended response's continuation, in this run or a later one that resumes it, goes back to the
             # model that started the provider-side job, which the agent records as the response's `model_id`.
             return response
@@ -444,16 +439,3 @@ def _is_or_wraps(model: Model, candidate: Model) -> bool:
         if not isinstance(model, WrapperModel):
             return False
         model = model.wrapped
-
-
-def _raises_on_any_content_filter(ctx: RunContext[Any]) -> bool:
-    """Whether the run has `RaiseContentFilterError`, which ends it on any response the content filter ended."""
-    found = False
-
-    def visit(capability: AbstractCapability[Any]) -> None:
-        nonlocal found
-        found = found or isinstance(capability, RaiseContentFilterError)
-
-    if ctx.root_capability is not None:
-        ctx.root_capability.apply(visit)
-    return found
