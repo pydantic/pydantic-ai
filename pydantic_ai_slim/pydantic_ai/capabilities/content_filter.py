@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING
 
-from pydantic_ai._model_errors import content_filter_message
+from pydantic_ai._content_filter import content_filter_message
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse

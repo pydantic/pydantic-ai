@@ -78,9 +78,9 @@ from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import (
+    _content_filter,
     _display,
     _enqueue,
-    _model_errors,
     _output,
     _system_prompt,
     _usage_attribution,
@@ -3854,7 +3854,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 # would only repeat the refused request.
                 if self.model_response.finish_reason == 'content_filter':
                     body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
-                    message = _model_errors.content_filter_message(self.model_response.provider_details)
+                    message = _content_filter.content_filter_message(self.model_response.provider_details)
                     raise exceptions.ContentFilterError(message, body=body)
 
                 # If the output type allows `None`, a response with no text output is a valid result:
