@@ -380,13 +380,12 @@ re-execute tasks keyed by the run ID. Generating a default ID adds one cached Pr
 explicit run IDs bypass it.
 
 Runs are distinguished by their [inputs](#caching-and-idempotency), including prompt, message
-history, dependencies and static metadata, along with
-incoming history's run and conversation IDs and any supplied conversation ID. Keep those incoming
-IDs stable across retries. Calls with identical inputs get distinct IDs by call order, so
-reordering them across a retry can associate results with different calls. Differences only in
-non-serializable dependencies or metadata do not distinguish runs; values returned by metadata
-callbacks are also excluded. Pass distinct, retry-stable `run_id=` values when such calls can
-reorder.
+history, dependencies and static metadata, along with incoming history's run and conversation IDs
+and any supplied conversation ID. Keep those incoming IDs stable across retries. Calls with
+identical inputs get distinct IDs by call order, so reordering them across a retry can associate
+results with different calls. Differences only in non-serializable dependencies or metadata do not
+distinguish runs; values returned by metadata callbacks are also excluded. Pass distinct,
+retry-stable `run_id=` values when such calls can reorder.
 
 !!! warning "Default ID format migration"
 
