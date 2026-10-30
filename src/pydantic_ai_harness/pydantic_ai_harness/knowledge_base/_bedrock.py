@@ -8,7 +8,11 @@ External assumptions (verified 2026-10-30 against botocore 1.42.63 and the API r
   `implicitFilterConfiguration`. boto3 1.43 adds `managedSearchConfiguration` for managed knowledge
   bases; `retrieval_configuration` passes it through on a boto3 that has it.
 - A filter's `andAll` and `orAll` lists need at least two entries, and an `andAll` directly inside an
-  `andAll` is rejected with a `ValidationException`; filters are combined at one level here.
+  `andAll` is rejected with a `ValidationException`; filters are combined at one level here. An
+  `orAll` inside an `andAll` is accepted. There is no `not` operator.
+- The negative operators (`notEquals` and its list form) match a document that lacks the key (checked live 2026-10-30).
+- `overrideSearchType` is `HYBRID` or `SEMANTIC`; there is no keyword-only search and no score
+  threshold, so a threshold is applied to the returned scores.
 - Filter values and result metadata values are the API's generic "document" type: scalars and lists of
   strings at runtime, which boto3-stubs type as a mapping. `_as_boto_filter` is the one crossover.
 - Result metadata keys starting with `x-amz-bedrock-kb-` (`source-uri`, `chunk-id`, `data-source-id`)
@@ -24,13 +28,13 @@ import functools
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
 import anyio.to_thread
 from typing_extensions import Unpack
 
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai_harness.knowledge_base._backend import MetadataFilter, Passage
+from pydantic_ai_harness.knowledge_base._backend import FilterNode, Passage, SearchMode
 
 try:
     import boto3
@@ -61,9 +65,6 @@ if TYPE_CHECKING:
 
 BEDROCK_MAX_NUMBER_OF_RESULTS = 100
 """Largest `numberOfResults` (and `numberOfRerankedResults`) the `Retrieve` API accepts."""
-
-SearchType: TypeAlias = Literal['HYBRID', 'SEMANTIC']
-"""How a Bedrock knowledge base matches a query: vector embeddings plus raw text, or embeddings only."""
 
 _USER_AGENT = 'pydantic-ai-harness/knowledge-base'
 _SERVICE_METADATA_PREFIX = 'x-amz-bedrock-kb-'
@@ -110,12 +111,6 @@ class BedrockKnowledgeBase:
     region_name: str | None = None
     """The AWS region of the knowledge base; `None` takes it from the ambient AWS configuration."""
 
-    search_type: SearchType | None = None
-    """`'HYBRID'` (embeddings plus raw text) or `'SEMANTIC'` (embeddings only); `None` lets Bedrock choose.
-
-    Hybrid search needs an OpenSearch Serverless vector store with a filterable text field.
-    """
-
     reranking_model: str | None = None
     """A Bedrock reranking model that reorders the retrieved passages, as a model ARN or a model id.
 
@@ -135,8 +130,8 @@ class BedrockKnowledgeBase:
 
     Use it for implicit filtering, reranker metadata selection, Bedrock-native filters (ranges,
     `startsWith`), or a managed knowledge base's `managedSearchConfiguration` (boto3 1.43 or later).
-    It replaces `search_type`, `reranking_model` and `fetch_results`, and its result count wins over
-    the search's. A search's metadata filter is still applied, combined with any filter it carries.
+    It replaces `reranking_model`, `fetch_results` and the search's mode, and its result count wins
+    over the search's. A search's metadata filter is still applied, combined with any filter it carries.
     """
 
     client: BedrockAgentRuntimeClient | None = field(default=None, repr=False)
@@ -153,10 +148,8 @@ class BedrockKnowledgeBase:
                 raise ValueError(
                     f'fetch_results must be between 1 and {BEDROCK_MAX_NUMBER_OF_RESULTS}, got {self.fetch_results}'
                 )
-        if self.retrieval_configuration is not None and (
-            self.search_type is not None or self.reranking_model is not None
-        ):
-            raise ValueError('retrieval_configuration replaces search_type and reranking_model; set one or the other.')
+        if self.retrieval_configuration is not None and self.reranking_model is not None:
+            raise ValueError('retrieval_configuration replaces reranking_model; set one or the other.')
 
     @cached_property
     def _client_and_region(self) -> tuple[BedrockAgentRuntimeClient, str | None]:
@@ -188,14 +181,31 @@ class BedrockKnowledgeBase:
             )
         return f'arn:aws:bedrock:{region}::foundation-model/{model}'
 
-    async def search(self, query: str, *, limit: int, filter: MetadataFilter | None) -> Sequence[Passage]:
-        """Run one `Retrieve` request and turn its results into passages."""
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filter: FilterNode | None,
+        mode: SearchMode | None = None,
+        score_threshold: float | None = None,
+    ) -> Sequence[Passage]:
+        """Run one `Retrieve` request and turn its results into passages.
+
+        `mode` is `'semantic'` or `'hybrid'` (hybrid needs an OpenSearch Serverless store with a
+        filterable text field); `None` lets Bedrock choose. `score_threshold` drops returned passages
+        scoring below it, on Bedrock's 0 to 1 scale.
+        """
+        if mode == 'keyword':
+            raise UserError("BedrockKnowledgeBase supports mode='semantic' or 'hybrid', not 'keyword'")
+        if mode is not None and self.retrieval_configuration is not None:
+            raise UserError('retrieval_configuration sets the search type itself; leave the search mode unset')
         client, _ = self._client_and_region
         call = functools.partial(
             client.retrieve,
             knowledgeBaseId=self.knowledge_base_id,
             retrievalQuery={'text': query},
-            retrievalConfiguration=self._configuration(min(limit, BEDROCK_MAX_NUMBER_OF_RESULTS), filter),
+            retrievalConfiguration=self._configuration(min(limit, BEDROCK_MAX_NUMBER_OF_RESULTS), filter, mode),
         )
         try:
             response = await anyio.to_thread.run_sync(call)
@@ -205,9 +215,14 @@ class BedrockKnowledgeBase:
             raise ModelRetry(f'Knowledge base search failed: {error}') from error
         except (BotocoreConnectionError, ReadTimeoutError) as error:
             raise ModelRetry(f'Knowledge base search failed: {error}') from error
-        return [_passage(result) for result in response['retrievalResults']]
+        passages = [_passage(result) for result in response['retrievalResults']]
+        if score_threshold is None:
+            return passages
+        return [passage for passage in passages if passage.score is None or passage.score >= score_threshold]
 
-    def _configuration(self, limit: int, filter: MetadataFilter | None) -> KnowledgeBaseRetrievalConfigurationTypeDef:
+    def _configuration(
+        self, limit: int, filter: FilterNode | None, mode: SearchMode | None
+    ) -> KnowledgeBaseRetrievalConfigurationTypeDef:
         native = to_bedrock_filter(filter)
         if self.retrieval_configuration is not None:
             if native is None:
@@ -222,8 +237,8 @@ class BedrockKnowledgeBase:
             combined = native if existing is None else _all_of([_from_boto_filter(existing), native])
             return {'vectorSearchConfiguration': {**configured, 'filter': _as_boto_filter(combined)}}
         vector: KnowledgeBaseVectorSearchConfigurationTypeDef = {'numberOfResults': limit}
-        if self.search_type is not None:
-            vector['overrideSearchType'] = self.search_type
+        if mode is not None:
+            vector['overrideSearchType'] = 'HYBRID' if mode == 'hybrid' else 'SEMANTIC'
         if native is not None:
             vector['filter'] = _as_boto_filter(native)
         if (arn := self.reranking_model_arn) is not None:
@@ -244,26 +259,51 @@ BedrockFilter: TypeAlias = dict[str, Any]
 """A Bedrock `RetrievalFilter` at runtime: one operator key with a `{key, value}` attribute, or `andAll` / `orAll`."""
 
 
-def to_bedrock_filter(filter: MetadataFilter | None) -> BedrockFilter | None:
-    """Translate a neutral filter: `equals` for a scalar, `in` for a list, and `andAll` over two or more keys."""
-    if not filter:
-        return None
-    clauses: list[BedrockFilter] = [
-        {'equals': {'key': key, 'value': value}}
-        if isinstance(value, str | int | float | bool)
-        else {'in': {'key': key, 'value': list(value)}}
-        for key, value in filter.items()
-    ]
-    return _all_of(clauses)
+_OPERATORS = {
+    '==': 'equals',
+    '!=': 'notEquals',
+    '>': 'greaterThan',
+    '>=': 'greaterThanOrEquals',
+    '<': 'lessThan',
+    '<=': 'lessThanOrEquals',
+    'in': 'in',
+    'not in': 'notIn',
+}
+
+
+def to_bedrock_filter(filter: FilterNode | None) -> BedrockFilter | None:
+    """Translate a filter tree: comparisons map one to one, `AND` to `andAll` and `OR` to `orAll`.
+
+    Raises:
+        UserError: The filter uses `NOT`, which Bedrock has no operator for. Negate the comparisons
+            instead (`!=`, `not in`), which Bedrock evaluates the same way for a missing field.
+    """
+    return None if filter is None else _translate(filter)
+
+
+def _translate(node: FilterNode) -> BedrockFilter:
+    if 'conditions' not in node:
+        return {_OPERATORS[node['operator']]: {'key': node['field'], 'value': node['value']}}
+    if node['operator'] == 'NOT':
+        raise UserError("BedrockKnowledgeBase can't apply NOT; negate the conditions instead, with '!=' or 'not in'")
+    children = [_translate(child) for child in node['conditions']]
+    return _all_of(children) if node['operator'] == 'AND' else _combine('orAll', children)
+
+
+def _combine(key: str, clauses: list[BedrockFilter]) -> BedrockFilter:
+    """Join clauses under `key` at one level, folding in clauses already joined the same way.
+
+    Bedrock wants two or more clauses in a list and rejects an `andAll` nested in an `andAll`.
+    """
+    flat: list[BedrockFilter] = []
+    for clause in clauses:
+        nested: list[BedrockFilter] | None = clause.get(key)
+        flat.extend(nested if nested is not None else [clause])
+    return flat[0] if len(flat) == 1 else {key: flat}
 
 
 def _all_of(clauses: list[BedrockFilter]) -> BedrockFilter:
-    """Combine clauses with one flat `andAll`: Bedrock rejects an `andAll` nested in an `andAll`."""
-    flat: list[BedrockFilter] = []
-    for clause in clauses:
-        nested: list[BedrockFilter] | None = clause.get('andAll')
-        flat.extend(nested if nested is not None else [clause])
-    return flat[0] if len(flat) == 1 else {'andAll': flat}
+    return _combine('andAll', clauses)
 
 
 def _as_boto_filter(filter: BedrockFilter) -> RetrievalFilterTypeDef:

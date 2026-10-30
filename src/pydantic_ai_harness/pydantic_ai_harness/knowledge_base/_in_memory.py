@@ -8,7 +8,8 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-from pydantic_ai_harness.knowledge_base._backend import Document, MetadataFilter, Passage, matches
+from pydantic_ai.exceptions import UserError
+from pydantic_ai_harness.knowledge_base._backend import Document, FilterNode, Passage, SearchMode, matches
 
 _TOKEN = re.compile(r'\w+')
 _PARAGRAPH = re.compile(r'\n\s*\n')
@@ -75,8 +76,22 @@ class InMemoryKnowledgeBase:
             if (tokens := _tokens(text))
         ]
 
-    async def search(self, query: str, *, limit: int, filter: MetadataFilter | None) -> Sequence[Passage]:
-        """Rank the matching documents' chunks against `query` and return the best `limit` that share a term."""
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filter: FilterNode | None,
+        mode: SearchMode | None = None,
+        score_threshold: float | None = None,
+    ) -> Sequence[Passage]:
+        """Rank the matching documents' chunks against `query` and return the best `limit` that share a term.
+
+        Only `mode='keyword'` (the default) is supported. `score_threshold` is on the BM25 scale, which
+        grows with the number of query terms and has no upper bound.
+        """
+        if mode not in (None, 'keyword'):
+            raise UserError(f'InMemoryKnowledgeBase only supports keyword search, not {mode!r}')
         terms = set(_tokens(query))
         candidates = [item for item in self._chunks if matches(item.document.metadata, filter)]
         if not terms or not candidates:
@@ -91,7 +106,7 @@ class InMemoryKnowledgeBase:
                 if count:
                     idf = math.log(1 + (len(candidates) - frequency[term] + 0.5) / (frequency[term] + 0.5))
                     score += idf * count * (_K1 + 1) / (count + _K1 * (1 - _B + _B * item.length / average))
-            if score > 0:
+            if score > 0 and (score_threshold is None or score >= score_threshold):
                 scored.append((score, item))
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return [
@@ -105,7 +120,7 @@ class InMemoryKnowledgeBase:
             for score, item in scored[:limit]
         ]
 
-    async def read(self, document_id: str, *, max_chars: int, filter: MetadataFilter | None) -> Document | None:
+    async def read(self, document_id: str, *, max_chars: int, filter: FilterNode | None) -> Document | None:
         """Return the stored document if it matches `filter`, else `None`; the caller cuts the text at `max_chars`."""
         document = self._documents.get(document_id)
         return document if document is not None and matches(document.metadata, filter) else None

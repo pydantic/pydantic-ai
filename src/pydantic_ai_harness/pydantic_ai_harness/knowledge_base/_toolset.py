@@ -14,21 +14,24 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness.knowledge_base._backend import (
+    FilterNode,
     KnowledgeBaseBackend,
     KnowledgeBaseResult,
     MetadataFilter,
     Passage,
     ReadableKnowledgeBase,
+    SearchMode,
+    normalize_filter,
 )
 
 FilterFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], MetadataFilter | None | Awaitable[MetadataFilter | None]]
 """Builds the filter for one run from its `RunContext`, for example the tenant in `ctx.deps`; sync or async."""
 
-SearchOperation: TypeAlias = Callable[[str, MetadataFilter | None], Awaitable[ToolReturn[str] | RetryRequest]]
+SearchOperation: TypeAlias = Callable[[str, FilterNode | None], Awaitable[ToolReturn[str] | RetryRequest]]
 """A durable operation that runs one search for a query and its resolved filter and renders the result."""
 
-ReadOperation: TypeAlias = Callable[[str, MetadataFilter | None], Awaitable[ToolReturn[str] | RetryRequest]]
-"""A durable operation that reads one document within the resolved filter and renders it."""
+ReadOperation: TypeAlias = Callable[[str, FilterNode | None, int], Awaitable[ToolReturn[str] | RetryRequest]]
+"""A durable operation that reads one document within the resolved filter, from an offset, and renders it."""
 
 _SEARCH_DESCRIPTION = 'Search the knowledge base for passages relevant to a query.'
 
@@ -51,8 +54,9 @@ class KnowledgeBaseToolset(FunctionToolset[AgentDepsT]):
 
     A search returns a `ToolReturn` whose `return_value` is the text the model sees and whose
     `metadata['results']` lists the passages as `KnowledgeBaseResult` records, so applications can
-    render citations without parsing the text. `KnowledgeBase` passes `operations` so that each
-    backend call runs as one of its durable operations.
+    render citations without parsing the text. `read_document` returns a document in windows of
+    `max_document_chars`, and says which `offset` continues it. `KnowledgeBase` passes `operations`
+    so that each backend call runs as one of its durable operations.
     """
 
     def __init__(
@@ -61,6 +65,8 @@ class KnowledgeBaseToolset(FunctionToolset[AgentDepsT]):
         *,
         number_of_results: int = 5,
         filter: MetadataFilter | FilterFunc[AgentDepsT] | None = None,
+        search_mode: SearchMode | None = None,
+        score_threshold: float | None = None,
         show_sources: bool = True,
         max_document_chars: int = 20_000,
         description: str | None = None,
@@ -72,6 +78,8 @@ class KnowledgeBaseToolset(FunctionToolset[AgentDepsT]):
         self._backend = backend
         self._number_of_results = number_of_results
         self._filter = filter
+        self._search_mode: SearchMode | None = search_mode
+        self._score_threshold = score_threshold
         self._show_sources = show_sources
         self._max_document_chars = max_document_chars
         self._operations = operations
@@ -103,24 +111,34 @@ class KnowledgeBaseToolset(FunctionToolset[AgentDepsT]):
             return raise_retry(await self._operations.search(query, filter))
         return await self.search(query, filter)
 
-    async def read_document(self, ctx: RunContext[AgentDepsT], document_id: str) -> ToolReturn[str]:
+    async def read_document(self, ctx: RunContext[AgentDepsT], document_id: str, offset: int = 0) -> ToolReturn[str]:
         """Read a whole document from the knowledge base, by the `Document:` id a search result showed.
 
         Args:
             ctx: The run context, which a callable `filter` builds the run's filter from.
             document_id: The id of the document to read.
+            offset: The character to start at. A long document comes back in parts; each part says the
+                offset that continues it.
 
         Returns:
-            The document text, cut at the configured length.
+            The document text from `offset`, up to the configured length.
         """
         filter = await self._resolve_filter(ctx)
         if self._operations is not None:
-            return raise_retry(await self._operations.read(document_id, filter))
-        return await self.read(document_id, filter)
+            return raise_retry(await self._operations.read(document_id, filter, offset))
+        return await self.read(document_id, filter, offset)
 
-    async def search(self, query: str, filter: MetadataFilter | None) -> ToolReturn[str]:
+    async def search(self, query: str, filter: FilterNode | None) -> ToolReturn[str]:
         """Run one backend search and render it. The request a capability's durable operation records."""
-        passages = list(await self._backend.search(query, limit=self._number_of_results, filter=filter))
+        passages = list(
+            await self._backend.search(
+                query,
+                limit=self._number_of_results,
+                filter=filter,
+                mode=self._search_mode,
+                score_threshold=self._score_threshold,
+            )
+        )
         passages = passages[: self._number_of_results]
         if not passages:
             return ToolReturn(f'No results found for {query!r}.', metadata={'results': []})
@@ -132,23 +150,30 @@ class KnowledgeBaseToolset(FunctionToolset[AgentDepsT]):
             f'Found {len(sections)} result{plural} for {query!r}:\n\n{joined}', metadata={'results': records}
         )
 
-    async def read(self, document_id: str, filter: MetadataFilter | None) -> ToolReturn[str]:
-        """Read one document within `filter` and render it, cut at `max_document_chars`.
+    async def read(self, document_id: str, filter: FilterNode | None, offset: int = 0) -> ToolReturn[str]:
+        """Read one document within `filter` from `offset` and render up to `max_document_chars` of it.
 
         A document outside the filter reads as missing, so the model learns nothing about it.
         """
+        if offset < 0:
+            raise ModelRetry(f'offset must be 0 or more, got {offset}.')
         backend = self._backend
         assert isinstance(backend, ReadableKnowledgeBase)
-        document = await backend.read(document_id, max_chars=self._max_document_chars, filter=filter)
+        document = await backend.read(document_id, max_chars=offset + self._max_document_chars, filter=filter)
         if document is None:
             raise ModelRetry(f'No document with id {document_id!r}. Use an id from a search result.')
-        truncated = len(document.text) > self._max_document_chars
-        text = document.text[: self._max_document_chars]
-        if truncated:
-            text += f'\n[... document truncated at {self._max_document_chars} characters]'
+        if offset and offset >= len(document.text):
+            raise ModelRetry(f'offset {offset} is past the end of document {document_id!r}.')
+        end = offset + self._max_document_chars
+        text = document.text[offset:end]
+        next_offset = end if len(document.text) > end else None
+        if next_offset is not None:
+            text += f'\n[... the document continues; call read_document with offset={next_offset}]'
         lines = [f'Document: {_one_line(document.document_id)}']
         if self._show_sources and document.source:
             lines.append(f'Source: {_one_line(document.source)}')
+        if offset:
+            lines.append(f'From character: {offset}')
         return ToolReturn(
             '\n'.join([*lines, '', text]),
             metadata={
@@ -156,18 +181,19 @@ class KnowledgeBaseToolset(FunctionToolset[AgentDepsT]):
                     'document_id': document.document_id,
                     'source': document.source,
                     'metadata': dict(document.metadata),
-                    'truncated': truncated,
+                    'offset': offset,
+                    'next_offset': next_offset,
                 }
             },
         )
 
-    async def _resolve_filter(self, ctx: RunContext[AgentDepsT]) -> MetadataFilter | None:
+    async def _resolve_filter(self, ctx: RunContext[AgentDepsT]) -> FilterNode | None:
         if not callable(self._filter):
-            return self._filter
+            return normalize_filter(self._filter)
         filter = self._filter(ctx)
         if inspect.isawaitable(filter):
             filter = await filter
-        return filter
+        return normalize_filter(filter)
 
     def _format(self, passage: Passage) -> str:
         lines: list[str] = []

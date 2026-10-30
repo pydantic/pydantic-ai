@@ -29,10 +29,14 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import KnowledgeBase
 from pydantic_ai_harness.knowledge_base import (
     Document,
+    FilterNode,
     InMemoryKnowledgeBase,
     KnowledgeBaseToolset,
     MetadataFilter,
     Passage,
+    SearchMode,
+    matches,
+    normalize_filter,
 )
 
 _DOCUMENTS = [
@@ -73,14 +77,24 @@ class _SearchOnly:
 
     passages: Sequence[Passage] = ()
     error: Exception | None = None
-    calls: list[tuple[str, int, MetadataFilter | None]] = field(
-        default_factory=list[tuple[str, int, 'MetadataFilter | None']]
+    calls: list[tuple[str, int, FilterNode | None]] = field(default_factory=list[tuple[str, int, 'FilterNode | None']])
+    options: list[tuple[SearchMode | None, float | None]] = field(
+        default_factory=list[tuple['SearchMode | None', 'float | None']]
     )
 
-    async def search(self, query: str, *, limit: int, filter: MetadataFilter | None) -> Sequence[Passage]:
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filter: FilterNode | None,
+        mode: SearchMode | None = None,
+        score_threshold: float | None = None,
+    ) -> Sequence[Passage]:
         if self.error is not None:
             raise self.error
         self.calls.append((query, limit, filter))
+        self.options.append((mode, score_threshold))
         return self.passages
 
 
@@ -122,7 +136,7 @@ class TestInMemoryKnowledgeBase:
         ],
     )
     async def test_filter_keeps_matching_documents(self, filter: MetadataFilter, expected: list[str]) -> None:
-        passages = await InMemoryKnowledgeBase(_DOCUMENTS).search('returns', limit=5, filter=filter)
+        passages = await InMemoryKnowledgeBase(_DOCUMENTS).search('returns', limit=5, filter=normalize_filter(filter))
         assert [passage.document_id for passage in passages] == expected
 
     async def test_limit_and_no_match(self) -> None:
@@ -151,13 +165,26 @@ class TestInMemoryKnowledgeBase:
 
     async def test_read_applies_the_filter(self) -> None:
         backend = InMemoryKnowledgeBase(_DOCUMENTS)
-        assert await backend.read('returns', max_chars=100, filter={'tenant_id': 'acme'}) is not None
-        assert await backend.read('other-returns', max_chars=100, filter={'tenant_id': 'acme'}) is None
+        acme = normalize_filter({'tenant_id': 'acme'})
+        assert await backend.read('returns', max_chars=100, filter=acme) is not None
+        assert await backend.read('other-returns', max_chars=100, filter=acme) is None
 
     async def test_blank_documents_and_paragraphs_add_no_chunks(self) -> None:
         backend = InMemoryKnowledgeBase([Document('blank', ''), Document('spaced', '\n\n  \n\nalpha')])
         passages = await backend.search('alpha', limit=5, filter=None)
         assert [(passage.document_id, passage.text) for passage in passages] == [('spaced', 'alpha')]
+
+    async def test_keyword_is_the_only_mode(self) -> None:
+        backend = InMemoryKnowledgeBase(_DOCUMENTS)
+        assert len(await backend.search('returns', limit=5, filter=None, mode='keyword')) == 2
+        with pytest.raises(UserError, match="only supports keyword search, not 'semantic'"):
+            await backend.search('returns', limit=5, filter=None, mode='semantic')
+
+    async def test_score_threshold_drops_weak_chunks(self) -> None:
+        backend = InMemoryKnowledgeBase(_DOCUMENTS)
+        scores = [passage.score or 0 for passage in await backend.search('returns', limit=5, filter=None)]
+        kept = await backend.search('returns', limit=5, filter=None, score_threshold=max(scores))
+        assert [passage.score for passage in kept] == [max(scores)]
 
     def test_chunk_chars_must_be_positive(self) -> None:
         with pytest.raises(ValueError, match='chunk_chars must be positive'):
@@ -221,7 +248,7 @@ class TestSearchKnowledgeBase:
     async def test_static_filter_is_passed_to_the_backend(self) -> None:
         backend = _SearchOnly()
         await _toolset(backend, filter={'tenant_id': 'acme'}).search_knowledge_base(_ctx(), 'q')
-        assert backend.calls == [('q', 5, {'tenant_id': 'acme'})]
+        assert backend.calls == [('q', 5, {'field': 'tenant_id', 'operator': '==', 'value': 'acme'})]
 
     async def test_filter_callable_is_evaluated_per_run(self) -> None:
         backend = _SearchOnly()
@@ -230,7 +257,7 @@ class TestSearchKnowledgeBase:
             return {'tenant_id': str(ctx.deps)}
 
         await _toolset(backend, filter=tenant).search_knowledge_base(_ctx('globex'), 'q')
-        assert backend.calls[0][2] == {'tenant_id': 'globex'}
+        assert backend.calls[0][2] == {'field': 'tenant_id', 'operator': '==', 'value': 'globex'}
 
     async def test_async_filter_callable_is_awaited(self) -> None:
         backend = _SearchOnly()
@@ -239,7 +266,30 @@ class TestSearchKnowledgeBase:
             return {'tenant_id': 'acme'}
 
         await _toolset(backend, filter=tenant).search_knowledge_base(_ctx(), 'q')
-        assert backend.calls[0][2] == {'tenant_id': 'acme'}
+        assert backend.calls[0][2] == {'field': 'tenant_id', 'operator': '==', 'value': 'acme'}
+
+    async def test_search_mode_and_threshold_are_passed_to_the_backend(self) -> None:
+        backend = _SearchOnly()
+        await _toolset(backend, search_mode='hybrid', score_threshold=0.4).search_knowledge_base(_ctx(), 'q')
+        assert backend.options == [('hybrid', 0.4)]
+
+    async def test_tree_filter_is_passed_through_checked(self) -> None:
+        backend = _SearchOnly()
+        tree: MetadataFilter = {
+            'operator': 'OR',
+            'conditions': [
+                {'field': 'year', 'operator': '>=', 'value': 2024},
+                {'field': 'source', 'operator': 'not in', 'value': ('drafts',)},
+            ],
+        }
+        await _toolset(backend, filter=tree).search_knowledge_base(_ctx(), 'q')
+        assert backend.calls[0][2] == {
+            'operator': 'OR',
+            'conditions': [
+                {'field': 'year', 'operator': '>=', 'value': 2024},
+                {'field': 'source', 'operator': 'not in', 'value': ['drafts']},
+            ],
+        }
 
     async def test_backend_retry_is_passed_through(self) -> None:
         backend = _SearchOnly(error=ModelRetry('throttled'))
@@ -285,15 +335,36 @@ class TestReadDocument:
                 'document_id': 'shipping',
                 'source': 'https://shop.example/shipping',
                 'metadata': {'tenant_id': 'acme', 'section': 'faq'},
-                'truncated': False,
+                'offset': 0,
+                'next_offset': None,
             }
         }
 
     async def test_long_document_is_cut_with_a_marker(self) -> None:
         backend = InMemoryKnowledgeBase([Document('long', 'x' * 30)])
         output = await _toolset(backend, max_document_chars=10, show_sources=False).read_document(_ctx(), 'long')
-        assert _text(output) == f'Document: long\n\n{"x" * 10}\n[... document truncated at 10 characters]'
-        assert output.metadata['document']['truncated'] is True
+        assert (
+            _text(output)
+            == f'Document: long\n\n{"x" * 10}\n[... the document continues; call read_document with offset=10]'
+        )
+        assert output.metadata['document']['next_offset'] == 10
+
+    async def test_later_parts_are_read_by_offset(self) -> None:
+        backend = InMemoryKnowledgeBase([Document('long', 'a' * 10 + 'b' * 10 + 'c' * 5)])
+        toolset = _toolset(backend, max_document_chars=10, show_sources=False)
+        second = await toolset.read_document(_ctx(), 'long', offset=10)
+        assert _text(second) == (
+            f'Document: long\nFrom character: 10\n\n{"b" * 10}\n[... the document continues; call read_document with offset=20]'
+        )
+        last = await toolset.read_document(_ctx(), 'long', offset=20)
+        assert _text(last) == f'Document: long\nFrom character: 20\n\n{"c" * 5}'
+        assert (last.metadata['document']['offset'], last.metadata['document']['next_offset']) == (20, None)
+
+    @pytest.mark.parametrize(('offset', 'message'), [(-1, 'offset must be 0 or more'), (30, 'past the end')])
+    async def test_bad_offsets_ask_the_model_to_retry(self, offset: int, message: str) -> None:
+        toolset = _toolset(InMemoryKnowledgeBase([Document('short', 'x' * 25)]))
+        with pytest.raises(ModelRetry, match=message):
+            await toolset.read_document(_ctx(), 'short', offset=offset)
 
     async def test_document_outside_the_run_filter_reads_as_missing(self) -> None:
         """A tenant-scoped agent can't open another tenant's document by guessing its id."""
@@ -325,9 +396,17 @@ class TestKnowledgeBase:
         with pytest.raises(ValueError, match='native needs a backend'):
             KnowledgeBase[None](_SearchOnly(), native=True)
 
-    def test_native_cannot_apply_a_filter(self) -> None:
-        with pytest.raises(ValueError, match='native search cannot apply a filter'):
-            KnowledgeBase[None](_NativeCapable(), native=True, filter={'tenant_id': 'acme'})
+    @pytest.mark.parametrize(
+        'options',
+        [{'filter': {'tenant_id': 'acme'}}, {'search_mode': 'semantic'}, {'score_threshold': 0.5}],
+    )
+    def test_native_uses_the_providers_settings(self, options: dict[str, object]) -> None:
+        with pytest.raises(ValueError, match="native search uses the provider's own settings"):
+            KnowledgeBase[None](_NativeCapable(), native=True, **options)  # pyright: ignore[reportArgumentType]
+
+    def test_static_filter_is_checked_at_construction(self) -> None:
+        with pytest.raises(ValueError, match="Unknown comparison operator '~'"):
+            KnowledgeBase[None](_SearchOnly(), filter={'field': 'year', 'operator': '~', 'value': 1})
 
     def test_instructions_follow_the_backend_and_description(self) -> None:
         searching = KnowledgeBase[None](_SearchOnly()).get_instructions()
@@ -486,3 +565,80 @@ class TestAgentSpec:
     def test_spec_schema_includes_the_capability(self) -> None:
         schema = AgentSpec.model_json_schema_with_capabilities([KnowledgeBase])
         assert 'KnowledgeBase' in json.dumps(schema)
+
+
+class TestFilters:
+    _METADATA: dict[str, object] = {'tenant_id': 'acme', 'year': 2025, 'tags': 'manual'}
+
+    @pytest.mark.parametrize(
+        ('filter', 'expected'),
+        [
+            (None, True),
+            ({}, True),
+            ({'tenant_id': 'acme'}, True),
+            ({'tenant_id': 'globex'}, False),
+            ({'tenant_id': ['acme', 'globex'], 'year': 2025}, True),
+            ({'field': 'year', 'operator': '>', 'value': 2024}, True),
+            ({'field': 'year', 'operator': '>=', 'value': 2026}, False),
+            ({'field': 'year', 'operator': '<', 'value': 2026}, True),
+            ({'field': 'year', 'operator': '<=', 'value': 2024}, False),
+            ({'field': 'year', 'operator': '!=', 'value': 2025}, False),
+            ({'field': 'year', 'operator': 'not in', 'value': [2024]}, True),
+            ({'field': 'tenant_id', 'operator': '>', 'value': 3}, False),
+            ({'field': 'missing', 'operator': '==', 'value': 'x'}, False),
+            ({'field': 'missing', 'operator': '>', 'value': 1}, False),
+            ({'field': 'missing', 'operator': '!=', 'value': 'x'}, True),
+            ({'field': 'missing', 'operator': 'not in', 'value': ['x']}, True),
+            (
+                {
+                    'operator': 'OR',
+                    'conditions': [
+                        {'field': 'tenant_id', 'operator': '==', 'value': 'globex'},
+                        {'field': 'year', 'operator': '==', 'value': 2025},
+                    ],
+                },
+                True,
+            ),
+            (
+                {
+                    'operator': 'AND',
+                    'conditions': [
+                        {'field': 'tenant_id', 'operator': '==', 'value': 'acme'},
+                        {'operator': 'NOT', 'conditions': [{'field': 'tags', 'operator': '==', 'value': 'manual'}]},
+                    ],
+                },
+                False,
+            ),
+        ],
+    )
+    def test_matches(self, filter: MetadataFilter | None, expected: bool) -> None:
+        assert matches(self._METADATA, filter) is expected
+
+    def test_shorthand_becomes_a_tree(self) -> None:
+        assert normalize_filter({'tenant_id': 'acme', 'source': ('a', 'b')}) == {
+            'operator': 'AND',
+            'conditions': [
+                {'field': 'tenant_id', 'operator': '==', 'value': 'acme'},
+                {'field': 'source', 'operator': 'in', 'value': ['a', 'b']},
+            ],
+        }
+
+    @pytest.mark.parametrize(
+        ('filter', 'message'),
+        [
+            ({'operator': 'XOR', 'conditions': [{'field': 'a', 'operator': '==', 'value': 1}]}, 'Unknown logical'),
+            ({'operator': 'AND', 'conditions': []}, 'non-empty list'),
+            ({'operator': 'AND', 'conditions': 'abc'}, 'non-empty list'),
+            ({'operator': 'AND', 'conditions': [{'a': 1}]}, 'Not a filter condition'),
+            ({'operator': 'AND', 'conditions': ['a']}, 'Not a filter condition'),
+            ({'field': 3, 'operator': '==', 'value': 1}, 'needs a field name'),
+            ({'field': 'a', 'operator': '~', 'value': 1}, 'Unknown comparison'),
+            ({'field': 'a', 'operator': 'in', 'value': 'x'}, 'needs a list'),
+            ({'field': 'a', 'operator': 'in', 'value': 3}, 'needs a list'),
+            ({'field': 'a', 'operator': '==', 'value': [1]}, 'needs a single value'),
+            ({'a': {'nested': 1}}, 'needs a list'),
+        ],
+    )
+    def test_malformed_filters_are_rejected(self, filter: object, message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            normalize_filter(filter)  # pyright: ignore[reportArgumentType]

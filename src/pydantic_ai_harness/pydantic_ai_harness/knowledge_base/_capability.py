@@ -14,10 +14,13 @@ from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, retry_as_result
 from pydantic_ai_harness.knowledge_base._backend import (
+    FilterNode,
     KnowledgeBaseBackend,
     MetadataFilter,
     NativeFileSearchBackend,
     ReadableKnowledgeBase,
+    SearchMode,
+    normalize_filter,
 )
 from pydantic_ai_harness.knowledge_base._toolset import FilterFunc, KnowledgeBaseOperations, KnowledgeBaseToolset
 
@@ -74,14 +77,25 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
     """How many passages one search returns (1 to 100; a backend may cap it lower, OpenAI at 50)."""
 
     filter: MetadataFilter | FilterFunc[AgentDepsT] | None = None
-    """A metadata filter every search applies, or a callable that builds it per run from the `RunContext`.
+    """A metadata filter every search and document read applies, or a callable that builds it per run.
 
-    A filter maps metadata keys to a value (equal) or a list of values (any of), and every key must
-    match: `{'tenant_id': 'acme', 'source': ['manuals', 'faq']}`. The callable form scopes a shared
-    knowledge base to the run's tenant or user, for example
-    `lambda ctx: {'tenant_id': ctx.deps.tenant_id}`; it may be async, and returning `None` searches
-    unfiltered. Each backend translates the filter to its own syntax.
+    The shorthand maps metadata keys to a value (equal) or a list of values (any of), and every key
+    must match: `{'tenant_id': 'acme', 'source': ['manuals', 'faq']}`. The tree form adds `!=`, ranges,
+    `not in`, `OR` and `NOT`: see `MetadataFilter`. The callable form scopes a shared knowledge base
+    to the run's tenant or user, for example `lambda ctx: {'tenant_id': ctx.deps.tenant_id}`; it may
+    be async, and returning `None` searches unfiltered. Each backend translates the filter to its own
+    syntax and raises for parts it can't apply.
     """
+
+    search_mode: SearchMode | None = None
+    """How searches match: `'semantic'`, `'keyword'` or `'hybrid'`; `None` for the backend's default.
+
+    Backends support a subset: in-memory is keyword, Bedrock semantic or hybrid, OpenAI semantic.
+    An unsupported mode raises on the first search.
+    """
+
+    score_threshold: float | None = None
+    """Drop passages scoring below this, on the backend's own scale (Bedrock and OpenAI 0 to 1, in-memory BM25)."""
 
     show_sources: bool = True
     """Whether each passage's `Source:` line (location and score) is in the text the model sees.
@@ -92,14 +106,18 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
     """
 
     max_document_chars: int = 20_000
-    """How much of a document `read_document` returns, in characters; longer documents are cut with a marker."""
+    """How much of a document one `read_document` call returns, in characters.
+
+    A longer document ends with a marker naming the `offset` that continues it, so the model can read on.
+    """
 
     native: bool = False
     """Let models whose provider can search the backend's index natively do so, with `FileSearchTool`.
 
-    Needs a backend that offers it (`OpenAIVectorStore`) and no `filter`, since the native tool can't
-    apply one. Models without native file search use `search_knowledge_base` as usual; with native
-    search, passages come back as the provider's own tool result instead of `metadata['results']`.
+    Needs a backend that offers it (`OpenAIVectorStore`), and no `filter`, `search_mode` or
+    `score_threshold`, since the native tool uses the provider's own settings. Models without native
+    file search use `search_knowledge_base` as usual; with native search, passages come back as the
+    provider's own tool result instead of `metadata['results']`.
     """
 
     description: str | None = None
@@ -126,11 +144,16 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
             )
         if self.max_document_chars < 1:
             raise ValueError(f'max_document_chars must be positive, got {self.max_document_chars}')
+        if self.filter is not None and not callable(self.filter):
+            normalize_filter(self.filter)
         if self.native:
             if not isinstance(self.backend, NativeFileSearchBackend):
                 raise ValueError(f'native needs a backend the provider can search natively, not {self.backend!r}')
-            if self.filter is not None:
-                raise ValueError('native search cannot apply a filter; use one or the other')
+            if self.filter is not None or self.search_mode is not None or self.score_threshold is not None:
+                raise ValueError(
+                    "native search uses the provider's own settings and can't apply a filter, "
+                    'search_mode or score_threshold; use one or the other'
+                )
 
     def get_description(self) -> str:
         """The catalog line shown with `load_capability` when `defer_loading=True`: what to load it for."""
@@ -170,12 +193,12 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
         return backend.file_search_tool(ctx, limit=self.number_of_results)
 
     @durable_operation('search_knowledge_base')
-    async def _search(self, query: str, filter: MetadataFilter | None) -> ToolReturn[str] | RetryRequest:
+    async def _search(self, query: str, filter: FilterNode | None) -> ToolReturn[str] | RetryRequest:
         return await retry_as_result(self._requests.search(query, filter))
 
     @durable_operation('read_document')
-    async def _read(self, document_id: str, filter: MetadataFilter | None) -> ToolReturn[str] | RetryRequest:
-        return await retry_as_result(self._requests.read(document_id, filter))
+    async def _read(self, document_id: str, filter: FilterNode | None, offset: int) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.read(document_id, filter, offset))
 
     @cached_property
     def _requests(self) -> KnowledgeBaseToolset[AgentDepsT]:
@@ -189,6 +212,8 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
             self.backend,
             number_of_results=self.number_of_results,
             filter=self.filter,
+            search_mode=self.search_mode,
+            score_threshold=self.score_threshold,
             show_sources=self.show_sources,
             max_document_chars=self.max_document_chars,
             description=self.description,
@@ -204,11 +229,12 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
         backend: Literal['bedrock', 'openai'],
         knowledge_base_id: str,
         region_name: str | None = None,
-        search_type: Literal['HYBRID', 'SEMANTIC'] | None = None,
         reranking_model: str | None = None,
         fetch_results: int | None = None,
         number_of_results: int = 5,
         filter: MetadataFilter | None = None,
+        search_mode: SearchMode | None = None,
+        score_threshold: float | None = None,
         show_sources: bool = True,
         max_document_chars: int = 20_000,
         native: bool = False,
@@ -219,7 +245,7 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
         """Construct the capability from serializable spec options.
 
         `knowledge_base_id` is the Bedrock knowledge base id or the OpenAI vector store id. The Bedrock
-        options (`region_name`, `search_type`, `reranking_model`, `fetch_results`) only apply to
+        options (`region_name`, `reranking_model`, `fetch_results`) only apply to
         `backend='bedrock'`. A spec takes a static `filter`; a callable filter, a custom client and an
         in-memory backend are Python-only.
         """
@@ -230,15 +256,12 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
             store = BedrockKnowledgeBase(
                 knowledge_base_id,
                 region_name=region_name,
-                search_type=search_type,
                 reranking_model=reranking_model,
                 fetch_results=fetch_results,
             )
         else:
-            if (region_name, search_type, reranking_model, fetch_results) != (None, None, None, None):
-                raise ValueError(
-                    'region_name, search_type, reranking_model and fetch_results only apply to backend="bedrock"'
-                )
+            if (region_name, reranking_model, fetch_results) != (None, None, None):
+                raise ValueError('region_name, reranking_model and fetch_results only apply to backend="bedrock"')
             from pydantic_ai_harness.knowledge_base._openai import OpenAIVectorStore
 
             store = OpenAIVectorStore(knowledge_base_id)
@@ -246,6 +269,8 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
             store,
             number_of_results=number_of_results,
             filter=filter,
+            search_mode=search_mode,
+            score_threshold=score_threshold,
             show_sources=show_sources,
             max_document_chars=max_document_chars,
             native=native,

@@ -371,16 +371,20 @@ agent = Agent(
 ```
 
 Key parameters: `backend` (required, positional), `number_of_results=5` (1 to 100; OpenAI caps at
-50), `filter=None` (a backend-neutral `{key: value}` or `{key: [values]}` dict, every key must
-match, or a sync or async callable of `RunContext` returning one per run), `show_sources=True`,
-`max_document_chars=20_000`, `native=False`, `description=None`, `guidance=None` (`''` disables
-the instructions), `id='knowledge_base'`. Bedrock options sit on the backend: `search_type`
-(`'HYBRID'` / `'SEMANTIC'`), `reranking_model`, `fetch_results`, `retrieval_configuration` (raw
-`retrievalConfiguration`; the capability's filter is still combined into it), `client`.
+50), `filter=None` (shorthand `{key: value | [values]}`, every key must match, or a tree of
+`{'field', 'operator', 'value'}` conditions with `==`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `not in`
+combined by `{'operator': 'AND' | 'OR' | 'NOT', 'conditions': [...]}`; or a sync or async callable
+of `RunContext` returning one per run), `search_mode=None` (`'semantic'`, `'keyword'`, `'hybrid'`),
+`score_threshold=None` (backend's scale), `show_sources=True`, `max_document_chars=20_000` (per
+`read_document` call; the model pages on with `offset`), `native=False`, `description=None`,
+`guidance=None` (`''` disables the instructions), `id='knowledge_base'`. Bedrock options sit on the
+backend: `reranking_model`, `fetch_results`, `retrieval_configuration` (raw `retrievalConfiguration`;
+the capability's filter is still combined into it, `search_mode` must stay unset), `client`.
 
 Gotchas:
-- A backend is any object with `async search(query, *, limit, filter)`; add `async read(document_id,
-  *, max_chars, filter)` for `read_document`. `read` must return `None` for a document outside the
+- A backend is any object with `async search(query, *, limit, filter, mode=None,
+  score_threshold=None)`; add `async read(document_id, *, max_chars, filter)` for `read_document`.
+  The filter arrives as a checked tree (`FilterNode`); raise `UserError` for what you can't apply. `read` must return `None` for a document outside the
   filter, or a tenant-scoped agent can open other tenants' documents by id (`matches` helps).
   Backends raise `ModelRetry` for transient failures.
 - `native=True` sends the provider's `FileSearchTool` on models that support it (OpenAI vector
@@ -388,11 +392,13 @@ Gotchas:
   `filter`, since the native tool can't scope a search, and native results don't land in
   `metadata['results']`.
 - `InMemoryKnowledgeBase` is keyword BM25 without stemming or embeddings: tests and small corpora.
-- Bedrock has no document read API; Bedrock rejects an `andAll` nested in `andAll`, so the
-  backend combines filter clauses at one level.
+- Bedrock has no document read API and no keyword mode; Bedrock and OpenAI have no `NOT` (negate
+  the comparisons instead); OpenAI is semantic only. A missing field matches `!=` and `not in` only,
+  as on Bedrock. Unsupported operators, modes and thresholds raise rather than being ignored.
 - Two instances share the default `id` and raise when they differ; a second knowledge base needs its
   own `id`, `PrefixTools`, and `guidance=''`.
-- A spec supports `backend: bedrock | openai` with `knowledge_base_id` and a static `filter`.
+- A spec supports `backend: bedrock | openai` with `knowledge_base_id`, `search_mode`,
+  `score_threshold` and a static `filter` in either form.
 
 ## See also
 

@@ -14,7 +14,7 @@ from typing_extensions import Unpack
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai_harness import KnowledgeBase
-from pydantic_ai_harness.knowledge_base import BedrockKnowledgeBase, MetadataFilter, Passage
+from pydantic_ai_harness.knowledge_base import BedrockKnowledgeBase, MetadataFilter, Passage, normalize_filter
 
 if TYPE_CHECKING:
     from mypy_boto3_bedrock_agent_runtime.type_defs import (
@@ -115,14 +115,16 @@ class TestSearch:
     )
     async def test_neutral_filter_is_translated(self, filter: MetadataFilter, expected: object) -> None:
         client = _FakeClient()
-        await BedrockKnowledgeBase('KB123', client=client, search_type='HYBRID').search('q', limit=5, filter=filter)
+        await BedrockKnowledgeBase('KB123', client=client).search(
+            'q', limit=5, filter=normalize_filter(filter), mode='hybrid'
+        )
         assert _configuration(client) == {
             'vectorSearchConfiguration': {'numberOfResults': 5, 'overrideSearchType': 'HYBRID', 'filter': expected}
         }
 
     async def test_empty_filter_sends_none(self) -> None:
         client = _FakeClient()
-        await BedrockKnowledgeBase('KB123', client=client).search('q', limit=5, filter={})
+        await BedrockKnowledgeBase('KB123', client=client).search('q', limit=5, filter=normalize_filter({}))
         assert _configuration(client) == {'vectorSearchConfiguration': {'numberOfResults': 5}}
 
     async def test_reranking_fetches_wide_and_keeps_the_limit(self) -> None:
@@ -199,7 +201,7 @@ class TestSearch:
         }
         passed = copy.deepcopy(configuration)
         backend = BedrockKnowledgeBase('KB123', client=client, retrieval_configuration=configuration)
-        await backend.search('q', limit=5, filter={'tenant_id': 'acme'})
+        await backend.search('q', limit=5, filter=normalize_filter({'tenant_id': 'acme'}))
         assert _configuration(client) == {
             'vectorSearchConfiguration': {
                 'numberOfResults': 7,
@@ -220,7 +222,7 @@ class TestSearch:
             'vectorSearchConfiguration': {'numberOfResults': 7}
         }
         backend = BedrockKnowledgeBase('KB123', client=client, retrieval_configuration=configuration)
-        await backend.search('q', limit=5, filter={'tenant_id': 'acme'})
+        await backend.search('q', limit=5, filter=normalize_filter({'tenant_id': 'acme'}))
         assert _configuration(client) == {
             'vectorSearchConfiguration': {
                 'numberOfResults': 7,
@@ -235,7 +237,7 @@ class TestSearch:
             retrieval_configuration={},  # pyright: ignore[reportArgumentType]  # optional key since boto3-stubs 1.43
         )
         with pytest.raises(UserError, match='vectorSearchConfiguration'):
-            await backend.search('q', limit=5, filter={'tenant_id': 'acme'})
+            await backend.search('q', limit=5, filter=normalize_filter({'tenant_id': 'acme'}))
 
 
 class TestPassages:
@@ -304,6 +306,103 @@ class TestPassages:
         assert passage.text == text
 
 
+class TestFilterTree:
+    @pytest.mark.parametrize(
+        ('filter', 'expected'),
+        [
+            (
+                {'field': 'year', 'operator': '>=', 'value': 2024},
+                {'greaterThanOrEquals': {'key': 'year', 'value': 2024}},
+            ),
+            (
+                {
+                    'operator': 'AND',
+                    'conditions': [
+                        {'field': 'tenant_id', 'operator': '==', 'value': 'acme'},
+                        {
+                            'operator': 'AND',
+                            'conditions': [
+                                {'field': 'year', 'operator': '>', 'value': 2020},
+                                {'field': 'year', 'operator': '<', 'value': 2030},
+                            ],
+                        },
+                        {
+                            'operator': 'OR',
+                            'conditions': [
+                                {'field': 'source', 'operator': '!=', 'value': 'drafts'},
+                                {'field': 'tag', 'operator': 'not in', 'value': ['old']},
+                                {'field': 'year', 'operator': '<=', 'value': 1999},
+                            ],
+                        },
+                    ],
+                },
+                {
+                    'andAll': [
+                        {'equals': {'key': 'tenant_id', 'value': 'acme'}},
+                        {'greaterThan': {'key': 'year', 'value': 2020}},
+                        {'lessThan': {'key': 'year', 'value': 2030}},
+                        {
+                            'orAll': [
+                                {'notEquals': {'key': 'source', 'value': 'drafts'}},
+                                {'notIn': {'key': 'tag', 'value': ['old']}},
+                                {'lessThanOrEquals': {'key': 'year', 'value': 1999}},
+                            ]
+                        },
+                    ]
+                },
+            ),
+            (
+                {'operator': 'OR', 'conditions': [{'field': 'a', 'operator': '==', 'value': 1}]},
+                {'equals': {'key': 'a', 'value': 1}},
+            ),
+        ],
+    )
+    async def test_tree_is_translated_flat(self, filter: MetadataFilter, expected: object) -> None:
+        client = _FakeClient()
+        await BedrockKnowledgeBase('KB123', client=client).search('q', limit=5, filter=normalize_filter(filter))
+        assert _configuration(client) == {'vectorSearchConfiguration': {'numberOfResults': 5, 'filter': expected}}
+
+    async def test_not_is_rejected(self) -> None:
+        client = _FakeClient()
+        not_drafts = normalize_filter(
+            {'operator': 'NOT', 'conditions': [{'field': 'source', 'operator': '==', 'value': 'drafts'}]}
+        )
+        with pytest.raises(UserError, match="can't apply NOT"):
+            await BedrockKnowledgeBase('KB123', client=client).search('q', limit=5, filter=not_drafts)
+        assert client.calls == []
+
+
+class TestSearchOptions:
+    async def test_semantic_mode_is_sent(self) -> None:
+        client = _FakeClient()
+        await BedrockKnowledgeBase('KB123', client=client).search('q', limit=5, filter=None, mode='semantic')
+        assert _configuration(client) == {
+            'vectorSearchConfiguration': {'numberOfResults': 5, 'overrideSearchType': 'SEMANTIC'}
+        }
+
+    async def test_keyword_mode_is_rejected(self) -> None:
+        with pytest.raises(UserError, match="not 'keyword'"):
+            await BedrockKnowledgeBase('KB123', client=_FakeClient()).search('q', limit=5, filter=None, mode='keyword')
+
+    async def test_mode_with_a_retrieval_configuration_is_rejected(self) -> None:
+        backend = BedrockKnowledgeBase(
+            'KB123', client=_FakeClient(), retrieval_configuration={'vectorSearchConfiguration': {'numberOfResults': 3}}
+        )
+        with pytest.raises(UserError, match='leave the search mode unset'):
+            await backend.search('q', limit=5, filter=None, mode='hybrid')
+
+    async def test_score_threshold_drops_weak_passages_and_keeps_unscored_ones(self) -> None:
+        client = _FakeClient(
+            response=_response(
+                _result('strong', score=0.9), _result('weak', score=0.2), _result('unscored', score=None)
+            )
+        )
+        passages = await BedrockKnowledgeBase('KB123', client=client).search(
+            'q', limit=5, filter=None, score_threshold=0.5
+        )
+        assert [passage.text for passage in passages] == ['strong', 'unscored']
+
+
 class TestErrors:
     @pytest.mark.parametrize(
         'code',
@@ -354,10 +453,11 @@ class TestConfiguration:
         with pytest.raises(ValueError, match='fetch_results must be between 1 and 100'):
             BedrockKnowledgeBase('KB123', reranking_model='arn:x', fetch_results=fetch_results)
 
-    @pytest.mark.parametrize('options', [{'search_type': 'HYBRID'}, {'reranking_model': 'arn:x'}])
-    def test_retrieval_configuration_excludes_the_typed_fields(self, options: dict[str, str]) -> None:
-        with pytest.raises(ValueError, match='retrieval_configuration replaces'):
-            BedrockKnowledgeBase('KB123', retrieval_configuration={'vectorSearchConfiguration': {}}, **options)  # pyright: ignore[reportArgumentType]
+    def test_retrieval_configuration_excludes_the_reranking_model(self) -> None:
+        with pytest.raises(ValueError, match='retrieval_configuration replaces reranking_model'):
+            BedrockKnowledgeBase(
+                'KB123', retrieval_configuration={'vectorSearchConfiguration': {}}, reranking_model='arn:x'
+            )
 
     async def test_default_client_requires_a_region(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         for name in ('AWS_DEFAULT_REGION', 'AWS_REGION', 'AWS_PROFILE'):
@@ -395,9 +495,10 @@ class TestWithKnowledgeBase:
             backend='bedrock',
             knowledge_base_id='KB123',
             region_name='eu-central-1',
-            search_type='HYBRID',
             reranking_model='amazon.rerank-v1:0',
             fetch_results=50,
+            search_mode='hybrid',
+            score_threshold=0.3,
             number_of_results=3,
             filter={'tenant_id': 'acme'},
             show_sources=False,
@@ -407,16 +508,51 @@ class TestWithKnowledgeBase:
         assert capability.backend == BedrockKnowledgeBase(
             'KB123',
             region_name='eu-central-1',
-            search_type='HYBRID',
             reranking_model='amazon.rerank-v1:0',
             fetch_results=50,
         )
+        assert (capability.search_mode, capability.score_threshold) == ('hybrid', 0.3)
         assert (capability.number_of_results, capability.filter, capability.show_sources) == (
             3,
             {'tenant_id': 'acme'},
             False,
         )
         assert (capability.description, capability.id) == ('manuals', 'manuals')
+
+    def test_agent_loads_a_filter_tree_from_a_spec_file(self, tmp_path: Path) -> None:
+        spec = tmp_path / 'agent.yaml'
+        spec.write_text(
+            'model: test\n'
+            'capabilities:\n'
+            '  - KnowledgeBase:\n'
+            '      backend: bedrock\n'
+            '      knowledge_base_id: KB123\n'
+            '      region_name: eu-central-1\n'
+            '      search_mode: hybrid\n'
+            '      filter:\n'
+            '        operator: AND\n'
+            '        conditions:\n'
+            '          - {field: tenant_id, operator: "==", value: acme}\n'
+            '          - operator: OR\n'
+            '            conditions:\n'
+            '              - {field: year, operator: ">=", value: 2024}\n'
+            '              - {field: source, operator: in, value: [manuals, faq]}\n'
+        )
+        agent = Agent.from_file(spec, custom_capability_types=[KnowledgeBase])
+        (capability,) = [c for c in agent.root_capability.capabilities if isinstance(c, KnowledgeBase)]
+        assert normalize_filter(capability.filter) == {  # pyright: ignore[reportArgumentType]
+            'operator': 'AND',
+            'conditions': [
+                {'field': 'tenant_id', 'operator': '==', 'value': 'acme'},
+                {
+                    'operator': 'OR',
+                    'conditions': [
+                        {'field': 'year', 'operator': '>=', 'value': 2024},
+                        {'field': 'source', 'operator': 'in', 'value': ['manuals', 'faq']},
+                    ],
+                },
+            ],
+        }
 
     def test_agent_loads_from_spec_file(self, tmp_path: Path) -> None:
         spec = tmp_path / 'agent.yaml'

@@ -7,15 +7,23 @@ needs `openai`; they load on first access, so importing this package pulls in ne
 from typing import TYPE_CHECKING
 
 from pydantic_ai_harness.knowledge_base._backend import (
+    ComparisonOperator,
     Document,
+    FilterCondition,
+    FilterNode,
     FilterScalar,
+    FilterValue,
     KnowledgeBaseBackend,
     KnowledgeBaseResult,
+    LogicalFilter,
+    LogicalOperator,
     MetadataFilter,
     NativeFileSearchBackend,
     Passage,
     ReadableKnowledgeBase,
+    SearchMode,
     matches,
+    normalize_filter,
 )
 from pydantic_ai_harness.knowledge_base._capability import KnowledgeBase
 from pydantic_ai_harness.knowledge_base._in_memory import InMemoryKnowledgeBase
@@ -28,20 +36,28 @@ if TYPE_CHECKING:
 __all__ = [
     'BedrockAgentRuntimeClient',
     'BedrockKnowledgeBase',
+    'ComparisonOperator',
     'Document',
+    'FilterCondition',
     'FilterFunc',
+    'FilterNode',
     'FilterScalar',
+    'FilterValue',
     'InMemoryKnowledgeBase',
     'KnowledgeBase',
     'KnowledgeBaseBackend',
     'KnowledgeBaseResult',
     'KnowledgeBaseToolset',
+    'LogicalFilter',
+    'LogicalOperator',
     'MetadataFilter',
     'NativeFileSearchBackend',
     'OpenAIVectorStore',
     'Passage',
     'ReadableKnowledgeBase',
+    'SearchMode',
     'matches',
+    'normalize_filter',
 ]
 
 _BACKENDS = {

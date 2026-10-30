@@ -12,7 +12,7 @@ import pytest
 from openai import AsyncOpenAI, AuthenticationError
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import FileSearchTool
@@ -20,7 +20,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import KnowledgeBase
-from pydantic_ai_harness.knowledge_base import Document, MetadataFilter, OpenAIVectorStore, Passage
+from pydantic_ai_harness.knowledge_base import Document, MetadataFilter, OpenAIVectorStore, Passage, normalize_filter
 
 Handler = Callable[[httpx2.Request], httpx2.Response]
 
@@ -101,11 +101,51 @@ class TestSearch:
                     ],
                 },
             ),
+            (
+                {
+                    'operator': 'OR',
+                    'conditions': [
+                        {'field': 'year', 'operator': '>', 'value': 2020},
+                        {'field': 'year', 'operator': '<=', 'value': 1999},
+                        {
+                            'operator': 'AND',
+                            'conditions': [
+                                {'field': 'source', 'operator': '!=', 'value': 'drafts'},
+                                {'field': 'tag', 'operator': 'not in', 'value': ['old']},
+                                {'field': 'rank', 'operator': '>=', 'value': 2},
+                                {'field': 'rank', 'operator': '<', 'value': 5},
+                            ],
+                        },
+                    ],
+                },
+                {
+                    'type': 'or',
+                    'filters': [
+                        {'type': 'gt', 'key': 'year', 'value': 2020},
+                        {'type': 'lte', 'key': 'year', 'value': 1999},
+                        {
+                            'type': 'and',
+                            'filters': [
+                                {'type': 'ne', 'key': 'source', 'value': 'drafts'},
+                                {'type': 'nin', 'key': 'tag', 'value': ['old']},
+                                {'type': 'gte', 'key': 'rank', 'value': 2},
+                                {'type': 'lt', 'key': 'rank', 'value': 5},
+                            ],
+                        },
+                    ],
+                },
+            ),
+            (
+                {'operator': 'AND', 'conditions': [{'field': 'a', 'operator': '==', 'value': 1}]},
+                {'type': 'eq', 'key': 'a', 'value': 1},
+            ),
         ],
     )
-    async def test_options_and_neutral_filter_are_sent(self, filter: MetadataFilter, expected: object) -> None:
+    async def test_options_and_filter_tree_are_sent(self, filter: MetadataFilter, expected: object) -> None:
         server = _Server({('POST', '/v1/vector_stores/vs_1/search'): httpx2.Response(200, json=_search_page())})
-        await _store(server, rewrite_query=True, score_threshold=0.5).search('q', limit=80, filter=filter)
+        await _store(server, rewrite_query=True).search(
+            'q', limit=80, filter=normalize_filter(filter), mode='semantic', score_threshold=0.5
+        )
         assert server.requests[0][2] == {
             'query': 'q',
             'max_num_results': 50,
@@ -113,6 +153,25 @@ class TestSearch:
             'filters': expected,
             'ranking_options': {'score_threshold': 0.5},
         }
+
+    async def test_not_is_rejected(self) -> None:
+        server = _Server({})
+        not_drafts = normalize_filter(
+            {'operator': 'NOT', 'conditions': [{'field': 'source', 'operator': '==', 'value': 'drafts'}]}
+        )
+        with pytest.raises(UserError, match="can't apply NOT"):
+            await _store(server).search('q', limit=5, filter=not_drafts)
+        assert server.requests == []
+
+    @pytest.mark.parametrize('mode', ['keyword', 'hybrid'])
+    async def test_only_semantic_mode(self, mode: Any) -> None:
+        with pytest.raises(UserError, match="only supports mode='semantic'"):
+            await _store(_Server({})).search('q', limit=5, filter=None, mode=mode)
+
+    @pytest.mark.parametrize('threshold', [-0.1, 1.1])
+    async def test_score_threshold_out_of_bounds_rejected(self, threshold: float) -> None:
+        with pytest.raises(UserError, match='score_threshold from 0 to 1'):
+            await _store(_Server({})).search('q', limit=5, filter=None, score_threshold=threshold)
 
     @pytest.mark.parametrize('status', [429, 500])
     async def test_transient_errors_become_model_retry(self, status: int) -> None:
@@ -170,14 +229,16 @@ def _content(*texts: str | None) -> httpx2.Response:
 class TestRead:
     async def test_reads_the_file_text_with_its_attributes(self) -> None:
         server = _Server({_FILE: _file(), _CONTENT: _content('first ', None, 'second')})
-        assert await _store(server).read('file-1', max_chars=100, filter={'tenant_id': 'acme'}) == Document(
-            'file-1', 'first second', metadata={'tenant_id': 'acme'}
-        )
+        assert await _store(server).read(
+            'file-1', max_chars=100, filter=normalize_filter({'tenant_id': 'acme'})
+        ) == Document('file-1', 'first second', metadata={'tenant_id': 'acme'})
 
     async def test_file_outside_the_filter_is_not_read(self) -> None:
         """A tenant-scoped run can't open another tenant's file by id: its content is never requested."""
         server = _Server({_FILE: _file({'tenant_id': 'globex'}), _CONTENT: _content('secret')})
-        assert await _store(server).read('file-1', max_chars=100, filter={'tenant_id': 'acme'}) is None
+        assert (
+            await _store(server).read('file-1', max_chars=100, filter=normalize_filter({'tenant_id': 'acme'})) is None
+        )
         assert [path for _, path, _ in server.requests] == ['/v1/vector_stores/vs_1/files/file-1']
 
     async def test_file_without_attributes_is_read_unfiltered(self) -> None:
@@ -246,11 +307,6 @@ class TestConfiguration:
     def test_empty_vector_store_id_rejected(self) -> None:
         with pytest.raises(ValueError, match='vector_store_id must not be empty'):
             OpenAIVectorStore('')
-
-    @pytest.mark.parametrize('threshold', [-0.1, 1.1])
-    def test_score_threshold_out_of_bounds_rejected(self, threshold: float) -> None:
-        with pytest.raises(ValueError, match='score_threshold must be between 0 and 1'):
-            OpenAIVectorStore('vs_1', score_threshold=threshold)
 
     def test_from_spec_builds_an_openai_backend(self) -> None:
         capability = KnowledgeBase[None].from_spec(backend='openai', knowledge_base_id='vs_1', native=True)

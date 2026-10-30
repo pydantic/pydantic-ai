@@ -41,7 +41,7 @@ from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, Validat
 from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.capability_creation import CapabilityCreation, CapabilityStore
-from pydantic_ai_harness.knowledge_base import Document, KnowledgeBase, MetadataFilter, Passage
+from pydantic_ai_harness.knowledge_base import Document, FilterNode, KnowledgeBase, Passage, SearchMode
 from pydantic_ai_harness.localstack import LocalStack
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 from pydantic_ai_harness.planning import (
@@ -154,11 +154,19 @@ class _ExaAgentRuns:
 
 
 class _KnowledgeBackend:
-    async def search(self, query: str, *, limit: int, filter: MetadataFilter | None) -> list[Passage]:
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filter: FilterNode | None,
+        mode: SearchMode | None = None,
+        score_threshold: float | None = None,
+    ) -> list[Passage]:
         _requests['knowledge_base.search'] += 1
         return [Passage('passage', document_id='doc')]
 
-    async def read(self, document_id: str, *, max_chars: int, filter: MetadataFilter | None) -> Document | None:
+    async def read(self, document_id: str, *, max_chars: int, filter: FilterNode | None) -> Document | None:
         _requests['knowledge_base.read'] += 1
         return Document(document_id, 'document text')
 

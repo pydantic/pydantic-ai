@@ -5,7 +5,8 @@ External assumptions (verified 2026-10-30 against openai 3.31.0 and
 
 - `vector_stores.search` takes `max_num_results` from 1 to 50 and `filters` built from comparison
   filters (equality, ranges, `in` and its negation) and compound `and` / `or` filters over file
-  attributes. Each result carries `file_id`, `filename`, `score`, `attributes` and text `content`.
+  attributes; there is no `not`. `ranking_options.score_threshold` runs from 0 to 1. The search is
+  semantic, with no keyword-only or hybrid mode on this endpoint. Each result carries `file_id`, `filename`, `score`, `attributes` and text `content`.
 - `vector_stores.files.content` pages through a file's parsed text, which `read` uses.
 - The Responses API's `file_search` tool searches the same vector stores natively; core sends it as
   `FileSearchTool(file_store_ids=[...])` on `OpenAIResponsesModel`.
@@ -16,12 +17,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.native_tools import FileSearchTool
 from pydantic_ai.tools import RunContext
-from pydantic_ai_harness.knowledge_base._backend import Document, MetadataFilter, Passage, matches
+from pydantic_ai_harness.knowledge_base._backend import Document, FilterNode, Passage, SearchMode, matches
 
 try:
     from openai import APIConnectionError, AsyncOpenAI, InternalServerError, NotFoundError, RateLimitError
@@ -55,9 +56,6 @@ class OpenAIVectorStore:
     rewrite_query: bool = False
     """Let OpenAI rewrite the query for vector search before searching."""
 
-    score_threshold: float | None = None
-    """Drop results scoring below this, from 0 to 1."""
-
     client: AsyncOpenAI | None = field(default=None, repr=False)
     """The OpenAI client; when `None`, one is built from the `OPENAI_API_KEY` environment variable.
 
@@ -72,8 +70,6 @@ class OpenAIVectorStore:
         """Validate configuration against the API's documented bounds."""
         if not self.vector_store_id:
             raise ValueError('vector_store_id must not be empty')
-        if self.score_threshold is not None and not 0 <= self.score_threshold <= 1:
-            raise ValueError(f'score_threshold must be between 0 and 1, got {self.score_threshold}')
 
     def _openai(self) -> AsyncOpenAI:
         if self.client is not None:
@@ -84,13 +80,29 @@ class OpenAIVectorStore:
             self._default = AsyncOpenAI()
         return self._default
 
-    async def search(self, query: str, *, limit: int, filter: MetadataFilter | None) -> Sequence[Passage]:
-        """Search the vector store and turn each matching file chunk into a passage."""
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filter: FilterNode | None,
+        mode: SearchMode | None = None,
+        score_threshold: float | None = None,
+    ) -> Sequence[Passage]:
+        """Search the vector store and turn each matching file chunk into a passage.
+
+        The search is semantic, so `mode` can only be `None` or `'semantic'`. `score_threshold` is on
+        OpenAI's 0 to 1 scale and applied by the API.
+        """
+        if mode not in (None, 'semantic'):
+            raise UserError(f"OpenAIVectorStore only supports mode='semantic', not {mode!r}")
         options: dict[str, Any] = {}
         if (filters := to_openai_filter(filter)) is not None:
             options['filters'] = filters
-        if self.score_threshold is not None:
-            options['ranking_options'] = {'score_threshold': self.score_threshold}
+        if score_threshold is not None:
+            if not 0 <= score_threshold <= 1:
+                raise UserError(f'OpenAIVectorStore takes a score_threshold from 0 to 1, got {score_threshold}')
+            options['ranking_options'] = {'score_threshold': score_threshold}
         try:
             page = await self._openai().vector_stores.search(
                 self.vector_store_id,
@@ -112,7 +124,7 @@ class OpenAIVectorStore:
             for result in page.data
         ]
 
-    async def read(self, document_id: str, *, max_chars: int, filter: MetadataFilter | None) -> Document | None:
+    async def read(self, document_id: str, *, max_chars: int, filter: FilterNode | None) -> Document | None:
         """Read a file's parsed text, stopping once it is past `max_chars`, if its attributes match `filter`.
 
         The file's attributes are fetched first, so a file outside the run's filter is never read.
@@ -144,14 +156,39 @@ class OpenAIVectorStore:
         return FileSearchTool(file_store_ids=[self.vector_store_id], max_num_results=min(limit, OPENAI_MAX_NUM_RESULTS))
 
 
-def to_openai_filter(filter: MetadataFilter | None) -> Filters | None:
-    """Translate a neutral filter: `eq` for a scalar, `in` for a list, and `and` over two or more keys."""
-    if not filter:
-        return None
-    clauses: list[Filters] = [
-        {'type': 'eq', 'key': key, 'value': value}
-        if isinstance(value, str | int | float | bool)
-        else {'type': 'in', 'key': key, 'value': list(value)}
-        for key, value in filter.items()
-    ]
-    return clauses[0] if len(clauses) == 1 else {'type': 'and', 'filters': clauses}
+_OPERATORS: dict[str, Literal['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'nin']] = {
+    '==': 'eq',
+    '!=': 'ne',
+    '>': 'gt',
+    '>=': 'gte',
+    '<': 'lt',
+    '<=': 'lte',
+    'in': 'in',
+    'not in': 'nin',
+}
+
+
+def to_openai_filter(filter: FilterNode | None) -> Filters | None:
+    """Translate a filter tree: comparisons map one to one, `AND` and `OR` to compound filters.
+
+    Raises:
+        UserError: The filter uses `NOT`, which the vector store API has no operator for. Negate the
+            comparisons instead (`!=`, `not in`).
+    """
+    return None if filter is None else _translate(filter)
+
+
+def _translate(node: FilterNode) -> Filters:
+    if 'conditions' not in node:
+        value = node['value']
+        return {
+            'type': _OPERATORS[node['operator']],
+            'key': node['field'],
+            'value': value if isinstance(value, str | int | float | bool) else list(value),
+        }
+    if node['operator'] == 'NOT':
+        raise UserError("OpenAIVectorStore can't apply NOT; negate the conditions instead, with '!=' or 'not in'")
+    children = [_translate(child) for child in node['conditions']]
+    if len(children) == 1:
+        return children[0]
+    return {'type': 'and' if node['operator'] == 'AND' else 'or', 'filters': children}
