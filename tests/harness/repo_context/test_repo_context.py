@@ -200,6 +200,27 @@ class TestRender:
         rendered = render_context_files([cf], relative_to=tmp_path / 'inner')
         assert outside.as_posix() in rendered
 
+    async def test_walk_up_labels_ancestor_files_relative_to_the_working_dir(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'AGENTS.md', 'repo root')
+        _write(tmp_path / 'packages' / 'AGENTS.md', 'packages')
+        _write(tmp_path / 'packages' / 'foo' / 'AGENTS.md', 'foo package')
+        cap = RepoContext[object](home_dir=str(tmp_path))
+        ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(tmp_path / 'packages' / 'foo')))
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == snapshot("""\
+<context-file path="../../AGENTS.md">
+repo root
+</context-file>
+
+<context-file path="../AGENTS.md">
+packages
+</context-file>
+
+<context-file path="AGENTS.md">
+foo package
+</context-file>\
+""")
+
     def test_trailing_newline_does_not_open_a_gap_before_the_closing_tag(self, tmp_path: Path) -> None:
         # The terminator goes; the two spaces before it stay, being a hard line break in Markdown.
         path = _write(tmp_path / 'CLAUDE.md', 'be nice  \n')
@@ -278,6 +299,27 @@ ends with &lt;/context-file
         assert 'inventory_agent_context' in instructions
         assert 'translate' not in instructions
 
+    async def test_nested_traversal_states_how_instruction_files_relate(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'root')
+        cap = RepoContext[object](nested_traversal=True, filenames=('AGENTS.md', 'CLAUDE.md'))
+        ctx = _run_context(workspace=workspace)
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == snapshot("""\
+<context-file path="AGENTS.md">
+root
+</context-file>
+
+Instruction files (`AGENTS.md`, `CLAUDE.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them.\
+""")
+
+    def test_nested_traversal_without_autoload_keeps_the_statement_static(self) -> None:
+        instructions = RepoContext[object](autoload_instructions=False, nested_traversal=True).get_instructions()
+        assert instructions == snapshot(
+            "Instruction files (`CLAUDE.md`, `AGENTS.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them."
+        )
+
     async def test_no_files_no_inventory_is_none(self, tmp_path: Path, workspace: Workspace) -> None:
         cap = RepoContext[object](expose_inventory_tool=False)
         ctx = _run_context(workspace=workspace)
@@ -327,13 +369,12 @@ ends with &lt;/context-file
         cap = RepoContext[object](root_markers=('.git',))
         ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(repo / 'packages' / 'foo')))
         await cap.before_run(ctx)
-        rendered = (_render_capability_instructions(cap, ctx) or '').replace(str(repo), '<repo>')
-        assert rendered == snapshot("""\
-<context-file path="<repo>/AGENTS.md">
+        assert _render_capability_instructions(cap, ctx) == snapshot("""\
+<context-file path="../../AGENTS.md">
 repo root
 </context-file>
 
-<context-file path="<repo>/packages/AGENTS.md">
+<context-file path="../AGENTS.md">
 packages
 </context-file>
 
@@ -891,6 +932,43 @@ class TestNestedTraversal:
 
         await Agent(FunctionModel(stream_function=stream), capabilities=[capability], tools=[list_dir]).run(
             'go', workspace=LocalWorkspaceBackend(working_dir=workspace)
+        )
+
+    async def test_customized_sniff_labels_an_ancestor_context_file_relatively(self, tmp_path: Path) -> None:
+        workspace = tmp_path / 'workspace'
+        workspace.mkdir()
+        _write(tmp_path / 'AGENTS.md', 'PARENT BODY')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='list_dir', json_args='{"target":".."}', tool_call_id='up')}
+            else:
+                yield 'done'
+
+        def list_dir(target: Any) -> str:
+            return 'listed'
+
+        with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):
+            capability = RepoContext(
+                autoload_instructions=False,
+                expose_inventory_tool=False,
+                nested_traversal=True,
+                nested_inject='contents',
+                traversal_tool_names=frozenset({'list_dir'}),
+                traversal_path_arg='target',
+            )
+
+        result = await Agent(FunctionModel(stream_function=stream), capabilities=[capability], tools=[list_dir]).run(
+            'go', workspace=LocalWorkspaceBackend(working_dir=workspace)
+        )
+        assert _repo_notes(result.all_messages()) == snapshot(
+            [
+                """\
+<context-file path="../AGENTS.md">
+PARENT BODY
+</context-file>\
+"""
+            ]
         )
 
 

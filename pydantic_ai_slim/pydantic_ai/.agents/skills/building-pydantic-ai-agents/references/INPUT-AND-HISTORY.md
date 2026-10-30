@@ -21,7 +21,20 @@ print(result.output)
 
 Use `BinaryContent(...)` when the asset is already in memory instead of at a URL.
 
-Not every model supports every input type. Keep provider expectations in mind when the user chooses a specific model.
+Not every model supports every input type, but the agent isn't limited to what its model reads natively. Add the `FileUnderstanding` capability to have another model describe each file the agent's model can't take, judged by the model's profile; the agent's model gets the description in the file's place, and files it reads are sent as they are:
+
+```python
+from pydantic_ai import Agent, AudioUrl
+from pydantic_ai.capabilities import FileUnderstanding
+
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[FileUnderstanding(fallback_subagent_model='google:gemini-3-flash-preview')],
+)
+result = agent.run_sync(['Summarize this call.', AudioUrl(url='https://example.com/call.mp3')])
+```
+
+Without it, a file in the prompt that the model can't take fails the request, and one a tool returned is replaced by a note saying the model can't read it. Descriptions are recorded in the message history, so later turns reuse them. See [File Understanding](https://pydantic.dev/docs/ai/capabilities/file-understanding/).
 
 For Gemini models that support agentic video processing, set `vendor_metadata={'media_processing': 'AGENTIC'}` on a `VideoUrl`, video `BinaryContent`, or video `UploadedFile`. See Google's [agentic video understanding guide](https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding).
 
