@@ -657,13 +657,15 @@ The socket belongs to the [`OpenAIResponsesModel`][pydantic_ai.models.openai.Ope
 - A provider error, a failed or incomplete response, or a stream closed early ends only that request; the socket stays open. A transport failure during a request closes the socket and raises [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError], as over HTTP, so [`ModelFallback`](../capabilities/model-fallback.md) can take over. The request after it opens a new socket. Pydantic AI doesn't resend a request after a disconnect, since the provider may have acted on it.
 - OpenAI closes a socket after 60 minutes. Ten minutes before that, new requests open a new socket, and the old one closes once its responses finish. If the server closed the socket while it was idle, the request hadn't been sent, so it moves to a new socket once.
 
-These requests use HTTP instead, without a warning. The `pydantic_ai.transport` attribute is recorded on a request's `chat` span, or under Temporal, on the model activity span within that trace. Its value is `'websocket'` for a socket request or `'http'` when WebSocket mode sends it over HTTP. HTTP-only mode leaves it unset:
+These requests use HTTP instead, without a warning:
 
 - a request outside an agent run, `async with agent:` or `async with model:`, such as a direct [`model.request()`][pydantic_ai.models.Model.request], which has nothing to keep a socket open for
 - a request in a [durable execution](../durable_execution/overview.md) activity, step or task without an explicit model or agent context that outlives the unit on its event loop; see [worker-owned Temporal connections](../durable_execution/temporal.md#responses-websocket-connections)
 - a [background](#background-mode) request, or one that resumes a suspended response
 - a request when no lane is free, as described above
 - a request whose headers differ from those the socket opened with, from model settings' [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] and the SDK client's default headers
+
+With instrumentation enabled, WebSocket mode records `pydantic_ai.transport` on each request's `chat` span, or under Temporal, on the model activity span within that trace. Its value is `'websocket'` for a socket request or `'http'` for one sent over HTTP. HTTP-only mode leaves the attribute unset.
 
 If the SDK client uses an API key callback, workload identity, Azure AD token provider or HTTP client authentication, each request uses HTTP so its credentials can be resolved. Selecting `openai_transport='websocket'` emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] for these requests, even when the profile permits WebSockets. This check also applies when HTTP authentication is added after the socket opens.
 
