@@ -704,6 +704,8 @@ Carrying `usage` and `usage_limits` across the boundary keeps [usage limits](../
 
 ### Responses WebSocket connections
 
+With [instrumentation](../logfire.md) enabled, inspect `pydantic_ai.transport` on the model activity span within each request's `chat` span. It records `'websocket'` for a socket request or `'http'` for HTTP fallback in WebSocket mode.
+
 An OpenAI Responses model can reuse a [Responses WebSocket](../models/openai.md#responses-websockets) across model
 activities when the worker holds the registered model open. Install `pydantic-ai-slim[openai-realtime]`,
 set `openai_transport='websocket'`, and enter the model around the worker's lifetime:

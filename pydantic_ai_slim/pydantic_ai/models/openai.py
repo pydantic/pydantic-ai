@@ -177,6 +177,7 @@ if TYPE_CHECKING:
     from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
+_RESPONSES_TRANSPORT_ATTRIBUTE = 'pydantic_ai.transport'
 
 # Initial/max backoff and downward jitter follow the OpenAI SDK's retry algorithm.
 _WEBSOCKET_RETRY_INITIAL_DELAY = 0.5
@@ -4521,7 +4522,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         if (websocket_stream := self._websocket_stream) is not None:
             if (span := current_model_request_span()) is not None:
-                span.set_attribute('pydantic_ai.transport', 'websocket')
+                span.set_attribute(_RESPONSES_TRANSPORT_ATTRIBUTE, 'websocket')
             body: dict[str, object] = dict(create_params)
             if (extra_body := model_settings.get('extra_body')) is not None:
                 if not _is_str_dict(extra_body):
@@ -4590,7 +4591,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
 
         if model_settings.get('openai_transport') == 'websocket' and (span := current_model_request_span()) is not None:
-            span.set_attribute('pydantic_ai.transport', 'http')
+            span.set_attribute(_RESPONSES_TRANSPORT_ATTRIBUTE, 'http')
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await with_max_retries(self.client, model_settings).responses.create(
@@ -4779,7 +4780,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         include = self._build_include(model_settings, is_retrieve=True)
         extra_headers, timeout = self._build_request_options(model_settings)
         if model_settings.get('openai_transport') == 'websocket' and (span := current_model_request_span()) is not None:
-            span.set_attribute('pydantic_ai.transport', 'http')
+            span.set_attribute(_RESPONSES_TRANSPORT_ATTRIBUTE, 'http')
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await with_max_retries(self.client, model_settings).responses.retrieve(

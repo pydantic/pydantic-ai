@@ -161,7 +161,7 @@ def open_request_policy() -> ContentPolicy | None:
 
 
 def current_model_request_span() -> Span | None:
-    """The open `chat` span, only while it's the caller's current span, for a model to record attributes on."""
+    """The request-policy span, only while it's the caller's current span, for a model to record attributes on."""
     policy = include_content_ctx.get()
     if (
         policy is None
