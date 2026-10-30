@@ -2755,6 +2755,61 @@ async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
 
 
+async def test_dbos_durability_submit_output_from_a_function_tool(dbos: DBOS) -> None:
+    """DBOS runs function tools in workflow code, so `submit_output()` from one ends the run."""
+
+    async def finish(ctx: RunContext[None]) -> str:
+        await ctx.submit_output('final_result', {'response': 'submitted'})
+        return 'done'
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('finish', {})])
+
+    agent = Agent(
+        FunctionModel(model),
+        name='durability_submit_output',
+        deps_type=type(None),
+        tools=[finish],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Finish')).output
+
+    assert await run_durable_agent() == 'submitted'
+
+
+@DBOS.step()
+async def _submit_output_in_a_step(ctx: RunContext[None]) -> None:
+    await ctx.submit_output('final_result', {'response': 'submitted'})
+
+
+async def test_dbos_durability_submit_output_refused_in_a_users_step(dbos: DBOS) -> None:
+    """A step the tool's own code runs records its result, and recovery wouldn't submit again, so it's refused."""
+
+    async def finish(ctx: RunContext[None]) -> None:
+        await _submit_output_in_a_step(ctx)
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('finish', {})])
+
+    agent = Agent(
+        FunctionModel(model),
+        name='durability_submit_output_in_a_step',
+        deps_type=type(None),
+        tools=[finish],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Finish')).output
+
+    with pytest.raises(UserError, match='cannot be called from a tool that runs as a durable step or task'):
+        await run_durable_agent()
+
+
 async def test_dbos_durability_sticky_fallback_goes_straight_to_the_candidate(dbos: DBOS) -> None:
     """Under durable execution, sticky steps and runs skip the failing primary, though the step's model is wrapped."""
     calls: list[str] = []

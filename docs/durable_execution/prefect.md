@@ -270,6 +270,8 @@ agent = Agent(
 This opt-out applies to function and dynamic tools only. MCP tools perform I/O and always run in
 their Prefect task, so `metadata={'prefect': False}` on an MCP tool raises a `UserError`.
 
+A tool that [submits the run's output](../output.md#submit-output) with `ctx.submit_output()` needs this opt-out, as it can't submit from its own task.
+
 ### Streaming
 
 [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] work inside a Prefect flow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable task, and once the task completes the flow replays its final response: each part arrives as one [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] carrying its full content, rather than as the deltas the model streamed, so the deltas aren't recorded in the task's result.

@@ -150,7 +150,7 @@ from ..toolsets._dynamic import (
 )
 from ..toolsets._instruction_collection import collect_toolset_instructions, framework_appended_toolset_sources
 from ..toolsets._tool_search import parse_discovered_tools
-from ..toolsets.abstract import AGENT_TOOLSET_ID
+from ..toolsets.abstract import AGENT_TOOLSET_ID, ToolsetTool
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
@@ -511,6 +511,23 @@ S = TypeVar('S')
 _PreparedDepsT = TypeVar('_PreparedDepsT')
 _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
+
+
+@dataclasses.dataclass
+class _OutputToolsFirstToolset(CombinedToolset[AgentDepsT]):
+    """The output toolset combined with the other tools, preparing the output tools first.
+
+    The other tools then see them as this step's `prepare_output_tools` hooks left them, through
+    `RunContext.output_tool_defs`: Code Mode builds its sandbox's output functions from them.
+    """
+
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        output_toolset, toolset = self.toolsets
+        output_tools = await output_toolset.get_tools(ctx)
+        # Only a `RunContext` built outside an agent run has no submitter.
+        if (submitter := ctx._live_output_submitter) is not None:  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
+            submitter.record_prepared_tool_defs([tool.tool_def for tool in output_tools.values()])
+        return self._merge_tools([output_tools, await toolset.get_tools(ctx)])
 
 
 @dataclasses.dataclass
@@ -3917,7 +3934,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     return await output_cap.prepare_output_tools(output_ctx, tool_defs)
 
                 output_toolset = PreparedToolset(output_toolset, _dispatch_prepare_output_tools)
-            toolset = CombinedToolset([output_toolset, toolset])
+            toolset = _OutputToolsFirstToolset([output_toolset, toolset])
 
         return toolset
 

@@ -287,6 +287,75 @@ class RunSyncDurableAgentWorkflow:
         return simple_durable_agent.run_sync(prompt).output
 
 
+async def _submit_output_tool(ctx: RunContext[None]) -> str:
+    await ctx.submit_output('final_result', {'response': 'submitted'})
+    return 'done'
+
+
+def _call_submit_output_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('_submit_output_tool', {})])
+
+
+def _submit_output_agent(name: str, metadata: dict[str, Any] | None) -> Agent[None, str]:
+    toolset = FunctionToolset[None](id=f'{name}_tools')
+    toolset.add_function(_submit_output_tool, metadata=metadata)
+    return Agent(
+        FunctionModel(_call_submit_output_tool),
+        name=name,
+        deps_type=NoneType,
+        toolsets=[toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+
+
+submit_output_in_activity_agent = _submit_output_agent('durability_submit_output_in_activity', None)
+submit_output_in_workflow_agent = _submit_output_agent('durability_submit_output_in_workflow', {'temporal': False})
+
+
+@workflow.defn
+class SubmitOutputInActivityWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await submit_output_in_activity_agent.run(prompt)).output
+
+
+@workflow.defn
+class SubmitOutputInWorkflowWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await submit_output_in_workflow_agent.run(prompt)).output
+
+
+async def test_durability_submit_output_needs_the_tool_in_the_workflow(client: Client):
+    """`submit_output()` can't reach the run from a tool's activity, but works from a tool opted out of one."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SubmitOutputInActivityWorkflow, SubmitOutputInWorkflowWorkflow],
+        plugins=[AgentPlugin(submit_output_in_activity_agent), AgentPlugin(submit_output_in_workflow_agent)],
+    ):
+        output = await client.execute_workflow(
+            SubmitOutputInWorkflowWorkflow.run,
+            args=['Finish'],
+            id=SubmitOutputInWorkflowWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'submitted'
+
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                SubmitOutputInActivityWorkflow.run,
+                args=['Finish'],
+                id=SubmitOutputInActivityWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert isinstance(activity_error.cause, ApplicationError)
+    assert activity_error.cause.type == 'UserError'
+    assert 'in the same process as the run itself' in activity_error.cause.message
+
+
 async def test_durability_run_sync_in_workflow_fails_the_workflow(client: Client):
     """`agent.run_sync()` inside a workflow fails the workflow with a clear error instead of hanging.
 

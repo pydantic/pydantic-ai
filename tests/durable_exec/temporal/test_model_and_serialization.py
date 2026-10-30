@@ -1099,6 +1099,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
         '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead
+        '_output_submitter',  # live view of the workflow's graph state; output can only be submitted from workflow code
         'workspace',  # live facade cannot cross the activity boundary; only a concrete ref is optionally carried
         # Live toolsets the run holds entered; an activity may run in another process, so it enters its own
         '_run_held_toolsets',

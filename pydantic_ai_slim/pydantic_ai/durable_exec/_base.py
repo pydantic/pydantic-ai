@@ -65,6 +65,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
+from .._run_context import in_durable_unit
 from ..models.wrapper import serving_wrapper_scope
 from ._capability_operation import (
     CapabilityBoundOperation,
@@ -109,7 +110,6 @@ from ._operation_backend import (
     BoundDurableOperation,
     DurableOperationBackend,
     RegisteredOperationBackend,
-    in_durable_unit,
 )
 from ._runtime_toolsets import (
     cancellation_token_unsupported_error,
@@ -925,6 +925,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     @abstractmethod
     def in_durable_context(self) -> bool:
         """Whether execution is currently inside this engine's durable container (workflow or flow)."""
+
+    @property
+    def in_durable_unit(self) -> bool:
+        """Whether execution is currently inside a unit whose result this engine records, like a step or task.
+
+        Engines whose units the user can also create around a tool, like a DBOS step or Prefect task,
+        check for those too.
+        """
+        return in_durable_unit()
 
     def _register_toolsets(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Wrap the agent's leaf toolsets in engine wrappers and index them by toolset `id`."""

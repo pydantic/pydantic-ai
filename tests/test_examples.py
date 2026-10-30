@@ -946,6 +946,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         'The first known use of "hello, world" was in a 1974 textbook about the C programming language.'
     ),
     'What is my balance?': ToolCallPart(tool_name='customer_balance', args={'include_pending': True}),
+    'Draft the invoice for order ord_8Kq2Zp.': ToolCallPart(tool_name='build_invoice', args={'order_id': 'ord_8Kq2Zp'}),
     'Was I refunded for the duplicate charge on my last statement?': ToolCallPart(
         tool_name='load_capability', args={'id': 'refunds'}
     ),

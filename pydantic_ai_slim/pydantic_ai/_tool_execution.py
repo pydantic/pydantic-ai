@@ -434,6 +434,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     retry_wins_triggered: bool = dataclasses.field(default=False, init=False)
     output_retries_increment: int = dataclasses.field(default=0, init=False)
     winning_output_part: _messages.ToolReturnPart | None = dataclasses.field(default=None, init=False)
+    # `submission_exhausted`: the first `RunContext.submit_output` (by emission order) that ran out of
+    # output retries, raised once the strategy has run if no output became the final result.
+    submission_exhausted: exceptions.UnexpectedModelBehavior | None = dataclasses.field(default=None, init=False)
     deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = dataclasses.field(
         init=False
     )
@@ -518,14 +521,30 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             projected_usage.tool_calls += len(self.function_indices)
             self.ctx.deps.usage_limits.check_before_tool_call(projected_usage)
 
-        async with aclosing(self._run_strategy()) as events:
-            async for event in events:
-                yield event
+        try:
+            async with aclosing(self._run_strategy()) as events:
+                async for event in events:
+                    yield event
+            self._raise_if_submission_exhausted()
 
-        self._apply_retry_wins()
-        async with aclosing(self._finalize_deferred()) as events:
-            async for event in events:
-                yield event
+            self._apply_retry_wins()
+            async with aclosing(self._finalize_deferred()) as events:
+                async for event in events:
+                    yield event
+            # A tool a deferred-call handler approved inline runs here, so it can submit too: a sibling's
+            # retry still wins over its submission, though not over the calls left deferred.
+            if self.final_result is not None and not isinstance(self.final_result.output, DeferredToolRequests):
+                self._apply_retry_wins()
+            self._raise_if_submission_exhausted()
+        finally:
+            # Each submission is taken by the call that made it. Drop any a call made without settling
+            # (it raised, or a sibling did), so a later step can't mistake them for its own. Not done
+            # up front: Code Mode's eager execution submits while the response is still streaming.
+            self.ctx.deps.output_submissions.clear()
+
+    def _raise_if_submission_exhausted(self) -> None:
+        if self.final_result is None and self.submission_exhausted is not None:
+            raise self.submission_exhausted
 
     @abstractmethod
     def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
@@ -653,6 +672,30 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             yield from self._record_output_part(r.call, part, args_valid=r.args_valid)
 
     # --- Function tool helpers ----------------------------------------------
+
+    def _take_submission(
+        self, call: _messages.ToolCallPart, part: _messages.ToolReturnPart | _messages.ToolAvailabilityDeltaPart
+    ) -> None:
+        """Make the output `call` submitted with `RunContext.submit_output`, if any, the final result.
+
+        A call that submitted counts as an output tool call at its position: it wins when no earlier
+        output did, and only if it went on to return successfully. A submission that ran out of output
+        retries is kept, to be raised if no output wins (see `run`).
+        """
+        submission = self.ctx.deps.output_submissions.get(call.tool_call_id)
+        if submission is None:
+            return
+        if submission.exhausted is not None and self.submission_exhausted is None:
+            self.submission_exhausted = submission.exhausted
+        if (
+            self.final_result is None
+            and submission.status == 'accepted'
+            and isinstance(part, _messages.ToolReturnPart)
+            and part.outcome == 'success'
+        ):
+            self.final_result = result.FinalResult(submission.output, call.tool_name, call.tool_call_id)
+            # Tracked like an output tool's status part, so retry-wins can replace it.
+            self.winning_output_part = part
 
     def _skip_function_call(self, call: _messages.ToolCallPart) -> Iterator[_messages.HandleResponseEvent]:
         """Record a 'not executed' stub for a call skipped because a final result was already processed.
@@ -985,6 +1028,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             self.output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
         for index in sorted(tool_parts_by_index):
+            self._take_submission(tool_calls[index], tool_parts_by_index[index][0])
             for part in tool_parts_by_index[index]:
                 if isinstance(part, _messages.ToolAvailabilityDeltaPart):
                     yield _messages.ToolAvailabilityDeltaEvent(part=part)
@@ -1029,7 +1073,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         on `outcome == 'retried'` to skip a tool-def lookup per settled return, so widening the set of
         outcomes that trigger retry-wins means widening that check too.
         """
-        return kind == 'function' and isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried'
+        if not (kind == 'function' and isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried'):
+            return False
+        # A rejected `RunContext.submit_output` is a failed output, not a failed function call: like a
+        # model's failed output tool call, it doesn't keep another output from being the final result.
+        submission = self.ctx.deps.output_submissions.get(part.tool_call_id)
+        return submission is None or submission.status != 'rejected'
 
     def _apply_retry_wins(self) -> None:
         """Suppress the output result if a function tool retried (graceful + exhaustive).
@@ -1355,12 +1404,17 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     await cancel_and_drain(*tasks)
                     raise
 
-            # Pick the winner: first valid output by emission order (or the streamed-in result).
+            # Pick the winner: first valid output by emission order (or the streamed-in result), counting a
+            # function call that submitted an output with `RunContext.submit_output` as an output.
             if self.final_result is None:
-                for i in self.output_indices:
-                    r = output_results.get(i)
-                    if r is not None and r.final_result is not None:
-                        self.final_result = r.final_result
+                for i in executable_indices:
+                    if self.call_kinds[i] == 'output':
+                        r = output_results.get(i)
+                        if r is not None and r.final_result is not None:
+                            self.final_result = r.final_result
+                    elif i in function_parts:
+                        self._take_submission(self.tool_calls[i], function_parts[i][0])
+                    if self.final_result is not None:
                         break
 
             # If no output produced a valid result but one hit max retries, surface that error.

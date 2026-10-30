@@ -151,6 +151,7 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 try:
     from prefect import flow, task
+    from prefect.cache_policies import NO_CACHE
     from prefect.context import FlowRunContext, TaskRunContext
 
     from pydantic_ai.durable_exec.prefect import (
@@ -532,6 +533,48 @@ async def test_prefect_durability_model_error_reaches_flow_with_its_type() -> No
         return (await agent.run('Hello Prefect')).output
 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
+
+
+@pytest.mark.parametrize('where', ['tool-task', 'user-task', 'flow-code'])
+async def test_prefect_durability_submit_output_needs_the_tool_in_flow_code(where: str) -> None:
+    """`submit_output()` is refused in a task, whose recorded result a retry replays, and works in flow code.
+
+    That includes a task the tool's own code runs, not only the one the agent runs the tool in.
+    """
+
+    @task(cache_policy=NO_CACHE)
+    async def submit_in_a_task(ctx: RunContext[None]) -> None:
+        await ctx.submit_output('final_result', {'response': 'submitted'})
+
+    async def finish(ctx: RunContext[None]) -> str:
+        if where == 'user-task':
+            await submit_in_a_task(ctx)
+        else:
+            await ctx.submit_output('final_result', {'response': 'submitted'})
+        return 'done'
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('finish', {})])
+
+    toolset = FunctionToolset[None](id='submit-tools')
+    toolset.add_function(finish, metadata=None if where == 'tool-task' else {'prefect': False})
+    agent = Agent(
+        FunctionModel(model),
+        name=f'prefect_durability_submit_output_{where}',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow(name=f'test_prefect_durability_submit_output_{where}')
+    async def run_durable_agent() -> str:
+        return (await agent.run('Finish')).output
+
+    if where == 'flow-code':
+        assert await run_durable_agent() == 'submitted'
+    else:
+        with pytest.raises(UserError, match='cannot be called from a tool that runs as a durable step or task'):
+            await run_durable_agent()
 
 
 class Deps(BaseModel):
@@ -2557,6 +2600,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
         '_durable_operations',  # runtime callables are derived from the static agent and do not vary cache identity
         '_run_capabilities_by_id',  # live instances are represented by their projected capability state instead
+        '_output_submitter',  # live view of the run's graph state; carries no inputs and must not fork the cache key
         # Toolsets the run holds entered, built from `deps`, which is projected: they carry no
         # input the task's own resolution wouldn't reach, so they must not fork the key.
         '_run_held_toolsets',

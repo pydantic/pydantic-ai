@@ -11,7 +11,7 @@ from contextvars import ContextVar
 from dataclasses import field
 from datetime import datetime
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer, Tracer
@@ -54,6 +54,19 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 
 CustomEventT = TypeVar('CustomEventT', bound=_messages.CustomEvent)
 CapabilityEventT = TypeVar('CapabilityEventT', bound=_messages.CapabilityEvent)
+
+
+class OutputSubmitter(Protocol):
+    """Backs [`RunContext.submit_output`][pydantic_ai.tools.RunContext.submit_output] for one agent run."""
+
+    @property
+    def tool_defs(self) -> list[ToolDefinition]: ...
+
+    async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None: ...
+
+    def record_prepared_tool_defs(self, tool_defs: list[ToolDefinition]) -> None:
+        """Record the output tools as this step's `prepare_output_tools` hooks left them."""
+        ...
 
 
 class EventStreamBuffer(list[_messages.AgentStreamEvent]):
@@ -381,6 +394,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
     """Per-run capability instances used for durable recovery, for internal use only."""
 
+    _output_submitter: OutputSubmitter | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    Backs [`output_tool_defs`][pydantic_ai.tools.RunContext.output_tool_defs] and
+    [`submit_output`][pydantic_ai.tools.RunContext.submit_output]. `None` in synthetic contexts that
+    aren't backed by a running agent.
+    """
+
     _run_held_toolsets: dict[str, RunHeldToolset[Any]] | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
@@ -585,13 +606,26 @@ class RunContext(Generic[RunContextAgentDepsT]):
         durability capability or is run outside a durable container. A Prefect task inherits its flow's
         context, so it is `True` there.
         """
+        durability = self._durability
+        return durability is not None and durability.in_durable_context
+
+    @property
+    def _in_durable_unit(self) -> bool:
+        """Whether this code runs inside a durable unit, like a step or task, whose result the engine records.
+
+        This includes units the user created, like a tool wrapped in its own DBOS step or Prefect task.
+        """
+        durability = self._durability
+        return durability.in_durable_unit if durability is not None else in_durable_unit()
+
+    @property
+    def _durability(self) -> BaseDurabilityCapability[object] | None:
         # Looked up through `sys.modules` like `realtime`: without the module, no durability capability exists.
         durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
         if durable_exec is None or self.agent is None:
-            return False
+            return None
         base: type[BaseDurabilityCapability[object]] = durable_exec.BaseDurabilityCapability
-        durability = base.from_agent(self.agent)
-        return durability is not None and durability.in_durable_context
+        return base.from_agent(self.agent)
 
     @property
     def last_attempt(self) -> bool:
@@ -829,6 +863,82 @@ class RunContext(Generic[RunContextAgentDepsT]):
         if self.tool_manager is None or self.tool_manager.tools is None:
             return {}
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
+
+    @property
+    def output_tool_defs(self) -> list[ToolDefinition]:
+        """The outputs a tool can submit with [`submit_output`][pydantic_ai.tools.RunContext.submit_output], one per output type.
+
+        With tool output they're the agent's output tools, as this step's
+        [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] hooks left
+        them. With native or prompted output they're the output tools tool output would have used, so they have
+        the same names and parameter schemas whatever the output mode. Plain text output has one that takes
+        the text as `response`. Image output and
+        [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] can't be submitted.
+
+        Empty when this `RunContext` isn't backed by a running agent in this process, such as inside a
+        Temporal activity.
+        """
+        submitter = self._live_output_submitter
+        return [] if submitter is None else submitter.tool_defs
+
+    async def submit_output(self, tool_name: str, args: dict[str, Any]) -> None:
+        """Submit the agent run's output, as if the model had called that output tool.
+
+        `args` goes through the same validation, output hooks, output functions and output validators as
+        output the model produces in the run's output mode.
+
+        From a tool, or a capability's `before_tool_execute`, `after_tool_execute` or `wrap_tool_execute`
+        hook for its call, the submission belongs to that tool call. When it's accepted, the tool still
+        returns as usual and its result is recorded in message history, and its call then counts as the
+        final output tool call of the model response it belongs to: the run ends after this step's tool
+        calls, the same way [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] decides for an output
+        tool call at that position. If the tool fails or asks for a retry after submitting, the submission
+        is dropped. A rejected submission uses up one output retry, like a rejected output from the model,
+        and raises [`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError] carrying the feedback. Let it
+        propagate, re-raising it if the tool catches exceptions broadly: the calling tool call is then
+        answered with that feedback, without counting against the tool's own retries. A tool that swallows
+        it returns as if it succeeded, so the model never sees the feedback.
+
+        From anywhere else in the run, such as another capability hook, the run ends with an accepted
+        submission at the next point it would otherwise continue: before the next model request is sent,
+        in which case that request isn't sent, or, from `after_model_request`, as an output tool call at
+        the start of the model response, so `end_strategy` decides what happens to its tool calls. A
+        rejected submission raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] carrying the feedback,
+        and doesn't use up an output retry, as there's no tool call to answer: catch it to try again, or
+        let it propagate to have the hook's own `ModelRetry` behavior apply, such as a model retry from a
+        model request hook. A run can then submit again, but only one submission outside a tool call can
+        be accepted.
+
+        Args:
+            tool_name: The name of one of [`output_tool_defs`][pydantic_ai.tools.RunContext.output_tool_defs].
+            args: The arguments, matching that definition's `parameters_json_schema`.
+
+        Raises:
+            UserError: If this isn't called during an agent run in the same process as the run itself (so not
+                inside a Temporal activity), if it's called from a durable step or task (such as a DBOS step or
+                Prefect task, including one the tool's own code runs), if it's called while output is being
+                validated or processed (from an output function, output validator or output hook), if the tool
+                call or, outside a tool call, the run already submitted an output, or if the run already has its
+                final result.
+            ToolRetryError: If a submission from a tool call was rejected, carrying the feedback for the model.
+                If the output retries have run out, the run then fails with
+                [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], unless another output
+                in the same response becomes the final result.
+            ModelRetry: If a submission from outside a tool call was rejected, carrying the feedback.
+        """
+        submitter = self._live_output_submitter
+        if submitter is None:
+            raise UserError(
+                '`submit_output` can only be called during an agent run, in the same process as the run itself.'
+            )
+        await submitter.submit(self, tool_name, args)
+
+    @property
+    def _live_output_submitter(self) -> OutputSubmitter | None:
+        # Read via `__dict__`, like `cancel`: `TemporalRunContext.__getattribute__` raises a
+        # serialize-it-yourself error for absent fields, but the submitter is a live view of the
+        # run's graph state that can never cross an activity boundary.
+        return self.__dict__.get('_output_submitter')
 
     def tool_name_for_kind(self, kind: _messages.ToolKindLike) -> str | None:
         """The name of the tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] in the current run step, or `None` if there is none.
@@ -1168,6 +1278,35 @@ def with_tool_name_layer(ctx: RunContext[AgentDepsT], layer: str | Mapping[str, 
 def without_tool_name_path(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
     """The context to hand user code that runs while tools are listed, without the listing's tool name path."""
     return with_tool_name_path(ctx, ()) if ctx._tool_name_path else ctx  # pyright: ignore[reportPrivateUsage]
+
+
+_IN_DURABLE_UNIT: ContextVar[bool] = ContextVar('pydantic_ai.durable_exec.in_durable_unit', default=False)
+
+
+def in_durable_unit() -> bool:
+    """Whether the current task is running a durable unit's body, set by `CallableOperationBackend`.
+
+    In-process engines need it where their own container check stays true inside a unit (Prefect's
+    `FlowRunContext` is set inside a task), so a `DurableWorkspace` call or a capability's durable
+    operation called from a tool goes direct.
+    """
+    return _IN_DURABLE_UNIT.get()
+
+
+@contextmanager
+def durable_unit_scope() -> Generator[None]:
+    """Mark the current task as running a durable unit's body.
+
+    `CallableOperationBackend` enters it around every unit. A `RegisteredOperationBackend` enters it
+    around its worker-side handler, so a nested durable operation called from inside the unit (a
+    `DurableWorkspace` call, a capability's durable operation called from a tool) runs directly
+    instead of scheduling a second unit.
+    """
+    token = _IN_DURABLE_UNIT.set(True)
+    try:
+        yield
+    finally:
+        _IN_DURABLE_UNIT.reset(token)
 
 
 _CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(
