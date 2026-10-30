@@ -1,6 +1,6 @@
 ---
 title: Enterprise support for Pydantic AI
-description: "Commercial support for Pydantic AI with an SLA: 24/7 priority help from Pydantic AI engineers on production incidents, architecture, upgrades and security."
+description: "Pydantic AI is open source, with commercial enterprise support from Pydantic: an SLA and 24/7 priority help from Pydantic AI engineers on production incidents, architecture, upgrades and security."
 ---
 
 # Enterprise support for Pydantic AI
@@ -8,6 +8,8 @@ description: "Commercial support for Pydantic AI with an SLA: 24/7 priority help
 Pydantic AI is open source under the MIT license. When it becomes part of a critical agent system, a public issue tracker is not the escalation path you want during an incident, provider change, or major rollout.
 
 Commercial support gives your team direct access to Pydantic AI engineers for production incidents, architecture, provider changes, and upgrades. Enterprise plans include 24/7 priority support, setup assistance, and an SLA matched to your operating model. Your agreement can also define how we coordinate when a vulnerability affects a covered release line.
+
+For what Pydantic AI sends outside your infrastructure, which models and clouds it runs on, and how teams control and audit agents, see [Pydantic AI for Enterprise](enterprise.md).
 
 <EnterpriseSupportCta
   product="ai"
@@ -49,7 +51,7 @@ Pydantic AI's license, documentation, releases, issue tracker, and community sup
 
 <Collapsible title="Is Logfire required?">
 
-No. Commercial support is available for the open-source Pydantic AI framework itself. Logfire traces can make an investigation faster, but Logfire is not required.
+No. Commercial support is available for the open-source Pydantic AI framework itself, as its own agreement: it is separate from any Logfire support tier, and a Logfire plan does not include it. Logfire traces can make an investigation faster, but Logfire is not required.
 
 </Collapsible>
 

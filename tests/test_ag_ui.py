@@ -2832,6 +2832,54 @@ def test_dump_load_roundtrip_thinking() -> None:
     assert reloaded == original
 
 
+@requires_ag_ui('0.1.11')
+def test_dump_load_roundtrip_canonical_system() -> None:
+    """A response's `canonical_system` comes back with its `provider_name`, from the parts that carry one.
+
+    Without it, a Google Cloud response's thought signatures would be judged by the name `google` alone and sent to
+    the Gemini API. A part from another provider in the same response doesn't carry the stamp.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think about this')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Deep thoughts...', signature='sig', provider_name='google'),
+                ThinkingPart(content='Earlier thoughts.', signature='other', provider_name='anthropic'),
+            ],
+            provider_name='google',
+            canonical_system='google-cloud',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Draw it')]),
+        ModelResponse(
+            parts=[FilePart(content=BinaryImage(data=b'img', media_type='image/png'), provider_name='google')],
+            provider_name='google',
+            canonical_system='google-cloud',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Compact')]),
+        ModelResponse(
+            parts=[CompactionPart(content=None, id='cmp-1', provider_name='openai', provider_details={'blob': 'x'})],
+            provider_name='openai',
+            canonical_system='azure',
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11', preserve_file_data=True)
+    assert [
+        json.loads(message.encrypted_value)
+        for message in ag_ui_msgs
+        if isinstance(message, ReasoningMessage) and message.encrypted_value
+    ] == snapshot(
+        [
+            {'signature': 'sig', 'provider_name': 'google', 'canonical_system': 'google-cloud'},
+            {'signature': 'other', 'provider_name': 'anthropic'},
+        ]
+    )
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    _sync_load_bookkeeping(original, reloaded)
+    assert reloaded == original
+
+
 def test_dump_load_roundtrip_tools() -> None:
     """Test full round-trip for tool calls and returns."""
     original: list[ModelMessage] = [
@@ -4658,6 +4706,7 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=run_id,
@@ -8576,6 +8625,7 @@ async def test_system_prompt_with_ag_ui_adapter():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=56, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8622,6 +8672,7 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8670,6 +8721,7 @@ async def test_frontend_system_prompt_stripped_by_default():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8717,6 +8769,7 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8773,6 +8826,7 @@ async def test_frontend_system_prompt_only_request_dropped():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8820,6 +8874,7 @@ async def test_client_mode_keeps_frontend_system_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8867,6 +8922,7 @@ async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8941,6 +8997,7 @@ async def test_client_mode_keeps_frontend_system_prompt_multi_turn():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=57, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8988,6 +9045,7 @@ async def test_client_mode_does_not_reinject_agent_system_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -9056,6 +9114,7 @@ async def test_system_prompt_reinjected_with_ag_ui_history():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=59, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -9859,6 +9918,7 @@ async def test_run_timeout_finishes_like_cancellation() -> None:
             parts=[TextPart(content='partial')],
             usage=RequestUsage(output_tokens=1, input_tokens=50),
             model_name='function::stream_then_time_out',
+            model_id='function:function::stream_then_time_out',
             timestamp=IsDatetime(),
             run_id=IsStr(),
             conversation_id=IsStr(),

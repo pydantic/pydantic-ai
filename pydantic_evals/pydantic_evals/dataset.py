@@ -36,13 +36,13 @@ from pydantic_evals._utils import run_until_complete
 
 from . import _task_run
 from ._ci_provenance import ci_provenance_attributes
-from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
+from ._utils import get_function_serialization_name, get_unwrapped_function_name, logfire_span, task_group_gather
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._base import BaseEvaluator
 from .evaluators._run_evaluator import as_evaluator, run_evaluator
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
-from .evaluators.evaluator import EvaluatorFailure, EvaluatorFunc
+from .evaluators.evaluator import EvaluatorFailure, EvaluatorFunc, FunctionEvaluator
 from .evaluators.report_common import DEFAULT_REPORT_EVALUATORS
 from .evaluators.report_evaluator import ReportEvaluator, ReportEvaluatorContext
 from .evaluators.spec import EvaluatorSpec
@@ -590,7 +590,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         cls,
         path: Path | str,
         fmt: Literal['yaml', 'json'] | None = None,
-        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[
+            type[Evaluator[InputsT, OutputT, MetadataT]] | EvaluatorFunc[InputsT, OutputT, MetadataT]
+        ] = (),
         custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> Self:
         """Load a dataset from a file.
@@ -599,7 +601,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             path: Path to the file to load.
             fmt: Format of the file. If None, the format will be inferred from the file extension.
                 Must be either 'yaml' or 'json'.
-            custom_evaluator_types: Custom evaluator classes to use when deserializing the dataset.
+            custom_evaluator_types: Custom evaluator classes and evaluator functions to use when deserializing the dataset.
                 These are additional evaluators beyond the default ones.
             custom_report_evaluator_types: Custom report evaluator classes to use when deserializing the dataset.
                 These are additional report evaluators beyond the default ones.
@@ -631,7 +633,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         cls,
         contents: str,
         fmt: Literal['yaml', 'json'] = 'yaml',
-        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[
+            type[Evaluator[InputsT, OutputT, MetadataT]] | EvaluatorFunc[InputsT, OutputT, MetadataT]
+        ] = (),
         custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
         *,
         default_name: str | None = None,
@@ -641,7 +645,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Args:
             contents: The string content to parse.
             fmt: Format of the content. Must be either 'yaml' or 'json'.
-            custom_evaluator_types: Custom evaluator classes to use when deserializing the dataset.
+            custom_evaluator_types: Custom evaluator classes and evaluator functions to use when deserializing the dataset.
                 These are additional evaluators beyond the default ones.
             custom_report_evaluator_types: Custom report evaluator classes to use when deserializing the dataset.
                 These are additional report evaluators beyond the default ones.
@@ -669,7 +673,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     def from_dict(
         cls,
         data: dict[str, Any],
-        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[
+            type[Evaluator[InputsT, OutputT, MetadataT]] | EvaluatorFunc[InputsT, OutputT, MetadataT]
+        ] = (),
         custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
         *,
         default_name: str | None = None,
@@ -678,7 +684,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         Args:
             data: Dictionary representation of the dataset.
-            custom_evaluator_types: Custom evaluator classes to use when deserializing the dataset.
+            custom_evaluator_types: Custom evaluator classes and evaluator functions to use when deserializing the dataset.
                 These are additional evaluators beyond the default ones.
             custom_report_evaluator_types: Custom report evaluator classes to use when deserializing the dataset.
                 These are additional report evaluators beyond the default ones.
@@ -700,7 +706,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     def _from_dataset_model(
         cls,
         dataset_model: _DatasetModel[InputsT, OutputT, MetadataT],
-        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[
+            type[Evaluator[InputsT, OutputT, MetadataT]] | EvaluatorFunc[InputsT, OutputT, MetadataT]
+        ] = (),
         custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
         default_name: str | None = None,
     ) -> Self:
@@ -708,14 +716,16 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         Args:
             dataset_model: The _DatasetModel to convert.
-            custom_evaluator_types: Custom evaluator classes to register for deserialization.
+            custom_evaluator_types: Custom evaluator classes and evaluator functions to register for deserialization.
             custom_report_evaluator_types: Custom report evaluator classes to register for deserialization.
             default_name: Default name of the dataset, to be used if the value is `None` in the provided model.
 
         Returns:
             A new Dataset instance created from the _DatasetModel.
         """
-        registry = _get_evaluator_registry(custom_evaluator_types, Evaluator, DEFAULT_EVALUATORS, 'evaluator')
+        registry = _get_evaluator_registry(
+            _evaluator_types(custom_evaluator_types), Evaluator, DEFAULT_EVALUATORS, 'evaluator'
+        )
         report_evaluator_registry = _get_evaluator_registry(
             custom_report_evaluator_types, ReportEvaluator, DEFAULT_REPORT_EVALUATORS, 'report evaluator'
         )
@@ -781,7 +791,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         path: Path | str,
         fmt: Literal['yaml', 'json'] | None = None,
         schema_path: Path | str | None = DEFAULT_SCHEMA_PATH_TEMPLATE,
-        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[
+            type[Evaluator[InputsT, OutputT, MetadataT]] | EvaluatorFunc[InputsT, OutputT, MetadataT]
+        ] = (),
         custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
     ):
         """Save the dataset to a file.
@@ -792,7 +804,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 Must be either 'yaml' or 'json'.
             schema_path: Path to save the JSON schema to. If None, no schema will be saved.
                 Can be a string template with {stem} which will be replaced with the dataset filename stem.
-            custom_evaluator_types: Custom evaluator classes to include in the schema.
+            custom_evaluator_types: Custom evaluator classes and evaluator functions to include in the schema.
             custom_report_evaluator_types: Custom report evaluator classes to include in the schema.
         """
         path = Path(path)
@@ -830,7 +842,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     @classmethod
     def model_json_schema_with_evaluators(
         cls,
-        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[
+            type[Evaluator[InputsT, OutputT, MetadataT]] | EvaluatorFunc[InputsT, OutputT, MetadataT]
+        ] = (),
         custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> dict[str, Any]:
         """Generate a JSON schema for this dataset type, including evaluator details.
@@ -838,14 +852,16 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         This is useful for generating a schema that can be used to validate YAML-format dataset files.
 
         Args:
-            custom_evaluator_types: Custom evaluator classes to include in the schema.
+            custom_evaluator_types: Custom evaluator classes and evaluator functions to include in the schema.
             custom_report_evaluator_types: Custom report evaluator classes to include in the schema.
 
         Returns:
             A dictionary representing the JSON schema.
         """
         evaluator_schema_types = _build_evaluator_schema_types(
-            _get_evaluator_registry(custom_evaluator_types, Evaluator, DEFAULT_EVALUATORS, 'evaluator')
+            _get_evaluator_registry(
+                _evaluator_types(custom_evaluator_types), Evaluator, DEFAULT_EVALUATORS, 'evaluator'
+            )
         )
         report_evaluator_schema_types = _build_evaluator_schema_types(
             _get_evaluator_registry(
@@ -881,14 +897,16 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     def _save_schema(
         cls,
         path: Path | str,
-        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_evaluator_types: Sequence[
+            type[Evaluator[InputsT, OutputT, MetadataT]] | EvaluatorFunc[InputsT, OutputT, MetadataT]
+        ] = (),
         custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
     ):
         """Save the JSON schema for this dataset type to a file.
 
         Args:
             path: Path to save the schema to.
-            custom_evaluator_types: Custom evaluator classes to include in the schema.
+            custom_evaluator_types: Custom evaluator classes and evaluator functions to include in the schema.
             custom_report_evaluator_types: Custom report evaluator classes to include in the schema.
         """
         path = Path(path)
@@ -940,11 +958,25 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         See <https://github.com/json-schema-org/json-schema-spec/issues/828> for context, that seems to be the nearest
         there is to a spec for this.
         """
+        _check_function_evaluator_names([*self.evaluators, *(e for case in self.cases for e in case.evaluators)])
         context = cast(dict[str, Any] | None, info.context)
         if isinstance(context, dict) and (schema := context.get('$schema')):
             return {'$schema': schema} | nxt(self)
         else:
             return nxt(self)
+
+
+def _check_function_evaluator_names(evaluators: Sequence[Evaluator[Any, Any, Any]]) -> None:
+    """Raise if two different functions would be saved under the same name, as loading could not tell them apart."""
+    functions: dict[str, Callable[..., Any]] = {}
+    for evaluator in evaluators:
+        # A function with no name fails later, when the evaluator itself is serialized.
+        if isinstance(evaluator, FunctionEvaluator) and (name := get_function_serialization_name(evaluator.function)):
+            if functions.setdefault(name, evaluator.function) is not evaluator.function:
+                raise ValueError(
+                    f'Two different evaluator functions are named {name!r}. A function evaluator is saved under its '
+                    'name, so the dataset could not be loaded unambiguously. Rename one of the functions.'
+                )
 
 
 def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:
@@ -1355,6 +1387,83 @@ def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
 
 
 BaseEvalT = TypeVar('BaseEvalT', bound=BaseEvaluator)
+
+
+def _evaluator_types(
+    custom_evaluator_types: Sequence[
+        type[Evaluator[InputsT, OutputT, MetadataT]] | EvaluatorFunc[InputsT, OutputT, MetadataT]
+    ],
+) -> list[type[Evaluator[InputsT, OutputT, MetadataT]]]:
+    """Replace each evaluator function with an evaluator type that loads it, so it can be registered like a class."""
+    evaluator_types: list[type[Evaluator[InputsT, OutputT, MetadataT]]] = []
+    # The class or function behind each name, to tell a function sharing its name apart from one passed twice.
+    sources: dict[str, set[int]] = {}
+    function_names: list[str] = []
+    for evaluator_type in custom_evaluator_types:
+        if isinstance(evaluator_type, type):
+            evaluator_types.append(evaluator_type)
+            # Anything else is rejected when the registry is built.
+            if issubclass(evaluator_type, BaseEvaluator):
+                sources.setdefault(evaluator_type.get_serialization_name(), set()).add(id(evaluator_type))
+        elif isinstance(evaluator_type, BaseEvaluator):
+            raise TypeError(
+                f'{evaluator_type!r} cannot be used in `custom_evaluator_types`, which takes evaluator classes and '
+                'functions, not evaluator instances.'
+            )
+        else:
+            function_type = _function_evaluator_type(evaluator_type)
+            evaluator_types.append(function_type)
+            name = function_type.get_serialization_name()
+            function_names.append(name)
+            sources.setdefault(name, set()).add(id(evaluator_type))
+
+    for name in function_names:
+        if len(sources[name]) > 1:
+            raise ValueError(
+                f'Duplicate evaluator name: {name!r}. An evaluator function is identified by its name, so it must be '
+                'different from the names of the other `custom_evaluator_types`. Rename the function.'
+            )
+    return evaluator_types
+
+
+def _function_evaluator_type(
+    function: EvaluatorFunc[InputsT, OutputT, MetadataT],
+) -> type[Evaluator[InputsT, OutputT, MetadataT]]:
+    """Build an evaluator type that loads a serialized `FunctionEvaluator` for `function`.
+
+    Its serialization name and dataclass fields match what `FunctionEvaluator` serializes to, so the registry and the
+    JSON schema treat it like any other custom evaluator class, while instantiating it returns a `FunctionEvaluator`.
+    """
+    name = get_function_serialization_name(function)
+    if name is None:
+        raise TypeError(
+            f'{function!r} cannot be used in `custom_evaluator_types`, as an evaluator function is identified by its '
+            'name, which only a plain function defined with `def` has, not a lambda, bound method, `functools.partial` '
+            'or other callable. Use a plain function or an `Evaluator` subclass instead.'
+        )
+
+    # Not instantiated itself (see `__new__`), so the fields only describe the serialized arguments.
+    @dataclass(init=False, repr=False, eq=False)
+    class LoadFunctionEvaluator(FunctionEvaluator[Any, Any, Any]):
+        evaluation_name: str | None = None
+        version: str | None = None
+
+        def __new__(
+            cls, *args: Any, evaluation_name: str | None = None, version: str | None = None
+        ) -> FunctionEvaluator[Any, Any, Any]:
+            if args:
+                raise TypeError(
+                    'an evaluator function only takes the `evaluation_name` and `version` arguments by name'
+                )
+            return FunctionEvaluator(function, evaluation_name=evaluation_name, version=version)
+
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return name
+
+    # Name the evaluator in errors about unexpected arguments, instead of this factory.
+    LoadFunctionEvaluator.__new__.__qualname__ = name
+    return LoadFunctionEvaluator
 
 
 def _get_evaluator_registry(

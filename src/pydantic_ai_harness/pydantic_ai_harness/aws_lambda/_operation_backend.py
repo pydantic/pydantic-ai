@@ -29,7 +29,7 @@ _RETRY_STRATEGY_ADAPTER: TypeAdapter[Callable[[Exception, int], RetryDecision] |
 )
 _STEP_SEMANTICS_ADAPTER = TypeAdapter(StepSemantics)
 _SERDES_ADAPTER: TypeAdapter[SerDes[object] | None] = TypeAdapter(
-    SerDes | None, config=ConfigDict(arbitrary_types_allowed=True)
+    SerDes[object] | None, config=ConfigDict(arbitrary_types_allowed=True)
 )
 _STEP_CONFIG_VALUE_ADAPTERS = {
     'retry_strategy': (_RETRY_STRATEGY_ADAPTER, 'a callable or None'),

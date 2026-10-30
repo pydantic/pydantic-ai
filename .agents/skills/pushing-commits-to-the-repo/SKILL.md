@@ -32,13 +32,12 @@ Set the light model's effort from the PR's complexity.
 
 ## Merge bar
 
-David merges at this bar. Never merge the PR yourself.
+A maintainer with merge rights (Douwe, Aditya or Mike) merges at this bar. Never merge the PR yourself.
 
 | Size label | Needs |
 |---|---|
 | S | CI green and a clean douwebot approval. An obviously trivial S PR needs CI green only. |
-| M | CI green and a clean douwebot approval. |
-| L, XL | CI green, a clean douwebot approval, and one human approval. |
+| M, L, XL | CI green and a clean douwebot approval. |
 
 Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
 State that judgment in the PR body.
@@ -55,9 +54,6 @@ Associate inline comments with their parent review's commit because GitHub can m
 A clean, maintainer-authorized `douwebot:review-agent-config` approval satisfies the same requirement for protected paths.
 A human approval does not substitute for douwebot.
 
-Count the latest non-dismissed approval from a `User` other than the author with current write/admin permission.
-A later change request supersedes approval; a comment does not. The approval may precede the head,
-with GitHub's stale-approval dismissal enforcing freshness when the diff changes.
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
 
@@ -160,7 +156,7 @@ Apply the merge bar, including its trivial-S exception, to required hosted revie
 
 Leave automatic configured CI and hosted review workflows unchanged; they may run independently.
 Do not edit workflows or triggers to implement this exception.
-Once the merge bar is met and posted comments are triaged, hand David the PR diff to inspect and merge.
+Once the merge bar is met and posted comments are triaged, hand the PR diff to the maintainer driving you, or another maintainer, to inspect and merge.
 Never merge the PR yourself.
 
 ## Mechanical text/data refreshes
@@ -388,7 +384,6 @@ if the head changes, capture the new SHA and restart the loop.
      and verify that the PR head still equals the captured SHA after the label is removed.
      Require douwebot `APPROVE` on that SHA with no douwebot comments on that head.
      A successful run alone does not satisfy the merge bar. A failure comment leaves the gate unsatisfied.
-   - **Human approval:** require one for L and XL PRs. Request the missing approval through David.
 
    Recheck that the live head is unchanged. Do not substitute a `pydanty:*` surface or another reviewer for a required review. Any valid
    finding and push restarts the lifecycle. Missing, stale, or failed required reviews are
@@ -548,7 +543,7 @@ maintainers run them, not something this repo can show you.
 ## Before handing the PR back
 
 For prose-only documentation, check the title, body, and labels directly against this skill, root `AGENTS.md`, and the PR template.
-Correct metadata directly, then hand David the PR diff after the merge bar and comment triage are complete.
+Correct metadata directly, then hand the PR diff to a maintainer after the merge bar and comment triage are complete.
 Skip the subagent steps below.
 
 For other diffs, run this final metadata check after CI, any required hosted review, and comments have settled.
