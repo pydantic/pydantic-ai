@@ -15,7 +15,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.durable_exec.dbos import DBOSDurability
 
-pytestmark = [
+pytestmark: list[pytest.MarkDecorator] = [
     pytest.mark.skipif(not imports_successful(), reason='dbos not installed'),
     pytest.mark.xdist_group(name='dbos'),
 ]

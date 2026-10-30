@@ -14,7 +14,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.durable_exec.prefect import PrefectDurability
 
-pytestmark = [
+pytestmark: list[pytest.MarkDecorator] = [
     pytest.mark.skipif(not imports_successful(), reason='prefect not installed'),
     pytest.mark.xdist_group(name='prefect'),
 ]
