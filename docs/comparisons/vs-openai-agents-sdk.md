@@ -16,6 +16,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Extensibility | Tools, guardrails, handoffs | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | `SandboxAgent`, or build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenAI tracing, OTel via adapters | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
+| Enterprise support | None documented for the SDK; [API Enterprise](https://openai.com/api/pricing/) for the API | [For the framework itself](../enterprise-support.md), no platform required |
 | Durable execution | Yes | [Eight integrations](../durable_execution/overview.md) |
 | Interfaces | REPL demo loop | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | Yes | [Realtime](../realtime/overview.md) |

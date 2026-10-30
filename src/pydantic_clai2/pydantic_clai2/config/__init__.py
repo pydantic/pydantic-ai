@@ -1,10 +1,14 @@
 """Validated settings, independent of persistence and terminal code."""
 
+import re
+from pathlib import Path
 from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from pydantic_clai2.config.theme_names import names
+
+_WORKTREE_COMMAND_PLACEHOLDER = re.compile(r'{[A-Za-z_]\w*}')
 
 UpdateChannel = Literal['stable', 'main']
 UPDATE_CHANNELS: tuple[UpdateChannel, ...] = get_args(UpdateChannel)
@@ -109,6 +113,42 @@ class Settings(BaseModel):
         default='stable',
         description='Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main.',
     )
+    worktree_remove_commands: dict[str, list[str]] = Field(
+        default={},
+        description='Confirmed removal on exit: absolute Git common directory -> argv.',
+    )
+
+    @field_validator('worktree_remove_commands')
+    @classmethod
+    def validate_worktree_remove_commands(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        """Validate executable argv entries and canonical absolute repository keys."""
+        placeholders = {'{path}', '{branch}', '{repo}'}
+        normalized: dict[str, list[str]] = {}
+        original_keys: dict[str, str] = {}
+        for directory, argv in value.items():
+            if '\0' in directory:
+                raise ValueError('Worktree command keys cannot contain NUL')
+            if not Path(directory).is_absolute():
+                raise ValueError(f'Worktree command key must be an absolute path: {directory!r}')
+            if not argv or not argv[0]:
+                raise ValueError('Worktree removal commands must have a non-empty executable and argv')
+            if any('\0' in token for token in argv):
+                raise ValueError('Worktree removal command arguments cannot contain NUL')
+            if any(token not in placeholders and any(name in token for name in placeholders) for token in argv):
+                raise ValueError('Worktree command placeholders must fill a whole argv token')
+            unknown = {
+                token for token in argv if _WORKTREE_COMMAND_PLACEHOLDER.fullmatch(token) and token not in placeholders
+            }
+            if unknown:
+                raise ValueError(f'Unknown worktree command placeholders: {", ".join(sorted(unknown))}')
+            canonical = str(Path(directory).resolve())
+            if canonical in original_keys:
+                raise ValueError(
+                    f'Worktree command keys {original_keys[canonical]!r} and {directory!r} resolve to the same directory'
+                )
+            original_keys[canonical] = directory
+            normalized[canonical] = argv
+        return normalized
 
     @field_validator('update_channel', mode='before')
     @classmethod
@@ -147,6 +187,7 @@ SETTING_FIELDS = {
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
     'updates.channel': 'update_channel',
+    'worktrees.remove_commands': 'worktree_remove_commands',
 }
 
 STRING_SETTINGS = frozenset(
