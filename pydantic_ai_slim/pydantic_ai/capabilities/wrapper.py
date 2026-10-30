@@ -616,10 +616,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             ctx, output_context=output_context, output=output, error=error
         )
 
-    # --- Output process lifecycle hooks ---
+    # --- Output retry notification ---
 
     async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
         await self.wrapped.after_output_retry(ctx, retry_context=retry_context)
+
+    # --- Output process lifecycle hooks ---
 
     async def before_output_process(
         self,

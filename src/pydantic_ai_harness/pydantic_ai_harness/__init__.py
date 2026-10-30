@@ -38,7 +38,6 @@ if TYPE_CHECKING:
     from .docker_sandbox import DockerSandbox, DockerSandboxBackend
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
-    from .escalate_on_output_retry import EscalateOnOutputRetry, EscalationLevel, EscalationLevelSpec, OutputRetryEvent
     from .exa import ExaAgent, ExaSearch
     from .filesystem import READ_ONLY_TOOL_NAMES, FileSystem
     from .grain import Grain
@@ -118,9 +117,6 @@ __all__ = [
     'DynamicWorkflow',
     'E2BSandbox',
     'E2BSandboxBackend',
-    'EscalateOnOutputRetry',
-    'EscalationLevel',
-    'EscalationLevelSpec',
     'ExaAgent',
     'ExaSearch',
     'FallbackCompaction',
@@ -145,7 +141,6 @@ __all__ = [
     'OutputBlocked',
     'OutputGuardrail',
     'OutputGuardrailFunc',
-    'OutputRetryEvent',
     'PGTaskDurability',
     'Planning',
     'PostHog',
@@ -210,9 +205,6 @@ _CAPABILITY_EXPORTS = {
     'DetectLoops': 'detect_loops',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
-    'EscalateOnOutputRetry': 'escalate_on_output_retry',
-    'EscalationLevel': 'escalate_on_output_retry',
-    'EscalationLevelSpec': 'escalate_on_output_retry',
     'ExaAgent': 'exa',
     'ExaSearch': 'exa',
     'FallbackCompaction': 'compaction',
@@ -225,7 +217,6 @@ _CAPABILITY_EXPORTS = {
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
     'Ordinal': 'ordinal',
-    'OutputRetryEvent': 'escalate_on_output_retry',
     'PGTaskDurability': 'pgtask',
     'Planning': 'planning',
     'PostHog': 'posthog',

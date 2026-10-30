@@ -15,10 +15,9 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxR
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai.messages import ModelResponse
+from tests.durable_exec._output_fallback import make_agent, make_models
 from tests.harness._temporal import ignore_source_reads_left_open, skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
-
-from ._scenario import make_agent, make_models
 
 pytestmark = [
     pytest.mark.temporal,

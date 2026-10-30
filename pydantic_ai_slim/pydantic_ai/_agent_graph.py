@@ -3972,38 +3972,33 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
+        output_retry_parts: list[_messages.ToolReturnPart] = []
 
         try:
             # When `final_result` is set (schema-validated text or image output already won under
             # `end_strategy='early'`), `process_tool_calls` records the tool calls as skipped rather than
             # executing them.
-            async with aclosing(
-                process_tool_calls(
-                    tool_manager=ctx.deps.tool_manager,
-                    tool_calls=tool_calls,
-                    tool_call_results=self.tool_call_results,
-                    tool_call_metadata=self.tool_call_metadata,
-                    final_result=final_result,
-                    ctx=ctx,
-                    output_parts=output_parts,
-                    output_final_result=output_final_result,
-                )
-            ) as events:
-                async for event in events:
-                    yield event
-            for part in output_parts:
-                if isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried' and part.retry is not None:
-                    tool_def = ctx.deps.tool_manager.get_tool_def(part.tool_name)
-                    if tool_def is not None and tool_def.kind == 'output':
-                        await notify_output_retry(
-                            ctx,
-                            OutputRetryContext(
-                                response=self.model_response,
-                                retry=part.retry,
-                                tool_name=part.tool_name,
-                                tool_call_id=part.tool_call_id,
-                            ),
-                        )
+            try:
+                async with aclosing(
+                    process_tool_calls(
+                        tool_manager=ctx.deps.tool_manager,
+                        tool_calls=tool_calls,
+                        tool_call_results=self.tool_call_results,
+                        tool_call_metadata=self.tool_call_metadata,
+                        final_result=final_result,
+                        ctx=ctx,
+                        output_parts=output_parts,
+                        output_final_result=output_final_result,
+                        output_retry_parts=output_retry_parts,
+                    )
+                ) as events:
+                    async for event in events:
+                        yield event
+            except Exception:
+                await notify_output_tool_retries(ctx, self.model_response, output_retry_parts)
+                raise
+            else:
+                await notify_output_tool_retries(ctx, self.model_response, output_retry_parts)
         except BaseException:
             # Capture the partial tool returns collected so far. State is 'interrupted'
             # so `capture_run_messages` consumers can detect partial state. The user prompt
@@ -4566,6 +4561,25 @@ def build_validation_context(
         return fn(run_context)
     else:
         return validation_ctx
+
+
+async def notify_output_tool_retries(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    response: _messages.ModelResponse,
+    parts: list[_messages.ToolReturnPart],
+) -> None:
+    """Notify accepted output-tool charges, including those preceding a terminal sibling."""
+    for part in parts:
+        assert part.retry is not None
+        await notify_output_retry(
+            ctx,
+            OutputRetryContext(
+                response=response,
+                retry=part.retry,
+                tool_name=part.tool_name,
+                tool_call_id=part.tool_call_id,
+            ),
+        )
 
 
 async def notify_output_retry(

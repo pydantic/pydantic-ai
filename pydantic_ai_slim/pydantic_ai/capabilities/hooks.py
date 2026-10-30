@@ -236,9 +236,13 @@ class OnOutputValidateErrorHookFunc(Protocol):
     """Protocol for [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: RawOutput, error: ValidationError | ModelRetry) -> Any | Awaitable[Any]: ...
 
+# --- Output retry notification ---
+
 class AfterOutputRetryHookFunc(Protocol[AgentDepsT]):
     """Protocol for [`after_output_retry`][pydantic_ai.capabilities.AbstractCapability.after_output_retry] hook functions."""
     def __call__(self, ctx: RunContext[AgentDepsT], /, *, retry_context: OutputRetryContext) -> None | Awaitable[None]: ...
+
+# --- Output processing ---
 
 class BeforeOutputProcessHookFunc(Protocol):
     """Protocol for [`before_output_process`][pydantic_ai.capabilities.AbstractCapability.before_output_process] hook functions."""
@@ -712,7 +716,7 @@ class _HookRegistration(Generic[AgentDepsT]):
     ) -> Any:
         return _bare_or_parameterized(self._r, 'on_output_validate_error', func, timeout=timeout)
 
-    # --- Output execution ---
+    # --- Output retry notification ---
 
     @overload
     def after_output_retry(
@@ -729,6 +733,8 @@ class _HookRegistration(Generic[AgentDepsT]):
         | Callable[[AfterOutputRetryHookFunc[AgentDepsT]], AfterOutputRetryHookFunc[AgentDepsT]]
     ):
         return _bare_or_parameterized(self._r, 'after_output_retry', func, timeout=timeout)
+
+    # --- Output execution ---
 
     @overload
     def before_output_process(self, func: BeforeOutputProcessHookFunc, /) -> BeforeOutputProcessHookFunc: ...
@@ -870,9 +876,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
         # Output processing
         before_output_process: BeforeOutputProcessHookFunc | None = None,
         after_output_process: AfterOutputProcessHookFunc | None = None,
-        after_output_retry: AfterOutputRetryHookFunc[AgentDepsT] | None = None,
         output_process: WrapOutputProcessHookFunc | None = None,
         output_process_error: OnOutputProcessErrorHookFunc | None = None,
+        # Output retry notification
+        after_output_retry: AfterOutputRetryHookFunc[AgentDepsT] | None = None,
         # Deferred tool calls
         deferred_tool_calls: HandleDeferredToolCallsHookFunc | None = None,
         # Ordering
@@ -1362,9 +1369,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 error = new_error
         raise error
 
+    # --- Output retry notification ---
+
     async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
         for entry in self._get('after_output_retry'):
             await _call_entry(entry, 'after_output_retry', ctx, retry_context=retry_context)
+
+    # --- Output processing ---
 
     async def before_output_process(
         self, ctx: RunContext[AgentDepsT], *, output_context: OutputContext, output: Any

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, get_args
 
 from pydantic_ai import exceptions
 from pydantic_ai._fallback import (
@@ -15,9 +15,10 @@ from pydantic_ai._fallback import (
 )
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UsageLimitExceeded, UserError
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import CapabilityEvent, ModelResponse, RetryInfo
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.output import OutputRetryContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability, AgentModel, CapabilityOrdering
@@ -26,7 +27,24 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import ModelRequestContext
 
-__all__ = ('ModelFallback',)
+__all__ = ('ModelFallback', 'OutputRetryEvent')
+
+_OutputRetries: TypeAlias = int | Mapping[str, int] | None
+
+
+@dataclass(kw_only=True)
+class OutputRetryEvent(CapabilityEvent, namespace='model_fallback', name='output_retry'):
+    """An output retry accepted by core while output-driven model fallback is enabled.
+
+    The rejected response identifies the actual producer. Inherited `tool_name` and `tool_call_id`
+    identify an output tool when `source` is `'output_tool'`. A failure that exhausts its retry
+    budget does not emit; accepted retries from other output calls still do.
+    """
+
+    source: Literal['response_output', 'output_tool']
+    response: ModelResponse
+    retry: RetryInfo[str]
+
 
 _SpecFallbackError = Literal[
     'ModelAPIError',
@@ -73,13 +91,18 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     A model already attempted this step is skipped, so listing the agent's own model as the first
     candidate is harmless rather than a wasted duplicate attempt.
 
+    Set `output_retries` to move the next ordinary step to another model after accepted output
+    validation failures. That model receives the validation feedback and remains the starting
+    candidate for this run. Core's output/per-tool retry limits and usage limits still apply.
+
     Each attempt re-runs
     [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
     the candidate about to serve it, so the model's own message preparation and token counting, and
     any preparation a capability does there, are redone per model instead of inherited. (The built-in
     compaction capabilities still run once per step, in `before_model_request`.) The request step
-    itself is not repeated: `before_model_request` and `wrap_model_request` run once, and the model
-    never sees a retry prompt.
+    itself is not repeated for request-level fallback: `before_model_request` and `wrap_model_request`
+    run once, and the model never sees a retry prompt for a failed request attempt. Output-driven
+    fallback starts a new step with the validation feedback.
 
     Prefer this over [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] inside an agent.
     `FallbackModel` remains the way to get the same behavior from a bare
@@ -88,6 +111,21 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
 
     models: list[Model | KnownModelName | str]
     """The models to attempt, in order, after the one selected for the step."""
+
+    output_retries: _OutputRetries
+    """Accepted output retries from a model before the next step moves to the next candidate.
+
+    A positive integer applies to every model; a mapping configures thresholds by model ID and
+    leaves unlisted models unchanged. `None` disables output-driven switching. The policy does
+    not increase core's retry limits.
+    """
+
+    _output_model: Model | str | None = field(repr=False)
+    _output_cursor: int = field(repr=False)
+    _output_failures: list[tuple[Model, int]] = field(repr=False)
+    _output_producer: Model | None = field(repr=False)
+    _output_threshold: int | None = field(repr=False)
+    _output_transition: OutputRetryContext | None = field(repr=False)
 
     _predicates: FallbackPredicates = field(repr=False)
     _supplies_model: bool = field(repr=False)
@@ -108,12 +146,20 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self,
         *models: Model | KnownModelName | str,
         fallback_on: FallbackOn = (ModelAPIError,),
+        output_retries: _OutputRetries = None,
     ):
         """Initialize the fallback capability.
 
         Args:
             models: The models to attempt after the one selected for the request step. When the
                 agent has no model of its own, the first of these is used for the first attempt.
+            output_retries: Move the next ordinary request step to the next candidate after this
+                many accepted output retries from the serving model. A positive integer applies
+                to every model. A mapping uses the selection ID, or `Model.model_id` for a model
+                instance, to configure each model independently; unlisted models do not trigger
+                output-driven switching. Stay at the chosen candidate, or
+                later ones, for the rest of this run. `None` keeps request-only fallback. Core's
+                output and per-tool limits remain authoritative; configure them explicitly.
             fallback_on: Conditions that trigger fallback to the next model. Accepts:
 
                 - A tuple of exception types: `(ModelRateLimitError, ModelUnavailableError)`
@@ -133,7 +179,29 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         super().__init__()
         if not models:
             raise UserError('`ModelFallback` requires at least one model to fall back to.')
+        if isinstance(output_retries, Mapping):
+            if any(
+                not isinstance(model_id, str)
+                or not isinstance(threshold, int)
+                or isinstance(threshold, bool)
+                or threshold < 1
+                for model_id, threshold in output_retries.items()
+            ):
+                raise UserError('`ModelFallback` `output_retries` must map model IDs to positive integers.')
+            self.output_retries = dict(output_retries)
+        elif output_retries is None or (
+            isinstance(output_retries, int) and not isinstance(output_retries, bool) and output_retries > 0
+        ):
+            self.output_retries = output_retries
+        else:
+            raise UserError('`ModelFallback` `output_retries` must be a positive integer or `None`.')
         self.models = list(models)
+        self._output_model = None
+        self._output_cursor = 0
+        self._output_failures = []
+        self._output_producer = None
+        self._output_threshold = None
+        self._output_transition = None
         self._predicates = FallbackPredicates.parse(fallback_on, owner='ModelFallback')
         self._supplies_model = False
         self._step = None
@@ -178,6 +246,12 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         """Return a fresh copy so each run tracks its own chain position."""
         return replace_no_init(
             self,
+            _output_model=None,
+            _output_cursor=0,
+            _output_failures=[],
+            _output_producer=None,
+            _output_threshold=None,
+            _output_transition=None,
             _step=None,
             _cursor=0,
             _attempted_models=[],
@@ -199,9 +273,10 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         """
         # Keyed on `run_step` rather than `request_context.attempt`, so the chain still starts over for a new step
         # when another capability asked for its first extra attempt.
-        if self._step != ctx.run_step:
+        first_attempt = self._step != ctx.run_step
+        if first_attempt:
             self._step = ctx.run_step
-            self._cursor = 0
+            self._cursor = self._output_cursor
             self._attempted_models = []
             self._attempted_ids = set()
             self._chain = self._new_chain()
@@ -221,7 +296,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             # whether or not the step's model already is that model.
             index = next((index for index, candidate in enumerate(self.models) if _pin_id(candidate) == pin), None)
             if pin == _pin_id(request_context.model_id or request_context.model):
-                self._cursor = (-1 if index is None else index) + 1
+                self._cursor = max((-1 if index is None else index) + 1, self._output_cursor)
             elif index is None:
                 raise UserError(
                     f'Cannot resume this suspended response: it was started by {pin!r}, which is neither the '
@@ -229,12 +304,33 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                     '`run(model=...)` when resuming.'
                 )
             else:
-                self._cursor = index + 1
+                self._cursor = max(index + 1, self._output_cursor)
                 self._pin_checked = True
                 # The step would continue a provider-side job on a model other than the one that started it; send
                 # it to that model instead, before anything is sent.
                 raise RetryModelRequest(self.models[index])
+        if (
+            first_attempt
+            and self._output_model is not None
+            and not (messages and isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended')
+        ):
+            if not _matches_model(self._output_model, request_context.model, request_context.model_id):
+                self._moved = True
+                raise RetryModelRequest(self._output_model)
         self._pin_checked = True
+        if (
+            self._output_transition is not None
+            and self._output_model is not None
+            and _matches_model(self._output_model, request_context.model, request_context.model_id)
+        ):
+            retry = self._output_transition
+            with ctx.tracer.start_as_current_span('model_fallback.output_fallback') as span:
+                if span.is_recording():
+                    span.set_attribute('model_fallback.model', request_context.model.model_name)
+                    span.set_attribute('model_fallback.source', retry.source)
+                    if retry.response.model_name is not None:
+                        span.set_attribute('model_fallback.producer', retry.response.model_name)
+            self._output_transition = None
         moved, self._moved = self._moved, False
         if moved and self._already_attempted(request_context.model):
             # A candidate given as a string, which the agent resolved only now, turned out to be a model already
@@ -271,6 +367,16 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             # the response handlers, with a warning when there are any, as `FallbackModel` does.
             self._chain.warn_if_streamed_responses_unjudged()
         if request_context.streaming or not await self._chain.falls_back(response):
+            if self.output_retries is not None:
+                producer = request_context.model
+                while isinstance(producer, WrapperModel):
+                    producer = producer.wrapped
+                self._output_producer = producer
+                self._output_threshold = (
+                    self.output_retries.get(request_context.model_id or producer.model_id)
+                    if isinstance(self.output_retries, Mapping)
+                    else self.output_retries
+                )
             if response.state == 'suspended':
                 # Its continuation, in this run or a later one that resumes it, has to go back to the
                 # model that started the provider-side job, not to the top of the chain.
@@ -284,6 +390,41 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         # rejected generation is still paid for in `RunUsage` even though it never enters history,
         # and records the attempt on the response that answers, as `FallbackModel` does.
         raise self._advance()
+
+    async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
+        if self._output_threshold is None:
+            return
+        assert self._output_producer is not None
+        for index, (producer, count) in enumerate(self._output_failures):
+            if producer is self._output_producer:
+                failures = count + 1
+                self._output_failures[index] = (producer, failures)
+                break
+        else:
+            failures = 1
+            self._output_failures.append((self._output_producer, failures))
+        await ctx.emit(
+            OutputRetryEvent(
+                source=retry_context.source,
+                response=retry_context.response,
+                retry=retry_context.retry,
+                tool_name=retry_context.tool_name,
+                tool_call_id=retry_context.tool_call_id,
+            )
+        )
+        # Every charge belongs to the model that produced this response. Failed siblings must not
+        # retire an untried candidate while the next step's switch is still pending.
+        if failures >= self._output_threshold and self._output_transition is None:
+            for index in range(self._cursor, len(self.models)):
+                candidate = self.models[index]
+                if not self._already_attempted(candidate):
+                    self._output_model = candidate
+                    self._output_cursor = index + 1
+                    self._output_transition = retry_context
+                    break
+            else:
+                self._output_model = self._output_producer
+                self._output_cursor = len(self.models)
 
     def _new_chain(self) -> FallbackChain:
         return FallbackChain(self._predicates, owner='ModelFallback')
@@ -305,9 +446,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             return candidate in self._attempted_ids
         # The attempted model may be wrapped by now, e.g. by a durable-execution capability.
         for attempted in self._attempted_models:
-            while attempted is not candidate and isinstance(attempted, WrapperModel):
-                attempted = attempted.wrapped
-            if attempted is candidate:
+            if _matches_model(candidate, attempted, None):
                 return True
         return False
 
@@ -317,6 +456,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         models: KnownModelName | str | Sequence[KnownModelName | str],
         *,
         fallback_on: _SpecFallbackError | Sequence[_SpecFallbackError] = 'ModelAPIError',
+        output_retries: _OutputRetries = None,
     ) -> ModelFallback[Any]:
         """Build from an agent spec, which names the models and the exceptions to fall back on.
 
@@ -354,7 +494,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 f'`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, '
                 f'got {unknown!r}. Valid names: {", ".join(_SPEC_FALLBACK_ERRORS)}.'
             )
-        return cls(*model_names, fallback_on=tuple(error_types))
+        return cls(*model_names, fallback_on=tuple(error_types), output_retries=output_retries)
 
 
 def _spec_list(value: object, name: str) -> Sequence[object]:
@@ -372,3 +512,11 @@ def _spec_list(value: object, name: str) -> Sequence[object]:
 def _pin_id(model: Model | str) -> str:
     """How a candidate is identified in a continuation pin: the string it was given as, or its `model_id`."""
     return model if isinstance(model, str) else model.model_id
+
+
+def _matches_model(candidate: Model | str, model: Model, model_id: str | None) -> bool:
+    if isinstance(candidate, str):
+        return candidate == model_id
+    while model is not candidate and isinstance(model, WrapperModel):
+        model = model.wrapped
+    return model is candidate

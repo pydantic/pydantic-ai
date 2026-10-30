@@ -6,10 +6,10 @@ from typing import Literal
 import pytest
 
 from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent, ModelRetry, RunContext
+from pydantic_ai.capabilities import ModelFallback, OutputRetryEvent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness import EscalateOnOutputRetry, EscalationLevel, OutputRetryEvent
 
 
 @pytest.fixture
@@ -27,11 +27,8 @@ def streaming_agent() -> tuple[Agent[object, str], list[str]]:
     agent = Agent(
         deps_type=object,
         capabilities=[
-            EscalateOnOutputRetry(
-                levels=[
-                    EscalationLevel(FunctionModel(stream_function=primary), after_failures=1),
-                    EscalationLevel(FunctionModel(stream_function=backup)),
-                ]
+            ModelFallback(
+                FunctionModel(stream_function=primary), FunctionModel(stream_function=backup), output_retries=1
             )
         ],
     )

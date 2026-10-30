@@ -14,10 +14,9 @@ from dbos import DBOS, DBOSConfig, SetWorkflowID
 
 from pydantic_ai.durable_exec.dbos import DBOSDurability
 from pydantic_ai.messages import ModelResponse
+from tests.durable_exec._output_fallback import make_agent, make_models
 
-from ._scenario import make_agent, make_models
-
-pytestmark = pytest.mark.xdist_group(name='harness-dbos')
+pytestmark = pytest.mark.xdist_group(name='dbos')
 
 
 class Crash(BaseException):

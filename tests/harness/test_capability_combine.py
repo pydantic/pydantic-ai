@@ -358,7 +358,6 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
     'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
-    'EscalateOnOutputRetry': Anonymous('independent selectors; the last model contribution wins'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '

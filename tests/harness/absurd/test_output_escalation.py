@@ -5,7 +5,7 @@ pytest.importorskip('absurd_sdk')
 from absurd_sdk import AsyncAbsurd
 
 from pydantic_ai_harness.absurd import AbsurdDurability
-from tests.harness.escalate_on_output_retry._scenario import make_agent, make_models
+from tests.durable_exec._output_fallback import make_agent, make_models
 
 from ._task import reenter_running_task, running_task_context
 

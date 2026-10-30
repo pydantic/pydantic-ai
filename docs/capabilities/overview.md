@@ -184,14 +184,13 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 
 ### Loop customization
 
-Core and Harness also ship capabilities for customizing the agent loop itself, mostly for production servers:
+Core also ships capabilities for customizing the agent loop itself, mostly for production servers:
 
 | Capability | Package | What it does |
 |---|---|---|
 | [Hooks](../hooks.md) | Core | Decorator-based lifecycle hook registration |
 | [Select Model](select-model.md) | Core | Select a static or per-step model with a callable |
-| [Model Fallback](model-fallback.md) | Core | Attempt other models when a request fails or its response is rejected |
-| [Escalate On Output Retry](../harness/escalate-on-output-retry.md) | Harness | Select successive models after accepted output validation retries |
+| [Model Fallback](model-fallback.md) | Core | Attempt other models on request failures, rejected responses, or opt-in output validation retries |
 | [Resolve Model ID](resolve-model-id.md) | Core | Resolve custom, application-specific model IDs with a callable |
 | [Prepare Tools / Prepare Output Tools](prepare-tools.md) | Core | Filter or modify function and [output tool][pydantic_ai.output.ToolOutput] definitions per step |
 | [Prefix Tools](prefix-tools.md) | Core | Wrap a capability and prefix its tool names |

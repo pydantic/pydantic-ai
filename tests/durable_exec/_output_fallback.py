@@ -3,11 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness import EscalateOnOutputRetry, EscalationLevel
 
 
 def make_models(executions: list[str]) -> dict[str, Model]:
@@ -42,9 +41,7 @@ def make_agent(
         deps_type=object,
         tools=[lookup_tool or lookup],
         capabilities=[
-            EscalateOnOutputRetry(
-                levels=[EscalationLevel(models['primary'], after_failures=1), EscalationLevel(models['backup'])]
-            ),
+            ModelFallback(models['primary'], models['backup'], output_retries=1),
             durability,
         ],
     )

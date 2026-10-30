@@ -3,7 +3,7 @@ import pytest
 pytest.importorskip('aws_durable_execution_sdk_python')
 
 from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, run_durable
-from tests.harness.escalate_on_output_retry._scenario import make_agent, make_models
+from tests.durable_exec._output_fallback import make_agent, make_models
 
 from .conftest import FakeDurableContext
 

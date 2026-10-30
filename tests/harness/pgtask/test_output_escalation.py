@@ -3,7 +3,7 @@ import pytest
 pytest.importorskip('pgtask')
 
 from pydantic_ai_harness.pgtask import PGTaskDurability
-from tests.harness.escalate_on_output_retry._scenario import make_agent, make_models
+from tests.durable_exec._output_fallback import make_agent, make_models
 
 from ._task import PGTaskDatabase, run_in_task
 

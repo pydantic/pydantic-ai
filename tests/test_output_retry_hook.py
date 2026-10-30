@@ -6,11 +6,11 @@ from typing import Literal
 import pytest
 from pydantic import ValidationError
 
-from pydantic_ai import Agent, ModelRetry, PromptedOutput, RunContext, capture_run_messages
+from pydantic_ai import Agent, EndStrategy, ModelRetry, PromptedOutput, RunContext, ToolOutput, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, Hooks, OutputContext, OutputRetryContext, WrapperCapability
 from pydantic_ai.capabilities.abstract import RawOutput
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, RetryInfo
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, RetryInfo, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
@@ -90,6 +90,37 @@ async def test_terminal_exhaustion_does_not_notify() -> None:
     assert received == []
 
 
+@pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
+async def test_accepted_sibling_notifies_before_later_exhaustion(end_strategy: EndStrategy) -> None:
+    received: list[tuple[str | None, int | None, int]] = []
+
+    def invalid(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('retryable', {'response': 'invalid'}, 'one'),
+                ToolCallPart('also_retryable', {'response': 'invalid'}, 'two'),
+                ToolCallPart('exhausted', {'response': 'invalid'}, 'three'),
+            ]
+        )
+
+    def record(ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:
+        received.append((retry_context.tool_name, retry_context.retry.attempt, ctx.retry))
+
+    agent = Agent(
+        FunctionModel(invalid),
+        output_type=[
+            ToolOutput(int, name='retryable', max_retries=1),
+            ToolOutput(int, name='also_retryable', max_retries=1),
+            ToolOutput(int, name='exhausted', max_retries=0),
+        ],
+        capabilities=[Hooks(after_output_retry=record)],
+        end_strategy=end_strategy,
+    )
+    with pytest.raises(UnexpectedModelBehavior, match='output retries'):
+        await agent.run('Answer.')
+    assert received == [('retryable', 1, 2), ('also_retryable', 1, 2)]
+
+
 async def test_none_output_validator_retry_notifies() -> None:
     received: list[OutputRetryContext] = []
 
@@ -137,7 +168,7 @@ async def test_recovered_schema_error_does_not_notify() -> None:
     assert received == []
 
 
-@pytest.mark.parametrize('error', [ValueError, ModelRetry])
+@pytest.mark.parametrize('error', [ValueError, ModelRetry, UnexpectedModelBehavior])
 async def test_notification_exception_stops_run_and_preserves_tool_returns(error: type[Exception]) -> None:
     def fail(ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:
         assert retry_context.source == 'output_tool'

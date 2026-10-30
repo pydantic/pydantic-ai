@@ -11,13 +11,17 @@ from prefect.settings import PREFECT_LOCAL_STORAGE_PATH, temporary_settings
 
 from pydantic_ai.durable_exec.prefect import PrefectDurability
 from pydantic_ai.messages import ModelResponse
-
-from ._scenario import make_agent, make_models
+from tests.durable_exec._output_fallback import make_agent, make_models
 
 pytestmark = pytest.mark.xdist_group(name='prefect')
 
 
-async def test_flow_retry_reconstructs_selection(prefect_test_server: None, tmp_path: Path) -> None:
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_flow_retry_reconstructs_selection(
+    prefect_test_server: None, tmp_path: Path, blockbuster_enabled: bool
+) -> None:
+    """Prefect's flow-source discovery and result persistence perform synchronous filesystem I/O."""
+    assert blockbuster_enabled is False
     executions: list[str] = []
     models = make_models(executions)
     agent = make_agent(models, PrefectDurability(models=models), executions)

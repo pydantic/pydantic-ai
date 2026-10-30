@@ -1498,7 +1498,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         raise error
 
-    # --- Output process lifecycle hooks ---
+    # --- Output retry notification ---
 
     async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
         """Observe an output retry accepted by core, inside response processing.
@@ -1511,6 +1511,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         cancellation, and terminal retry exhaustion do not notify. Exceptions from this hook stop the
         run; they do not grant a retry. Selection for the next ordinary step runs after this hook.
         """
+
+    # --- Output process lifecycle hooks ---
 
     async def before_output_process(
         self,

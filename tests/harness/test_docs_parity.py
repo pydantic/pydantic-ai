@@ -191,7 +191,6 @@ _CAPABILITY_PAGE_META = {
     'planning.md': ('planning', 'Planning'),
     'system-reminders.md': ('system_reminders', 'System Reminders'),
     'detect-loops.md': ('detect_loops', 'Detect Loops'),
-    'escalate-on-output-retry.md': ('escalate_on_output_retry', 'Escalate On Output Retry'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),

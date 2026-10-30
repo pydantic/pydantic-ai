@@ -100,6 +100,50 @@ When every model has failed or been rejected, `ModelFallback` raises [`FallbackE
 
 A run that reaches its `timeout=` stops with [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] wherever it is, including in the middle of a candidate's request: the remaining candidates aren't attempted. Likewise, a request that exceeds the run's [usage limits](../agent.md#usage-limits) raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] whatever `fallback_on` says, as another model wouldn't change that.
 
+## Output validation retries
+
+Set `output_retries` to a positive integer to move to the next candidate when the serving model repeatedly fails output validation. `output_retries=1` moves on after the first accepted output retry; the default `None` keeps request-only fallback.
+
+```python {title="model_fallback_output_retries.py"}
+from pydantic_ai import Agent, ModelRetry
+from pydantic_ai.capabilities import ModelFallback
+from pydantic_ai.models.test import TestModel
+
+agent = Agent(
+    TestModel(custom_output_text='draft'),
+    capabilities=[ModelFallback(TestModel(custom_output_text='ready'), output_retries=1)],
+    retries={'output': 2},
+)
+
+
+@agent.output_validator
+def validate(output: str) -> str:
+    if output == 'draft':
+        raise ModelRetry('Finish the draft.')
+    return output
+
+
+print(agent.run_sync('Answer.').output)
+#> ready
+```
+
+Unlike `fallback_on`, this happens across ordinary request steps: the next model sees the rejected response and validation feedback. Successful tools are retained, usage keeps accumulating, and the logical run and trace continue. The next model is the next candidate in the chain; it need not be larger or more capable.
+
+An integer applies the same threshold to every model. For independent thresholds, pass a mapping from model IDs to positive integers. Keys match the string used to select the model, including a `ResolveModelId` alias, or [`Model.model_id`][pydantic_ai.models.Model.model_id] for a model instance. Unlisted models keep request-only fallback; an empty mapping disables output-driven switching. The capability copies the mapping when constructed.
+
+- Schema failures, output-validator or output-function `ModelRetry`, invalid output-tool arguments, and unusable responses count when core accepts their retry. Function-tool retries, request-hook `ModelRetry`, request errors, and cancellation do not count towards this threshold.
+- Each serving model has its own count. Several failed output calls in one response count against their producer and trigger at most one move; they cannot skip a candidate that has not run.
+- After switching, later steps start at the chosen candidate. Request failures can still use `fallback_on` to try later candidates, but the chain does not return to candidates retired by output failures. At the end of the chain, output retries stay on the last serving model until core's limits end the run.
+- The initial model still comes from the agent, `run(model=...)`, `override(model=...)`, or `SelectModel`. After an output-driven switch, the persistent candidate takes precedence for later steps in that run. A suspended response continues on the model that started it before output-driven routing is considered.
+
+Configure `retries={'output': ...}` explicitly to allow the desired switches and any retries on the final model. `output_retries` does not replenish that allowance, change per-output-tool overrides, or bypass usage limits. Request-hook retries consume the same core budget without advancing this policy, so no threshold guarantees that a later candidate is reached.
+
+The policy state is isolated per run. Passing saved message history into a new run starts the policy afresh. Under durable execution, replay reconstructs the state by replaying accepted-output notifications outside journaled model operations.
+
+Graph-level streaming through `run(event_stream_handler=...)`, `run_stream_events()`, and `iter()` can continue to the next candidate after validation rejects a completed response. `run_stream()` does not replace final output already delivered to its consumer.
+
+For models with a configured threshold, [`OutputRetryEvent`][pydantic_ai.capabilities.OutputRetryEvent] reports each accepted retry through the capability-event stream. It includes `source`, the rejected `response`, core's `retry` metadata, and output-tool identity when applicable. A zero-duration `model_fallback.output_fallback` span records a switch when its candidate is prepared, with `model_fallback.model`, `model_fallback.source`, and the optional `model_fallback.producer`. These contain no response content and add no usage charges. Request-attempt failures retain their existing telemetry.
+
 ## In agent specs {#agent-specs}
 
 `ModelFallback` can be declared in an [agent spec](../agent-spec.md), with its models as a list of model names:
@@ -123,6 +167,29 @@ capabilities:
 ```
 
 Model names are resolved when they're attempted, like those passed to `ModelFallback(...)`, so a spec can also list model IDs of your own that a [`ResolveModelId`](resolve-model-id.md) capability resolves, passed to [`Agent.from_spec()`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file()`][pydantic_ai.agent.Agent.from_file] with `capabilities=`.
+
+The mapping form also accepts `output_retries`:
+
+```yaml
+retries: {output: 3}
+capabilities:
+  - ModelFallback:
+      models: [{{ openai:medium }}, {{ anthropic:medium }}]
+      output_retries: 1
+```
+
+For different thresholds, use the selected model IDs as keys:
+
+```yaml
+model: {{ openai:medium }}
+retries: {output: 4}
+capabilities:
+  - ModelFallback:
+      models: [{{ anthropic:medium }}]
+      output_retries:
+        {{ openai:medium }}: 2
+        {{ anthropic:medium }}: 1
+```
 
 ## How attempts work
 

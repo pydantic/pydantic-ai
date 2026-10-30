@@ -267,8 +267,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 | [pgtask durability](pgtask.md) | Harness | Checkpoint model requests, MCP calls, and tool calls into pgtask steps on PostgreSQL |
 | [Render Workflows](render-workflows.md) | Harness | Run model requests and tool calls as chained task runs with separate retries, timeouts, and compute settings; retrying the task that runs the agent can repeat completed work |
 | [Step Persistence](step-persistence.md) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
-| [Model Fallback](../capabilities/model-fallback.md) | Core | Fall back to other models when a model request fails or its response is rejected, within the run's own request step |
-| [Escalate On Output Retry](escalate-on-output-retry.md) | Harness | Select successive models after accepted output validation retries |
+| [Model Fallback](../capabilities/model-fallback.md) | Core | Fall back on request errors, rejected responses, or opt-in output validation retries |
 | [Instrumentation](../capabilities/instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
 | [Managed Prompt](managed-prompt.md) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
 | [Thread Executor](../capabilities/thread-executor.md) | Core | Run sync tools on a shared thread pool |

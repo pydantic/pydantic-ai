@@ -13,15 +13,20 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent, ModelRetry, RunContext, ToolOutput
-from pydantic_ai.capabilities import AbstractCapability, Hooks, Instrumentation, SelectModel
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Hooks,
+    Instrumentation,
+    ModelFallback,
+    OutputRetryEvent,
+    SelectModel,
+)
 from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelResponse
-from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness import EscalateOnOutputRetry, EscalationLevel, OutputRetryEvent
-
-from .test_capability import Answer
+from tests.test_capability_model_fallback_output import Answer
 
 
 @dataclass
@@ -34,23 +39,14 @@ class RecordRetries(AbstractCapability[object]):
 
 
 class TestOutputRetryEvent:
-    async def test_losing_selector_is_not_evaluated_or_traced(self) -> None:
+    async def test_output_policy_starts_from_selected_model(self) -> None:
         exporter = InMemorySpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
-        selections: list[int] = []
-
-        class ObservedEscalation(EscalateOnOutputRetry[object]):
-            def select_model(self, ctx: ModelSelectionContext[object]) -> Model | str:  # pragma: no cover
-                selections.append(ctx.retry)
-                return super().select_model(ctx)
-
         model = TestModel(custom_output_text='draft')
         agent = Agent(
             capabilities=[
-                ObservedEscalation(
-                    levels=[EscalationLevel(TestModel(), after_failures=1), EscalationLevel(TestModel())]
-                ),
+                ModelFallback(TestModel(custom_output_text='ready'), output_retries=1),
                 SelectModel(lambda ctx: model),
                 Instrumentation(settings=InstrumentationSettings(tracer_provider=provider)),
             ]
@@ -62,9 +58,8 @@ class TestOutputRetryEvent:
                 raise ModelRetry('Finish the draft.')
             return value
 
-        assert (await agent.run('Answer.')).output == 'draft'
-        assert selections == []
-        assert all(span.name != 'escalate_on_output_retry' for span in exporter.get_finished_spans())
+        assert (await agent.run('Answer.')).output == 'ready'
+        assert sum(span.name == 'model_fallback.output_fallback' for span in exporter.get_finished_spans()) == 1
 
     @pytest.mark.parametrize('include_content', [False, True])
     @pytest.mark.parametrize('producer', ['test', None])
@@ -82,15 +77,13 @@ class TestOutputRetryEvent:
             response.model_name = producer
             return response
 
+        fallback = ModelFallback(
+            TestModel(custom_output_text='draft'), TestModel(custom_output_text='ready'), output_retries=1
+        )
+        fallback.id = 'fallback'
         agent = Agent(
             capabilities=[
-                EscalateOnOutputRetry(
-                    id='escalation',
-                    levels=[
-                        EscalationLevel(TestModel(custom_output_text='draft'), after_failures=1),
-                        EscalationLevel(TestModel(custom_output_text='ready')),
-                    ],
-                ),
+                fallback,
                 recorder,
                 hooks,
                 Instrumentation(
@@ -111,20 +104,17 @@ class TestOutputRetryEvent:
         assert event.response.text == 'draft'
         assert event.response.model_name == producer
         assert (event.retry.cause, event.retry.attempt, event.retry.max_retries) == ('model_retry', 1, 1)
-        assert event.capability_id == 'escalation'
+        assert event.capability_id == 'fallback'
         adapter = TypeAdapter(CapabilityEvent)
         assert adapter.validate_json(adapter.dump_json(event)) == event
         spans = exporter.get_finished_spans()
-        [transition] = [s for s in spans if s.name == 'escalate_on_output_retry']
+        [transition] = [s for s in spans if s.name == 'model_fallback.output_fallback']
         attributes: dict[str, object] = dict(transition.attributes or {})
-        assert attributes.pop('escalate_on_output_retry.producer', None) == producer
+        assert attributes.pop('model_fallback.producer', None) == producer
         assert attributes == snapshot(
             {
-                'escalate_on_output_retry.from_level': 0,
-                'escalate_on_output_retry.to_level': 1,
-                'escalate_on_output_retry.failures': 1,
-                'escalate_on_output_retry.model': 'test',
-                'escalate_on_output_retry.source': 'response_output',
+                'model_fallback.model': 'test',
+                'model_fallback.source': 'response_output',
             }
         )
         assert len({s.context.trace_id for s in spans if s.context is not None}) == 1
@@ -134,11 +124,8 @@ class TestOutputRetryEvent:
         recorder = RecordRetries()
         agent = Agent(
             capabilities=[
-                EscalateOnOutputRetry(
-                    levels=[
-                        EscalationLevel(TestModel(custom_output_text='draft'), after_failures=1),
-                        EscalationLevel(TestModel(custom_output_text='ready')),
-                    ]
+                ModelFallback(
+                    TestModel(custom_output_text='draft'), TestModel(custom_output_text='ready'), output_retries=1
                 ),
                 recorder,
             ]
@@ -178,11 +165,10 @@ class TestOutputRetryEvent:
             output_type=[ToolOutput(Answer, name='first'), ToolOutput(Answer, name='second')],
             end_strategy='exhaustive',
             capabilities=[
-                EscalateOnOutputRetry(
-                    levels=[
-                        EscalationLevel(FunctionModel(stream_function=stream), after_failures=1),
-                        EscalationLevel(TestModel(custom_output_args={'number': -1})),
-                    ]
+                ModelFallback(
+                    FunctionModel(stream_function=stream),
+                    TestModel(custom_output_args={'number': -1}),
+                    output_retries=1,
                 ),
                 recorder,
             ],
