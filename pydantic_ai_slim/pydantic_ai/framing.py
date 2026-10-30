@@ -32,16 +32,12 @@ def _refuse_voice_tag(tag: str) -> None:
         )
 
 
-def wrap(tag: DataTag | RegisteredTag, body: str, /, *, sealed: bool = False, **attrs: str | None) -> str:
+def wrap(tag: DataTag | RegisteredTag, body: str, /, **attrs: str | None) -> str:
     """Wrap `body` in the data tag `tag` so that nothing in it can end the tag early, open another, or speak in the framework's voice.
 
     The `<` of every opening or closing framing tag in `body`, `<system>` included, is escaped, as by
     [`neutralize_tags`][pydantic_ai.framing.neutralize_tags]. The rest of the body goes in exactly as
     written.
-
-    Pass `sealed=True` for a frame that reaches the model on the user channel, so it carries the `seal` attribute
-    Pydantic AI's own frames there carry ([details](../message-history.md#framework-frames-and-content-fidelity)).
-    It's rendered first.
 
     Attributes are rendered as by [`open_tag`][pydantic_ai.framing.open_tag]: names must be lowercase
     letters, digits and underscores, values are HTML-escaped, attributes whose value is `None` are left
@@ -60,7 +56,6 @@ def wrap(tag: DataTag | RegisteredTag, body: str, /, *, sealed: bool = False, **
         tag: One of Pydantic AI's own [`DataTag`][pydantic_ai.framing.DataTag]s, or a tag returned by
             [`register_tag`][pydantic_ai.framing.register_tag].
         body: The text to frame.
-        sealed: Whether the tag carries the frame seal, as its first attribute.
         **attrs: Attributes to put on the opening tag.
 
     Raises:
@@ -68,10 +63,10 @@ def wrap(tag: DataTag | RegisteredTag, body: str, /, *, sealed: bool = False, **
             letters, digits and underscores.
     """
     _refuse_voice_tag(tag)
-    return _framing.wrap(tag, body, seal=_framing.FRAME_SEAL if sealed else None, **attrs)
+    return _framing.wrap(tag, body, **attrs)
 
 
-def open_tag(tag: DataTag | RegisteredTag, /, *, sealed: bool = False, **attrs: str | None) -> str:
+def open_tag(tag: DataTag | RegisteredTag, /, **attrs: str | None) -> str:
     """Render the opening data tag `tag`, for a frame whose body isn't a string, such as a file.
 
     Put the body between this and [`close_tag`][pydantic_ai.framing.close_tag] yourself; nothing in it is
@@ -93,8 +88,6 @@ def open_tag(tag: DataTag | RegisteredTag, /, *, sealed: bool = False, **attrs: 
     Args:
         tag: One of Pydantic AI's own [`DataTag`][pydantic_ai.framing.DataTag]s, or a tag returned by
             [`register_tag`][pydantic_ai.framing.register_tag].
-        sealed: Whether the tag carries the frame seal, as its first attribute. See
-            [`wrap`][pydantic_ai.framing.wrap].
         **attrs: Attributes to put on the tag.
 
     Raises:
@@ -102,7 +95,7 @@ def open_tag(tag: DataTag | RegisteredTag, /, *, sealed: bool = False, **attrs: 
             letters, digits and underscores.
     """
     _refuse_voice_tag(tag)
-    return _framing.open_tag(tag, seal=_framing.FRAME_SEAL if sealed else None, **attrs)
+    return _framing.open_tag(tag, **attrs)
 
 
 def close_tag(tag: DataTag | RegisteredTag) -> str:

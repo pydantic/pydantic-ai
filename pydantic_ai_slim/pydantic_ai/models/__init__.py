@@ -59,6 +59,7 @@ from .._framing import (
     LookalikeSource,
     frame,
     frame_seal_announcement,
+    in_second_model_prompt,
     lookalike_frame_note,
     neutralize_tags,
     resembles_frame,
@@ -1940,7 +1941,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         compaction summary, a tool's files moved onto the user channel and reasoning carried into a user turn. The
         request is found from the history alone, so the announcement stays in the same place on every later request.
 
+        Requests made inside `second_model_prompt()` (a judge or summarizer reading a transcript) get neither.
         """
+        if in_second_model_prompt():
+            return messages
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         announce = inline_system and self._announces_frame_seal
         first_request_index = next((i for i, m in enumerate(messages) if isinstance(m, ModelRequest)), None)
@@ -2257,11 +2261,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Where the profile's `supports_inline_system_prompts` is `False` and there's a standing prompt, the frame seal
         announcement is the last part. It's marked `dynamic` so the instruction cache points stay where they'd be
-        without it, ahead of it.
+        without it, ahead of it. A request made inside `second_model_prompt()` doesn't get it.
         """
         parts = _instruction_parts_of(messages, model_request_parameters)
         if (
             self._announces_frame_seal
+            and not in_second_model_prompt()
             and not self.profile.get('supports_inline_system_prompts', False)
             and (parts or _first_request_has_standing_prompt(messages))
         ):

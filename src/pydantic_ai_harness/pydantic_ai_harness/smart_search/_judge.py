@@ -18,7 +18,7 @@ import anyio
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
-from pydantic_ai._framing import TOOL_RESULT_TAG, neutralize_tags, wrap
+from pydantic_ai._framing import TOOL_RESULT_TAG, neutralize_tags, second_model_prompt, wrap
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness._judge import claim_request, claimed_request_limits
@@ -140,7 +140,8 @@ async def judge(
             try:
                 claim_request(ctx)
                 try:
-                    result = await agent.run(_state(chunk), usage=ctx.usage, usage_limits=limits)
+                    with second_model_prompt():
+                        result = await agent.run(_state(chunk), usage=ctx.usage, usage_limits=limits)
                 finally:
                     ctx.usage.requests -= 1  # the nested run counted its own request
                 scores[index] = result.output.score
