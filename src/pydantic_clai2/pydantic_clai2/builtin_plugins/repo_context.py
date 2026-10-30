@@ -16,6 +16,9 @@ from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2.plugins import DepsT, Plugin
 from pydantic_clai2.runtime.session import WorkspacelessCapability, supports_local_workspace
 
+_WALK_UP_ROOT = TypeAdapter(str)
+_SYMLINK_ROOTS = TypeAdapter(list[str])
+
 
 class RepoContextSettings(BaseModel):
     """The JSON a `repo_context` declaration may carry. Filenames stay `RepoContext`'s own defaults."""
@@ -50,9 +53,9 @@ class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
         symlink_roots: list[str] = []
         # The store validates path policy; narrow the host's JSON values without depending on unrelated settings.
         with suppress(KeyError):
-            walk_up_root = TypeAdapter(str).validate_python(self.host.setting('repo_context.walk_up_root'), strict=True)
+            walk_up_root = _WALK_UP_ROOT.validate_python(self.host.setting('repo_context.walk_up_root'), strict=True)
         with suppress(KeyError):
-            symlink_roots = TypeAdapter(list[str]).validate_python(
+            symlink_roots = _SYMLINK_ROOTS.validate_python(
                 self.host.setting('repo_context.autoload_symlink_roots'), strict=True
             )
         return RepoContext[DepsT](

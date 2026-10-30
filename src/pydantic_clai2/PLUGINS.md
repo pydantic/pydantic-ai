@@ -1331,9 +1331,11 @@ Two global user-only `/set` keys control autoload boundaries, not plugin JSON fi
 | `repo_context.walk_up_root` | `~` | inclusive stop used only when `walk_up` is `true` |
 | `repo_context.autoload_symlink_roots` | `[]` | JSON string list of authorized external instruction-symlink target directories |
 
-These keys are rejected in `.clai/settings.json` and plugin JSON. Changes apply next run.
-See [Repository instructions](docs/reference.md#repository-instructions) for commands, path rules, and trust guidance,
-and [Repo Context](../../docs/harness/repo-context.md#shared-instruction-symlinks) for symlink loading and backend requirements.
+These keys are rejected in `.clai/settings.json` and plugin JSON. Changes apply
+next run. See [Repository instructions](docs/reference.md#repository-instructions)
+for commands, path rules, and trust guidance, and
+[Repo Context](../../docs/harness/repo-context.md#shared-instruction-symlinks)
+for symlink loading and backend requirements.
 
 A repository can declare plugins too, in `.clai/settings.json`; they show as
 `(project)` and rank just above the built-ins. They start off, because a

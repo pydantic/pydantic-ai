@@ -37,28 +37,47 @@ result = agent.run_sync('Summarize the coding-assistant setup in this repo.')
 print(result.output)
 ```
 
-`RepoContext` reads from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), starting at its working directory. To point it at a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. `home_dir`, `asset_roots`, and `autoload_symlink_roots` are paths in the workspace: relative ones resolve from the working directory, and `~` is not expanded. A run without a workspace fails at its start.
+`RepoContext` reads from the run's
+[workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), starting at its
+working directory. To point it at a subdirectory, set it on the workspace:
+`LocalWorkspace('./repo')`. `home_dir`, `asset_roots`, and `autoload_symlink_roots`
+are paths in the workspace: relative ones resolve from the working directory,
+and `~` is not expanded. A run without a workspace fails at its start.
 
 ### 1. Walk-up instruction autoload (on by default)
 
-Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up to `home_dir` (inclusive). Precedence is ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by the path a symlink resolves to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors sharing identical content load once. Where the workspace can resolve symlinks, a same-directory symlink is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`. A file in an ancestor is labeled relative to the working directory, such as `../AGENTS.md`, not by its absolute path.
+Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up to
+`home_dir` (inclusive). Precedence is ancestor-first, workspace-last: broadest
+context first, most specific last. Files are deduped by the path a symlink resolves
+to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors
+sharing identical content load once. Where the workspace can resolve symlinks, a
+same-directory symlink is labeled with its target's name, so `CLAUDE.md -> AGENTS.md`
+reaches the model as `AGENTS.md`. A file in an ancestor is labeled relative to the
+working directory, such as `../AGENTS.md`, not by its absolute path.
 
-When `home_dir` is `None` (the default), only the working directory is scanned -- no walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`. If `home_dir` is not an ancestor of the working directory, only the working directory is scanned.
+When `home_dir` is `None` (the default), only the working directory is scanned --
+no walk-up. Pass the workspace home path explicitly to walk up to it. For a remote
+sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent
+host's `Path.home()`. If `home_dir` is not an ancestor of the working directory,
+only the working directory is scanned.
 
 #### Shared instruction symlinks
 
-If several repositories symlink their instruction files into a shared directory, authorize that directory
-with `RepoContext(autoload_symlink_roots=('/opt/agent-context',))`. This keyword-only option defaults to
-empty, which skips links outside the directory being scanned. Each resolved target must be inside a
-resolved authorized root. The option only affects autoload: it does not scan the shared directory,
-extend the walk-up, or change inventory or nested traversal. The workspace backend needs native realpath
-support (`SupportsRealpath`) or command execution (`SupportsCommands`) to resolve links; otherwise the run
-raises `UserError`.
+If several repositories symlink their instruction files into a shared directory,
+authorize that directory with
+`RepoContext(autoload_symlink_roots=('/opt/agent-context',))`. This keyword-only
+option defaults to empty, which skips links outside the directory being scanned.
+Each resolved target must be inside a resolved authorized root. The option only
+affects autoload: it does not scan the shared directory, extend the walk-up, or
+change inventory or nested traversal. The workspace backend needs native realpath
+support (`SupportsRealpath`) or command execution (`SupportsCommands`) to resolve
+links; otherwise the run raises `UserError`.
 
-An external link keeps its scanned entry's label, such as `../AGENTS.md`, because that directory defines
-where the instructions apply. Same-directory links keep their target-name labels (`CLAUDE.md -> AGENTS.md`
-is labeled `AGENTS.md`). Files are still deduplicated by resolved target and content hash, and broken links
-and directories are skipped.
+An external link keeps its scanned entry's label, such as `../AGENTS.md`, because
+that directory defines where the instructions apply. Same-directory links keep
+their target-name labels (`CLAUDE.md -> AGENTS.md` is labeled `AGENTS.md`). Files
+are still deduplicated by resolved target and content hash, and broken links and
+directories are skipped.
 
 ### 2. Asset inventory (off by default)
 
@@ -98,7 +117,9 @@ result = agent.run_sync('List the source directory.')
 `nested_inject='pointer'` (default) enqueues a one-line note pointing at the
 file; `'contents'` enqueues the file body. The note reaches message history
 before the next model request. Each directory is surfaced at most once per run.
-Same-directory instruction symlinks are named after their targets. External instruction symlinks are skipped, even when `autoload_symlink_roots` authorizes their targets for autoload.
+Same-directory instruction symlinks are named after their targets. External
+instruction symlinks are skipped, even when `autoload_symlink_roots` authorizes
+their targets for autoload.
 
 With nested traversal on, the instructions also tell the model how instruction
 files relate: each applies to its own directory and everything below it, the
@@ -125,9 +146,10 @@ the same note twice.
 
 Walk-up files become part of the agent's instructions, so the model gives them the same weight as the instructions you write yourself. That is what the strategy is for, and it means the working directory and `home_dir` should hold only instruction files you would put in your own instructions.
 
-Authorize a directory containing only trusted instruction files, such as `/opt/agent-context`, rather
-than `/` or your entire home directory. A repository's instruction symlinks can select any readable file
-beneath an authorized root, not just the file you originally linked.
+Authorize a directory containing only trusted instruction files, such as
+`/opt/agent-context`, rather than `/` or your entire home directory. A repository's
+instruction symlinks can select any readable file beneath an authorized root,
+not just the file you originally linked.
 
 Nested files are different: the model chooses which directories to read, and those can include vendored code or a checkout someone else wrote. Their contents and paths reach the model as a user message, not as instructions. The `'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart` (a system message where the model supports one mid-conversation, and `<system>`-tagged user text otherwise), followed by the file's path as a user-message `<context-file path="..." />` tag.
 
