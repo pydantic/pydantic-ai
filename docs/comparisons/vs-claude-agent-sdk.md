@@ -47,3 +47,5 @@ built from the pieces `Coder` puts together.
 **Can I run my agents in CI?** Yes. [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs Pydantic AI agents
 from a Markdown workflow file in GitHub Actions, or run a Python script directly with `uv run`;
 nothing requires an Action.
+
+For the longer argument, read [Would you deploy an agent you don't control?](https://pydantic.dev/articles/pydantic-ai-vs-claude-agent-sdk) on the Pydantic blog.

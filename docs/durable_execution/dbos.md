@@ -4,7 +4,7 @@ description: "Make Pydantic AI agents durable with DBOS, checkpointing model req
 
 # Durable Execution with DBOS
 
-[DBOS](https://www.dbos.dev/) is a lightweight [durable execution](https://docs.dbos.dev/architecture) library natively integrated with Pydantic AI.
+[DBOS](https://www.dbos.dev/) is a lightweight [durable execution](https://docs.dbos.dev/architecture) library natively integrated with Pydantic AI. [Build Reliable and Observable AI Agents with Pydantic AI and DBOS](https://pydantic.dev/articles/pydantic-ai-dbos) on the Pydantic blog walks through an example.
 
 ## Durable Execution
 
