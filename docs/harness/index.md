@@ -304,6 +304,11 @@ Everything the harness does is observable: core's [Instrumentation](../capabilit
 
 Pydantic AI Harness uses **0.x versioning**, and that's a statement about API stability, not maturity: these capabilities are tested end-to-end and meant for production use, but their APIs may still move between minor releases (0.1 -> 0.2): renamed parameters, changed defaults, restructured APIs, always with deprecation warnings where practical. Patch releases will not intentionally break existing behavior, and every breaking change is documented in release notes with migration guidance your agent can follow. Keeping the Harness a separate package from [Pydantic AI](https://github.com/pydantic/pydantic-ai), which has a [stricter version policy](../version-policy.md), is what lets capabilities iterate at the speed the field moves.
 
+## Further reading
+
+- [The harness thesis](https://pydantic.dev/articles/the-harness-thesis): why long-horizon agents need a harness that makes their work observable, governable and reusable
+- [What makes a good harness](https://pydantic.dev/articles/what-makes-a-good-harness): getting the right text to the model at the right moment, with capabilities, code mode and just-in-time tools
+
 ## Pydantic AI references
 
 - [Capabilities](../capabilities/overview.md): what capabilities are, built-in capabilities, building your own

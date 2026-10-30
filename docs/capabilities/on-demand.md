@@ -71,6 +71,8 @@ Loading activates the whole bundle, not just instructions: the capability's func
 
     A `before_model_request` hook still sees a loaded capability's instructions in `ModelRequestParameters.instruction_parts`, each addressed beneath the capability's block (`capability:refunds`, or `capability:refunds:<name>` for a named part), and [`instruction_visibility_of`][pydantic_ai.models.ModelRequestParameters.instruction_visibility_of] reports them as `'via_history'`. Pydantic AI takes them out before the model is called, and what the hook made of them is what the model is sent, from the first statement after the load on. A capability loaded by a hook itself, one that adds a `load_capability` exchange to the history, is the exception on that request: its instructions are resolved after the hooks have run, so they're stated as they resolved, with the tools the load reveals.
 
+[Skills on steroids: on-demand capabilities in Pydantic AI](https://pydantic.dev/articles/pydantic-ai-capabilities) on the Pydantic blog walks through the pattern and its token savings.
+
 ## What you can defer
 
 Every part of a capability bundle activates together as a single unit:
