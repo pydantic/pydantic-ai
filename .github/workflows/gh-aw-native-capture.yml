@@ -1,0 +1,80 @@
+# description: Verifies the Pydantic recorder with released native Linux AWF capture and final session collection.
+name: gh-aw native capture
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gh-aw-native-capture.yml'
+      - '.github/scripts/gh_aw_native_capture/**'
+      - '.github/scripts/gh_aw_native_capture.py'
+      - 'src/pydantic_ai_harness/gh-aw/**'
+      - 'tests/harness/gh_aw/**'
+      - 'docs/harness/gh-aw.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gh-aw-native-capture-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  native-capture:
+    name: gh-aw / native signed capture
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: false
+
+      - name: Run the released AWF acceptance fixture
+        run: python3 .github/scripts/gh_aw_native_capture.py --work-dir "$RUNNER_TEMP/gh-aw-native-capture"
+
+      - name: Preserve acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gh-aw-native-capture
+          path: ${{ runner.temp }}/gh-aw-native-capture/evidence
+          if-no-files-found: ignore
+          retention-days: 7
+
+  conclusion-roundtrip:
+    name: gh-aw / downloaded artifact collection
+    needs: native-capture
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gh-aw-native-capture
+          path: ${{ runner.temp }}/native-capture-input
+
+      - name: Collect the downloaded native capture artifacts
+        run: node .github/scripts/gh_aw_native_capture/collect_downloaded.cjs "$RUNNER_TEMP/native-capture-input" "$RUNNER_TEMP/native-capture-roundtrip"
+
+      - name: Preserve artifact roundtrip evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gh-aw-native-capture-roundtrip
+          path: ${{ runner.temp }}/native-capture-roundtrip
+          if-no-files-found: ignore
+          retention-days: 7
