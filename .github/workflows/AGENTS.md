@@ -216,6 +216,8 @@ cannot trigger review or label workflows. The publisher binds each wake-up to th
 GitHub reports for its exact head SHA and repository. It ignores titles and artifacts, and a stale
 or ambiguous event cannot write statuses to another head. Fork observers may need contributor approval.
 
+The `Gate: …` commit statuses carry the review verdict. The publisher job succeeds after publishing
+those statuses, including a failing verdict for an unmet requirement. The job fails on publisher errors.
 Publication is serialized per PR and marks the douwebot status pending before setup. API errors or
 incomplete data fail closed. After the requirements are met, a new evaluation replaces the previous
 failure through GitHub's latest-per-context commit statuses. Rerun an existing current-head,

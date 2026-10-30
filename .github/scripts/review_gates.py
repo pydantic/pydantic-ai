@@ -211,6 +211,7 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
     expected_head = env['EXPECTED_HEAD_SHA']
     expected_repository = int(env['EXPECTED_HEAD_REPOSITORY_ID'])
     head = ''
+    failed = False
     verdicts: dict[ReviewGate, Verdict]
     try:
         for _ in range(3):
@@ -228,15 +229,14 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
         else:
             raise GateError('PR changed repeatedly while evaluating reviews; retry the gate.')
     except (GateError, ValidationError, OSError) as error:
+        failed = True
         if not head:
             # Setup already left the independently verified target pending.
             # Never write to a caller-supplied SHA when no PR snapshot was read.
             print(f'Cannot read live PR: {type(error).__name__}: {error}')
             return 1
         verdicts = {gate: Verdict(failures=[f'{type(error).__name__}: {error}']) for gate in REVIEW_CONTEXTS}
-    failed = False
     for gate, verdict in verdicts.items():
-        failed |= bool(verdict.failures)
         state = 'failure' if verdict.failures else 'success'
         description = verdict.failures[0] if verdict.failures else 'Review requirement satisfied.'
         github.status(head, gate, state, description[:140], url)
