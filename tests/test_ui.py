@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import warnings
 from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -393,6 +394,178 @@ async def test_event_stream_error_closes_open_text():
             '</stream>',
         ]
     )
+
+
+async def test_event_stream_restarted_part_ends_open_text():
+    """A `PartStartEvent` can arrive while the previous part is still open. #11734
+
+    A retried durable activity republishes the model events it already published
+    (`durable_exec/temporal/_event_stream.py` documents this), so a subscriber reads the first
+    attempt's `PartStartEvent` and deltas, then the retry's `PartStartEvent` for the same index
+    with no `PartEndEvent` between them. The open part is ended before the new start is emitted —
+    the same cleanup the error path does — so the run never finishes with a message part still
+    streaming (`Cannot send 'RUN_FINISHED' while text messages are still active`).
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo'))
+        # The activity retry republishes its part start without a `PartEndEvent` first.
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello, world'))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hel',
+            'lo',
+            # the first attempt's part, closed with its recorded deltas applied
+            '</text followed_by_text=False>',
+            '<text follows_text=False>Hel',
+            'lo, world',
+            '</text followed_by_text=False>',
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
+def _ag_ui_start_key(event: dict[str, Any]) -> tuple[str, str]:
+    """Identity of an AG-UI `*_START` event, for pairing it with its `*_END`."""
+    return (event['type'][: -len('_START')], str(event.get('messageId') or event.get('toolCallId')))
+
+
+def _ag_ui_end_key(event: dict[str, Any]) -> tuple[str, str]:
+    """Identity of an AG-UI `*_END` event, as `{{<_kind>}}_START` keys are spelled."""
+    return (event['type'][: -len('_END')], str(event.get('messageId') or event.get('toolCallId')))
+
+
+def _assert_ag_ui_no_start_open_at_run_finished(events: list[dict[str, Any]]) -> None:
+    """Mirror of the AG-UI client verifier's rule: `RUN_FINISHED` with an open start is invalid.
+
+    `verifyEvents` (TypeScript `@ag-ui/client`) rejects `RUN_FINISHED` while a text message is
+    still open; the same bookkeeping covers tool calls and the thinking/reasoning envelopes.
+    `RUN_STARTED` does not end with `_START` and needs no special case.
+    """
+    open_starts: list[tuple[str, str]] = []
+    for event in events:
+        type_ = event['type']
+        if type_ == 'RUN_FINISHED':
+            assert not open_starts, f'still open at RUN_FINISHED: {open_starts}'
+        elif type_.endswith('_START'):
+            open_starts.append(_ag_ui_start_key(event))
+        elif type_.endswith('_END'):
+            open_starts.remove(_ag_ui_end_key(event))
+
+
+def _assert_vercel_no_part_open_at_finish(events: list[dict[str, Any]]) -> None:
+    """Every Vercel AI data stream start is closed before the `finish` chunk.
+
+    An unclosed `text-start`/`reasoning-start` leaves the client message streaming, and an
+    unclosed `tool-input-start` leaves the call in `input-streaming` (its closing chunk is
+    `tool-input-available`/`tool-input-error`, emitted when the call result or error arrives).
+    """
+    open_parts: list[str] = []
+    streaming_calls: set[str] = set()
+    for event in events:
+        type_ = event['type']
+        if type_ in ('text-start', 'reasoning-start'):
+            open_parts.append(str(event['id']))
+        elif type_ in ('text-end', 'reasoning-end'):
+            open_parts.remove(str(event['id']))
+        elif type_ == 'tool-input-start':
+            streaming_calls.add(str(event['toolCallId']))
+        elif type_ in ('tool-input-available', 'tool-input-error'):
+            streaming_calls.discard(str(event['toolCallId']))
+        elif type_ == 'finish':
+            assert not open_parts, f'message parts still open at finish: {open_parts}'
+            assert not streaming_calls, f'calls still input-streaming at finish: {streaming_calls}'
+
+
+@pytest.mark.parametrize('part_kind', ['thinking', 'tool-call'])
+@pytest.mark.parametrize('protocol', ['ag-ui', 'vercel-ai'])
+async def test_event_stream_restarted_part_ends_open_part_in_real_encoders(
+    protocol: str, part_kind: str
+) -> None:
+    """A republished `PartStartEvent` ends the still-open part under the real encoders. #11734
+
+    Beyond the dummy-stream text case above, the issue names a thinking part and a tool call
+    part: their end events differ per protocol, so this feeds the republished-start stream
+    through the AG-UI and Vercel AI encoders and asserts the output is verifier-valid — every
+    start has an end before the run finishes.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        if part_kind == 'thinking':
+            yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
+            yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo'))
+            # The activity retry republishes its part start with no `PartEndEvent` before it.
+            yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
+            yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', world'))
+            yield PartEndEvent(index=0, part=ThinkingPart(content='Hello, world'))
+        else:
+
+            def call_part(args: str) -> ToolCallPart:
+                return ToolCallPart(tool_name='get_time', args=args, tool_call_id='call_0')
+
+            yield PartStartEvent(index=0, part=call_part('{"tz": '))
+            yield PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}')
+            )
+            # The activity retry republishes its part start with no `PartEndEvent` before it.
+            yield PartStartEvent(index=0, part=call_part('{"tz": '))
+            yield PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}')
+            )
+            yield PartEndEvent(index=0, part=call_part('{"tz": "UTC"}'))
+            yield FunctionToolCallEvent(part=call_part('{"tz": "UTC"}'), args_valid=True)
+            yield FunctionToolResultEvent(
+                part=ToolReturnPart(tool_name='get_time', tool_call_id='call_0', content='12:00')
+            )
+
+    if protocol == 'ag-ui':
+        pytest.importorskip('ag_ui')
+        from ag_ui.core import RunAgentInput, UserMessage
+
+        from pydantic_ai.ui.ag_ui import AGUIEventStream
+
+        run_input = RunAgentInput(
+            thread_id='thread_1',
+            run_id='run_1',
+            messages=[UserMessage(id='msg_1', content='Hello')],
+            state={},
+            context=[],
+            tools=[],
+            forwarded_props={},
+            resume=None,
+        )
+        event_stream = AGUIEventStream(run_input=run_input)
+    else:
+        from pydantic_ai.ui.vercel_ai import VercelAIEventStream
+        from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
+
+        run_input = SubmitMessage(
+            id='foo',
+            messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])],
+        )
+        event_stream = VercelAIEventStream(run_input=run_input)
+
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
+
+    if protocol == 'ag-ui':
+        _assert_ag_ui_no_start_open_at_run_finished(events)
+    else:
+        _assert_vercel_no_part_open_at_finish(events)
 
 
 async def test_event_stream_error_closes_open_thinking():

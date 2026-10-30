@@ -241,6 +241,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         try:
             async for event in stream:
                 if isinstance(event, PartStartEvent):
+                    # A retried durable activity republishes the events it already published
+                    # (`durable_exec/temporal/_event_stream.py` documents this), so a part's start
+                    # can arrive while the previous attempt's part was never ended. End the open
+                    # part first — the same cleanup the error path does — so no message part is
+                    # still streaming when the next one starts (or when the run finishes). #11734
+                    async for e in self._end_open_part():
+                        yield e
                     async for e in self._turn_to('response'):
                         yield e
                 elif isinstance(event, PartEndEvent):
@@ -299,25 +306,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
             # first: it's a response-side event, whereas the tool-call cleanup below turns to the
             # request side, and everything after the error chunk is dropped.
-            if (part := self._open_part) is not None:
-                for delta in self._open_part_deltas:
-                    # Synthetic cleanup must not replace the original stream error.
-                    try:
-                        match delta, part:
-                            case TextPartDelta() as text_delta, TextPart():
-                                part = text_delta.apply(part)
-                            case ThinkingPartDelta() as thinking_delta, ThinkingPart():
-                                part = thinking_delta.apply(part)
-                            case ToolCallPartDelta() as tool_delta, ToolCallPart() | NativeToolCallPart():
-                                part = tool_delta.apply(part)
-                            case _:
-                                pass
-                    except Exception:
-                        pass
-                self._open_part = None
-                self._open_part_deltas.clear()
-                async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
-                    yield e
+            async for e in self._end_open_part():
+                yield e
 
             # Close any pending tool calls before emitting the error,
             # so the UI doesn't show them as still running.
@@ -378,6 +368,36 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             yield e
 
         async for e in self.after_stream():
+            yield e
+
+    async def _end_open_part(self) -> AsyncIterator[EventT]:
+        """End the message part currently tracked as open, emitting its protocol end event.
+
+        Called when a new `PartStartEvent` arrives while the open part was never ended — a retried
+        durable activity republishes its events, so the previous attempt's part can still be open
+        (#11734) — and by the error path before `on_error`, so a client never sees a finish (or a
+        next start) with a message part still streaming. The deltas recorded since the part's
+        start are applied first, so the synthetic end carries what the client last saw.
+        """
+        if (part := self._open_part) is None:
+            return
+        for delta in self._open_part_deltas:
+            # Synthetic cleanup must not replace the stream's own error.
+            try:
+                match delta, part:
+                    case TextPartDelta() as text_delta, TextPart():
+                        part = text_delta.apply(part)
+                    case ThinkingPartDelta() as thinking_delta, ThinkingPart():
+                        part = thinking_delta.apply(part)
+                    case ToolCallPartDelta() as tool_delta, ToolCallPart() | NativeToolCallPart():
+                        part = tool_delta.apply(part)
+                    case _:
+                        pass
+            except Exception:
+                pass
+        self._open_part = None
+        self._open_part_deltas.clear()
+        async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
             yield e
 
     async def _dispatch_callback(
