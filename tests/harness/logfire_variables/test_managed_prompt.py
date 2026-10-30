@@ -390,6 +390,11 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
                     'logfire.variables.prompt__baggage_slug': '<code_default>',
+                    'pydantic_ai.active_capabilities': (
+                        'managed-prompt-baggage_slug',
+                        'tool_search',
+                        'instrumentation',
+                    ),
                     'gen_ai.input.messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]}]',
                     'gen_ai.output.messages': '[{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]}]',
                     'gen_ai.system_instructions': '[{"type":"text","content":"<context '
@@ -430,6 +435,11 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
                     'logfire.variables.prompt__baggage_slug': '<code_default>',
+                    'pydantic_ai.active_capabilities': (
+                        'managed-prompt-baggage_slug',
+                        'tool_search',
+                        'instrumentation',
+                    ),
                     'gen_ai.input.messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]},{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]},{"role":"user","parts":[{"type":"tool_call_response","id":"pyd_ai_tool_call_id__noop","name":"noop","result":"ok"}]}]',
                     'gen_ai.output.messages': '[{"role":"assistant","parts":[{"type":"text","content":"{\\"noop\\":\\"ok\\"}"}]}]',
                     'gen_ai.system_instructions': '[{"type":"text","content":"<context '
@@ -462,7 +472,9 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'helpful assistant.\\n</context>\\nA later <context> element with '
                     'the same id replaces the earlier one and stays in effect until '
                     'replaced again."}]',
-                    'logfire.json_schema': '{"type":"object","properties":{"pydantic_ai.all_messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"final_result":{"type":"object"}}}',
+                    'pydantic_ai.capabilities': '{"pydantic_ai_harness.logfire.ManagedPrompt":[{"id":"managed-prompt-baggage_slug","defer_loading":false,"active":true}],"pydantic_ai.capabilities.ToolSearch":[{"id":"tool_search","defer_loading":false,"active":true}],"pydantic_ai.capabilities.Instrumentation":[{"id":"instrumentation","defer_loading":false,"active":true}]}',
+                    'pydantic_ai.toolsets': '{}',
+                    'logfire.json_schema': '{"type":"object","properties":{"pydantic_ai.all_messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"pydantic_ai.capabilities":{"type":"object"},"pydantic_ai.toolsets":{"type":"object"},"final_result":{"type":"object"}}}',
                 },
             },
         ]
