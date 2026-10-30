@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, Union, cast
 
-from pydantic import BaseModel, Field, model_serializer
+from pydantic import BaseModel, Field, model_serializer, model_validator
 from pydantic_core import from_json, to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 
@@ -21,6 +22,7 @@ from pydantic_ai.template import TemplateStr
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import AbstractCapability
+    from pydantic_ai.models import Model
 
 __all__ = ['CapabilitySpec']  # re-exported from _spec
 
@@ -30,12 +32,93 @@ DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
 _YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
 
 
+class OpenAICompatibleModelSpec(
+    BaseModel,
+    extra='forbid',
+    json_schema_extra={
+        'oneOf': [
+            {'required': [field], 'properties': {field: {'type': 'string'}}} for field in ('base_url', 'base_url_env')
+        ]
+    },
+):
+    """A model on a service with an OpenAI-compatible API, for the `model` field of a spec.
+
+    It builds an [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] or
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with an
+    [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider].
+    The API key can only come from an environment variable, so a spec never contains it.
+    """
+
+    provider: Literal['openai-compatible']
+    """Selects this kind of model spec."""
+
+    provider_name: str
+    """The name of the service, passed to `OpenAICompatibleProvider` as its `name`.
+
+    It identifies the service in message history and telemetry.
+    """
+
+    model_name: str
+    """The name of the model on the service."""
+
+    api: Literal['chat', 'responses'] = 'chat'
+    """The API to use: `'chat'` for Chat Completions, or `'responses'` if the service implements the Responses API."""
+
+    base_url: str | None = None
+    """The base URL of the service's OpenAI-compatible API, such as `'https://gateway.example.com/v1'`.
+
+    Exactly one of `base_url` and `base_url_env` must be set.
+    """
+
+    base_url_env: str | None = None
+    """The name of the environment variable to read the base URL from when the model is built."""
+
+    api_key_env: str | None = None
+    """The name of the environment variable to read the API key from when the model is built, if the service needs one."""
+
+    @model_validator(mode='after')
+    def _check_base_url(self) -> Self:
+        if (self.base_url is None) == (self.base_url_env is None):
+            raise ValueError('Exactly one of `base_url` and `base_url_env` must be set.')
+        return self
+
+    def build_model(self) -> Model:
+        """Build the model, reading the environment variables named by `base_url_env` and `api_key_env`.
+
+        Raises:
+            UserError: If a named environment variable is not set or empty.
+        """
+        from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+        from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
+        def read_env(name: str, field: str) -> str:
+            if not (value := os.environ.get(name)):
+                raise UserError(
+                    f"The environment variable `{name}` named by the model spec's `{field}` is not set or empty."
+                )
+            return value
+
+        if self.base_url_env is not None:
+            base_url = read_env(self.base_url_env, 'base_url_env')
+        else:
+            assert self.base_url is not None, 'validation requires `base_url` or `base_url_env`'
+            base_url = self.base_url
+        api_key = read_env(self.api_key_env, 'api_key_env') if self.api_key_env is not None else None
+        provider = OpenAICompatibleProvider(self.provider_name, base_url=base_url, api_key=api_key)
+        model_class = OpenAIChatModel if self.api == 'chat' else OpenAIResponsesModel
+        return model_class(self.model_name, provider=provider)
+
+
+ModelSpec: TypeAlias = str | OpenAICompatibleModelSpec
+"""A model in a spec: a `provider:model` name, or an [`OpenAICompatibleModelSpec`][pydantic_ai.agent.OpenAICompatibleModelSpec]."""
+
+
 class AgentSpec(BaseModel):
     """Specification for constructing an Agent from a dict/YAML/JSON."""
 
     # $schema is included to avoid validation fails from the `$schema` key, see `_add_json_schema` below for context
     json_schema_path: str | None = Field(default=None, alias='$schema')
-    model: str | None = None
+    model: ModelSpec | None = None
     name: str | None = None
     description: TemplateStr[Any] | str | None = None
     instructions: TemplateStr[Any] | str | list[TemplateStr[Any] | str] | None = None
@@ -195,7 +278,7 @@ class AgentSpec(BaseModel):
         # - extra='forbid' enables strict validation in the generated schema
         # When adding or removing fields on AgentSpec, update this class to match.
         class _AgentSpecSchema(BaseModel, extra='forbid', arbitrary_types_allowed=True):
-            model: str | None = None
+            model: ModelSpec | None = None
             name: str | None = None
             description: str | None = None
             instructions: str | list[str] | None = None

@@ -29,6 +29,37 @@ capabilities:
       effort: high
 ```
 
+### Models on OpenAI-compatible services
+
+The `model` field takes a [model name](models/overview.md) like the `model` argument to [`Agent`][pydantic_ai.Agent]. For an OpenAI-compatible service that Pydantic AI has no provider for, such as a self-hosted server or an internal gateway, `model` can instead describe the model and how to reach it, as an [`OpenAICompatibleModelSpec`][pydantic_ai.agent.OpenAICompatibleModelSpec]:
+
+```yaml {title="gateway_agent.yaml" test="skip"}
+model:
+  provider: openai-compatible
+  provider_name: my-gateway
+  model_name: qwen/qwen3-coder
+  base_url: https://gateway.example.com/v1
+  api_key_env: MY_GATEWAY_API_KEY
+instructions: You are a helpful coding assistant.
+```
+
+When the agent is constructed, this builds an [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] with an [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider], as described in [Other endpoints](models/compatible-apis.md#other-endpoints):
+
+| Field | Description |
+|---|---|
+| `provider` | Always `openai-compatible` |
+| `provider_name` | The name of the service, which identifies it in message history and telemetry. Keep it the same for the service. |
+| `model_name` | The name of the model on the service |
+| `api` | `chat` (the default) for Chat Completions, or `responses` for [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] if the service implements the Responses API |
+| `base_url` | The base URL of the service's OpenAI-compatible API |
+| `base_url_env` | The name of an environment variable to read the base URL from instead, so the same spec can point at different deployments |
+| `api_key_env` | The name of an environment variable to read the API key from, if the service needs one |
+
+Exactly one of `base_url` and `base_url_env` must be set. There is no field for the API key itself, so a spec never contains a secret. The environment variables are read when the model is built, and a missing one raises a [`UserError`][pydantic_ai.exceptions.UserError]. `Agent.from_spec` and `Agent.from_file` build it when the agent is constructed, even with `defer_model_check=True`. A spec passed to a run method or to [`override`][pydantic_ai.agent.Agent.override] builds it when the run starts or the override is entered. An explicit `model` argument replaces the spec's model without reading them, and so does an active `override(model=...)` around a run that passes the spec.
+
+!!! warning
+    `api_key_env` reads the named environment variable and sends its value to the spec's `base_url`, so load specs only from sources you trust.
+
 ## Loading specs
 
 [`Agent.from_file`][pydantic_ai.agent.Agent.from_file] loads a spec from a YAML or JSON file and constructs an agent:
@@ -136,7 +167,7 @@ The [`AgentSpec`][pydantic_ai.agent.AgentSpec] model represents the full spec st
 
 | Field | Type | Description |
 |---|---|---|
-| `model` | `str \| None` | [Model](models/overview.md) name |
+| `model` | `str \| OpenAICompatibleModelSpec \| None` | [Model](models/overview.md) name, or a [model on an OpenAI-compatible service](#models-on-openai-compatible-services) |
 | `name` | `str \| None` | Agent name |
 | `description` | `str \| None` | Agent description (supports [templates](#template-strings)) |
 | `instructions` | `str \| list[str] \| None` | [Instructions](agent.md#instructions) (supports [templates](#template-strings)) |
