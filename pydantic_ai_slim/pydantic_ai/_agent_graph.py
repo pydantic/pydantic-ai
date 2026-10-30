@@ -20,7 +20,7 @@ from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
 from datetime import datetime
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeGuard, assert_never, cast
 
 import anyio
@@ -54,6 +54,7 @@ from pydantic_ai._utils import (
 )
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
+from pydantic_ai.capabilities.compaction import CompactionRequest, CompactionResult
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     ModelRequestContext,
@@ -82,7 +83,13 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
-from ._context_size import context_input_tokens
+from ._capability_loads import keep_capability_loads
+from ._compaction_view import CompactionView
+from ._context_size import (
+    context_input_tokens,
+    context_tokens,
+    mark_context_input_tokens,
+)
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
@@ -100,7 +107,9 @@ from ._instructions import (
 )
 from ._run_context import (
     AnchoredEvidence,
+    CompactionRequests,
     EventStreamBuffer,
+    RequestedCompaction,
     dispatch_event_stream,
     recorded_workspace_ref,
     set_current_run_context,
@@ -717,6 +726,201 @@ class _FailedAttempts:
         group.attempts = list(self.log.attempts)
 
 
+@dataclasses.dataclass
+class _PreparedAttempt:
+    """An attempt as the `prepare_model_request` hooks left it, before compaction, model wrappers and token counting.
+
+    The rest of the preparation starts from this, so an attempt retried after a context overflow is prepared again for
+    the same model, from the same request, without running the hooks again.
+    """
+
+    model: models.Model
+    model_id: str | None
+    messages: list[_messages.ModelMessage]
+    model_settings: ModelSettings | None
+    model_request_parameters: models.ModelRequestParameters
+
+    @classmethod
+    def capture(cls, request_context: ModelRequestContext) -> _PreparedAttempt:
+        return cls(
+            model=request_context.model,
+            model_id=request_context.model_id,
+            messages=list(request_context.messages),
+            model_settings=request_context.model_settings,
+            model_request_parameters=request_context.model_request_parameters,
+        )
+
+    def restore(self, request_context: ModelRequestContext) -> None:
+        request_context.model = self.model
+        request_context._serving_wrapper = None  # pyright: ignore[reportPrivateUsage]
+        request_context.model_id = self.model_id
+        request_context.messages = list(self.messages)
+        request_context.model_settings = self.model_settings.copy() if self.model_settings is not None else None
+        request_context.model_request_parameters = self.model_request_parameters
+
+
+@dataclasses.dataclass
+class _AttemptCompaction:
+    """What the `compact_history` hooks did for one attempt at a request, kept until the attempt is accepted or discarded.
+
+    The compacted history is sent with the attempt, and replaces the run's history only once a response to it is
+    kept: a compaction for a model that then fails was made for that model's context window and provider, so it's
+    dropped with the attempt, and the next attempt compacts again for its own model.
+    """
+
+    requested: RequestedCompaction | None = None
+    """The pending request, which is settled when the attempt is accepted, or `None` when there was none."""
+    result: CompactionResult | None = None
+    """What the capability that compacted returned, or `None` when none did."""
+    committed: list[_messages.ModelMessage] | None = None
+    """The history to commit: the compacted one, with the persistent originals of what it kept."""
+    sent: list[_messages.ModelMessage] | None = None
+    """The messages to send: the compacted history, with this request's own edits to what it kept."""
+    record: _messages.CompactionRecord | None = None
+    """What the run result reports about the compaction once it's kept."""
+    error: exceptions.ModelAPIError | None = None
+    """The error compacting failed with, which fails the attempt."""
+    billed: _messages.ModelResponse | None = None
+    """The record the compaction's usage was committed with, at the provider boundary."""
+
+    def commit(self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
+        """Replace the run's history with the compacted one, now that a response to it is kept."""
+        if self.requested is not None:
+            ctx.state.compaction_requests.settle(self.requested)
+        if self.committed is None or self.record is None:
+            return
+        history = ctx.state.message_history
+        removed = len(history) - len(self.committed)
+        # In place: `capture_run_messages` and every `RunContext` of the run hold this list.
+        history[:] = self.committed
+        ctx.state.compactions.append(self.record)
+        if ctx.deps.resumed_request_index is not None:
+            # As after the before-chain: the request a run resumes from history is the last one, which compaction keeps.
+            shifted = ctx.deps.resumed_request_index - removed
+            ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
+        ctx.deps.new_message_index = _first_new_message_index(
+            history,
+            ctx.state.run_id,
+            resumed_request=ctx.deps.resumed_request,
+            resumed_request_index=ctx.deps.resumed_request_index,
+        )
+        # Tools are dispatched against what the history now shows as loaded and discovered, as the request saw it.
+        _refresh_loaded_capability_ids(ctx)
+        _refresh_discovered_tool_names(ctx)
+
+    def discard(self, request_context: ModelRequestContext) -> None:
+        """Count the discarded compaction's usage like that of a response a hook rejected to make another attempt."""
+        if self.billed is not None:
+            request_context._usage_response_ledger.rejected.append(self.billed)  # pyright: ignore[reportPrivateUsage]
+        self.result = self.committed = self.sent = self.record = self.billed = self.error = None
+
+    def take(self, other: _AttemptCompaction) -> None:
+        """Make `other` this attempt's compaction, in place, once this one has been discarded."""
+        self.requested = other.requested
+        self.result = other.result
+        self.committed = other.committed
+        self.sent = other.sent
+        self.record = other.record
+        self.error = other.error
+        self.billed = other.billed
+
+
+def _same_message(a: _messages.ModelMessage, b: _messages.ModelMessage) -> bool:
+    return a is b or a == b
+
+
+def _check_compaction_result(result: CompactionResult, given: Sequence[_messages.ModelMessage]) -> int:
+    """Check that a compacted history keeps what core and the providers rely on, whichever capability compacted.
+
+    Returns where the messages kept as they were start: `result.kept_from`, or the default for it.
+    """
+    messages = result.messages
+    handler = result.handler
+    if not messages or not isinstance(messages[-1], _messages.ModelRequest):
+        raise exceptions.UserError(
+            f'The history compacted by {handler!r} must end with the request being answered, a `ModelRequest`.'
+        )
+    part = result.part
+    # A `ModelRequest` already refuses a `CompactionPart` naming a provider, so a provider's part can only be in the
+    # `ModelResponse` it arrived in, and ours in a request: where the post-compaction window starts for each.
+    latest = next(
+        (
+            (index, latest_part)
+            for index in reversed(range(len(messages)))
+            for latest_part in reversed(messages[index].parts)
+            if isinstance(latest_part, _messages.CompactionPart)
+        ),
+        None,
+    )
+    if latest is None or latest[1] != part:
+        raise exceptions.UserError(
+            f'The history compacted by {handler!r} must contain its `CompactionResult.part`, as its latest '
+            '`CompactionPart`: that is where the compacted history starts.'
+        )
+    if not (part.content and part.content.strip()) and not (
+        part.provider_details and 'encrypted_content' in part.provider_details
+    ):
+        raise exceptions.UnexpectedModelBehavior(
+            f'The compaction by {handler!r} produced an empty summary, which would replace the history with nothing.'
+        )
+    holder = latest[0]
+    if (kept_from := result.kept_from) is None:
+        # The longest tail after the summary that the history it was given ends with.
+        kept_from = len(messages)
+        while (
+            kept_from > holder + 1
+            and (kept := len(messages) - kept_from) < len(given)
+            and _same_message(messages[kept_from - 1], given[len(given) - kept - 1])
+        ):
+            kept_from -= 1
+        return kept_from
+    kept = len(messages) - kept_from
+    if (
+        not holder < kept_from <= len(messages)
+        or kept > len(given)
+        or not all(map(_same_message, messages[kept_from:], given[len(given) - kept :]))
+    ):
+        raise exceptions.UserError(
+            f'The `kept_from` of the history compacted by {handler!r} must be after its `CompactionPart`, and the '
+            'messages from there on must be the last messages of the history it was given, unchanged.'
+        )
+    return kept_from
+
+
+def _keep_capability_loads(
+    run_context: RunContext[Any],
+    original: list[_messages.ModelMessage],
+    compacted: list[_messages.ModelMessage],
+    kept_from: int,
+) -> tuple[list[_messages.ModelMessage], int]:
+    """Record again, after the compaction, the deferred capability loads it dropped, whichever capability compacted.
+
+    Returns the compacted history with the records, and where its kept messages start now: the records go ahead of
+    them, or, after a provider's compaction response and the requests following it, into them, which ends the kept tail
+    after them.
+
+    TODO(#11264): tool search discoveries are dropped the same way, and aren't recorded again yet.
+    """
+    deferred_ids = {
+        capability_id for capability_id, capability in run_context.capabilities.items() if capability.defer_loading
+    }
+    messages = keep_capability_loads(original, compacted, kept_from=kept_from, deferred_ids=deferred_ids)
+    if messages is compacted:
+        return compacted, kept_from
+    inserted = len(messages) - len(compacted)
+    index = next(
+        (index for index, (new, old) in enumerate(zip(messages, compacted)) if new is not old),
+        len(compacted),
+    )
+    return messages, (kept_from + inserted if index <= kept_from else index + inserted)
+
+
+def _latest_context_tokens(messages: Sequence[_messages.ModelMessage]) -> int | None:
+    """The context size the latest response in `messages` reported, or `None` without one."""
+    latest = next((message for message in reversed(messages) if isinstance(message, _messages.ModelResponse)), None)
+    return (context_tokens(latest) or None) if latest is not None else None
+
+
 @dataclasses.dataclass(kw_only=True)
 class GraphAgentState:
     """State kept across the execution of the agent graph."""
@@ -749,6 +953,11 @@ class GraphAgentState:
     """Internal: the default output mode each model's first request this run resolved to, keyed by model ID.
 
     See `_keep_default_output_mode`."""
+    compactions: list[_messages.CompactionRecord] = dataclasses.field(default_factory=list[_messages.CompactionRecord])
+    """The compactions this run kept, in order; see [`AgentRunResult.compactions`][pydantic_ai.agent.AgentRunResult.compactions]."""
+    compaction_requests: CompactionRequests = dataclasses.field(default_factory=CompactionRequests)
+    """Internal: the run's pending [`request_compaction`][pydantic_ai.tools.RunContext.request_compaction], shared by
+    reference into every `RunContext` this run as the private `_compaction_requests` field."""
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
@@ -2696,7 +2905,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             state.response = None
             state.usage_recorded = False
             try:
-                request_context, attempt_model = await self._prepare_attempt(ctx, run_context, request_context)
+                request_context, attempt_model, compaction, prepared = await self._prepare_attempt(
+                    ctx, run_context, request_context
+                )
             except exceptions.RetryModelRequest as retry:
                 # A `prepare_model_request` hook asked for another model before this attempt was sent.
                 await self._start_next_attempt(ctx, request_context, retry)
@@ -2707,14 +2918,35 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 self._raise_usage_limit_exceeded(ctx, unrecovered)
                 raise
             capture_model_request_span_context(request_context)
+            retry_overflow = (
+                partial(self._retry_overflow, ctx, run_context, request_context, prepared, compaction)
+                if ctx.deps.root_capability._has_compact_history  # pyright: ignore[reportPrivateUsage]
+                else None
+            )
             try:
-                return await self._request_attempt(ctx, run_context, request_context, state, failed)
+                response = await self._request_attempt(
+                    ctx, run_context, request_context, state, failed, compaction, retry_overflow
+                )
             except exceptions.RetryModelRequest as retry:
+                compaction.discard(request_context)
                 # The next attempt is wrapped afresh, for whichever model serves it.
                 request_context.model = attempt_model
                 request_context._serving_wrapper = None  # pyright: ignore[reportPrivateUsage]
                 baseline.rewind_suspended()
                 await self._start_next_attempt(ctx, request_context, retry)
+                continue
+            except exceptions.ModelRetry:
+                # A response a hook retried with a retry prompt is kept in history, so the history it answered is too.
+                if state.response is not None:
+                    compaction.commit(ctx)
+                else:
+                    compaction.discard(request_context)
+                raise
+            except BaseException:
+                compaction.discard(request_context)
+                raise
+            compaction.commit(ctx)
+            return response
 
     async def _request_attempt(
         self,
@@ -2723,8 +2955,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request_context: ModelRequestContext,
         state: _HandlerState,
         failed: _FailedAttempts,
+        compaction: _AttemptCompaction,
+        retry_overflow: Callable[[exceptions.ModelContextWindowExceededError], Awaitable[bool]] | None,
     ) -> _messages.ModelResponse:
-        """Make one attempt: call the model, then run the error or after hooks on the outcome."""
+        """Make one attempt: call the model, then run the error or after hooks on the outcome.
+
+        An attempt whose compaction failed fails with that error, without calling the model. One the model rejects for
+        exceeding its context window before any output is compacted and sent to the same model once more, with
+        `retry_overflow`, before the error hooks see the overflow: compacting is how this model can still serve it.
+        """
 
         # `model_request` resolves any suspended → complete continuation chain (Anthropic
         # `pause_turn`, OpenAI background mode) and returns the final merged response, so
@@ -2738,34 +2977,47 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # What the attempt is recorded as failing with, should a hook move on from it: the billed
         # response, or the error, also when a hook recovered from it (a recovered response was never billed).
         outcome: Exception | _messages.ModelResponse
-        try:
-            async with _serving_scope(request_context):
-                outcome = await model_request(
-                    request_context.model,
-                    request_context=request_context,
-                    run_context=run_context,
-                    on_progress=on_progress,
-                    return_pending=ctx.deps.output_schema.allows_pending_model_response,
-                )
-                # Before the wrapper is exited, so a pending response is still settled if exiting it fails.
-                state.pending = _pending_snapshot(request_context, outcome)
-            # Committed before the earlier attempts are attached, so their usage isn't counted twice.
-            state.record(ctx, outcome, request_context)
-            response = failed.log.attach(outcome)
-        except (exceptions.ModelRetry, exceptions.RetryModelRequest):
-            raise
-        except BaseException as e:
-            # The segments of a continued response were billed, however the request stopped: by an error, a usage
-            # limit, or the run being cancelled or timing out. So were the responses a `FallbackModel` rejected.
-            _record_carried_attempts(ctx, request_context, e)
-            if state.response is not None:
-                state.record(ctx, state.response, request_context)
-            if not isinstance(e, Exception):
+        while True:
+            try:
+                if compaction.error is not None:
+                    raise compaction.error
+                async with _serving_scope(request_context):
+                    outcome = await model_request(
+                        request_context.model,
+                        request_context=request_context,
+                        run_context=run_context,
+                        on_progress=on_progress,
+                        return_pending=ctx.deps.output_schema.allows_pending_model_response,
+                    )
+                    # Before the wrapper is exited, so a pending response is still settled if exiting it fails.
+                    state.pending = _pending_snapshot(request_context, outcome)
+                # Committed before the earlier attempts are attached, so their usage isn't counted twice.
+                state.record(ctx, outcome, request_context)
+                response = failed.log.attach(outcome)
+            except (exceptions.ModelRetry, exceptions.RetryModelRequest):
                 raise
-            outcome = e
-            recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
-            # Not billed, so its usage is committed with the step's response, without the attempts it carries.
-            response = failed.log.attach(recovered)
+            except BaseException as e:
+                # The segments of a continued response were billed, however the request stopped: by an error, a
+                # usage limit, or the run being cancelled or timing out. So were the responses a `FallbackModel`
+                # rejected.
+                _record_carried_attempts(ctx, request_context, e)
+                if state.response is not None:
+                    state.record(ctx, state.response, request_context)
+                if not isinstance(e, Exception):
+                    raise
+                if (
+                    retry_overflow is not None
+                    and isinstance(e, exceptions.ModelContextWindowExceededError)
+                    and state.response is None
+                ):
+                    retry, retry_overflow = retry_overflow, None
+                    if await retry(e):
+                        continue
+                outcome = e
+                recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
+                # Not billed, so its usage is committed with the step's response, without the attempts it carries.
+                response = failed.log.attach(recovered)
+            break
         state.response = response
         capture_model_response_span_context(request_context, response)
         try:
@@ -3156,7 +3408,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
-    ) -> tuple[ModelRequestContext, models.Model]:
+    ) -> tuple[ModelRequestContext, models.Model, _AttemptCompaction, _PreparedAttempt]:
         """Prepare one attempt at the request for the model that is about to serve it.
 
         Everything here depends on `request_context.model`, so it runs again for every attempt
@@ -3165,13 +3417,45 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         attempt never inherits preparation done for a different model.
 
         Returns the prepared request, whose model is wrapped by the capabilities'
-        [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model], and the model the
-        `prepare_model_request` hooks picked, without those wrappers, which a further attempt starts from.
+        [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model], the model the
+        `prepare_model_request` hooks picked, without those wrappers, which a further attempt starts from, and
+        what the `compact_history` hooks did for this attempt, which the caller commits or discards with it, and the
+        request as the `prepare_model_request` hooks left it, which a retry after a context overflow starts from. When
+        compacting failed, the rest of the preparation is skipped: the attempt fails with that error.
         """
         root_capability = ctx.deps.root_capability
         processed_context = await root_capability.prepare_model_request(run_context, request_context)
         # Like the before-chain, a hook may return a copy: keep the object outer wrappers hold.
         attempt_model = processed_context.model
+        request_context.model = attempt_model
+        request_context.messages = list(processed_context.messages)
+        request_context.model_settings = processed_context.model_settings or None
+        request_context.model_request_parameters = processed_context.model_request_parameters
+        request_context.model_id = processed_context.model_id
+        prepared = _PreparedAttempt.capture(request_context)
+
+        # After the whole `prepare_model_request` chain, so it's for the model serving this attempt, after a sticky
+        # or pinned redirect and as durability left it, and before the batch wrapper and token counting.
+        compaction = _AttemptCompaction()
+        await self._compact_attempt(ctx, run_context, request_context, prepared, compaction)
+        if compaction.error is None:
+            await self._finish_attempt(ctx, run_context, request_context, prepared, compaction)
+        return request_context, attempt_model, compaction, prepared
+
+    async def _finish_attempt(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+        prepared: _PreparedAttempt,
+        compaction: _AttemptCompaction,
+    ) -> None:
+        """Prepare the attempt for sending, from the request the `prepare_model_request` hooks left and its compaction."""
+        prepared.restore(request_context)
+        if compaction.sent is not None:
+            request_context.messages = list(compaction.sent)
+        root_capability = ctx.deps.root_capability
+
         # After `prepare_model_request`, so capability model wrappers apply to the model serving this attempt, including
         # one a hook moved the request to, like `ModelFallback`'s next candidate.
         wrappers: list[tuple[models.Model, models.Model]] = []
@@ -3182,19 +3466,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             wrappers.append((wrapper, model))
             return wrapper
 
-        request_context.model = attempt_model._with_serving_wrapper(wrap)  # pyright: ignore[reportPrivateUsage]
+        request_context.model = prepared.model._with_serving_wrapper(wrap)  # pyright: ignore[reportPrivateUsage]
         self._serving_model = request_context.model
-        self._serving_model_id = processed_context.model_id or attempt_model.model_id
+        self._serving_model_id = prepared.model_id or prepared.model.model_id
         # The wrapper is entered around each call it serves for this attempt, like a model passed to the agent is
         # around a run. One applied on this side of a durable unit only answers questions like `continuation_delay`,
         # and the unit enters the one that sends the request.
         request_context._serving_wrapper = next(  # pyright: ignore[reportPrivateUsage]
             (wrapped for wrapped in wrappers if wrapped[0] is request_context.model), None
         )
-        request_context.messages = list(processed_context.messages)
-        request_context.model_settings = processed_context.model_settings or None
-        request_context.model_request_parameters = processed_context.model_request_parameters
-        request_context.model_id = processed_context.model_id
 
         model = request_context.model
         messages = request_context.messages
@@ -3216,14 +3496,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             messages = _clean_message_history(list(messages), repair_last_response=True)
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
             request_context.model_request_parameters = model_request_parameters
-            prepared = model.prepare_messages(messages, model_request_parameters)
+            adapted = model.prepare_messages(messages, model_request_parameters)
             # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
             # it, behind that request's `CachePoint`, so an inserted message isn't guaranteed to reach the
             # wire as a turn of its own. A rewrite that needs its own turn belongs in the adapter, where
             # the rendered position is known (see the carried reasoning in
             # `AnthropicModel._append_model_response_turns`).
             messages = (
-                _clean_message_history(prepared, repair_last_response=True) if prepared is not messages else prepared
+                _clean_message_history(adapted, repair_last_response=True) if adapted is not messages else adapted
             )
             request_context.messages = messages
 
@@ -3302,7 +3582,153 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         self.last_request_context = request_context
 
-        return request_context, attempt_model
+    async def _compact_attempt(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+        prepared: _PreparedAttempt,
+        compaction: _AttemptCompaction,
+        *,
+        overflow: bool = False,
+    ) -> None:
+        """Run the `compact_history` hooks for this attempt, if compaction was requested, into `compaction`.
+
+        See [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction]. The events, the checks
+        on the result and its usage are core's, so they hold whichever capability compacted. With `overflow`, the
+        model rejected the attempt for exceeding its context window, so it's compacted whether or not that was
+        requested, with reason `'context_overflow'`.
+        """
+        requests = ctx.state.compaction_requests
+        pending = requests.requested
+        requested = (
+            RequestedCompaction(reason='context_overflow', focus=pending.focus if pending is not None else None)
+            if overflow
+            else pending
+        )
+        # A continuation completes a turn the provider already has, so it can't be sent a different history. That
+        # also covers a batch request waiting for its batch's result: it's a suspended response the step resumes.
+        if requested is None or resumed_response(prepared.messages) is not None:
+            return
+        # Made from the persistent history as this request shows it, without what only this request adds, so nothing
+        # request-only reaches the history through the compaction. See `CompactionView`.
+        view = CompactionView.of(ctx.state.message_history, prepared.messages)
+        history = view.history
+        # Before the batch wrapper is applied, so a compaction call is never batched: a pending compaction is
+        # nothing the history could hold. Under durable execution it's the model durability wrapped, which runs a
+        # compaction call as a durable model operation whose model isn't wrapped for serving either.
+        model = prepared.model
+        tokens_before = _latest_context_tokens(history)
+        start = _messages.CompactionStartEvent(
+            reason=requested.reason,
+            focus=requested.focus,
+            model_name=model.model_name,
+            provider_name=model.system,
+            messages_before=len(history),
+            tokens_before=tokens_before,
+        )
+        await run_context._publish_event(start)  # pyright: ignore[reportPrivateUsage]
+        if start.cancelled:
+            if not overflow:
+                requests.settle(requested)
+            return
+
+        compaction.requested = pending
+        request = CompactionRequest(
+            reason=requested.reason,
+            focus=requested.focus,
+            model=model,
+            messages=list(view.messages),
+            model_settings=prepared.model_settings,
+            model_request_parameters=prepared.model_request_parameters,
+        )
+        try:
+            result = await ctx.deps.root_capability.compact_history(run_context, request)
+        except exceptions.ModelAPIError as error:
+            # A failed attempt, like an error from the model it's for, so `ModelFallback` can move on to another one.
+            compaction.error = error
+            return
+        if result is None:
+            return
+        kept_from = _check_compaction_result(result, view.messages)
+        committed, committed_kept_from = _keep_capability_loads(
+            run_context, history, view.committed(result.messages, kept_from), kept_from
+        )
+        sent, _ = _keep_capability_loads(run_context, view.view, view.sent(result.messages, kept_from), kept_from)
+        holder = next(message for message in result.messages if result.part in message.parts)
+        if isinstance(holder, _messages.ModelResponse) and all(
+            isinstance(part, _messages.CompactionPart) for part in holder.parts
+        ):
+            # A response that is only a compaction leaves behind just its summary, not the history it was given, so
+            # its context size is the summary's: a size trigger reading it doesn't fire again straight away.
+            mark_context_input_tokens(holder, 0)
+        compaction.result = result
+        compaction.committed = committed
+        compaction.sent = sent
+        compaction.record = _messages.CompactionRecord(
+            part=result.part,
+            handler=result.handler,
+            reason=requested.reason,
+            model_name=model.model_name,
+            provider_name=model.system,
+            messages_before=len(history),
+            messages_after=len(committed),
+            kept_from=committed_kept_from,
+            replaced=history,
+            metadata=result.metadata,
+        )
+        # Committed at the provider boundary, like a response: billed whether or not the attempt is accepted.
+        compaction.billed = _messages.ModelResponse(
+            parts=[result.part],
+            usage=result.usage,
+            model_name=model.model_name,
+            provider_name=model.system,
+            provider_url=model.base_url,
+        )
+        self._record_response_usage(ctx, compaction.billed, request_context=request_context)
+        # Before the request is sent, like the check a later attempt gets for an earlier one's rejected response.
+        ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+        ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
+        await run_context._publish_event(  # pyright: ignore[reportPrivateUsage]
+            _messages.CompactionEndEvent(
+                reason=requested.reason,
+                handler=result.handler,
+                model_name=model.model_name,
+                provider_name=model.system,
+                messages_before=len(history),
+                messages_after=len(committed),
+                kept_from=committed_kept_from,
+                tokens_before=tokens_before,
+                summary_tokens=result.usage.output_tokens or None,
+                usage=result.usage,
+            )
+        )
+
+    async def _retry_overflow(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+        prepared: _PreparedAttempt,
+        compaction: _AttemptCompaction,
+        overflow: exceptions.ModelContextWindowExceededError,
+    ) -> bool:
+        """Compact an attempt the model rejected for exceeding its context window, to send it to the same model again.
+
+        The attempt's own compaction, if any, is discarded for the new one. Returns whether there's a compacted
+        request to send; when no capability compacted, the attempt is left as it was, to fail with the overflow. When
+        compacting failed, that's noted on the overflow, which is still what the attempt failed with.
+        """
+        retry = _AttemptCompaction()
+        await self._compact_attempt(ctx, run_context, request_context, prepared, retry, overflow=True)
+        if retry.result is None:
+            if retry.error is not None:
+                overflow.add_note(f'Compacting the request to retry it failed: {retry.error!r}')
+            return False
+        compaction.discard(request_context)
+        compaction.take(retry)
+        await self._finish_attempt(ctx, run_context, request_context, prepared, compaction)
+        return True
 
     async def _open_stream(
         self,
@@ -3326,20 +3752,37 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         that produced it, the instant the request was issued, and the attempts this loop moved on from.
         """
         failed = _FailedAttempts()
+        root_capability = ctx.deps.root_capability
+        # Whether to send the attempt again, compacted after the model rejected it for exceeding its context window.
+        resend = False
+        # Set for each attempt once it's prepared, before it's sent.
+        attempt_model = request_context.model
+        compaction = _AttemptCompaction()
+        retry_overflow: Callable[[exceptions.ModelContextWindowExceededError], Awaitable[bool]] | None = None
         while True:
-            baseline.restore(request_context)
-            await baseline.resolve_native_tools(run_context, request_context)
-            try:
-                request_context, attempt_model = await self._prepare_attempt(ctx, run_context, request_context)
-            except exceptions.RetryModelRequest as retry:
-                # A `prepare_model_request` hook asked for another model before this attempt was sent.
-                await self._start_next_attempt(ctx, request_context, retry)
-                continue
-            except exceptions.FallbackExceptionGroup as unrecovered:
-                # A hook found no model left to attempt before this attempt was sent.
-                failed.list_on(unrecovered)
-                self._raise_usage_limit_exceeded(ctx, unrecovered)
-                raise
+            if resend:
+                resend = False
+            else:
+                baseline.restore(request_context)
+                await baseline.resolve_native_tools(run_context, request_context)
+                try:
+                    request_context, attempt_model, compaction, prepared = await self._prepare_attempt(
+                        ctx, run_context, request_context
+                    )
+                except exceptions.RetryModelRequest as retry:
+                    # A `prepare_model_request` hook asked for another model before this attempt was sent.
+                    await self._start_next_attempt(ctx, request_context, retry)
+                    continue
+                except exceptions.FallbackExceptionGroup as unrecovered:
+                    # A hook found no model left to attempt before this attempt was sent.
+                    failed.list_on(unrecovered)
+                    self._raise_usage_limit_exceeded(ctx, unrecovered)
+                    raise
+                retry_overflow = (
+                    partial(self._retry_overflow, ctx, run_context, request_context, prepared, compaction)
+                    if root_capability._has_compact_history  # pyright: ignore[reportPrivateUsage]
+                    else None
+                )
             # After the before-chain and `prepare_model_request`, so the check applies to the model
             # actually being called (a hook or an earlier attempt may have swapped it).
             _ensure_model_supports_streaming(request_context.model)
@@ -3352,6 +3795,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             attempt_stack = AsyncExitStack()
             opened: _ContinuationStreamedResponse | None = None
             try:
+                if compaction.error is not None:
+                    raise compaction.error
                 # `model_request_stream` stitches the (possibly suspended → complete) segments
                 # into one continuous stream, so the whole chain is presented as a single
                 # `AgentStream` and the model-request hooks wrap it once.
@@ -3365,9 +3810,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                 )
                 opened = sr
-                if ctx.deps.root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
-                    # Only worth opening early when a hook can act on a failure to open: otherwise the
-                    # stream keeps opening lazily, once the consumer starts iterating it.
+                if (
+                    root_capability._handles_model_request_error(run_context, request_context)  # pyright: ignore[reportPrivateUsage]
+                    or retry_overflow is not None
+                ):
+                    # Only worth opening early when a hook can act on a failure to open, or a context overflow can be
+                    # compacted and sent again: otherwise the stream keeps opening lazily, once the consumer starts
+                    # iterating it.
                     outcome: asyncio.Future[Exception | None] = asyncio.get_running_loop().create_future()
                     handoff.offers.put_nowait(_StreamOffer(sr, outcome))
                     if (error := await outcome) is not None:
@@ -3377,17 +3826,31 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 _record_carried_attempts(ctx, request_context, e)
                 # A stream the consumer stopped while it was primed is committed by the consuming task, billed usage
                 # included, so only a failure records it here.
-                if isinstance(e, Exception) and opened is not None and (partial := opened.get()).usage.has_values():
+                partial_response = opened.get() if isinstance(e, Exception) and opened is not None else None
+                billed = partial_response is not None and partial_response.usage.has_values()
+                if partial_response is not None and billed:
                     # Priming got past a segment the provider billed, like a suspended one, before the stream failed.
-                    self._record_response_usage(ctx, partial, request_context=request_context)
+                    self._record_response_usage(ctx, partial_response, request_context=request_context)
                 # Cancellation and control flow aren't failures to open for the error hooks to handle.
                 if not isinstance(e, Exception) or isinstance(e, (exceptions.ModelRetry, exceptions.RetryModelRequest)):
+                    compaction.discard(request_context)
                     raise
+                if (
+                    retry_overflow is not None
+                    and isinstance(e, exceptions.ModelContextWindowExceededError)
+                    and not billed
+                ):
+                    # Before the error hooks see it, as for a request that isn't streamed.
+                    retry, retry_overflow = retry_overflow, None
+                    if await retry(e):
+                        resend = True
+                        continue
                 try:
                     recovered = await self._recover_model_request_error(
                         ctx, run_context, request_context, e, failed, start
                     )
                 except exceptions.RetryModelRequest as retry:
+                    compaction.discard(request_context)
                     # The next attempt is wrapped afresh, for whichever model serves it.
                     request_context.model = attempt_model
                     request_context._serving_wrapper = None  # pyright: ignore[reportPrivateUsage]
@@ -3395,6 +3858,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     await self._start_next_attempt(ctx, request_context, retry)
                     continue
                 except Exception as error:
+                    compaction.discard(request_context)
                     handoff.open_error = error
                     raise
                 # A hook recovered the failure with a complete response; replay it as a stream so the
@@ -3405,9 +3869,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     replay_events=True,
                 )
                 failed.log.attach_to_stream(replay)
+                compaction.commit(ctx)
                 return replay, request_context, request_start, failed.log.attempts
             stream_stack.push_async_exit(attempt_stack)
             failed.log.attach_to_stream(sr)
+            # Handed over to the consumer, so this is the attempt that answers the request.
+            compaction.commit(ctx)
             return sr, request_context, request_start, failed.log.attempts
 
     async def _start_next_attempt(
@@ -4277,6 +4744,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
+        _compaction_requests=ctx.state.compaction_requests,
         _cancellation=ctx.deps.cancellation,
         _durable_operations=ctx.deps.durable_operations,
         _run_capabilities_by_id=ctx.deps.run_capabilities_by_id,
@@ -4289,7 +4757,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
-    # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_event_stream_buffer`,
+    # `discovered_tool_names`, `pending_messages`, `_compaction_requests`, `_cancellation`, `_event_stream_buffer`,
     # `_mcp_tool_defs_cache`, `_durable_operations`, `_run_capabilities_by_id` (see the invariant on
     # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking
     # the object would silently break in-step capability loads / tool reveals / message enqueues /

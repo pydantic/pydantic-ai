@@ -24,6 +24,8 @@ from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import (
     BatchModelRequests,
     CombinedCapability,
+    CompactionRequest,
+    CompactionResult,
     Hooks,
     Instrumentation,
     NativeTool,
@@ -1356,6 +1358,18 @@ async def test_prepare_model_request_hook_warns() -> None:
     assert [str(warning.message) for warning in record] == [
         _uncalled_hooks_warning('`Hooks`', '`prepare_model_request`')
     ]
+
+
+class _Compacts(AbstractCapability[None]):
+    async def compact_history(self, ctx: RunContext[None], request: CompactionRequest) -> CompactionResult | None:
+        return None  # pragma: no cover
+
+
+async def test_compact_hook_warns() -> None:
+    """A session makes no model request attempts, so a `compact_history` hook never runs."""
+    with pytest.warns(UserWarning) as record:
+        await _drain(Agent[None, str](capabilities=[_Compacts()], deps_type=type(None)), _RecordingModel())
+    assert [str(warning.message) for warning in record] == [_uncalled_hooks_warning('`_Compacts`', '`compact_history`')]
 
 
 async def test_batching_warns_that_a_session_sends_no_model_requests() -> None:

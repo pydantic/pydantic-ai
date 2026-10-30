@@ -42,6 +42,7 @@ import pydantic_core
 from genai_prices import types as genai_types
 from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic.json_schema import SkipJsonSchema
 from typing_extensions import TypeAliasType, TypedDict, TypeVar, deprecated
 
 from pydantic_ai._genai_prices import calculate_price_for_usage
@@ -7095,6 +7096,209 @@ HandleResponseEvent = Annotated[
 """An event yielded when handling a model response, indicating tool calls and results."""
 
 
+CompactionReason: TypeAlias = (
+    Literal['threshold', 'cache_expiry', 'manual', 'model_requested', 'model_switch', 'context_overflow'] | str
+)
+"""Why the message history is being compacted.
+
+- `'threshold'`: the history grew past a size threshold.
+- `'cache_expiry'`: the provider's prompt cache is about to expire, so compacting now still reads it.
+- `'manual'`: the user or the application asked for it, like a `/compact` command.
+- `'model_requested'`: the model asked for it, like with a tool that requests compaction.
+- `'model_switch'`: the model serving the next request can't use the history's existing compaction.
+- `'context_overflow'`: the model rejected the request for exceeding its context window, so it's compacted and
+  sent to the same model once more.
+
+Any other string is passed through as is, for a reason of your own. When a request is made while another is pending,
+they're merged, and the merged one keeps the more important reason: `'manual'`, then `'model_requested'`,
+`'context_overflow'`, `'model_switch'`, `'threshold'` and `'cache_expiry'`, then a reason of your own; see
+[`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction].
+"""
+
+
+@dataclass(repr=False, kw_only=True)
+class CompactionStartEvent:
+    """Emitted before a model request attempt runs the capabilities' [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hooks.
+
+    It's emitted when compaction was requested with
+    [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], or when a model rejected the
+    request for exceeding its context window, with reason `'context_overflow'`. It's dispatched immediately:
+    capability listeners ([`@on_event`][pydantic_ai.capabilities.on_event], `hooks.on.event`) run before the
+    hooks do, and any of them can [`cancel()`][pydantic_ai.messages.CompactionStartEvent.cancel] it, for example
+    a capability that needs the full history for one more turn. Cancelling skips compaction for this attempt
+    and drops the request; whatever asked for it can ask again. Under durable execution, an
+    `event_stream_handler` runs in its own activity or step, so it only observes the event; cancel it from a
+    capability listener instead.
+
+    A [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent] follows once the history was compacted.
+    None follows when the event was cancelled, no capability compacted, or the compaction failed.
+    """
+
+    reason: CompactionReason
+    """Why compaction was requested."""
+
+    model_name: str
+    """The name of the model that will serve the request the compacted history is sent with."""
+
+    provider_name: str
+    """The provider of that model."""
+
+    messages_before: int
+    """The number of messages in the history to compact."""
+
+    focus: str | None = None
+    """What the compaction should keep, if the request said."""
+
+    tokens_before: int | None = None
+    """The context size the latest response in the history reported, or `None` without one."""
+
+    cancelled: bool = False
+    """Whether a listener cancelled this compaction."""
+
+    cancel_reason: str | None = None
+    """The reason the cancelling listener gave, if any."""
+
+    event_kind: Literal['compaction_start'] = 'compaction_start'
+    """Event type identifier, used as a discriminator."""
+
+    event_dispatch: ClassVar[Literal['immediate']] = 'immediate'
+    """Listeners run before the compaction does, so they can cancel it."""
+
+    def cancel(self, reason: str | None = None) -> None:
+        """Skip this compaction.
+
+        Args:
+            reason: An optional human-readable reason, stored on
+                [`cancel_reason`][pydantic_ai.messages.CompactionStartEvent.cancel_reason].
+        """
+        self.cancelled = True
+        self.cancel_reason = reason
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class CompactionEndEvent:
+    """Emitted after a capability's [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook compacted the history.
+
+    The compacted history is sent with the attempt it was made for. If that attempt fails and the request moves
+    on to another model, the compaction is discarded, and the next attempt may compact again, with events of its
+    own.
+    """
+
+    reason: CompactionReason
+    """Why compaction was requested."""
+
+    handler: str
+    """The stable identifier of the capability that compacted, from
+    [`CompactionResult.handler`][pydantic_ai.capabilities.CompactionResult.handler]."""
+
+    model_name: str
+    """The name of the model that will serve the request the compacted history is sent with."""
+
+    provider_name: str
+    """The provider of that model."""
+
+    messages_before: int
+    """The number of messages in the history that was compacted."""
+
+    messages_after: int
+    """The number of messages in the history that replaced it."""
+
+    kept_from: int
+    """The index in the compacted history where the messages kept as they were start.
+
+    See [`CompactionRecord.kept_from`][pydantic_ai.messages.CompactionRecord.kept_from].
+    """
+
+    tokens_before: int | None = None
+    """The context size the latest response in the history reported before compaction, or `None` without one."""
+
+    summary_tokens: int | None = None
+    """The size of the summary the compaction produced: the output tokens it reported, or `None` when it reported none.
+
+    That's not the size of the compacted history, which can also keep recent messages: the context size is only
+    known again from the next response.
+    """
+
+    usage: RequestUsage = field(default_factory=RequestUsage)
+    """What the compaction cost, which is counted in the run's usage."""
+
+    event_kind: Literal['compaction_end'] = 'compaction_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class CompactionRecord:
+    """A compaction a run kept, on [`AgentRunResult.compactions`][pydantic_ai.agent.AgentRunResult.compactions].
+
+    The run's message history only shows the compacted history, so this is how you tell what a compaction
+    replaced, for example to store a conversation's full log next to the history the model sees. The compacted
+    history is `messages_after` messages long: the ones up to `kept_from` hold the summary, and the ones from
+    `kept_from` on are the last messages of the history it replaced, kept as they were. So the messages it
+    summarized are the history it replaced without that tail; see
+    [`summarized`][pydantic_ai.messages.CompactionRecord.summarized].
+    """
+
+    part: CompactionPart
+    """The part that marks where the compacted history starts."""
+
+    handler: str
+    """The stable identifier of the capability that compacted, from
+    [`CompactionResult.handler`][pydantic_ai.capabilities.CompactionResult.handler]."""
+
+    reason: CompactionReason
+    """Why the history was compacted."""
+
+    model_name: str
+    """The name of the model the compaction was made for, which served the request it was sent with."""
+
+    provider_name: str
+    """The provider of that model."""
+
+    messages_before: int
+    """The number of messages in the history that was compacted."""
+
+    messages_after: int
+    """The number of messages in the history that replaced it."""
+
+    kept_from: int
+    """The index in the compacted history where the messages kept as they were start.
+
+    The compacted history's messages from this index on are the last `messages_after - kept_from` messages of the
+    history it replaced.
+    """
+
+    replaced: Annotated[SkipJsonSchema[list[ModelMessage] | None], pydantic.Field(exclude=True)] = field(
+        default=None, compare=False
+    )
+    """The run's persistent history the compaction replaced, ending with the request being answered.
+
+    It's the history itself, not the request's view the handler was given: what a hook only changed for that request
+    isn't in it.
+
+    It's held in memory only, by reference, and isn't serialized: a record loaded from a serialized
+    [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] has `None` here.
+    """
+
+    metadata: dict[str, Any] | None = None
+    """Additional data about the compaction, from [`CompactionResult.metadata`][pydantic_ai.capabilities.CompactionResult.metadata]."""
+
+    @property
+    def summarized(self) -> list[ModelMessage] | None:
+        """The messages of [`replaced`][pydantic_ai.messages.CompactionRecord.replaced] the compaction summarized: all but the kept tail.
+
+        `None` when `replaced` isn't available, on a record loaded from a serialized result.
+        """
+        if self.replaced is None:
+            return None
+        return self.replaced[: self.messages_before - (self.messages_after - self.kept_from)]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 CUSTOM_EVENT_TYPES: dict[str, type[CustomEvent]] = _EventRegistry[type['CustomEvent']]()
 """Registry of [`CustomEvent`][pydantic_ai.messages.CustomEvent] subclasses, keyed by their `name`.
 
@@ -7597,6 +7801,8 @@ AgentStreamEvent = Annotated[
     ModelResponseStreamEvent
     | EnqueuedMessagesEvent
     | HandleResponseEvent
+    | CompactionStartEvent
+    | CompactionEndEvent
     | RealtimeSessionEvent
     | CustomEvent
     | CapabilityEvent,

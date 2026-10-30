@@ -17,7 +17,14 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
 from pydantic_ai.workspaces.unavailable import NO_WORKSPACE, UnavailableWorkspace
 
-from ._toolset import DispatchSnapshots, EnqueueGuard, enqueue_not_supported_message, validation_context_from_agent
+from ._toolset import (
+    CompactionRequestGuard,
+    DispatchSnapshots,
+    EnqueueGuard,
+    compaction_request_not_supported_message,
+    enqueue_not_supported_message,
+    validation_context_from_agent,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -57,7 +64,8 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
 # Fields that `serialize_run_context` doesn't carry but that are still readable inside a unit, as
 # `None` unless the framework attaches something: `agent` and `root_capability` are re-attached
 # from the worker's agent instance by `restore`, `pending_messages` is replaced by an `EnqueueGuard`
-# so `ctx.enqueue()` raises an explanation, and `tool_manager` is documented to be `None` inside a
+# so `ctx.enqueue()` raises an explanation, `_compaction_requests` by a `CompactionRequestGuard` so
+# `ctx.request_compaction()` does too, and `tool_manager` is documented to be `None` inside a
 # unit — `available_tool_names` then reads the snapshot serialized at dispatch time (see the
 # property override below), or falls back to `discovered_tool_names` without one.
 # `realtime_session` is a live session object that cannot cross the boundary, and its contract
@@ -68,6 +76,7 @@ _NONE_UNLESS_ATTACHED = (
     'agent',
     'root_capability',
     'pending_messages',
+    '_compaction_requests',
     'tool_manager',
     'realtime_session',
     '_durable_operations',
@@ -350,8 +359,9 @@ class DurableRunContext(RunContext[AgentDepsT]):
         `root_capability` so custom subclasses don't need to know about either. Setting
         `root_capability` lets the durability capability fire the capability chain against the live
         model stream inside the unit. The workspace is rebuilt from its serialized
-        [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], and `pending_messages` gets a guard so
-        `ctx.enqueue()` raises the shared explanation worded with `engine_spec`'s nouns.
+        [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], and `pending_messages` and `_compaction_requests` get
+        guards so `ctx.enqueue()` and `ctx.request_compaction()` raise the shared explanations worded with
+        `engine_spec`'s nouns.
         `ctx.validation_context` is rebuilt from the agent's `validation_context` setting the first
         time it's read.
         """
@@ -365,6 +375,10 @@ class DurableRunContext(RunContext[AgentDepsT]):
         # without re-running it, so an enqueue would be dropped.
         ctx.__dict__['pending_messages'] = EnqueueGuard(
             enqueue_not_supported_message(engine_spec.durable_unit_noun, engine_spec.durable_container_noun)
+        )
+        # The same goes for a compaction request: the run would never see it.
+        ctx.__dict__['_compaction_requests'] = CompactionRequestGuard(
+            compaction_request_not_supported_message(engine_spec.durable_unit_noun, engine_spec.durable_container_noun)
         )
         return ctx
 

@@ -825,7 +825,10 @@ class ModelContextWindowExceededError(ModelRequestRejectedError):
     """Raised when the provider rejected the request because the input exceeds the model's context window.
 
     Catch it to compact or truncate the message history and try again; see
-    [Compaction](../capabilities/compaction.md). An overflow reported as an HTTP 400 is also a
+    [Compaction](../capabilities/compaction.md). When a capability has a
+    [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook, an agent run first
+    compacts a request the model rejected this way before any output, and sends it to the same model once more.
+    An overflow reported as an HTTP 400 is also a
     [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with status 400, as before. A subclass of
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
 

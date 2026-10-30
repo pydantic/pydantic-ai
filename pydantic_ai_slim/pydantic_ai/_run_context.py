@@ -56,6 +56,59 @@ CustomEventT = TypeVar('CustomEventT', bound=_messages.CustomEvent)
 CapabilityEventT = TypeVar('CapabilityEventT', bound=_messages.CapabilityEvent)
 
 
+@dataclasses.dataclass
+class RequestedCompaction:
+    """A compaction asked for with [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction]."""
+
+    reason: _messages.CompactionReason
+    focus: str | None = None
+
+
+_COMPACTION_REASON_PRIORITY: tuple[str, ...] = (
+    'manual',
+    'model_requested',
+    'context_overflow',
+    'model_switch',
+    'threshold',
+    'cache_expiry',
+)
+"""The built-in reasons, most important first. A reason of your own ranks after all of them."""
+
+
+def _reason_rank(reason: _messages.CompactionReason) -> int:
+    try:
+        return _COMPACTION_REASON_PRIORITY.index(reason)
+    except ValueError:
+        return len(_COMPACTION_REASON_PRIORITY)
+
+
+@dataclasses.dataclass
+class CompactionRequests:
+    """A run's pending compaction request, shared by reference by every `RunContext` of the run."""
+
+    requested: RequestedCompaction | None = None
+
+    def request(self, requested: RequestedCompaction) -> None:
+        """Make `requested` pending, merged into the request already pending, if any.
+
+        The merged request has the more important reason, by `_COMPACTION_REASON_PRIORITY`, and the earlier one's on
+        a tie. It keeps every focus: both, the earlier one first and separated by a blank line, when they differ.
+        """
+        pending = self.requested
+        if pending is None:
+            self.requested = requested
+            return
+        reason = requested.reason if _reason_rank(requested.reason) < _reason_rank(pending.reason) else pending.reason
+        focuses = [focus for focus in (pending.focus, requested.focus) if focus]
+        focus = '\n\n'.join(dict.fromkeys(focuses)) or None
+        self.requested = RequestedCompaction(reason=reason, focus=focus)
+
+    def settle(self, requested: RequestedCompaction) -> None:
+        """Drop `requested` once it's been acted on, unless a later request was merged into it in the meantime."""
+        if self.requested is requested:
+            self.requested = None
+
+
 class EventStreamBuffer(list[_messages.AgentStreamEvent]):
     """The run's event buffer, notifying waiting stream mergers as soon as an event lands.
 
@@ -73,6 +126,14 @@ class EventStreamBuffer(list[_messages.AgentStreamEvent]):
         super().append(event)
         for waiter in self.waiters:
             waiter.set()
+
+
+def dispatched_immediately(event: _messages.AgentStreamEvent) -> bool:
+    """Whether listeners receive `event` when it's emitted, before its emitter goes on, rather than at its stream position."""
+    return (
+        isinstance(event, _messages.CapabilityEvent | _messages.CompactionStartEvent)
+        and event.event_dispatch == 'immediate'
+    )
 
 
 class RealtimeEventBuffer(list[_messages.AgentStreamEvent]):
@@ -110,8 +171,8 @@ class RealtimeEventBuffer(list[_messages.AgentStreamEvent]):
 
 
 async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
-    """Dispatch an immediately dispatched capability event and mark it for stream deduplication."""
-    if not isinstance(event, _messages.CapabilityEvent) or event.event_dispatch != 'immediate':
+    """Dispatch an immediately dispatched event and mark it for stream deduplication."""
+    if not dispatched_immediately(event):
         return
     # Mark before awaiting listeners: awaiting yields the event loop, and a concurrent stream
     # consumer (e.g. the `run_stream_events` reader task) could drain the buffered event in that
@@ -369,6 +430,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
         default_factory=dict[int, _messages.AgentStreamEvent], repr=False
     )
     """Legacy `hooks.on.event` replacements, shared across the run."""
+
+    _compaction_requests: CompactionRequests | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The run's pending [`request_compaction`][pydantic_ai.tools.RunContext.request_compaction], the same object
+    `GraphAgentState` holds. `None` in synthetic contexts not backed by a running agent; inside a durable unit, a
+    guard that makes `request_compaction` raise.
+    """
 
     _durable_operations: dict[tuple[str, str], _DurableOperationDispatch] | None = field(default=None, repr=False)
     """Per-run durable capability operation dispatchers, for internal use only.
@@ -962,6 +1031,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # Attribution is stamped on the event in place (never on a copy): listeners of an immediately dispatched
         # decision event mutate the dispatched object, and the emitter must be able to read those
         # decisions off its own reference as well as off the returned one.
+        await self._publish_event(event)
+        return event
+
+    async def _publish_event(self, event: _messages.AgentStreamEvent) -> None:
+        """Put an event in the run's event stream, awaiting its listeners first if it's dispatched immediately.
+
+        Private framework plumbing, shared by `emit` and the events core emits itself.
+        """
         self._emit_event(event)
         if (root_capability := self.root_capability) is not None:
             root_capability._prepare_event_dispatch(self, event)  # pyright: ignore[reportPrivateUsage]
@@ -970,7 +1047,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # An `await` inserted between the two would open a window for a concurrent stream
         # consumer to drain the buffered event and dispatch it a second time.
         await dispatch_event_immediate(self, event)
-        return event
 
     def enqueue(
         self,
@@ -1037,6 +1113,46 @@ class RunContext(Generic[RunContextAgentDepsT]):
             return None
         self.pending_messages.append(pending)
         return pending.enqueue_id
+
+    def request_compaction(self, *, reason: _messages.CompactionReason = 'manual', focus: str | None = None) -> None:
+        """Ask for the message history to be compacted before the next attempt at a model request.
+
+        The next attempt runs the capabilities' [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history]
+        hooks for the model that will serve it, in capability order, and sends the history the first one
+        returns. Called from a `prepare_model_request` hook, that's the attempt being prepared; from
+        `before_model_request`, the step's first attempt; from a tool or `after_model_request`, the next
+        request's. A suspended response being resumed is never compacted, so the request waits for the
+        step after it.
+
+        The request stays pending until an attempt is sent with it: if the attempt it was made for fails
+        and another model serves the request, that attempt compacts again, for its own model. A
+        [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] listener that cancels the compaction
+        drops the request.
+
+        A call while a request is pending merges into it, so an automatic request, like one when the prompt cache
+        expired, doesn't lose a `/compact` command's focus. The merged request keeps the more important
+        [reason][pydantic_ai.messages.CompactionReason]: `'manual'`, then `'model_requested'`,
+        `'context_overflow'`, `'model_switch'`, `'threshold'` and `'cache_expiry'`, then a reason of your own, and
+        the earlier one on a tie. It keeps every focus: when both have a different one, the earlier first, separated
+        by a blank line.
+
+        Args:
+            reason: Why compaction is needed, passed on to the hooks and the compaction events.
+            focus: What the compaction should keep, like the argument to a `/compact` command.
+
+        Raises:
+            UserError: If this `RunContext` isn't backed by a running agent, or it's inside a durable unit
+                such as a Temporal activity, whose result is replayed without running it again.
+        """
+        # Read via `__dict__`, like `cancel`: a context rebuilt inside a durable unit raises for fields it
+        # wasn't given, and this one never crosses that boundary.
+        requests: CompactionRequests | None = self.__dict__.get('_compaction_requests')
+        if requests is None:
+            raise UserError(
+                '`request_compaction` is only available during an agent run (from tools or capability hooks) '
+                'in the same process as the run itself. This `RunContext` has no run to compact.'
+            )
+        requests.request(RequestedCompaction(reason=reason, focus=focus))
 
     def cancel(self) -> None:
         """Cancel the agent run this context belongs to.

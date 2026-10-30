@@ -73,7 +73,9 @@ from pydantic_ai.exceptions import RunCancelled, RunTimedOut
 from pydantic_ai.messages import (
     BinaryContent,
     CapabilityEvent,
+    CompactionEndEvent,
     CompactionPart,
+    CompactionStartEvent,
     CustomEvent,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
@@ -136,7 +138,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ..workspace_fakes import FakeWorkspace
@@ -1046,6 +1048,19 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         FunctionToolResultEvent(part=ToolReturnPart('tool', 'result', tool_call_id='call')),
         ToolAvailabilityDeltaEvent(part=ToolAvailabilityDeltaPart()),
         ModelSettingsDeltaEvent(part=ModelSettingsDeltaPart(settings={'thinking': 'high'})),
+        CompactionStartEvent(
+            reason='manual', focus='decisions', model_name='m', provider_name='p', messages_before=4, cancelled=True
+        ),
+        CompactionEndEvent(
+            reason='threshold',
+            handler='summarize',
+            model_name='m',
+            provider_name='p',
+            messages_before=4,
+            messages_after=2,
+            kept_from=1,
+            usage=RequestUsage(input_tokens=100, output_tokens=10),
+        ),
         OutputToolCallEvent(part=ToolCallPart('final_result', tool_call_id='output')),
         OutputToolResultEvent(part=ToolReturnPart('final_result', 'done', tool_call_id='output')),
         DeferredToolRequestsEvent(requests=DeferredToolRequests(calls=[ToolCallPart('tool', tool_call_id='call')])),

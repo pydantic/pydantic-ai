@@ -40,6 +40,7 @@ from .caching import Caching
 from .capability import Capability
 from .citations import Citations
 from .combined import CombinedCapability
+from .compaction import CompactionRequest, CompactionResult
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .durable_operation import durable_operation
@@ -174,6 +175,8 @@ __all__ = [
     'WrapperCapability',
     'XSearch',
     'CombinedCapability',
+    'CompactionRequest',
+    'CompactionResult',
     'DynamicCapability',
     'durable_operation',
     'HandleDeferredToolCalls',

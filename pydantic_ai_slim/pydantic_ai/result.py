@@ -609,6 +609,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         new_message_index: int,
         stream_response: AgentStream[AgentDepsT, OutputDataT] | None,
         on_complete: Callable[[], Awaitable[None]] | None,
+        *,
+        compactions: list[_messages.CompactionRecord] | None = None,
     ) -> None: ...
 
     @overload
@@ -627,9 +629,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         stream_response: AgentStream[AgentDepsT, OutputDataT] | None = None,
         on_complete: Callable[[], Awaitable[None]] | None = None,
         run_result: AgentRunResult[OutputDataT] | None = None,
+        *,
+        compactions: list[_messages.CompactionRecord] | None = None,
     ) -> None:
         self._all_messages = all_messages
         self._new_message_index = new_message_index
+        self._compactions = compactions if compactions is not None else []
 
         self._stream_response = stream_response
         self._on_complete = on_complete
@@ -676,6 +681,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     run_id=self.run_id,
                     conversation_id=self.conversation_id,
                     metadata=self.metadata,
+                    compactions=self._compactions,
                 ),
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
@@ -859,6 +865,19 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return self._stream_response.response
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    @property
+    def compactions(self) -> list[_messages.CompactionRecord]:
+        """The compactions this run kept so far, in the order it kept them.
+
+        The message history only shows the compacted history: [`new_messages()`][pydantic_ai.result.StreamedRunResult.new_messages] are this run's messages
+        still in it. Each [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you
+        can tell which messages were summarized, for example to store the conversation's full log. A compaction made
+        for an attempt that then failed isn't included.
+        """
+        if self._run_result is not None:
+            return self._run_result.compactions
+        return self._compactions
 
     @property
     def metadata(self) -> dict[str, Any] | None:
@@ -1183,6 +1202,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def metadata(self) -> dict[str, Any] | None:
         """Metadata associated with this agent run, if configured."""
         return self._streamed_run_result.metadata
+
+    @property
+    def compactions(self) -> list[_messages.CompactionRecord]:
+        """The compactions this run kept so far; see [`StreamedRunResult.compactions`][pydantic_ai.result.StreamedRunResult.compactions]."""
+        return self._streamed_run_result.compactions
 
     @property
     def workspace(self) -> Workspace:

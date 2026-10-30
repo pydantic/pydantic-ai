@@ -373,6 +373,12 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10672"
     },
     {
+      "against": "v2.63.0",
+      "fingerprint": "ee0ccea827f407a46b96e4701c2d59d703be1b1aa9c29cea81c148c8cef1757b",
+      "reason": "Adds `CompactionStartEvent` and `CompactionEndEvent` to `AgentStreamEvent`; every existing member is unchanged, and they're only emitted when something calls `RunContext.request_compaction()` or a capability defines `compact_history` and a request overflows the model's context window.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11454"
+    },
+    {
       "against": "v2.61.0",
       "fingerprint": "c2655ed50f60d9b53296c110ea2267134651aa29c6bfa49d4beb7ffcceede410",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `forks=forks`.",

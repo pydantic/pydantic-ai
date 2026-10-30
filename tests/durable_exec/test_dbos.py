@@ -27,6 +27,8 @@ from pydantic_ai import (
     AgentStreamEvent,
     CancellationToken,
     CapabilityEvent,
+    CompactionPart,
+    CompactionStartEvent,
     CustomEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -54,10 +56,13 @@ from pydantic_ai.capabilities import (
     MCP,
     BatchModelRequests,
     Capability,
+    CompactionRequest,
+    CompactionResult,
     DynamicCapability,
     Hooks,
     ModelFallback,
     WrapperCapability,
+    on_event,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
@@ -67,6 +72,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelAPIError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
     ModelRequestTimeout,
     ModelRetry,
@@ -86,7 +92,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models._batch_model import BatchPool
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -3563,6 +3569,29 @@ async def test_dbos_step_wrapped_tool_rejects_cancel_in_workflow(dbos: DBOS) -> 
         await agent.run('run')
 
 
+async def test_dbos_step_wrapped_tool_rejects_request_compaction_in_workflow(dbos: DBOS) -> None:
+    """`ctx.request_compaction()` inside a step-wrapped tool raises: a replayed step wouldn't request it again."""
+
+    async def compact(ctx: RunContext[object]) -> str:
+        ctx.request_compaction()
+        return 'requested'  # pragma: no cover
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_request_compaction_dynamic',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([compact]), id='compact_dynamic')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='`request_compaction` is not supported inside a durable step'):
+        await run_workflow()
+
+
 async def test_dbos_step_wrapped_sub_agent_self_cancel_is_a_failed_tool_return(dbos: DBOS) -> None:
     """A sub-agent that cancels itself inside a step-wrapped (dynamic) tool fails that tool call, as it does in-process.
 
@@ -6142,3 +6171,82 @@ def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError
     replayed = deserialize_exception(recorded, serialization, DBOSDefaultSerializer)
     assert type(replayed) is type(error)
     assert streamed_before_failing(replayed) == partial
+
+
+async def test_dbos_durability_compaction_runs_model_calls_as_steps(dbos: DBOS) -> None:
+    """A `compact_history` hook runs in the workflow, and its call through `request.model` is a DBOS step.
+
+    The model rejects the first attempt for exceeding its context window, so the overflow is compacted and retried
+    within the same attempt; a listener cancels the requested compaction of the following step.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not info.function_tools:
+            # The compaction's own request, which offers no tools.
+            return ModelResponse(parts=[TextPart('a summary')])
+        if not any(isinstance(part, CompactionPart) for message in messages for part in message.parts):
+            raise ModelContextWindowExceededError('model', 'context_length_exceeded')
+        if sum(isinstance(message, ModelResponse) for message in messages) == 0:
+            return ModelResponse(parts=[ToolCallPart('compact_again', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        # A run with an event listener streams its requests.
+        response = model_fn(messages, info)
+        part = response.parts[0]
+        if isinstance(part, ToolCallPart):
+            yield {0: DeltaToolCall(name=part.tool_name, json_args='{}')}
+        else:
+            yield response.text or ''
+
+    class Summarize(AbstractCapability[None]):
+        async def compact_history(self, ctx: RunContext[None], request: CompactionRequest) -> CompactionResult | None:
+            summary = await request.model.request(
+                [ModelRequest(parts=[UserPromptPart('Summarize the conversation.')])],
+                None,
+                ModelRequestParameters(),
+            )
+            part = CompactionPart(content=summary.text)
+            return CompactionResult(
+                messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='summarize', kept_from=1
+            )
+
+    cancelled: list[str] = []
+
+    class HoldRequested(AbstractCapability[None]):
+        @on_event(CompactionStartEvent)
+        async def _hold(self, ctx: RunContext[None], event: CompactionStartEvent) -> None:
+            if event.reason != 'context_overflow':
+                cancelled.append(event.reason)
+                event.cancel()
+
+    agent = Agent(
+        FunctionModel(model_fn, stream_function=stream_fn),
+        name='durability_compaction',
+        deps_type=type(None),
+        capabilities=[HoldRequested(), Summarize(), DBOSDurability()],
+    )
+
+    @agent.tool
+    def compact_again(ctx: RunContext[None]) -> str:
+        ctx.request_compaction(reason='threshold')
+        return 'requested'
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> tuple[str, list[str]]:
+        result = await agent.run('Hello DBOS')
+        return result.output, [record.reason for record in result.compactions]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output, reasons = await run_durable_agent()
+    assert (output, reasons, cancelled) == ('done', ['context_overflow'], ['threshold'])
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(
+        [
+            'durability_compaction__model.request_stream',
+            'durability_compaction__model.request',
+            'durability_compaction__model.request_stream',
+            'durability_compaction__model.request_stream',
+        ]
+    )

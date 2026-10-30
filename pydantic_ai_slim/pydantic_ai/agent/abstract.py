@@ -1170,6 +1170,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 graph_ctx.deps.new_message_index,
                                 stream,
                                 on_complete,
+                                compactions=graph_ctx.state.compactions,
                             )
                             # Note: wrap_node_run/after_node_run are intentionally skipped here.
                             # before_node_run fired above; on_complete() later calls

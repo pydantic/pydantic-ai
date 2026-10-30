@@ -56,6 +56,7 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     conversation_id: NotRequired[str]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
+    compactions: NotRequired[list[_messages.CompactionRecord]]
 
 
 @with_config(ConfigDict(title='AgentRunResult'))
@@ -75,6 +76,7 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     conversation_id: str
     metadata: dict[str, Any] | None
     traceparent: str | None
+    compactions: list[_messages.CompactionRecord]
 
 
 @cache
@@ -106,7 +108,7 @@ def _output_field_schema(schema: CoreSchema) -> CoreSchema:
     return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
 
 
-_STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'metadata')
+_STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'metadata', 'compactions')
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
 
 
@@ -687,6 +689,17 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return self._graph_run.state.run_id
 
     @property
+    def compactions(self) -> list[_messages.CompactionRecord]:
+        """The compactions this run kept so far, in the order it kept them.
+
+        The message history only shows the compacted history: [`new_messages()`][pydantic_ai.agent.AgentRun.new_messages] are this run's messages
+        still in it. Each [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you
+        can tell which messages were summarized, for example to store the conversation's full log. A compaction made
+        for an attempt that then failed isn't included.
+        """
+        return self._graph_run.state.compactions
+
+    @property
     def conversation_id(self) -> str:
         """The unique identifier for the conversation this run belongs to."""
         return self._graph_run.state.conversation_id
@@ -922,6 +935,9 @@ class AgentRunResult(Generic[OutputDataT]):
             'metadata': self._state.metadata,
             'traceparent': self._traceparent_value,
         }
+        if compactions := self._state.compactions:
+            # Only when there are any, so a run that didn't compact serializes as it always has.
+            data['compactions'] = compactions
         if 'output' in serialized:
             # Absent when the caller filtered it out: an explicit `exclude={'output'}`, or
             # `exclude_none=True` on a `None` output. The handler applies those filters to the
@@ -1037,6 +1053,17 @@ class AgentRunResult(Generic[OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
+
+    @property
+    def compactions(self) -> list[_messages.CompactionRecord]:
+        """The compactions this run kept, in the order it kept them.
+
+        The message history only shows the compacted history: [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] are this run's messages
+        still in it. Each [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you
+        can tell which messages were summarized, for example to store the conversation's full log. A compaction made
+        for an attempt that then failed isn't included.
+        """
+        return self._state.compactions
 
     @property
     def conversation(self) -> Conversation:

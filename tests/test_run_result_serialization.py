@@ -437,6 +437,7 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                     'title': 'Metadata',
                 },
                 'traceparent': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Traceparent'},
+                'compactions': {'items': {'$ref': '#/$defs/CompactionRecord'}, 'title': 'Compactions', 'type': 'array'},
             },
             'required': ['output'],
             'title': 'AgentRunResult',
