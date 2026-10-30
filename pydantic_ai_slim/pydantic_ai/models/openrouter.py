@@ -936,7 +936,7 @@ class OpenRouterModel(OpenAIChatModel):
         """Add `cache_control` to the last content part.
 
         Mirrors the Anthropic model's `_add_cache_control_to_last_param` behavior for
-        OpenRouter's Anthropic and Gemini providers. A `CachePoint` that opens a user message has
+        OpenRouter's Anthropic routes (Gemini routes take no message breakpoints). A `CachePoint` that opens a user message has
         nothing in that message to attach to, so it goes on an empty placeholder part that
         `_move_leading_cache_controls` moves onto the previous user message once the whole
         request is mapped.
