@@ -904,6 +904,7 @@ class ModelRequestTimeout(ModelAPIError):
         super().__setstate__(state)
         self.setting = state.get('setting', 'request_timeout')
         self.message = _request_timeout_message(self.model_name, self.timeout, self.setting)
+        self.args = (self.message,)
 
 
 def _request_timeout_message(model_name: str, timeout: float, setting: RequestTimeoutSetting) -> str:

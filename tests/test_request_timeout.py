@@ -772,6 +772,7 @@ async def test_first_event_timeout_raises_model_request_timeout(anyio_backend: s
     )
     unpickled = pickle.loads(pickle.dumps(error))
     assert (unpickled.model_name, unpickled.timeout, unpickled.setting) == ('slow', 10, 'first_event_timeout')
+    assert (str(unpickled), repr(unpickled)) == (str(error), repr(error))
     assert stream.closed
 
 
