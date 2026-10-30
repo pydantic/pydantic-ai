@@ -58,6 +58,12 @@ from pydantic_clai2.ui.rendering.tool_output import (
 )
 
 
+def print_prompt(console: Console, text: str) -> None:
+    """Echo a submitted prompt, then a blank line: an accent marker and bold text set it apart from answers."""
+    console.print(Text.assemble(('> ', theme.color(theme.ACCENT)), (terminal_text(text), 'bold')), highlight=False)
+    console.print()
+
+
 def markdown_style() -> RenderStyle:
     """Keep the existing Markdown colours unless a Termflow palette is selected."""
     palette = theme.current()
@@ -479,8 +485,7 @@ class StreamRenderer:
             self._buffer = ''
         continuation = self._markdown.continuation() if self._markdown is not None else None
         await self.finish()
-        self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
-        self.console.print()
+        print_prompt(self.console, text)
         if index is not None:
             self._index = index
             self._thinking = thinking
