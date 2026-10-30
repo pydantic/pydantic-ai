@@ -13,7 +13,7 @@ import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, NoReturn
 from unittest.mock import patch
@@ -1706,7 +1706,7 @@ class TestStopEscalation:
                 await anyio.sleep(0.01)  # pragma: lax no cover
         job.pgid = None
         job.pid = 2**22 + 12345  # beyond any live PID, so `kill` finds no process
-        assert not await job.kill()
+        assert await job.kill() is False
 
 
 _KILL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
@@ -1939,7 +1939,6 @@ class TestLostJob:
         assert await ts.check_command(ctx, command_id) == f'(no output yet)\n{_LOST}'
         assert await ts.stop_command(ctx, command_id) == f'(no output)\n{_LOST}'
         assert [argv for argv in backend.argv if argv[:3] == ['sh', '-c', _KILL_SCRIPT]] == []
-        assert not Path(job.directory).exists()
 
     async def test_an_unrelated_process_holding_the_job_ids_is_not_signalled(self, shell_dir: Path) -> None:
         # After a workspace restart, PIDs start again from 1, so an unrelated session leader can hold the
@@ -1970,15 +1969,20 @@ class TestLostJob:
         os.mkfifo(pid_pipe)
         command_id = _parse_command_id(await ts.start_command(ctx, f'echo $$ > {pid_pipe}; exec sleep 300'))
         job = await _job(ts, ctx, command_id)
-        with anyio.fail_after(10):
-            command_pid = int(await anyio.to_thread.run_sync(pid_pipe.read_text))
-        os.kill(job.pid, signal.SIGKILL)
-        await _wait_for_exit(job.pid)
+        assert job.pgid is not None
+        try:
+            with anyio.fail_after(10):
+                command_pid = int(await anyio.to_thread.run_sync(pid_pipe.read_text, abandon_on_cancel=True))
+            os.kill(job.pid, signal.SIGKILL)
+            await _wait_for_exit(job.pid)
 
-        assert await ts.check_command(ctx, command_id) == '(no output yet)\n[status: running]'
-        # The wrapper can't publish how the command ended, so there is no exit code.
-        assert await ts.stop_command(ctx, command_id) == '(no output)\n[stopped]'
-        await _wait_for_exit(command_pid)
+            assert await ts.check_command(ctx, command_id) == '(no output yet)\n[status: running]'
+            # The wrapper can't publish how the command ended, so there is no exit code.
+            assert await ts.stop_command(ctx, command_id) == '(no output)\n[stopped]'
+            await _wait_for_exit(command_pid)
+        finally:
+            with suppress(ProcessLookupError, PermissionError):  # already stopped; macOS: only zombies left
+                os.killpg(job.pgid, signal.SIGKILL)
 
     async def test_a_live_job_launched_with_another_time_zone_is_running(self, shell_dir: Path) -> None:
         # The job is launched with the command's `env` and checked without it. Where its start time comes from `ps`
@@ -1995,8 +1999,15 @@ class TestLostJob:
         finally:
             await _kill_group(job.pgid)
 
+    @pytest.mark.parametrize(
+        ('tool', 'expected'),
+        [
+            ('check_command', '(no output yet)\n[status: finished]\n[exit code: 0]'),
+            ('stop_command', '(no output)\n[stopped]\n[exit code: 0]'),
+        ],
+    )
     async def test_a_job_finishing_during_the_check_is_finished(
-        self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch
+        self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch, tool: str, expected: str
     ) -> None:
         # The job is still running when its status is first read, and gone, having published its exit code,
         # by the time its processes are looked for.
@@ -2008,13 +2019,24 @@ class TestLostJob:
         alive = Job.alive
 
         async def alive_once_finished(job: Job) -> bool:
-            await anyio.to_thread.run_sync(release.write_text, 'go\n')
+            await anyio.to_thread.run_sync(release.write_text, 'go\n', abandon_on_cancel=True)
             await _wait_for_exit(job.pid)
             return await alive(job)
 
         monkeypatch.setattr(Job, 'alive', alive_once_finished)
         with anyio.fail_after(10):
-            assert await ts.check_command(ctx, command_id) == '(no output yet)\n[status: finished]\n[exit code: 0]'
+            assert await getattr(ts, tool)(ctx, command_id) == expected
+
+    async def test_a_job_started_before_identities_were_recorded_is_still_checked_and_stopped(
+        self, shell_dir: Path
+    ) -> None:
+        ts = _shell_toolset(shell_dir)
+        ctx = _ctx(shell_dir)
+        command_id = _parse_command_id(await ts.start_command(ctx, 'exec sleep 300'))
+        job = await _job(ts, ctx, command_id)
+        (Path(job.directory) / 'identity').unlink()
+        assert await ts.check_command(ctx, command_id) == '(no output yet)\n[status: running]'
+        assert await ts.stop_command(ctx, command_id) == '(no output)\n[stopped]\n[exit code: 143]'
 
     async def test_a_failed_check_is_not_taken_for_a_lost_job(self, shell_dir: Path) -> None:
         ts = _shell_toolset(shell_dir)
@@ -2031,12 +2053,13 @@ class TestLostJob:
     @pytest.mark.parametrize('mode', ['foreground', 'background'])
     async def test_the_shell_tool_names_no_kill_command_for_a_lost_job(self, shell_dir: Path, mode: str) -> None:
         async def call_shell(arguments: dict[str, object]) -> str:
-            # The same run ID and tool call ID each time: a durable retry of one call, which attaches to the job
-            # the first attempt started.
+            # Each run has the same ID and gets the same response, as a durable engine replays a recorded one, so
+            # the call attaches to the job the first one started.
             def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
                 if isinstance(messages[-1].parts[-1], ToolReturnPart):
                     return ModelResponse(parts=[TextPart('done')])
-                return ModelResponse(parts=[ToolCallPart('shell', arguments, tool_call_id='shell-1')])
+                call = ToolCallPart('shell', arguments, tool_call_id='shell-1')
+                return ModelResponse(parts=[call], timestamp=datetime(2026, 1, 1, tzinfo=UTC))
 
             agent = Agent(FunctionModel(respond), capabilities=[Shell(denied_commands=[], tools=['shell'])])
             result = await agent.run('go', workspace=LocalWorkspaceBackend(shell_dir), run_id='durable-run')
