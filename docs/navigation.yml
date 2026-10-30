@@ -1100,6 +1100,13 @@ navigation:
           - "comparisons/google-adk"
           - "pydantic-ai-vs-google-adk"
           - "google-adk-vs-pydantic-ai"
+      - page: "vs OpenHands Software Agent SDK"
+        path: "comparisons/vs-openhands.md"
+        slug: "comparisons/vs-openhands"
+        aliases:
+          - "comparisons/openhands"
+          - "pydantic-ai-vs-openhands"
+          - "openhands-vs-pydantic-ai"
       - page: "vs Mastra"
         path: "comparisons/vs-mastra.md"
         slug: "comparisons/vs-mastra"
