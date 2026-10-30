@@ -36,7 +36,7 @@ def escape_tool_result_body(text: str) -> str:
 
 
 def make_background_completion(text: str, task_id: str) -> TextContent:
-    """The completion as a frame the framework wrote, so it's sent with the conversation's frame seal."""
+    """The completion as a frame the framework wrote, so it's sent with the frame seal."""
     return framework_frame_text(text, metadata={'origin': _BACKGROUND_RESULT_ORIGIN, 'tool_call_id': task_id})
 
 

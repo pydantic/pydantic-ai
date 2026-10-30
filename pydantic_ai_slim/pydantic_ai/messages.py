@@ -2039,7 +2039,7 @@ other outcomes (`'denied'`, `'interrupted'`) are ordinary results whose content 
 
 
 def _tool_result_provenance_tags(
-    tool_name: str, tool_call_id: str, file_identifier: str, *, sealed: bool = True
+    tool_name: str, tool_call_id: str, file_identifier: str, *, sealed: bool
 ) -> tuple[str, str]:
     """The open and close tags framing one tool-produced file that has to travel on the user channel.
 
