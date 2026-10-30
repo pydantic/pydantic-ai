@@ -22,7 +22,7 @@ if TYPE_CHECKING:
         str | bool | int | float | Sequence['AttributeValue'] | Mapping[str, 'AttributeValue'] | None
     )
 else:
-    # Match recursive OTel values while retaining the existing byte-string validation.
+    # Recursive OTel values; byte strings validate as UTF-8 text through the str arm.
     AttributeValue = TypeAliasType(
         'AttributeValue',
         'str | bool | int | float | Sequence[AttributeValue] | Mapping[str, AttributeValue] | None',
