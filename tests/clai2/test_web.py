@@ -1014,9 +1014,15 @@ def test_sidebar_tells_apart_projects_that_share_a_name(make_web: 'MakeWeb', tmp
         web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
     web_.shell.session.workspace = str(first.resolve())
 
-    names = sorted(project['name'] for project in web_.get('/api/sessions').json())
-    shown = [f'{tmp_path.resolve().name}/a/scratch', 'b/scratch', 'z/a/scratch', 'other', 'scratch']
-    assert names == sorted(str(Path(name)) for name in shown)
+    projects = web_.get('/api/sessions').json()
+    names = {project['worktrees'][0]['sessions'][0]['title']: project['name'] for project in projects}
+    assert names == {
+        'First': str(Path(tmp_path.resolve().name, 'a', 'scratch')),
+        'Second': str(Path('b', 'scratch')),
+        'Third': str(Path('z', 'a', 'scratch')),
+        'Other': 'other',
+        'Relative': 'scratch',
+    }
 
 
 def test_sidebar_lists_removed_worktrees_after_live_ones(make_web: 'MakeWeb', tmp_path: Path) -> None:

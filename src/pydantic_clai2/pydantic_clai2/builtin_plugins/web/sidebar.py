@@ -64,7 +64,7 @@ def project_names(identities: Mapping[str, ProjectIdentity]) -> dict[str, str]:
     Projects that share a name each show the shortest end of their folder's path that no other of them shares,
     as `a/scratch` and `b/scratch`.
     """
-    # A repository's key is its Git folder: `.git` inside the main checkout, or the bare repository itself.
+    # A repository's key is its Git folder, as its name is: `.git` inside the main checkout, or the folder itself.
     folders = {key: PurePath(key).parent if PurePath(key).name == '.git' else PurePath(key) for key in identities}
     names = {key: identity.name for key, identity in identities.items()}
     for key, folder in folders.items():
