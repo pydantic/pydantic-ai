@@ -673,15 +673,32 @@ class TestIdleTimeout:
         assert fake_e2b.set_timeout_calls == [('sbx-1', 60)]
 
     async def test_extension_stops_at_the_sandbox_timeout(self, fake_e2b: FakeE2B, clock: list[float]) -> None:
-        # A sandbox passed in has an unknown lifetime, so its first operation extends it.
         backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'), sandbox_timeout=100, idle_timeout=60)  # pyright: ignore[reportArgumentType]
+        # A sandbox passed in has an unknown lifetime: its first use extends it and starts the deadline,
+        # however long after construction that is.
+        clock[0] += 500
         await backend.run(['true'])
         clock[0] += 50
         await backend.run(['true'])
         clock[0] += 20
         await backend.run(['true'])
-        # The second extension already reaches the deadline 100 seconds after construction.
+        # The second extension already reaches the deadline, 100 seconds after the first use.
         assert fake_e2b.set_timeout_calls == [('sbx-own', 60), ('sbx-own', 50)]
+
+    async def test_no_extension_under_a_second_before_the_deadline(self, fake_e2b: FakeE2B, clock: list[float]) -> None:
+        backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'), sandbox_timeout=100, idle_timeout=60)  # pyright: ignore[reportArgumentType]
+        fake_e2b.set_timeout_error = SandboxException('500: busy')
+        await backend.run(['true'])
+        fake_e2b.set_timeout_error = None
+        clock[0] += 99.5
+        await backend.run(['true'])
+        assert fake_e2b.set_timeout_calls == []
+
+    async def test_a_one_second_idle_timeout_is_extended(self, fake_e2b: FakeE2B, clock: list[float]) -> None:
+        backend = await started(idle_timeout=1)
+        clock[0] += 0.5
+        await backend.run(['true'])
+        assert fake_e2b.set_timeout_calls == [('sbx-1', 1)]
 
     async def test_a_long_command_extends_the_timeout_and_a_failed_extension_is_retried(
         self, fake_e2b: FakeE2B
@@ -694,9 +711,11 @@ class TestIdleTimeout:
                 # The extension before the command failed; the one while it runs succeeds.
                 fake_e2b.set_timeout_error = None
                 fake_e2b.command_hangs = True
+                fake_e2b.set_timeout_hangs = True
             return '', '', 0
 
         fake_e2b.responder = responder
+        tasks_before = asyncio.all_tasks()
         with anyio.fail_after(5):
             async with anyio.create_task_group() as group:
                 group.start_soon(backend.run, ['sleep', '600'])
@@ -704,6 +723,9 @@ class TestIdleTimeout:
                     await anyio.lowlevel.checkpoint()
                 group.cancel_scope.cancel()
         assert fake_e2b.set_timeout_calls == [('sbx-own', 60)]
+        # The keep-alive task, cancelled in the middle of its request, is awaited before `run` returns.
+        assert fake_e2b.set_timeout_unwound
+        assert asyncio.all_tasks() == tasks_before
 
     async def test_without_idle_timeout_nothing_is_extended(self, fake_e2b: FakeE2B) -> None:
         backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'))  # pyright: ignore[reportArgumentType]

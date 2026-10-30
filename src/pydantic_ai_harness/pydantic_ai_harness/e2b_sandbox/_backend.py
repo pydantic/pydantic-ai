@@ -286,9 +286,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self._sandbox_timeout = sandbox_timeout
         self._idle_timeout = idle_timeout
         # Monotonic times: when the sandbox pauses unless extended, and past which it is never extended.
-        # A sandbox passed in has an unknown lifetime, so its first operation extends it.
+        # A sandbox passed in has an unknown lifetime, so its first operation extends it and starts the deadline.
         self._expires_at = 0.0
-        self._deadline = time.monotonic() + sandbox_timeout
+        self._deadline: float | None = None
         self._env = dict(env) if env is not None else None
         self._allow_internet_access = allow_internet_access
         self._probe_setsid = template is not None or sandbox is not None or ref is not None
@@ -345,11 +345,13 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         if self._idle_timeout is None:
             return
         now = time.monotonic()
-        if self._expires_at - now > self._idle_timeout * 0.9:
+        if self._deadline is None:
+            self._deadline = now + self._sandbox_timeout
+        # Within a second of the deadline, the last extension already reaches it.
+        if self._expires_at - now > self._idle_timeout * 0.9 or self._expires_at > self._deadline - 1:
             return
         timeout = min(self._idle_timeout, int(self._deadline - now))
-        # Nothing to gain at the deadline, where the last extension already reaches it.
-        if timeout < 1 or now + timeout < self._expires_at + 1:
+        if timeout < 1:
             return
         try:
             await sandbox.set_timeout(timeout)
@@ -743,6 +745,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 finally:
                     if keep_alive is not None:
                         keep_alive.cancel()
+                        # Wait for its `set_timeout` request to unwind, so `run` leaves no request behind.
+                        with anyio.CancelScope(shield=True):
+                            await asyncio.wait([keep_alive])
             if output_bytes > _MAX_OUTPUT_BYTES:
                 # The SDK builds the handle before its pump delivers any output, so one exists here.
                 assert handle is not None

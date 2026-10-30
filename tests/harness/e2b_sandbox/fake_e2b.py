@@ -676,6 +676,15 @@ class FakeSandbox:
         if self._control.set_timeout_error is not None:
             raise self._control.set_timeout_error
         self._control.set_timeout_calls.append((self.sandbox_id, timeout))
+        if self._control.set_timeout_hangs:
+            try:
+                await anyio.sleep_forever()
+            finally:
+                # A real request takes many event-loop steps to unwind after cancellation, as the HTTP client closes it.
+                with anyio.CancelScope(shield=True):
+                    for _ in range(100):
+                        await anyio.lowlevel.checkpoint()
+                self._control.set_timeout_unwound = True
 
 
 class FakeAsyncSandboxFactory:
@@ -752,6 +761,8 @@ class FakeE2B:
     sandbox_is_running: bool = True
     set_timeout_calls: list[tuple[str, int]] = field(default_factory=list[tuple[str, int]])
     set_timeout_error: Exception | None = None
+    set_timeout_hangs: bool = False
+    set_timeout_unwound: bool = False
     # When set, sandboxes run commands and file operations on the host under this directory.
     host_root: Path | None = None
 
