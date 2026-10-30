@@ -266,7 +266,6 @@ async def test_uncommitted_matches_git_diff_head(repo: Path, monkeypatch: pytest
     (repo / 'c.py').write_text('c = 1\n')
     (repo / 'logo.png').write_bytes(b'\0PNG')
     git(repo, 'add', 'c.py', 'logo.png')
-    (repo / 'untracked.py').write_text('ignored by git diff HEAD\n')
 
     found = await session_changes([], repo, scope='uncommitted')
     numstat = [line.split('\t') for line in git(repo, 'diff', 'HEAD', '--numstat').splitlines()]
@@ -285,6 +284,37 @@ async def test_uncommitted_matches_git_diff_head(repo: Path, monkeypatch: pytest
     monkeypatch.setattr(changes_module, 'MAX_FILES', 3)
     capped = await session_changes([], repo, scope='uncommitted')
     assert ([change.path for change in capped.files], capped.omitted) == (['a.py', 'b.py', 'c.py'], 1)
+
+
+async def test_uncommitted_lists_untracked_files_as_git_status_does(repo: Path) -> None:
+    """New files Git does not track yet are added, as the git chip counts them; ignored ones stay out."""
+    (repo / 'a.py').write_text('def a():\n    return 10\n')
+    (repo / 'src').mkdir()
+    (repo / 'src' / 'notes.txt').write_text('hello\n')
+    (repo / 'src' / 'logo.png').write_bytes(b'\0PNG')
+    (repo / '.gitignore').write_text('*.log\n')
+    git(repo, 'add', '.gitignore')
+    git(repo, 'commit', '-q', '-m', 'ignore logs')
+    (repo / 'debug.log').write_text('ignored\n')
+    index = (repo / '.git' / 'index').read_bytes()
+
+    # From a folder inside the repository, as a session's workspace can be.
+    found = await session_changes([], repo / 'src', scope='uncommitted')
+    assert listed(found) == [('a.py', 'M', 1, 1), ('src/logo.png', 'A', 0, 0), ('src/notes.txt', 'A', 1, 0)]
+    assert found.files[2].diff.diff == '--- /dev/null\n+++ b/src/notes.txt\n@@ -0,0 +1 @@\n+hello\n'
+    assert found.files[1].note == 'Binary file.'
+    status = git(repo, 'status', '--porcelain', '--untracked-files=all').splitlines()
+    assert len(found.files) == len(status)
+
+    counted = await session_changes([], repo, scope='uncommitted', diffs=False)
+    assert listed(counted) == listed(found)
+    assert git(repo, 'status', '--porcelain', '--untracked-files=all').splitlines() == status
+    assert (repo / '.git' / 'index').read_bytes() == index, 'the real index is left alone'
+
+    # With no index at all, every file on disk is compared with the last commit.
+    (repo / '.git' / 'index').unlink()
+    unindexed = await session_changes([], repo, scope='uncommitted', diffs=False)
+    assert listed(unindexed) == listed(found)
 
 
 async def test_branch_against_its_base(repo: Path) -> None:
