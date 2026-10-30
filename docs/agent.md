@@ -297,6 +297,76 @@ if __name__ == '__main__':
 
 _(This example is complete, it can be run "as is")_
 
+#### Telling rejected responses apart {#rejected-responses}
+
+A streamed response can turn out not to be the answer after you've received its events: an [output validator](output.md#output-validator-functions) or an `after_model_request` [hook](hooks.md) raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], the response has no usable output, or a capability replaces it mid-stream, like a parallel [input guardrail](harness/guardrails.md) that blocks the prompt. The response that takes its place then streams as usual, so a [`ModelResponseRejectedEvent`][pydantic_ai.messages.ModelResponseRejectedEvent] comes between the two, right after the rejected response's own events. Use it to set the rejected output apart, for example by striking it through or replacing it in your UI.
+
+The event carries the rejected `response` as far as it was streamed, the `run_step` and `attempt` that produced it, and the `reason`: the [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] the model is asked again with, or a [`ModelRequestAttempt`][pydantic_ai.messages.ModelRequestAttempt] when a capability answered instead. It's also sent when the rejection uses up the [output retry budget](#how-output-retries-are-enforced), before the run fails with [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]. Runs whose responses are all accepted see no such event.
+
+```python {title="rejected_response_events.py"}
+import asyncio
+from collections.abc import AsyncIterator
+
+from pydantic_ai import (
+    Agent,
+    AgentRunResultEvent,
+    ModelResponseRejectedEvent,
+    ModelRetry,
+    PartEndEvent,
+    RunContext,
+    TextPart,
+)
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    # Announces a lookup at first, and answers once it's asked again.
+    yield 'The store opens at 9 am.' if len(messages) > 1 else "I'll look that up."
+
+
+agent = Agent(FunctionModel(stream_function=stream_function))
+
+
+@agent.output_validator
+def reject_announcements(ctx: RunContext, output: str) -> str:
+    if output.startswith("I'll look"):
+        raise ModelRetry('Answer the question instead of announcing a lookup.')
+    return output
+
+
+seen: list[str] = []
+
+
+async def main():
+    async with agent.run_stream_events('When does the store open?') as events:
+        async for event in events:
+            if isinstance(event, PartEndEvent) and isinstance(event.part, TextPart):
+                seen.append(f'Text: {event.part.content}')
+            elif isinstance(event, ModelResponseRejectedEvent):
+                seen.append(f'Rejected: {event.response.text}')
+            elif isinstance(event, AgentRunResultEvent):
+                seen.append(f'Output: {event.result.output}')
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+
+    print(seen)
+    """
+    [
+        "Text: I'll look that up.",
+        "Rejected: I'll look that up.",
+        'Text: The store opens at 9 am.',
+        'Output: The store opens at 9 am.',
+    ]
+    """
+```
+
+_(This example is complete, it can be run "as is")_
+
+The event reaches every consumer of the run's events: an `event_stream_handler`, `run_stream_events()`, [`agent.iter()`](#iterating-over-an-agents-graph) streaming, and the [Vercel AI](ui/vercel-ai.md#rejected-responses) and [AG-UI](ui/ag-ui.md#rejected-responses) adapters. When the hooks reject a response, the request step's stream reports it before it ends, so a consumer that reads the stream to the end sees the rejection in the same stream as the response. One that stops reading early gets it at the start of the next request's stream. [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] and the other [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] accessors carry text only, not this event.
+
 ### Custom Events
 
 Alongside the framework's own events, a tool or code driving [`agent.iter()`](#iterating-over-an-agents-graph) can emit its own [`CustomEvent`][pydantic_ai.messages.CustomEvent]s into the same stream. This is useful for surfacing progress updates, intermediate results, or status information from long-running work to whoever is consuming the stream, without adding anything to the model's context.
