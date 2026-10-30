@@ -2727,7 +2727,7 @@ class TestModelRequestErrorHooks:
             await agent.run('hello')
 
     async def test_default_on_model_request_error_reraises_streaming(self):
-        """Default on_model_request_error re-raises in streaming path (wrap_task error after stream consumed)."""
+        """Default on_model_request_error re-raises in streaming path (wrap.task error after stream consumed)."""
 
         @dataclass
         class PostProcessFailCap(AbstractCapability[Any]):

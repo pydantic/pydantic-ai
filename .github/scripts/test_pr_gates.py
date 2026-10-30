@@ -620,7 +620,8 @@ ENV = {
 
 def test_reevaluation_replaces_a_failure_with_success_on_the_live_head():
     github = ReviewGitHub(current_reviews=[])
-    assert review_gates.reconcile_reviews(github, ENV) == 1
+    assert review_gates.reconcile_reviews(github, ENV) == 0
+    assert github.statuses == [(HEAD, 'douwebot', 'failure')]
     github.current_reviews = [review()]
     assert review_gates.reconcile_reviews(github, ENV) == 0
     assert github.statuses == [
@@ -629,10 +630,14 @@ def test_reevaluation_replaces_a_failure_with_success_on_the_live_head():
     ]
 
 
-def test_errors_and_changing_snapshots_fail_closed():
+@pytest.mark.parametrize(
+    'error',
+    [GateError('API unavailable'), review_gates.ValidationError('ReviewComment', []), OSError('Cannot read metadata')],
+)
+def test_errors_and_changing_snapshots_fail_closed(error: Exception):
     class Unreachable(ReviewGitHub):
         def review_comments(self) -> list[review_gates.ReviewComment]:
-            raise GateError('API unavailable')
+            raise error
 
     github = Unreachable()
     assert review_gates.reconcile_reviews(github, ENV) == 1
@@ -646,6 +651,17 @@ def test_errors_and_changing_snapshots_fail_closed():
     moving = Moving(current_reviews=[])
     assert review_gates.reconcile_reviews(moving, ENV) == 1
     assert moving.statuses == [(HEAD, 'douwebot', 'failure')]
+
+
+def test_review_status_publication_errors_propagate():
+    class Unwritable(ReviewGitHub):
+        def status(
+            self, head: str, gate: review_gates.ReviewGate, state: review_gates.CommitStatus, description: str, url: str
+        ) -> None:
+            raise GateError('Cannot publish status')
+
+    with pytest.raises(GateError, match='Cannot publish status'):
+        review_gates.reconcile_reviews(Unwritable(current_reviews=[]), ENV)
 
 
 @pytest.mark.parametrize('change', ['head', 'repository', 'closed'])
