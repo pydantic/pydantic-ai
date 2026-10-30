@@ -94,9 +94,9 @@ Once a model has been attempted `max_attempts` times (`3` by default, the first 
 
 Before each retry, the agent waits as long as the error's [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] says the provider asked for. Without one, it backs off exponentially: `initial_delay` seconds (`1` by default) before the first retry, doubling for each retry after it, up to `max_delay` seconds (`30` by default). A random part of up to half of each wait is taken off, so that many runs failing at the same moment don't all retry at the same moment too.
 
-A request is not retried, and the error is raised at once, when the wait would be longer than `max_delay`, as a provider asking for minutes rather than seconds usually means a quota resets later, or when the wait would end after the run's [deadline](../timeouts.md#bounding-a-whole-run). Either way, a `ModelFallback` can then move on to another model while the run still has time.
+A request is not retried, and the error is raised at once, when the wait would be longer than `max_delay`, as a provider asking for minutes rather than seconds usually means a quota resets later, or when the wait would end after the request's or the run's [deadline](../timeouts.md#bounding-a-whole-run). Either way, a `ModelFallback` can then move on to another model while the run still has time.
 
-Each attempt gets a fresh [`request_timeout`](../timeouts.md#model-request-deadlines) deadline of its own, as each model does under `ModelFallback`, so the deadline bounds one attempt rather than the retries together. To bound them all, set a [run timeout](../timeouts.md#bounding-a-whole-run).
+A [`request_timeout`](../timeouts.md#model-request-deadlines) covers a request to a model with all its retries and the waits between them: each retry gets what's left of the deadline the first attempt started with, and a wait that would end after it isn't made. A model `ModelFallback` moves on to gets a fresh deadline, as without `RetryOnModelErrors`.
 
 ## How attempts work
 
@@ -108,14 +108,7 @@ The response that answers lists every attempt before it in [`failed_attempts`][p
 
 ## Provider SDK retries
 
-Most provider SDKs retry failed requests themselves before raising, so each attempt `RetryOnModelErrors` makes can be several requests on the wire, and the waits add up. To make `RetryOnModelErrors` the only layer that retries, so that `max_attempts` really is the number of requests sent, set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0`:
-
-```python {title="retry_single_owner.py"}
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import RetryOnModelErrors
-
-agent = Agent('{{ openai:medium }}', model_settings={'max_retries': 0}, capabilities=[RetryOnModelErrors()])
-```
+Most provider SDKs retry failed requests themselves before raising, so each attempt could otherwise be several requests on the wire, with waits of their own. `RetryOnModelErrors` turns those retries off for the requests it makes, by sending them with [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) set to `0`, so it's the one layer that retries and `max_attempts` is the number of requests sent. A `max_retries` you set yourself, on the agent, the run or a model, is kept, and a model that doesn't support the setting isn't sent it.
 
 ## Streaming
 

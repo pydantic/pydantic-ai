@@ -445,8 +445,9 @@ Set it to `0` when another layer owns retrying, so the attempt budget is the one
 
 - a [retrying transport](#transport-retries) on the HTTP client;
 - a [durable execution](durable_execution/overview.md) engine's retry policy;
-- a [fallback model](#model-fallback-is-not-a-retry) that should move to its next model as soon as one fails;
-- the [`RetryOnModelErrors`](#retrying-the-same-model) capability.
+- a [fallback model](#model-fallback-is-not-a-retry) that should move to its next model as soon as one fails.
+
+[`RetryOnModelErrors`](#retrying-the-same-model) does this for you.
 
 With [`ModelFallback`](capabilities/model-fallback.md), `max_retries` set on the agent or run applies to every model in the chain, and takes precedence over each model's own settings. To keep SDK retries on the last model, the one with nothing to fall back to, set it on the other models instead:
 
@@ -486,7 +487,7 @@ The model classes that honor it are listed under [`ModelSettings.max_retries`][p
 The [`RetryOnModelErrors`](capabilities/retry-on-model-errors.md) capability attempts the same model again when a request fails with an error that waiting may fix: by default a rate limit, an unavailable or overloaded model, a server error, or a connection error. It's the retry layer the agent can see, configured on the agent like any capability:
 
 - it decides by the [normalized error categories](models/overview.md#handling-model-api-errors) every model raises, not by status codes, and you choose which with `retry_on`;
-- it waits the error's [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after], or an exponential backoff, but never longer than `max_delay` or past the run's deadline, and on [Temporal](durable_execution/temporal.md) and [DBOS](durable_execution/dbos.md) the wait is durable;
+- it waits the error's [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after], or an exponential backoff, but never longer than `max_delay` or past the request's or the run's deadline, and on [Temporal](durable_execution/temporal.md) and [DBOS](durable_execution/dbos.md) the wait is durable;
 - it retries a stream that fails before any output, which a [retrying transport](#transport-retries) can't do once the response headers have arrived;
 - it records every attempt in the answering response's `failed_attempts`, in the same list as [model fallback](#model-fallback-is-not-a-retry), and composes with it: each model is retried before the request falls back to the next.
 
@@ -494,14 +495,10 @@ The [`RetryOnModelErrors`](capabilities/retry-on-model-errors.md) capability att
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import RetryOnModelErrors
 
-agent = Agent(
-    '{{ openai:medium }}',
-    model_settings={'max_retries': 0},
-    capabilities=[RetryOnModelErrors(max_attempts=4)],
-)
+agent = Agent('{{ openai:medium }}', capabilities=[RetryOnModelErrors(max_attempts=4)])
 ```
 
-Set [`ModelSettings['max_retries']`](#setting-the-sdk-retry-count-per-request) to `0`, as above, so it's the only layer that retries and `max_attempts` is the number of requests sent, rather than that number multiplied by the provider SDK's own attempts.
+It owns retrying the requests it makes: it sends them with [`ModelSettings['max_retries']`](#setting-the-sdk-retry-count-per-request) set to `0`, so the provider SDK doesn't retry underneath it and `max_attempts` is the number of requests sent. A `max_retries` you set yourself is kept. A [`request_timeout`](timeouts.md#model-request-deadlines) covers its retries of a model and the waits between them.
 
 ## Model fallback is not a retry
 

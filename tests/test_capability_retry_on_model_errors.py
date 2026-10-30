@@ -15,7 +15,7 @@ import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import Hooks, ModelFallback, RetryOnModelErrors
+from pydantic_ai.capabilities import BatchModelRequests, Hooks, ModelFallback, RetryOnModelErrors
 from pydantic_ai.exceptions import (
     FallbackExceptionGroup,
     ModelAPIError,
@@ -36,12 +36,16 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import ModelRequestAttempt
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.batch import BatchRequest, EncodedBatchRequest
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
+from .batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 
 
 def _http_error(
@@ -116,6 +120,16 @@ async def test_gives_up_after_max_attempts():
 
     assert answered == ['primary'] * 4
     assert len(delays) == 3
+
+
+async def test_counts_attempts_at_a_wrapped_model():
+    """A model wrapped in another, as durable execution wraps it, is the same model on every attempt."""
+    answered: list[str] = []
+    errors: list[Exception] = [ModelConnectionError('primary', f'reset {i}') for i in range(3)]
+    agent = Agent(WrapperModel(_flaky('primary', errors, answered)), capabilities=[RetryOnModelErrors()])
+    with _recorded_sleeps(), pytest.raises(ModelConnectionError, match='reset 2'):
+        await agent.run('x')
+    assert answered == ['primary'] * 3
 
 
 async def test_one_attempt_never_retries():
@@ -344,6 +358,150 @@ async def test_a_usage_limit_is_not_retried():
     with _recorded_sleeps() as delays, pytest.raises(UsageLimitExceeded):
         await agent.run('x', usage_limits=UsageLimits(input_tokens_limit=5))
     assert (calls, delays) == (['expensive'], [])
+
+
+# --- Provider SDK retries and request deadlines ---
+
+
+def _recording(
+    name: str, errors: list[Exception], settings: list[ModelSettings | None], own: ModelSettings | None = None
+) -> FunctionModel:
+    """A model that records the settings each attempt is sent with, raises each of `errors` in turn, then answers."""
+    remaining = list(errors)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        settings.append(info.model_settings)
+        if remaining:
+            raise remaining.pop(0)
+        return ModelResponse(parts=[TextPart(f'{name} answered')])
+
+    return FunctionModel(respond, model_name=name, settings=own)
+
+
+async def test_turns_off_provider_sdk_retries():
+    """The capability is the one retry owner: every attempt is sent with `max_retries=0`."""
+    settings: list[ModelSettings | None] = []
+    agent = Agent(
+        _recording('primary', [ModelConnectionError('primary', 'reset')], settings),
+        capabilities=[RetryOnModelErrors()],
+    )
+    with _recorded_sleeps():
+        await agent.run('x')
+    assert [(s or {}).get('max_retries') for s in settings] == [0, 0]
+
+
+async def test_an_explicit_max_retries_is_kept():
+    """A `max_retries` the application set, on the agent or on a fallback model, is sent as is."""
+    primary_settings: list[ModelSettings | None] = []
+    backup_settings: list[ModelSettings | None] = []
+    primary = _recording('primary', [ModelConnectionError('primary', 'reset')] * 2, primary_settings)
+    backup = _recording('backup', [], backup_settings, own={'max_retries': 5})
+    agent = Agent(
+        primary,
+        model_settings={'max_retries': 1},
+        capabilities=[RetryOnModelErrors(max_attempts=2), ModelFallback(backup)],
+    )
+    with _recorded_sleeps():
+        await agent.run('x')
+    assert [(s or {}).get('max_retries') for s in primary_settings] == [1, 1]
+    # The agent's setting is sent to the fallback model too, which applies its own on top, as without the capability.
+    assert [(s or {}).get('max_retries') for s in backup_settings] == [1]
+
+    backup_settings.clear()
+    primary = _recording('primary', [ModelConnectionError('primary', 'reset')] * 2, [])
+    agent = Agent(primary, capabilities=[RetryOnModelErrors(max_attempts=2), ModelFallback(backup)])
+    with _recorded_sleeps():
+        await agent.run('x')
+    # The fallback model's own `max_retries` isn't overridden.
+    assert [(s or {}).get('max_retries') for s in backup_settings] == [5]
+
+
+class _NoSdkRetriesModel(FunctionModel):
+    unsupported_settings = frozenset({'max_retries'})
+
+
+async def test_a_model_without_sdk_retries_is_not_sent_max_retries():
+    """A model that ignores `max_retries` isn't sent it, so it doesn't warn about it."""
+    answering = _NoSdkRetriesModel(_recording('primary', [], []).function, model_name='primary')
+    with pytest.warns(UserWarning, match='max_retries'):
+        await Agent(answering, model_settings={'max_retries': 0}).run('x')
+
+    settings: list[ModelSettings | None] = []
+    recording = _recording('primary', [ModelConnectionError('primary', 'reset')], settings)
+    model = _NoSdkRetriesModel(recording.function, model_name='primary')
+    agent = Agent(model, capabilities=[RetryOnModelErrors()])
+    with _recorded_sleeps():
+        await agent.run('x')
+    assert [(s or {}).get('max_retries') for s in settings] == [None, None]
+
+
+async def test_retries_share_the_request_deadline():
+    """A retry gets what's left of the first attempt's `request_timeout`, so the deadline covers every retry."""
+    settings: list[ModelSettings | None] = []
+    agent = Agent(
+        _recording('primary', [ModelConnectionError('primary', 'reset')], settings),
+        model_settings={'request_timeout': 60},
+        capabilities=[RetryOnModelErrors(initial_delay=0)],
+    )
+    with _recorded_sleeps():
+        await agent.run('x')
+    timeouts = [(s or {}).get('request_timeout') for s in settings]
+    assert timeouts[0] == 60
+    assert timeouts[1] is not None and 0 < timeouts[1] < 60
+
+
+async def test_does_not_wait_past_the_request_deadline():
+    """A wait that would outlast the request's `request_timeout` isn't made, so a `ModelFallback` can move on."""
+    answered: list[str] = []
+    primary = _flaky('primary', [ModelConnectionError('primary', 'reset')], answered)
+    backup = _flaky('backup', [], answered)
+    agent = Agent(
+        primary,
+        model_settings={'request_timeout': 5},
+        capabilities=[RetryOnModelErrors(initial_delay=10, max_delay=10), ModelFallback(backup)],
+    )
+    with _recorded_sleeps() as delays:
+        result = await agent.run('x')
+    assert result.output == 'backup answered'
+    assert (answered, delays) == (['primary', 'backup'], [])
+
+
+class _FailingOnceBatchModel(SlowBatchTestModel):
+    """Fails the request in its first batch with an error batching doesn't submit again, and records what it encodes."""
+
+    def __init__(self) -> None:
+        super().__init__(model_name='batched')
+        self.encoded_settings: list[ModelSettings | None] = []
+        self.failures = 1
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        self.encoded_settings.append(request.model_settings)
+        return await super().batch_encode(request)
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        if self.failures:
+            self.failures -= 1
+            raise ModelHTTPError(400, self.model_name, body={'error': 'invalid request'})
+        return await super().request(messages, model_settings, model_request_parameters)
+
+
+async def test_retries_a_batched_request_in_a_new_batch():
+    """With `BatchModelRequests`, a retry goes into a new batch on the same model, sent `max_retries=0` like any."""
+    model = _FailingOnceBatchModel()
+    agent = Agent(
+        model,
+        capabilities=[RetryOnModelErrors(retry_on=ModelHTTPError), BatchModelRequests(**FAST_BATCH_SETTINGS)],
+    )
+    with _recorded_sleeps():
+        result = await agent.run('x')
+    assert result.output == 'success (no tool calls)'
+    assert len(model.created) == 2
+    assert [(s or {}).get('max_retries') for s in model.encoded_settings] == [0, 0]
 
 
 # --- With `ModelFallback` ---

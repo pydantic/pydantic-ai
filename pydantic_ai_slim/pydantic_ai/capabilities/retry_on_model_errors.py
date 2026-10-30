@@ -5,6 +5,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn
 
+import anyio
+
 from pydantic_ai._agent_graph import _agent_graph_sleep  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._fallback import (
     FallbackOn,
@@ -28,6 +30,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability, CapabilityOrdering
@@ -109,6 +112,8 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
     """The model the current attempt is at, without the wrappers applied to it."""
     _attempt: int = field(repr=False)
     """Which attempt in a row at `_model` in this step the current one is, counting from 1."""
+    _deadline: float | None = field(repr=False)
+    """When the `request_timeout` of the first of those attempts runs out, on anyio's clock, if it has one."""
 
     def __init__(
         self,
@@ -158,6 +163,7 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
         self._step = None
         self._model = None
         self._attempt = 1
+        self._deadline = None
 
     def get_ordering(self) -> CapabilityOrdering:
         # Inside `ModelFallback`, which is innermost too: the error and after hooks run innermost-first and the
@@ -168,28 +174,42 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> RetryOnModelErrors[AgentDepsT]:
         """Return a fresh copy so each run keeps its own attempt count."""
-        return replace_no_init(self, _step=None, _model=None, _attempt=1)
+        return replace_no_init(self, _step=None, _model=None, _attempt=1, _deadline=None)
 
     async def prepare_model_request(
         self,
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Count the attempt about to be made: one more at the same model, or the first at another one.
+        """Count the attempt about to be made, and keep the provider SDK from retrying it.
 
-        Whichever capability asked for the attempt, so a `ModelFallback` moving on to its next model starts a fresh
-        budget, and two of these capabilities share one per model.
+        An attempt is one more at the same model, or the first at another one, whichever capability asked for it, so
+        a `ModelFallback` moving on to its next model starts a fresh budget, and two of these capabilities share one
+        per model. A retry gets what's left of the first attempt's `request_timeout` rather than a fresh one, so the
+        deadline covers the retries and the waits between them.
         """
         model = request_context.model
         # The model may be wrapped by now, e.g. by a durable-execution capability, and wasn't on the previous attempt.
         while isinstance(model, WrapperModel):
             model = model.wrapped
+        settings: ModelSettings = merge_model_settings(model.settings, request_context.model_settings) or {}
+        updates: ModelSettings = {}
         if self._step == ctx.run_step and model is self._model:
             self._attempt += 1
+            if self._deadline is not None:
+                updates['request_timeout'] = max(self._deadline - _now(), 0.0)
         else:
             self._step = ctx.run_step
             self._model = model
             self._attempt = 1
+            timeout = settings.get('request_timeout')
+            self._deadline = _now() + timeout if timeout is not None else None
+        # This capability is the one retry owner, so `max_attempts` is the number of requests sent, unless the
+        # application set an SDK retry count of its own. A model that ignores the setting would warn about it.
+        if 'max_retries' not in settings and 'max_retries' not in model._unsupported_settings():  # pyright: ignore[reportPrivateUsage]
+            updates['max_retries'] = 0
+        if updates:
+            request_context.model_settings = {**(request_context.model_settings or {}), **updates}
         return request_context
 
     async def on_model_request_error(
@@ -245,6 +265,9 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
         if (remaining := ctx.remaining_time()) is not None and delay >= remaining:
             # The run would time out while waiting; raising now lets a `ModelFallback` try another model instead.
             return None
+        if self._deadline is not None and delay >= self._deadline - _now():
+            # So would the request; another model gets a fresh deadline.
+            return None
         return delay
 
     async def _retry_later(self, delay: float) -> NoReturn:
@@ -277,6 +300,11 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
         """
         error_types = spec_error_types(retry_on, owner='RetryOnModelErrors', param='retry_on')
         return cls(retry_on=error_types, max_attempts=max_attempts, initial_delay=initial_delay, max_delay=max_delay)
+
+
+def _now() -> float:
+    # The clock a `request_timeout` deadline is set on: the workflow's on Temporal, which replays it.
+    return anyio.current_time()  # workflow-nondeterminism-ok: the clock `request_timeout` runs on, replayed by Temporal
 
 
 def _jitter(ctx: RunContext[Any], attempt: int) -> float:
