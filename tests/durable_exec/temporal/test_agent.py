@@ -34,6 +34,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseRejectedEvent,
     ModelSettings,
     OutputToolCallEvent,
     OutputToolResultEvent,
@@ -41,6 +42,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
+    RetryFeedbackPart,
     RetryInfo,
     RunContext,
     RunUsage,
@@ -4026,6 +4028,32 @@ class HandlerDurableAgentWorkflow:
         return result.output
 
 
+async def _announce_then_answer(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'The store opens at 9 am.' if len(messages) > 1 else "I'll look that up."
+
+
+_rejection_durable_agent = Agent(
+    FunctionModel(stream_function=_announce_then_answer),
+    name='durability_rejection_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_durability_handler)],
+)
+
+
+@_rejection_durable_agent.output_validator
+def _reject_announcements(ctx: RunContext, output: str) -> str:
+    if output.startswith("I'll look"):
+        raise ModelRetry('Answer the question.')
+    return output
+
+
+@workflow.defn
+class RejectionDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _rejection_durable_agent.run(prompt)
+        return result.output
+
+
 _ENQUEUE_GUARD_ERROR = (
     '`ctx.enqueue()` is not supported inside a durable activity: the durable runtime replays '
     "the activity's recorded result without re-running your code, so the enqueued messages "
@@ -4157,6 +4185,44 @@ async def test_temporal_durability_event_stream_handler(client: Client) -> None:
     assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
     assert any(isinstance(event, PartStartEvent) for event in events)
     assert any(isinstance(event, FinalResultEvent) for event in events)
+
+
+async def test_temporal_rejected_streamed_response_is_reported_between_the_attempts(client: Client) -> None:
+    """Under Temporal, the rejected response's events, then `ModelResponseRejectedEvent`, then the retry's events.
+
+    The model stream is handled inside the request activity; the rejection is decided workflow-side and dispatched
+    to the handler activity before the next request's activity runs, so the order the design promises holds.
+    """
+    _durability_handler_events.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RejectionDurableAgentWorkflow],
+        plugins=[AgentPlugin(_rejection_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            RejectionDurableAgentWorkflow.run,
+            args=['When does the store open?'],
+            id=RejectionDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'The store opens at 9 am.'
+    assert all(in_activity for _, in_activity in _durability_handler_events)
+    assert [event.event_kind for event, _ in _durability_handler_events] == snapshot(
+        [
+            'part_start',
+            'final_result',
+            'part_end',
+            'model_response_rejected',
+            'part_start',
+            'final_result',
+            'part_end',
+        ]
+    )
+    rejected = next(event for event, _ in _durability_handler_events if isinstance(event, ModelResponseRejectedEvent))
+    assert rejected.response.text == "I'll look that up."
+    assert isinstance(rejected.reason, RetryFeedbackPart)
 
 
 async def test_temporal_event_stream_handler_rejects_enqueue(client: Client) -> None:
