@@ -516,7 +516,7 @@ class _ServerHeldTurn:
     After a cut, it ends with a request holding the tool results the cut request carried, if it had any.
     """
     new_turn: list[ModelMessage]
-    """The client's new turn, without tool results for calls that aren't pending or compaction parts.
+    """The client's new turn, without tool results for calls that aren't pending, compaction parts, or framework records.
 
     Not yet sanitized: `UIAdapter.sanitize_messages` still has to run on it.
     """
@@ -525,6 +525,10 @@ class _ServerHeldTurn:
 
     `history[:cut_at]` is the part of the stored history the run keeps as it is.
     """
+
+
+_FRAMEWORK_RECORD_PARTS = (CapabilityLoadDeltaPart, ToolAvailabilityDeltaPart, ModelSettingsDeltaPart)
+"""The request parts the framework records a change at a point in history with, which only it writes."""
 
 
 def _take_new_turn(
@@ -548,7 +552,11 @@ def _take_new_turn(
     Tool results in the new turn are kept only for calls the stored history's last response is still
     waiting on. Copies of the results kept from the cut request are dropped without a warning, as an
     honest client resubmits them too, and other results with one. Compaction parts are never kept, as
-    the client doesn't own the history they would cut off. See `_drop_compaction_parts`.
+    the client doesn't own the history they would cut off. See `_drop_compaction_parts`. Nor are the framework's
+    own records of a change at a point in history, `CapabilityLoadDeltaPart`, `ToolAvailabilityDeltaPart` and
+    `ModelSettingsDeltaPart`: the stored history has the ones the server recorded, and a client-supplied one would
+    load a capability, reveal a tool or change a setting no part of the run did, as a client-made `load_capability`
+    exchange would if it weren't dropped with the response it's in.
     """
     last_response = max((i for i, m in enumerate(client_messages) if isinstance(m, ModelResponse)), default=-1)
     new_turn = client_messages[last_response + 1 :]
@@ -588,6 +596,8 @@ def _take_new_turn(
         assert isinstance(message, ModelRequest)
         parts: list[ModelRequestPart] = []
         for part in message.parts:
+            if isinstance(part, _FRAMEWORK_RECORD_PARTS):
+                continue
             if _is_tool_result_part(part):
                 if part.tool_call_id not in pending:
                     dropped += part.tool_call_id not in resubmitted_results

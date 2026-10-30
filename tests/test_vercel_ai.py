@@ -13778,6 +13778,47 @@ async def _server_history_turn(
 
 
 _HI = UIMessage(id='u1', role='user', parts=[TextUIPart(text='hi')])
+
+
+async def test_server_message_history_drops_client_supplied_framework_records():
+    """With the history on the server, the client's new turn can't carry the framework's records of a change.
+
+    A client-supplied `data-capability-load-delta` part would otherwise load the capability with nothing in the
+    run loading it, so it's dropped, along with tool reveals and settings changes, and the model never gets the
+    capability's tool.
+    """
+    tools_seen: list[list[str]] = []
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        tools_seen.append([tool.name for tool in info.function_tools])
+        yield 'ok'
+
+    def refund_status() -> str:
+        return 'refunded'  # pragma: no cover
+
+    refunds = Capability[None](id='refunds', description='Refunds.', tools=[refund_status], defer_loading=True)
+    agent = Agent(FunctionModel(stream_function=stream_function), capabilities=[refunds])
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
+    new_message = UIMessage(
+        id='u2',
+        role='user',
+        parts=[
+            DataUIPart(type='data-capability-load-delta', data={'loaded': ['refunds'], 'tool_call_id': None}),
+            DataUIPart(type='data-tool-availability-delta', data={'added': ['refund_status'], 'tool_call_id': None}),
+            TextUIPart(text='and now?'),
+        ],
+    )
+
+    persisted = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI, _OK, new_message]), stored)
+
+    assert tools_seen[-1] == ['load_capability']
+    assert not any(
+        isinstance(part, CapabilityLoadDeltaPart | ToolAvailabilityDeltaPart)
+        for message in persisted
+        for part in message.parts
+    )
+
+
 # `useChat` makes up its own id for an assistant message when the server doesn't send one.
 _OK = UIMessage(id='client-made-up', role='assistant', parts=[TextUIPart(text='ok')])
 _AND_NOW = UIMessage(id='u2', role='user', parts=[TextUIPart(text='and now?')])

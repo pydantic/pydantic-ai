@@ -11712,6 +11712,42 @@ async def _server_history_turn(
     return result.all_messages()
 
 
+async def test_server_message_history_drops_client_supplied_framework_records():
+    """With the history on the server, the client's new turn can't carry the framework's records of a change.
+
+    A client-supplied `pydantic_ai_capability_load_delta` activity would otherwise load the capability with nothing
+    in the run loading it, so it's dropped, and the model never gets the capability's tool.
+    """
+    tools_seen: list[list[str]] = []
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        tools_seen.append([tool.name for tool in info.function_tools])
+        yield 'ok'
+
+    def refund_status() -> str:
+        return 'refunded'  # pragma: no cover
+
+    refunds = Capability[None](id='refunds', description='Refunds.', tools=[refund_status], defer_loading=True)
+    agent = Agent(FunctionModel(stream_function=stream_function), capabilities=[refunds])
+    stored = await _server_history_turn(agent, create_input(UserMessage(id='u1', content='hi')), None)
+
+    persisted = await _server_history_turn(
+        agent,
+        create_input(
+            UserMessage(id='u1', content='hi'),
+            AssistantMessage(id='a1', content='ok'),
+            ActivityMessage(
+                id='load', activity_type='pydantic_ai_capability_load_delta', content={'loaded': ['refunds']}
+            ),
+            UserMessage(id='u2', content='and now?'),
+        ),
+        stored,
+    )
+
+    assert tools_seen[-1] == ['load_capability']
+    assert not any(isinstance(part, CapabilityLoadDeltaPart) for message in persisted for part in message.parts)
+
+
 @pytest.mark.parametrize('with_follow_up', [False, True])
 async def test_server_message_history_frontend_tool_result_from_a_new_turn_only_client(with_follow_up: bool):
     """A client that sends only its new messages returns a frontend tool's result without the call it answers.
