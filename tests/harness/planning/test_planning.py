@@ -1193,7 +1193,7 @@ def _plan_records_in(parts: Iterable[ModelRequestPart | ModelResponsePart]) -> l
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
         for item in part.content
         if isinstance(item, TextContent)
-        and isinstance(item.metadata, dict)
+        and is_str_dict(item.metadata)
         and item.metadata.get('origin') == _PLAN_ORIGIN['origin']
     ]
 

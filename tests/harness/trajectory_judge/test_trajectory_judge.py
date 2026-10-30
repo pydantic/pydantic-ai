@@ -369,7 +369,7 @@ class TestSteering:
         )
 
         note, data = prepared[-1].parts
-        assert isinstance(note, UserPromptPart)
+        assert isinstance(note, UserPromptPart) and isinstance(note.content, str)
         assert _unsealed(note.content) == f'<system>{_FRAMING}</system>'
         assert isinstance(data, UserPromptPart)
         (item,) = data.content
