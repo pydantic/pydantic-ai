@@ -1,0 +1,60 @@
+--- expected
++++ actual
+@@ -274,8 +273,0 @@
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `refund_status`"
+-  },
+-  {
+-   "role": "system",
+-   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
+-  },
+-  {
+@@ -343,12 +334,0 @@
+-  },
+-  {
+-   "type": "function",
+-   "function": {
+-    "name": "refund_status",
+-    "description": "",
+-    "parameters": {
+-     "additionalProperties": false,
+-     "properties": {},
+-     "type": "object"
+-    }
+-   }
+@@ -388,8 +367,0 @@
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `refund_status`"
+-  },
+-  {
+-   "role": "system",
+-   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
+-  },
+-  {
+@@ -439,0 +412,8 @@
++  },
++  {
++   "role": "system",
++   "content": "The following tool(s) are now available: `refund_status`"
++  },
++  {
++   "role": "system",
++   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
+@@ -521,8 +500,0 @@
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `refund_status`"
+-  },
+-  {
+-   "role": "system",
+-   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
+-  },
+-  {
+@@ -572,0 +545,8 @@
++  },
++  {
++   "role": "system",
++   "content": "The following tool(s) are now available: `refund_status`"
++  },
++  {
++   "role": "system",
++   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
