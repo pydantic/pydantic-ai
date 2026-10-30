@@ -2042,13 +2042,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 while isinstance(capability, WrapperCapability):
                     capability = capability.wrapped
                 if isinstance(capability, ModelFallbackCap) and capability.output_retry_threshold:
+                    # Skip run wrappers to attribute direct calls to their caller. Background
+                    # event-stream tasks have no originating caller on their stack.
+                    frame = inspect.currentframe()
+                    stacklevel = 1
+                    while frame is not None and frame.f_globals.get('__name__', '').partition('.')[0] in {
+                        'pydantic_ai',
+                        'pydantic_graph',
+                        'contextlib',
+                        'asyncio',
+                    }:
+                        frame = frame.f_back
+                        stacklevel += 1
+                    del frame
                     warnings.warn(
                         f'`ModelFallback` output switching (`output_retry_threshold='
                         f'{capability.output_retry_threshold!r}`) is disabled by the explicit run '
                         f'`model` {model_id or model_used.model_id!r}. Configure the starting model on '
                         '`Agent(model=...)` and let `ModelFallback` control selection to enable output switching.',
                         UserWarning,
-                        stacklevel=2,
+                        stacklevel=stacklevel,
                     )
         # Read back off the resolved tree, which also sees an `Instrumentation` that only a `for_run`
         # contributed, so every later step's `RunContext` describes what the run's spans use.

@@ -73,6 +73,7 @@ async def test_explicit_run_model_warns_before_output_is_rejected(
 
     assert result.output == 'chosen'
     assert len(emitted) == 1
+    assert emitted[0].filename == __file__
     message = str(emitted[0].message)
     assert f'output_retry_threshold={threshold!r}' in message
     assert f'`model` {expected_model_id!r}' in message
@@ -121,3 +122,33 @@ async def test_warning_does_not_query_model_contributions(mocker: MockerFixture)
         assert (await agent.run('Answer.', model=TestModel(custom_output_text='chosen'))).output == 'chosen'
 
     getter.assert_not_called()
+
+
+@pytest.mark.parametrize('entrypoint', ['iter', 'run_stream'])
+async def test_warning_points_to_async_caller(entrypoint: Literal['iter', 'run_stream']) -> None:
+    capabilities: list[AbstractCapability[object]] = [ModelFallback(TestModel(), output_retry_threshold=1)]
+    agent = Agent(TestModel(), deps_type=object, capabilities=capabilities)
+    chosen = TestModel(custom_output_text='chosen')
+
+    with pytest.warns(UserWarning, match='output switching.*explicit run') as emitted:
+        if entrypoint == 'iter':
+            async with agent.iter('Answer.', model=chosen):
+                pass
+        else:
+            assert entrypoint == 'run_stream'
+            async with agent.run_stream('Answer.', model=chosen) as result:
+                assert await result.get_output() == 'chosen'
+
+    assert len(emitted) == 1
+    assert emitted[0].filename == __file__
+
+
+def test_warning_points_to_sync_caller() -> None:
+    capabilities: list[AbstractCapability[object]] = [ModelFallback(TestModel(), output_retry_threshold=1)]
+    agent = Agent(TestModel(), deps_type=object, capabilities=capabilities)
+
+    with pytest.warns(UserWarning, match='output switching.*explicit run') as emitted:
+        assert agent.run_sync('Answer.', model=TestModel(custom_output_text='chosen')).output == 'chosen'
+
+    assert len(emitted) == 1
+    assert emitted[0].filename == __file__
