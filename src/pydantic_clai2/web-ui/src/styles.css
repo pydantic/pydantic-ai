@@ -3603,6 +3603,17 @@ textarea.setting-input {
   font-size: 13.5px;
 }
 
+.settings-updated {
+  margin: 0 0 16px;
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+/* `/update` installing, over the whole window rather than below the session header. */
+.settings-window > .opening-overlay {
+  inset: 0;
+}
+
 .settings-groups {
   display: flex;
   flex-direction: column;

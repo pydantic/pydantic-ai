@@ -1636,11 +1636,12 @@ to install dependencies, rebuild the bundle, and run browser tests. Do not commi
 workflow commits it.
 
 `/update now`, typed in the terminal or confirmed with **Update…** in the page's About section (bare
-`/update` in the composer opens that section), shows in the page: uv's latest line while it
-installs (`on_install_progress`), then all it printed and the command's result. A failed install,
-or nothing to install, says so and changes nothing. After a successful one, CLAI restarts as the
-new build serving the web UI again on the same port with the same token, and resumes the session;
-the page says it is restarting, reconnects by itself, and names the new version. That holds for
+`/update` in the composer opens that section), shows in the page, over Settings too while it is open:
+uv's latest line while it installs (`on_install_progress`), then all it printed and the command's
+result. A failed install, or nothing to install, says so and changes nothing. After a successful one,
+CLAI restarts as the new build serving the web UI again on the same port with the same token, and
+resumes the session; the page says it is restarting, reconnects by itself, and names the new
+version, and About names the versions it updated from and to. That holds for
 `clai2 --web`, with its `--port` and `--token-file`, and for `/web` started from a terminal, which
 restarts as a terminal session with the web UI running, though the browser does not open again.
 The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only

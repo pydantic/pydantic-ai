@@ -27,6 +27,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.app import HEADER
+from pydantic_clai2.plugins import InstallProgress
 from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
@@ -746,6 +747,44 @@ async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) 
         }"""
     )
     assert await badge.json_value() == 'none'
+
+
+async def test_settings_about_follows_an_update(page: Page, web_ui: WebUI) -> None:
+    """Settings > About, where Update… starts it, shows the install going, then what it updated from and to."""
+    await page.add_init_script("""
+      window.claiTestSockets = [];
+      const OriginalWebSocket = window.WebSocket;
+      window.WebSocket = class extends OriginalWebSocket {
+        constructor(...args) { super(...args); window.claiTestSockets.push(this); }
+      };
+    """)
+    service = web_ui.fleet.service
+    portal = web_ui.fleet.portal
+    before = service.version
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.evaluate("location.hash = '#settings/about'")
+    settings = page.get_by_role('dialog', name='Settings')
+    await expect(settings.locator('.setting-label', has_text='Version')).to_be_visible()
+    try:
+        portal.call(service.install_progress, InstallProgress(stage='installing', target='0.99.0'))
+        progress = settings.get_by_role('status')
+        await expect(progress).to_contain_text('Updating CLAI to 0.99.0…')
+        # A trial click checks nothing covers it, as the window once covered the session's progress.
+        await progress.click(trial=True)
+        portal.call(service.install_progress, InstallProgress(stage='output', target='0.99.0', text='Resolved 3'))
+        await expect(progress).to_contain_text('Resolved 3')
+        portal.call(service.install_progress, InstallProgress(stage='restarting', target='0.99.0'))
+        await expect(progress).to_contain_text('Restarting CLAI…')
+        # The new build comes back at the same address, and the page reconnects to it.
+        service.version, service.update = '0.99.0', None
+        await page.clock.install()
+        await page.evaluate('window.claiTestSockets[0].close()')
+        await page.clock.run_for(500)
+        await page.clock.resume()
+        await expect(progress).to_have_count(0)
+        await expect(settings).to_contain_text(f'Updated CLAI from {before} to 0.99.0.')
+    finally:
+        service.version, service.update = before, None
 
 
 async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI) -> None:
