@@ -4222,7 +4222,7 @@ async def test_temporal_event_stream_handler_reads_dispatch_snapshots(client: Cl
         )
 
     assert sorted(_snapshot_handler_reads) == snapshot(
-        [('agent', ('_durability_handler_tool',), 3), ('model', ('_durability_handler_tool',), 3)]
+        [('agent', ('_durability_handler_tool',), 4), ('model', ('_durability_handler_tool',), 4)]
     )
 
 

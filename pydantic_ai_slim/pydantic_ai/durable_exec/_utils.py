@@ -26,6 +26,8 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
+from ._operation_backend import durable_unit_scope
+
 __all__ = [
     'DurableModel',
     'SegmentExecutor',
@@ -66,7 +68,11 @@ def reject_serving_wrapper(
     model: WrapperModel, wrap: Callable[[Model], Model], agent_class: str, durability_class: str
 ) -> Model:
     """Refuse a capability's model wrapper on a deprecated durable agent, which sends requests without applying it."""
-    if wrap(model.wrapped) is model.wrapped:
+    # Asked as from a durable unit, where the request is sent, so a wrapper that sits out durable execution (like the
+    # auto-injected `GatewayFallback`'s) isn't counted as one the agent would drop.
+    with durable_unit_scope():
+        wrapped = wrap(model.wrapped)
+    if wrapped is model.wrapped:
         return model
     raise UserError(
         f'`{agent_class}` does not support capabilities that wrap the model, such as `BatchModelRequests`. '
