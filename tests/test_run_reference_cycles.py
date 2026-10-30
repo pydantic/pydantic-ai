@@ -526,31 +526,34 @@ async def test_failed_tool_node_replays_during_manual_iteration(stream_first: bo
         ref = weakref.ref(deps)
         node = None
         async with agent.iter('hi', deps=deps, infer_name=False) as run:
-            async for node in run:
-                if Agent.is_call_tools_node(node):
-                    original_error: RuntimeError | None = None
-                    if stream_first:
-                        stream = None
-                        with pytest.raises(RuntimeError, match=r'^tool failed$') as streamed:
-                            async with node.stream(run.ctx) as stream:
-                                async for _ in stream:
-                                    pass
-                        original_error = streamed.value
-                        del streamed, stream
-                    for _ in range(2):
-                        with pytest.raises(RuntimeError, match=r'^tool failed$') as raised:
-                            await run.next(node)
-                        if original_error is None:
-                            original_error = raised.value
-                        assert raised.value is original_error
-                        assert raised.value.__cause__ is raised.value.__context__
-                        assert str(raised.value.__cause__) == 'original cause'
-                        assert run.all_messages()
-                        assert run.result is None
-                        del raised
-                    assert tool_calls == 1
-                    del original_error
-                    break
+            node = run.next_node
+            assert Agent.is_user_prompt_node(node)
+            node = await run.next(node)
+            assert Agent.is_model_request_node(node)
+            node = await run.next(node)
+            assert Agent.is_call_tools_node(node)
+            original_error: RuntimeError | None = None
+            if stream_first:
+                stream = None
+                with pytest.raises(RuntimeError, match=r'^tool failed$') as streamed:
+                    async with node.stream(run.ctx) as stream:
+                        async for _ in stream:
+                            pass
+                original_error = streamed.value
+                del streamed, stream
+            for _ in range(2):
+                with pytest.raises(RuntimeError, match=r'^tool failed$') as raised:
+                    await run.next(node)
+                if original_error is None:
+                    original_error = raised.value
+                assert raised.value is original_error
+                assert raised.value.__cause__ is raised.value.__context__
+                assert str(raised.value.__cause__) == 'original cause'
+                assert run.all_messages()
+                assert run.result is None
+                del raised
+            assert tool_calls == 1
+            del original_error
         del deps, run, node
         return ref
 
@@ -593,10 +596,14 @@ async def test_failed_tool_node_replays_during_run_error_recovery() -> None:
     deps = Deps()
     async with agent.iter('hi', deps=deps, infer_name=False) as active_run:
         run = active_run
-        async for node in active_run:
-            if Agent.is_call_tools_node(node):
-                failed_node = node
-                await active_run.next(node)
+        node = active_run.next_node
+        assert Agent.is_user_prompt_node(node)
+        node = await active_run.next(node)
+        assert Agent.is_model_request_node(node)
+        node = await active_run.next(node)
+        assert Agent.is_call_tools_node(node)
+        failed_node = node
+        await active_run.next(node)
 
     assert active_run.result is not None
     assert active_run.result.output == 'recovered'
