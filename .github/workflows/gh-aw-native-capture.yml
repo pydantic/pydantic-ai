@@ -9,7 +9,6 @@ on:
       - '.github/scripts/gh_aw_native_capture.py'
       - 'src/pydantic_ai_harness/gh-aw/**'
       - 'tests/harness/gh_aw/**'
-      - 'docs/harness/gh-aw.md'
 
 permissions:
   contents: read

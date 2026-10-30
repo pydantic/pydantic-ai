@@ -16,8 +16,10 @@ import importlib.util
 import json
 import os
 import re
+import select
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import AsyncIterator, Iterator
@@ -1565,6 +1567,71 @@ def test_the_generated_recorder_uses_the_dedicated_capture_descriptor(tmp_path: 
     parsed = parse_log(tmp_path, completed.stderr)
     assert parsed.log_entries[-1].type == 'session.result'
     assert parsed.log_entries[-1].data['status'] == 'success'
+
+
+@pytest.mark.subprocess(reason='verifies SIGTERM handling in the generated launcher process')
+@requires_clai2
+def test_sigterm_preserves_partial_stream_and_emits_a_failure_result(tmp_path: Path) -> None:
+    invocation = launch(
+        tmp_path,
+        {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'interrupted_agent:agent'},
+        extra_python_path=CLAI2_SOURCE,
+    )
+    (Path(invocation.cwd) / 'interrupted_agent.py').write_text(
+        """import asyncio
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.models.function import FunctionModel
+
+async def stream(messages, info):
+    yield 'before interruption'
+    # The model iterator resumes after the yielded text event has been observed.
+    os.write(int(os.environ['GH_AW_TEST_READY_FD']), b'1')
+    await asyncio.Event().wait()
+
+agent = Agent(FunctionModel(stream_function=stream))
+""",
+        encoding='utf-8',
+    )
+    arguments = invocation.argv.copy()
+    model_index = arguments.index('-m')
+    del arguments[model_index : model_index + 2]
+    read_fd, write_fd = os.pipe()
+    with os.fdopen(read_fd, 'rb', buffering=0) as ready, os.fdopen(write_fd, 'wb', buffering=0) as ready_writer:
+        with subprocess.Popen(
+            [sys.executable, *arguments, *code_mode_off_args(tmp_path)],
+            cwd=invocation.cwd,
+            env={**invocation.env, 'GH_AW_TEST_READY_FD': str(ready_writer.fileno())},
+            pass_fds=(ready_writer.fileno(),),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ) as process:
+            ready_writer.close()
+            try:
+                readable, _, _ = select.select([ready], [], [], 20)
+                assert readable, 'the generated agent did not observe the streamed text'
+                assert ready.read(1) == b'1'
+                process.send_signal(signal.SIGTERM)
+                stdout, stderr = process.communicate(timeout=10)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=10)
+
+    assert process.returncode == 128 + signal.SIGTERM, f'{stdout}\n{stderr}'
+    assert '\x1eGH-AW-SESSION/' not in stdout
+    parsed = parse_log(tmp_path, stderr)
+    assert [event.data for event in parsed.log_entries if event.type == 'assistant.message'] == [
+        {'content': 'before interruption', 'partial': True}
+    ]
+    results = [event for event in parsed.log_entries if event.type == 'session.result']
+    assert len(results) == 1
+    assert parsed.log_entries[-1] == results[0]
+    assert results[0].data['status'] == 'failure'
+    assert parsed.diagnostic_log_entries == []
 
 
 @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')

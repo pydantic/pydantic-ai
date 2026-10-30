@@ -263,22 +263,6 @@ def run_case(
     return result
 
 
-def check_assets(assets: Path, script: str, raw_parser: str) -> None:
-    """Validate test assets and report exact source hashes without claiming a native pass."""
-    for fixture in assets.glob('*.py'):
-        compile(fixture.read_text(encoding='utf-8'), str(fixture), 'exec')
-    subprocess.run(['node', '--check', str(assets / 'postprocess.cjs')], check=True)
-    print(
-        json.dumps(
-            {
-                'status': 'static-check-only',
-                'harness_sha256': hashlib.sha256(script.encode()).hexdigest(),
-                'parser_sha256': hashlib.sha256(raw_parser.encode()).hexdigest(),
-            }
-        )
-    )
-
-
 def artifact_upload(lock: str, upload_name: str) -> dict[str, object]:
     """Read one real emitted upload path list and require its parser/redaction publication gate."""
     start = lock.index(f'      - name: {upload_name}\n')
@@ -299,24 +283,19 @@ def artifact_upload(lock: str, upload_name: str) -> dict[str, object]:
 
 
 def main() -> None:
-    """Run static checks or all three native protected-capture acceptance cases."""
+    """Run all three native protected-capture acceptance cases."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work-dir', type=Path, required=True)
     parser.add_argument('--repo', type=Path, default=Path.cwd())
-    parser.add_argument(
-        '--check-only', action='store_true', help='Validate fixture syntax/extraction; never claim native acceptance'
-    )
     arguments = parser.parse_args()
     assets = Path(__file__).with_name('gh_aw_native_capture')
-    if not assets.is_dir():
-        assets = Path(__file__).with_name('assets')
     repo = arguments.repo.resolve()
     definition = (repo / 'src/pydantic_ai_harness/gh-aw/pydantic.md').read_text(encoding='utf-8')
     script = block(definition, 'harness-script')
     raw_parser = block(definition, 'log-parser')
-    check_assets(assets, script, raw_parser)
-    if arguments.check_only:
-        return
+    for fixture in assets.glob('*.py'):
+        compile(fixture.read_text(encoding='utf-8'), str(fixture), 'exec')
+    subprocess.run(['node', '--check', str(assets / 'postprocess.cjs')], check=True)
     if sys.platform != 'linux' or os.getuid() == 0:
         raise RuntimeError(
             'Native acceptance requires a non-root Linux runner with Docker; this is a failure, not a skip'

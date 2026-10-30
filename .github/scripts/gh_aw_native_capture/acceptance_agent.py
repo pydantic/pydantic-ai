@@ -6,6 +6,7 @@ import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import gh_aw_recording
 import pydantic_ai.models
 from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -21,8 +22,6 @@ _probe_failed = False
 def hostile_probe() -> str:
     """Inspect a same-UID descendant's access to the protected recorder."""
     global _probe_failed
-    import gh_aw_recording
-
     parent_dumpable = ctypes.CDLL(None).prctl(3, 0, 0, 0, 0)
     sentinel = ctypes.create_string_buffer(b'native-recorder-controlled-memory-sentinel')
     capture_fd = gh_aw_recording.output.fileno()
@@ -80,6 +79,7 @@ async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator
             raise RuntimeError('intentional-fixture-failure')
 
 
-# Keep this test-only context alive while the real CLI supplies its workflow model.
+# Deliberately retain this override after import so the fixture model wins over
+# the real CLI's `-m` throughout this process; exiting it would restore that model.
 _override = agent.override(model=FunctionModel(stream_function=stream))
 _override.__enter__()
