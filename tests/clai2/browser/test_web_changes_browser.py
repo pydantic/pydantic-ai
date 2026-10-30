@@ -137,3 +137,22 @@ async def test_changes_panel_lists_the_files_of_two_turns(page: Page, changes_ui
     await page.keyboard.press('ControlOrMeta+Shift+E')
     await expect(panel).to_have_count(0)
     await expect(toggle).to_have_attribute('aria-pressed', 'false')
+
+
+async def test_monty_replaces_the_changes_panel(page: Page, changes_ui: ChangesUI) -> None:
+    """Changes and Monty are one column: opening Monty unmounts Changes, and the reverse."""
+    await page.goto(f'{changes_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Changes', exact=True).click()
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await page.get_by_role('button', name=re.compile(r'^Changes')).click()
+    changes = page.get_by_role('complementary', name='Changes')
+    monty = page.get_by_role('complementary', name='Monty, the run_code sandbox')
+    await expect(changes).to_be_visible()
+    await page.get_by_role('button', name=re.compile(r'Monty, the run_code sandbox')).click()
+    await expect(monty).to_be_visible()
+    await expect(changes).to_have_count(0)
+    await expect(page.locator('.app.with-monty.with-side-panel')).to_have_count(0)
+    await page.get_by_role('button', name=re.compile(r'^Changes')).click()
+    await expect(changes).to_be_visible()
+    await expect(monty).to_have_count(0)
+    await expect(page.locator('.app.with-monty.with-side-panel')).to_have_count(0)

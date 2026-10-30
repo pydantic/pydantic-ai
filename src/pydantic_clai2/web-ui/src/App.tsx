@@ -276,14 +276,30 @@ export function App() {
       const next =
         key !== undefined ? (shownKey === key ? null : key) : shownKey || !firstPanel ? null : panelKey(firstPanel)
       setSidePanel(next)
-      if (next) setChanges(false)
+      if (next) {
+        setChanges(false)
+        setMonty(false)
+      }
     },
     [shownKey, firstPanel],
   )
   const toggleChanges = useCallback(() => {
     setChanges((open) => !open)
     setSidePanel(null)
+    setMonty(false)
   }, [])
+  const toggleMonty = useCallback(() => {
+    const showing = monty && !changes && sidePanel === null
+    if (showing) {
+      setMonty(false)
+      return
+    }
+    setMonty(true)
+    setChanges(false)
+    setSidePanel(null)
+  }, [monty, changes, sidePanel])
+  // One right-hand panel. `monty` can still be set from an older page that left it open beside another.
+  const montyShown = monty && !changes && shownPanel === null
   // The files may have changed when a turn ends, so the count and the panel ask again then; not while one runs.
   const changesActive = connection === 'open' && !chat.running
   // The page hears a turn end before the session keeps its messages, so the count asks again once it saves them.
@@ -541,7 +557,7 @@ export function App() {
         newSession()
       } else if (mod && event.key === 'j') {
         event.preventDefault()
-        setMonty((open) => !open)
+        toggleMonty()
       } else if (mod && event.shiftKey && event.key.toLowerCase() === 'l') {
         event.preventDefault()
         togglePanel()
@@ -572,7 +588,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, openSettings, newSession, focusSessions])
+  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, toggleMonty, openSettings, newSession, focusSessions])
 
   const status = chat.status
   // A session still opening is named from its sidebar row, never as a new session while its snapshot comes.
@@ -613,7 +629,7 @@ export function App() {
 
   const page = (
     <div
-      className={`app ${sidebar ? '' : 'no-sidebar'} ${monty && !orchestrating ? 'with-monty' : ''} ${(shownPanel || changes) && !orchestrating ? 'with-side-panel' : ''}`}
+      className={`app ${sidebar ? '' : 'no-sidebar'} ${montyShown && !orchestrating ? 'with-monty' : ''} ${(shownPanel || changes) && !orchestrating ? 'with-side-panel' : ''}`}
       style={{ '--side-panel-width': `min(${panelWidth}px, 70vw)` } as CSSProperties}
     >
       {sidebar && (
@@ -723,10 +739,10 @@ export function App() {
                 {changed > 0 && <span className="changes-count">{changed}</span>}
               </button>
               <button
-                className={`icon-button monty-toggle ${monty ? 'active' : ''}`}
-                onClick={() => setMonty(!monty)}
-                title={`${monty ? 'Hide' : 'Show'} Monty, the run_code sandbox (${MOD}J)`}
-                aria-pressed={monty}
+                className={`icon-button monty-toggle ${montyShown ? 'active' : ''}`}
+                onClick={toggleMonty}
+                title={`${montyShown ? 'Hide' : 'Show'} Monty, the run_code sandbox (${MOD}J)`}
+                aria-pressed={montyShown}
               >
                 <TerminalIcon size={16} />
               </button>
@@ -862,7 +878,7 @@ export function App() {
           onNotice={showNotice}
         />
       )}
-      {monty && !orchestrating && (
+      {montyShown && !orchestrating && (
         <MontyPanel
           entries={entries}
           status={status}
