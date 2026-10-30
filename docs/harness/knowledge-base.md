@@ -208,7 +208,7 @@ from pydantic_ai_harness.knowledge_base import QdrantKnowledgeBase
 backend = QdrantKnowledgeBase(
     AsyncQdrantClient(url='http://localhost:6333'),
     'manuals',
-    Embedder('openai:text-embedding-3-small'),
+    Embedder('{{ openai:embedding }}'),
 )
 capability = KnowledgeBase(backend)
 ```
@@ -238,7 +238,7 @@ from pydantic_ai_harness.knowledge_base import PgVectorKnowledgeBase
 
 async def build() -> KnowledgeBase[None]:
     pool = await asyncpg.create_pool('postgresql://localhost/app')
-    return KnowledgeBase(PgVectorKnowledgeBase(pool, Embedder('openai:text-embedding-3-small'), table='chunks'))
+    return KnowledgeBase(PgVectorKnowledgeBase(pool, Embedder('{{ openai:embedding }}'), table='chunks'))
 ```
 
 Bring your own table, one row per chunk:

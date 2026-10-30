@@ -688,6 +688,7 @@ def test_model_http_error_headers_provider_bedrock():
 def test_model_http_error_headers_provider_xai_no_headers():
     """xAI errors are gRPC-based: no HTTP response headers, so ModelHTTPError.headers is None."""
     grpc = pytest.importorskip('grpc', reason='grpcio (xai extra) not installed')
+    pytest.importorskip('xai_sdk', reason='xai-sdk not installed')
 
     from pydantic_ai.models.xai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 
