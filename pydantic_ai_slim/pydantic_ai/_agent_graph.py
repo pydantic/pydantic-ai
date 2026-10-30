@@ -4245,9 +4245,8 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
     selector = ctx.deps.model_selector
     if selector is None or ctx.deps.model_selected_for_step == ctx.state.run_step:
         return
-    selection_context = _model_selection_context(ctx)
-    model, model_id = await ctx.deps.evaluate_model_selector(selector, selection_context)
 
+    model, model_id = await ctx.deps.evaluate_model_selector(selector, _model_selection_context(ctx))
     await ctx.deps.enter_model(model)
     ctx.deps.model = model
     ctx.deps.model_id = model_id

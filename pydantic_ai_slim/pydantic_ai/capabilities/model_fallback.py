@@ -68,9 +68,8 @@ _SPEC_FALLBACK_ERRORS: dict[str, type[ModelAPIError]] = {
 
 @dataclass(frozen=True)
 class _OutputRetryState:
-    """Keep the serving selection and its unwrapped producer as one response snapshot."""
+    """The serving selection and its configured threshold for one response."""
 
-    producer: Model
     selection: Model | str
     threshold: int | None
 
@@ -134,8 +133,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     _output_initial_model: Model | str | None = field(repr=False)
     _output_selected_step: int | None = field(repr=False)
     _output_cursor: int = field(repr=False)
-    # Retain producers so a later model cannot reuse an earlier producer's object ID.
-    _output_failures: dict[int, tuple[Model, int]] = field(repr=False)
+    _output_failures: dict[str, int] = field(repr=False)
     _output_response: _OutputRetryState | None = field(repr=False)
     _output_transition: OutputRetryContext | None = field(repr=False)
 
@@ -401,13 +399,10 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             self._chain.warn_if_streamed_responses_unjudged()
         if request_context.streaming or not await self._chain.falls_back(response):
             if self.output_retry_threshold is not None:
-                producer = request_context.model
-                while isinstance(producer, WrapperModel):
-                    producer = producer.wrapped
+                selection = request_context.model_id or request_context.model
                 self._output_response = _OutputRetryState(
-                    producer=producer,
-                    selection=request_context.model_id or request_context.model,
-                    threshold=self.output_retry_threshold.get(request_context.model_id or producer.model_id)
+                    selection=selection,
+                    threshold=self.output_retry_threshold.get(_pin_id(selection))
                     if isinstance(self.output_retry_threshold, Mapping)
                     else self.output_retry_threshold,
                 )
@@ -423,10 +418,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         response = self._output_response
         if self._output_selected_step != ctx.run_step or response is None or response.threshold is None:
             return
-        producer_id = id(response.producer)
-        previous = self._output_failures.get(producer_id)
-        failures = 1 if previous is None else previous[1] + 1
-        self._output_failures[producer_id] = (response.producer, failures)
+        model_id = _pin_id(response.selection)
+        failures = self._output_failures.get(model_id, 0) + 1
+        self._output_failures[model_id] = failures
         # Every charge belongs to the model that produced this response. Failed siblings must not
         # retire an untried candidate while the next step's switch is still pending.
         if failures >= response.threshold and self._output_transition is None:

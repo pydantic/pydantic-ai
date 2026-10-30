@@ -132,7 +132,7 @@ Unlike `fallback_on`, this happens across ordinary request steps: the next model
 An integer applies the same threshold to every model. For independent thresholds, pass a mapping from model IDs to positive integers. Keys match the string used to select the model, including a `ResolveModelId` alias, or [`Model.model_id`][pydantic_ai.models.Model.model_id] for a model instance. Unlisted models keep request-only fallback; an empty mapping disables output-driven switching. The capability copies the mapping when constructed.
 
 - Schema failures, output-validator or output-function `ModelRetry`, invalid output-tool arguments, and unusable responses count when the applicable retry limit allows another attempt. Function-tool retries, request-hook `ModelRetry`, request errors, and cancellation do not count towards this threshold.
-- Each serving model has its own count. Several failed output calls in one response count against their producer and trigger at most one move; they cannot skip a candidate that has not run.
+- Each model ID has its own count, including resolver aliases. Several failed output calls in one response count against their producer and trigger at most one move; they cannot skip a candidate that has not run.
 - After switching, later steps use the chosen candidate with its settings and tools. Request failures can still use `fallback_on` to try later candidates, but the chain does not return to candidates retired by output failures. At the end of the chain, output retries stay on the last serving model until the applicable output retry limit ends the run.
 - Output-driven selection uses the agent's model, or the first candidate when the agent has no model. An explicit `run(model=...)`, `override(model=...)`, or another capability's selection such as `SelectModel` keeps control for the whole run and disables output-driven switching. Request-level fallback remains available. A suspended response continues on the model that started it before output-driven routing is considered.
 
@@ -172,7 +172,7 @@ Model names are resolved when they're attempted, like those passed to `ModelFall
 
 The mapping form also accepts `output_retry_threshold`:
 
-```yaml
+```yaml {title="output_fallback_agent.yaml" test="skip"}
 retries: {output: 3}
 capabilities:
   - ModelFallback:
@@ -182,7 +182,7 @@ capabilities:
 
 For different thresholds, use the selected model IDs as keys:
 
-```yaml
+```yaml {title="output_fallback_thresholds_agent.yaml" test="skip"}
 model: {{ openai:medium }}
 retries: {output: 4}
 capabilities:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import pytest
@@ -9,7 +9,9 @@ from pydantic_ai import Agent, ModelRetry, RunContext, ToolDefinition
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CombinedCapability,
+    Hooks,
     ModelFallback,
+    ResolveModelId,
     SelectModel,
     WrapModelRequestHandler,
     WrapperCapability,
@@ -152,6 +154,75 @@ async def test_wrapped_container_keeps_output_selection_a_default(threshold: int
     # Static container contributions retain their existing precedence. The opt-in run-bound
     # output selector stays a default even through a wrapped container.
     assert (await agent.run('Answer.')).output == ('primary' if threshold is None else 'selected')
+
+
+async def test_output_counts_survive_serving_model_reconstruction() -> None:
+    calls: list[str] = []
+    reconstructed: list[FunctionModel] = []
+    hooks = Hooks[object]()
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('primary')
+        return ModelResponse(parts=[TextPart('draft')])
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('backup')
+        return ModelResponse(parts=[TextPart('ready')])
+
+    @hooks.on.before_model_request
+    def reconstruct(ctx: RunContext[object], request_context: ModelRequestContext) -> ModelRequestContext:
+        if request_context.model.model_name == 'primary':
+            model = FunctionModel(primary, model_name='primary')
+            reconstructed.append(model)
+            return replace(request_context, model=model)
+        return request_context
+
+    agent = Agent(
+        FunctionModel(primary, model_name='primary'),
+        capabilities=[hooks, ModelFallback(FunctionModel(backup), output_retry_threshold=2)],
+        retries={'output': 3},
+    )
+
+    @agent.output_validator
+    def validate(value: str) -> str:
+        if value == 'draft':
+            raise ModelRetry('Finish the draft.')
+        return value
+
+    assert (await agent.run('Answer.')).output == 'ready'
+    assert calls == ['primary', 'primary', 'backup']
+    assert reconstructed[0] is not reconstructed[1]
+
+
+async def test_output_counts_use_configured_aliases() -> None:
+    served: list[str | None] = []
+    hooks = Hooks[object]()
+    primary = TestModel(custom_output_text='draft')
+    models: dict[str, Model] = {'first': primary, 'second': primary, 'backup': TestModel(custom_output_text='ready')}
+
+    @hooks.on.before_model_request
+    def record(ctx: RunContext[object], request_context: ModelRequestContext) -> ModelRequestContext:
+        served.append(request_context.model_id)
+        return request_context
+
+    agent = Agent(
+        'first',
+        capabilities=[
+            hooks,
+            ModelFallback('second', 'backup', output_retry_threshold={'first': 2, 'second': 2}),
+            ResolveModelId(lambda ctx, model_id: models.get(model_id)),
+        ],
+        retries={'output': 4},
+    )
+
+    @agent.output_validator
+    def validate(value: str) -> str:
+        if value == 'draft':
+            raise ModelRetry('Finish the draft.')
+        return value
+
+    assert (await agent.run('Answer.')).output == 'ready'
+    assert served == ['first', 'first', 'second', 'second', 'backup']
 
 
 @pytest.mark.parametrize('pin', ['known', 'outside', 'missing'])
