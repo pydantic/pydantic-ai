@@ -1526,7 +1526,8 @@ printed and returned. Code mode keeps Monty's state with the session between tur
 so cells are numbered across the session, as a notebook numbers them, until a `restart: true`
 clears it. Its input runs your own cell with `/monty` between turns, shown as yours; your next
 prompt tells the model what you ran. A saved session keeps no sandbox call log, so its cells list
-the calls found in their code.
+the calls found in their code. It uses the same column as the Changes panel and plugins' side
+panels, so opening one closes the others.
 
 The **Changes** panel (Cmd/Ctrl+Shift+E, or the diff button at the top right, which shows how
 many files the session has changed) lists what the session changed, one diff per file. **Last
@@ -1534,7 +1535,8 @@ turn** and **This session** come from the session's own `write_file` and `edit_f
 they also work outside Git. **Uncommitted** is `git diff HEAD` in the session's directory, plus
 untracked files that are not ignored, as added, and
 **Branch vs base** compares the files with where the branch left `origin/HEAD`, `main`, or
-`master`. It uses the same column as plugins' side panels, so opening one closes the other.
+`master`. It uses the same column as Monty and plugins' side panels, so opening one closes the
+others.
 
 Images pasted or dropped into the composer go with the next prompt: the page shows each as a
 thumbnail until it is sent, and sends them with the text (`POST /api/sessions/ID/input` with
@@ -1601,7 +1603,7 @@ view. A panel sits on the right, resized by dragging its left edge; the browser 
 one is open and how wide. A page that allows the web UI to frame it shows inside the panel;
 others open in a window beside this one, which follows the panel as its page changes. The page's
 own `Content-Security-Policy` admits frames from `https:` and loopback `http:` pages only.
-Opening a side panel closes the Changes panel, which uses the same column.
+Opening a side panel closes the Changes panel or Monty, which use the same column.
 
 One menu edits a plugin at a time: while the terminal shows its menu, or an action's dialogs
 are open in the page, other edits to that plugin are refused until it closes. The panel cannot

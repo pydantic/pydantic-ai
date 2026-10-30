@@ -87,8 +87,8 @@ added, as `git status` and the git chip count them, and **Branch
 vs base** compares the files, uncommitted changes included, with where the branch left its base:
 `origin/HEAD`, else `main` or `master`. Each file shows its status (A, M, or D) and added and
 removed lines; click it to jump to its diff. Files with many changed lines start collapsed. The
-panel asks again when a turn ends, and **Refresh** asks at once. It takes the plugin side panels'
-place, so opening one closes the other.
+panel asks again when a turn ends, and **Refresh** asks at once. It shares one column with Monty
+and the plugin side panels, so opening one closes the others.
 
 <!-- From #10442 -->
 The **Settings** window (the gear in the sidebar's footer, or Cmd/Ctrl+,) has a section per area

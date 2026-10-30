@@ -520,6 +520,50 @@ async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None
     await expect(diff).to_be_visible()
 
 
+async def test_side_panels_replace_each_other(page: Page, web_ui: WebUI) -> None:
+    """Changes, Monty, and a plugin's panel share the right-hand column: opening one closes the others."""
+    logfire = {
+        'plugin': 'observability',
+        'id': 'logfire',
+        'title': 'Logfire',
+        'icon': 'traces',
+        'url': None,
+        'note': 'Set up Logfire to see traces.',
+        'embed': False,
+    }
+    await page.route('**/api/panels', lambda route: route.fulfill(json=[logfire]))
+    await page.set_viewport_size({'width': 1280, 'height': 800})
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    changes = page.get_by_role('complementary', name='Changes')
+    plugin = page.get_by_role('complementary', name='Logfire')
+    monty = page.get_by_role('complementary', name='Monty, the run_code sandbox')
+    toggles = page.locator('header .monty-toggle')
+
+    async def only(panel: object) -> None:
+        for each in (changes, plugin, monty):
+            await expect(each).to_have_count(1 if each is panel else 0)
+        await expect(toggles.and_(page.locator('[aria-pressed="true"]'))).to_have_count(1)
+        chat = await page.locator('main').bounding_box()
+        assert chat is not None and chat['width'] >= 480, chat
+
+    await page.get_by_role('button', name=re.compile(r'^Changes')).click()
+    await only(changes)
+    await page.get_by_role('button', name=re.compile(r'^Show Logfire')).click()
+    await only(plugin)
+    await page.get_by_role('button', name=re.compile(r'^Show Monty')).click()
+    await only(monty)
+    await page.get_by_role('button', name=re.compile(r'^Changes')).click()
+    await only(changes)
+    await page.keyboard.press('ControlOrMeta+j')
+    await only(monty)
+    await page.keyboard.press('ControlOrMeta+Shift+L')
+    await only(plugin)
+    await page.get_by_role('button', name=re.compile(r'^Hide Logfire')).click()
+    await expect(toggles.and_(page.locator('[aria-pressed="true"]'))).to_have_count(0)
+
+
 async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
