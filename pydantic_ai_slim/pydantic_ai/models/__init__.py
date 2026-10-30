@@ -201,6 +201,9 @@ def known_model_names() -> tuple[str, ...]:
     This is the public, stable way to enumerate the known model ids. Prefer it over introspecting
     the `KnownModelName` type alias directly (e.g. `get_args(KnownModelName.__value__)`), which is
     not part of the public API and would break if the alias were ever recomposed.
+
+    This list supports discovery and autocompletion, but is not an exhaustive list of names accepted
+    by models or provider endpoints and should not be used to validate user input.
     """
     return tuple(get_literal_values(KnownModelName.__value__, unpack_type_aliases='eager'))
 
