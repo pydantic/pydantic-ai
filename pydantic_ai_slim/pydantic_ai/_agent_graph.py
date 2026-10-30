@@ -2450,8 +2450,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # Cut short before the model produced anything, so the consumer has nothing to set apart.
                 return None
             try:
-                # Shielded so a cancelled consumer leaves `wrap_task` to the stream teardown below.
-                await asyncio.shield(wrap_task)
+                # Shielded so a cancelled consumer leaves `wrap.task` to the stream teardown below.
+                await asyncio.shield(wrap.task)
             except exceptions.ModelRetry as e:
                 return self._reject_with_retry(ctx, streamed, e)
             except Exception:
