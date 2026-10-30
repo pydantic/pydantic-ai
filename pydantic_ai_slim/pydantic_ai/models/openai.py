@@ -309,6 +309,9 @@ def _status_error(
     if code == 'model_not_found':
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
     category = _model_errors.openai_compatible_category(status_code, code, error_type, message)
+    if model_id_namespace == 'zai':
+        # Z.ai's numeric codes mean something only from Z.ai, so other OpenAI-compatible APIs don't get this mapping.
+        category = _model_errors.zai_code_category(code) or category
     if status_code == 403 and _flags_input(body.get('metadata') if _utils.is_str_dict(body) else None):
         # OpenRouter sends a 403 for flagged input too: a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
