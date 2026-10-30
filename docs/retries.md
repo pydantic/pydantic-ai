@@ -447,7 +447,7 @@ agent = Agent(model, model_settings={'max_retries': 0})
 
 ### Error handling
 
-The retry transports will re-raise the last exception if all retry attempts fail. Make sure to handle these appropriately in your application:
+The retry transports re-raise the last exception once they run out of attempts, and the model raises it as a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] like any other failed request: an error status your `validate_response` rejected becomes a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with that status and its [error category](models/overview.md#handling-model-api-errors). A connection error or timeout becomes a [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] or [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]. Either way, a [fallback model](#model-fallback-is-not-a-retry) moves on from it by default. Make sure to handle these appropriately in your application:
 
 ```python {title="error_handling_example.py" requires="smart_retry_example.py"}
 from pydantic_ai import Agent
