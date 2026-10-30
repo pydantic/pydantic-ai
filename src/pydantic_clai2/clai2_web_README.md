@@ -28,7 +28,8 @@ watching it (a page watches the last five sessions it showed), closes, except th
 with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
 
 The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
-after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
+after its main checkout's folder, with as much of its path as tells apart projects of one name, as
+`a/scratch` and `b/scratch`), then by worktree (each checkout, labelled with its branch), with
 the current ones first and search across all of them. A folder outside Git is a project of its own.
 A session remembers its checkout when it is saved, so one from a worktree you have since removed
 stays under its project, marked removed, in one **Removed worktrees** group after the live ones,

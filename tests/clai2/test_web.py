@@ -996,6 +996,35 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
 
 
+def test_sidebar_tells_apart_projects_that_share_a_name(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Projects whose folders share a name each add the shortest end of their path that no other one shares.
+
+    A relative workspace an older CLAI saved has no more path to add, so it keeps its name.
+    """
+    web_ = make_web(Agent(TestModel()))
+    first, second, third = tmp_path / 'a' / 'scratch', tmp_path / 'b' / 'scratch', tmp_path / 'z' / 'a' / 'scratch'
+    git('init', '-b', 'main', str(first))
+    git('init', '-b', 'main', str(third))
+    second.mkdir(parents=True)
+    other = tmp_path / 'other'
+    other.mkdir()
+    workspaces = [('First', first.resolve()), ('Second', second.resolve()), ('Third', third.resolve())]
+    for title, workspace in [*workspaces, ('Other', other.resolve()), ('Relative', Path('scratch'))]:
+        summary = ConversationSummary(workspace=str(workspace), title=title)
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    web_.shell.session.workspace = str(first.resolve())
+
+    projects = web_.get('/api/sessions').json()
+    names = {project['worktrees'][0]['sessions'][0]['title']: project['name'] for project in projects}
+    assert names == {
+        'First': str(Path(tmp_path.resolve().name, 'a', 'scratch')),
+        'Second': str(Path('b', 'scratch')),
+        'Third': str(Path('z', 'a', 'scratch')),
+        'Other': 'other',
+        'Relative': 'scratch',
+    }
+
+
 def test_sidebar_lists_removed_worktrees_after_live_ones(make_web: 'MakeWeb', tmp_path: Path) -> None:
     """A removed worktree comes after the project's live checkouts, even when its session is the newest."""
     web_ = make_web(Agent(TestModel()))
