@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import copy
+import io
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from botocore.exceptions import ClientError, EndpointConnectionError, ReadTimeoutError
@@ -14,7 +17,7 @@ from typing_extensions import Unpack
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai_harness import KnowledgeBase
-from pydantic_ai_harness.knowledge_base import BedrockKnowledgeBase, MetadataFilter, Passage, normalize_filter
+from pydantic_ai_harness.knowledge_base import BedrockKnowledgeBase, Document, MetadataFilter, Passage, normalize_filter
 
 if TYPE_CHECKING:
     from mypy_boto3_bedrock_agent_runtime.type_defs import (
@@ -519,6 +522,14 @@ class TestWithKnowledgeBase:
         )
         assert (capability.description, capability.id) == ('manuals', 'manuals')
 
+    def test_from_spec_reads_source_documents(self) -> None:
+        capability = KnowledgeBase[None].from_spec(
+            backend='bedrock', knowledge_base_id='KB123', region_name='eu-central-1', read_source_documents=True
+        )
+        assert capability.backend == BedrockKnowledgeBase(
+            'KB123', region_name='eu-central-1', read_source_documents=True
+        )
+
     def test_agent_loads_a_filter_tree_from_a_spec_file(self, tmp_path: Path) -> None:
         spec = tmp_path / 'agent.yaml'
         spec.write_text(
@@ -569,3 +580,266 @@ class TestWithKnowledgeBase:
         )
         agent = Agent.from_file(spec, custom_capability_types=[KnowledgeBase])
         assert isinstance(agent, Agent)
+
+
+_URI = 's3://kb-bucket/ingested/acme/manual.md'
+_PDF_URI = 's3://kb-bucket/ingested/acme/manual.pdf'
+
+
+def _s3_result(uri: str, text: str = 'passage') -> KnowledgeBaseRetrievalResultTypeDef:
+    return _result(text, location={'type': 'S3', 's3Location': {'uri': uri}})
+
+
+def _sidecar(attributes: Mapping[str, object]) -> tuple[bytes, str]:
+    return json.dumps({'metadataAttributes': attributes}).encode(), 'application/json'
+
+
+@dataclass
+class _FakeS3:
+    """In-memory `S3Client`: objects by bucket and key, recorded keys, an optional error."""
+
+    objects: dict[tuple[str, str], tuple[bytes, str | None]] = field(
+        default_factory=dict[tuple[str, str], tuple[bytes, 'str | None']]
+    )
+    error: Exception | None = None
+    keys: list[str] = field(default_factory=list[str])
+
+    def get_object(self, *, Bucket: str, Key: str) -> Mapping[str, Any]:
+        self.keys.append(Key)
+        if self.error is not None:
+            raise self.error
+        if (Bucket, Key) not in self.objects:
+            raise ClientError({'Error': {'Code': 'NoSuchKey', 'Message': 'missing'}}, 'GetObject')
+        data, content_type = self.objects[(Bucket, Key)]
+        response: dict[str, Any] = {'Body': io.BytesIO(data)}
+        if content_type is not None:
+            response['ContentType'] = content_type
+        return response
+
+
+def _reader(s3: _FakeS3, *results: KnowledgeBaseRetrievalResultTypeDef, **options: Any) -> BedrockKnowledgeBase:
+    return BedrockKnowledgeBase(
+        'KB123', client=_FakeClient(response=_response(*results)), s3_client=s3, read_source_documents=True, **options
+    )
+
+
+async def _document_id(backend: BedrockKnowledgeBase) -> str:
+    (passage, *_) = await backend.search('q', limit=5, filter=None)
+    assert passage.document_id is not None
+    return passage.document_id
+
+
+_ACME = normalize_filter({'tenant_id': 'acme'})
+
+
+class TestReadSourceDocuments:
+    async def test_s3_passages_get_opaque_ids_and_others_none(self) -> None:
+        backend = _reader(
+            _FakeS3(),
+            _s3_result(_URI),
+            _result('web', location={'type': 'WEB', 'webLocation': {'url': 'https://example.com'}}),
+            _result('s3 without uri', location={'type': 'S3', 's3Location': {}}),
+        )
+        first, web, no_uri = await backend.search('q', limit=5, filter=None)
+        assert first.document_id is not None and first.document_id.startswith('doc_')
+        assert 'acme' not in first.document_id and 'kb-bucket' not in first.document_id
+        assert (web.document_id, no_uri.document_id) == (None, None)
+        again, *_ = await backend.search('q', limit=5, filter=None)
+        assert again.document_id == first.document_id
+
+    async def test_without_the_option_passages_have_no_ids_and_no_read_tool(self) -> None:
+        backend = BedrockKnowledgeBase('KB123', client=_FakeClient(response=_response(_s3_result(_URI))))
+        (passage,) = await backend.search('q', limit=5, filter=None)
+        assert passage.document_id is None
+        assert list(KnowledgeBase[None](backend).get_toolset().tools) == ['search_knowledge_base']
+        assert list(KnowledgeBase[None](_reader(_FakeS3())).get_toolset().tools) == [
+            'search_knowledge_base',
+            'read_document',
+        ]
+
+    async def test_text_source_within_the_filter_is_read_with_its_attributes(self) -> None:
+        s3 = _FakeS3(
+            {
+                ('kb-bucket', 'ingested/acme/manual.md'): (b'# Manual\n\nFull text.', 'text/markdown; charset=utf-8'),
+                ('kb-bucket', 'ingested/acme/manual.md.metadata.json'): _sidecar({'tenant_id': 'acme', 'year': 2025}),
+            }
+        )
+        backend = _reader(s3, _s3_result(_URI))
+        document = await backend.read(await _document_id(backend), max_chars=100, filter=_ACME)
+        assert document is not None
+        assert (document.text, document.source, dict(document.metadata)) == (
+            '# Manual\n\nFull text.',
+            _URI,
+            {'tenant_id': 'acme', 'year': 2025},
+        )
+
+    async def test_typed_sidecar_values_are_understood(self) -> None:
+        sidecar = {
+            'tenant_id': {'value': {'type': 'STRING', 'stringValue': 'acme'}, 'includeForEmbedding': True},
+            'year': {'value': {'type': 'NUMBER', 'numberValue': 2025}},
+            'tags': {'value': {'type': 'STRING_LIST', 'stringListValue': ['a']}},
+            'labels': ['a', 'b'],
+        }
+        s3 = _FakeS3(
+            {
+                ('kb-bucket', 'ingested/acme/manual.md'): (b'text', 'text/plain'),
+                ('kb-bucket', 'ingested/acme/manual.md.metadata.json'): _sidecar(sidecar),
+            }
+        )
+        backend = _reader(s3, _s3_result(_URI))
+        document = await backend.read(await _document_id(backend), max_chars=100, filter=_ACME)
+        assert document is not None and dict(document.metadata) == {'tenant_id': 'acme', 'year': 2025}
+
+    async def test_source_outside_the_filter_is_never_fetched(self) -> None:
+        s3 = _FakeS3(
+            {
+                ('kb-bucket', 'ingested/acme/manual.md'): (b'secret', 'text/plain'),
+                ('kb-bucket', 'ingested/acme/manual.md.metadata.json'): _sidecar({'tenant_id': 'globex'}),
+            }
+        )
+        backend = _reader(s3, _s3_result(_URI))
+        assert await backend.read(await _document_id(backend), max_chars=100, filter=_ACME) is None
+        assert s3.keys == ['ingested/acme/manual.md.metadata.json']
+
+    @pytest.mark.parametrize('sidecar', [b'not json', b'[1, 2]', b'{"metadataAttributes": "x"}'])
+    async def test_unreadable_sidecar_matches_no_filter(self, sidecar: bytes) -> None:
+        s3 = _FakeS3(
+            {
+                ('kb-bucket', 'ingested/acme/manual.md'): (b'text', 'text/plain'),
+                ('kb-bucket', 'ingested/acme/manual.md.metadata.json'): (sidecar, 'application/json'),
+            }
+        )
+        backend = _reader(s3, _s3_result(_URI))
+        document_id = await _document_id(backend)
+        assert await backend.read(document_id, max_chars=100, filter=_ACME) is None
+        assert await backend.read(document_id, max_chars=100, filter=None) is not None
+
+    async def test_missing_sidecar_blocks_a_filtered_read_only(self) -> None:
+        s3 = _FakeS3({('kb-bucket', 'ingested/acme/manual.md'): (b'text', None)})
+        backend = _reader(s3, _s3_result(_URI))
+        document_id = await _document_id(backend)
+        assert await backend.read(document_id, max_chars=100, filter=_ACME) is None
+        document = await backend.read(document_id, max_chars=100, filter=None)
+        assert document == Document(document_id, 'text', source=_URI)
+
+    async def test_unknown_id_and_missing_object_are_none(self) -> None:
+        s3 = _FakeS3({('kb-bucket', 'ingested/acme/manual.md.metadata.json'): _sidecar({'tenant_id': 'acme'})})
+        backend = _reader(s3, _s3_result(_URI))
+        assert await backend.read('doc_unknown', max_chars=100, filter=None) is None
+        assert await backend.read(await _document_id(backend), max_chars=100, filter=_ACME) is None
+
+    async def test_pdf_needs_a_converter(self) -> None:
+        objects = {
+            ('kb-bucket', 'ingested/acme/manual.pdf'): (b'%PDF-1.7 binary', 'application/pdf'),
+            ('kb-bucket', 'ingested/acme/manual.pdf.metadata.json'): _sidecar({'tenant_id': 'acme'}),
+        }
+        plain = _reader(_FakeS3(dict(objects)), _s3_result(_PDF_URI))
+        assert await plain.read(await _document_id(plain), max_chars=100, filter=_ACME) is None
+
+        seen: list[tuple[bytes, str | None, str]] = []
+
+        def to_text(data: bytes, content_type: str | None, uri: str) -> str | None:
+            seen.append((data, content_type, uri))
+            return 'extracted text'
+
+        converting = _reader(_FakeS3(dict(objects)), _s3_result(_PDF_URI), convert=to_text)
+        document = await converting.read(await _document_id(converting), max_chars=100, filter=_ACME)
+        assert document is not None and document.text == 'extracted text'
+        assert seen == [(b'%PDF-1.7 binary', 'application/pdf', _PDF_URI)]
+
+        def decline(data: bytes, content_type: str | None, uri: str) -> str | None:
+            return None
+
+        declining = _reader(_FakeS3(dict(objects)), _s3_result(_PDF_URI), convert=decline)
+        assert await declining.read(await _document_id(declining), max_chars=100, filter=_ACME) is None
+
+    @pytest.mark.parametrize(
+        ('key', 'content_type'),
+        [('doc.json', 'application/json'), ('doc.md', 'binary/octet-stream'), ('doc.csv', None)],
+    )
+    async def test_text_is_recognised_by_type_or_suffix(self, key: str, content_type: str | None) -> None:
+        uri = f's3://kb-bucket/{key}'
+        backend = _reader(_FakeS3({('kb-bucket', key): (b'{"a": 1}', content_type)}), _s3_result(uri))
+        document = await backend.read(await _document_id(backend), max_chars=100, filter=None)
+        assert document is not None and document.text == '{"a": 1}'
+
+    @pytest.mark.parametrize('code', ['SlowDown', 'InternalError'])
+    async def test_transient_s3_errors_become_model_retry(self, code: str) -> None:
+        s3 = _FakeS3(error=ClientError({'Error': {'Code': code, 'Message': 'x'}}, 'GetObject'))
+        backend = _reader(s3, _s3_result(_URI))
+        with pytest.raises(ModelRetry, match='Reading the document failed'):
+            await backend.read(await _document_id(backend), max_chars=100, filter=None)
+
+    async def test_network_failures_become_model_retry(self) -> None:
+        s3 = _FakeS3(error=EndpointConnectionError(endpoint_url='https://s3.amazonaws.com'))
+        backend = _reader(s3, _s3_result(_URI))
+        with pytest.raises(ModelRetry, match='Reading the document failed'):
+            await backend.read(await _document_id(backend), max_chars=100, filter=None)
+
+    async def test_access_denied_propagates(self) -> None:
+        s3 = _FakeS3(error=ClientError({'Error': {'Code': 'AccessDenied', 'Message': 'no'}}, 'GetObject'))
+        backend = _reader(s3, _s3_result(_URI))
+        with pytest.raises(ClientError, match='AccessDenied'):
+            await backend.read(await _document_id(backend), max_chars=100, filter=None)
+
+    async def test_remembered_ids_are_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.knowledge_base._bedrock._MAX_REMEMBERED_DOCUMENTS', 2)
+        uris = [f's3://kb-bucket/doc-{index}.md' for index in range(3)]
+        objects: dict[tuple[str, str], tuple[bytes, str | None]] = {
+            ('kb-bucket', uri.removeprefix('s3://kb-bucket/')): (b'text', 'text/plain') for uri in uris
+        }
+        backend = _reader(_FakeS3(objects), *(_s3_result(uri) for uri in uris))
+        ids = [passage.document_id for passage in await backend.search('q', limit=5, filter=None)]
+        assert ids[0] is not None and ids[2] is not None
+        assert await backend.read(ids[0], max_chars=100, filter=None) is None
+        assert await backend.read(ids[2], max_chars=100, filter=None) is not None
+
+    def test_convert_needs_the_option(self) -> None:
+        def to_text(data: bytes, content_type: str | None, uri: str) -> str | None:
+            return None  # pragma: no cover
+
+        with pytest.raises(ValueError, match='convert needs read_source_documents=True'):
+            BedrockKnowledgeBase('KB123', convert=to_text)
+
+    async def test_default_s3_client_is_built_for_the_region(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        built: list[tuple[str | None, str]] = []
+        s3 = _FakeS3({('kb-bucket', 'ingested/acme/manual.md'): (b'text', 'text/plain')})
+
+        class _Session:
+            def __init__(self, region_name: str | None = None) -> None:
+                self.region_name = region_name
+
+            def client(self, service: str, **kwargs: object) -> _FakeS3:
+                built.append((self.region_name, service))
+                return s3
+
+        monkeypatch.setattr('pydantic_ai_harness.knowledge_base._bedrock.boto3.Session', _Session)
+        backend = BedrockKnowledgeBase(
+            'KB123',
+            region_name='eu-central-1',
+            client=_FakeClient(response=_response(_s3_result(_URI))),
+            read_source_documents=True,
+        )
+        document = await backend.read(await _document_id(backend), max_chars=100, filter=None)
+        assert document is not None and built == [('eu-central-1', 's3')]
+
+    async def test_agent_reads_the_source_through_read_document(self) -> None:
+        s3 = _FakeS3(
+            {
+                ('kb-bucket', 'ingested/acme/manual.md'): (b'Full manual text.', 'text/markdown'),
+                ('kb-bucket', 'ingested/acme/manual.md.metadata.json'): _sidecar({'tenant_id': 'acme'}),
+            }
+        )
+        backend = _reader(s3, _s3_result(_URI))
+        toolset = KnowledgeBase[None](backend, filter={'tenant_id': 'acme'}, show_sources=False).get_toolset()
+        from pydantic_ai.models.test import TestModel
+        from pydantic_ai.tools import RunContext
+        from pydantic_ai.usage import RunUsage
+
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+        found = await toolset.search_knowledge_base(ctx, 'manual')
+        text = str(found.return_value)
+        assert 's3://' not in text and 'kb-bucket' not in text
+        document_id = found.metadata['results'][0]['document_id']
+        read = await toolset.read_document(ctx, document_id)
+        assert str(read.return_value) == f'Document: {document_id}\n\nFull manual text.'

@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TypeAlias
 
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.native_tools import FileSearchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -21,6 +21,7 @@ from pydantic_ai_harness.knowledge_base._backend import (
     Passage,
     ReadableKnowledgeBase,
     SearchMode,
+    is_readable,
     normalize_filter,
 )
 
@@ -65,6 +66,7 @@ class KnowledgeBaseToolset(FunctionToolset[AgentDepsT]):
         *,
         number_of_results: int = 5,
         filter: MetadataFilter | FilterFunc[AgentDepsT] | None = None,
+        require_filter: bool = False,
         search_mode: SearchMode | None = None,
         score_threshold: float | None = None,
         show_sources: bool = True,
@@ -78,12 +80,13 @@ class KnowledgeBaseToolset(FunctionToolset[AgentDepsT]):
         self._backend = backend
         self._number_of_results = number_of_results
         self._filter = filter
+        self._require_filter = require_filter
         self._search_mode: SearchMode | None = search_mode
         self._score_threshold = score_threshold
         self._show_sources = show_sources
         self._max_document_chars = max_document_chars
         self._operations = operations
-        self._readable = isinstance(backend, ReadableKnowledgeBase)
+        self._readable = is_readable(backend)
         search_description = (
             f'{_SEARCH_DESCRIPTION} The knowledge base holds {description}.' if description else _SEARCH_DESCRIPTION
         )
@@ -188,12 +191,16 @@ class KnowledgeBaseToolset(FunctionToolset[AgentDepsT]):
         )
 
     async def _resolve_filter(self, ctx: RunContext[AgentDepsT]) -> FilterNode | None:
-        if not callable(self._filter):
-            return normalize_filter(self._filter)
-        filter = self._filter(ctx)
-        if inspect.isawaitable(filter):
-            filter = await filter
-        return normalize_filter(filter)
+        if callable(self._filter):
+            filter = self._filter(ctx)
+            if inspect.isawaitable(filter):
+                filter = await filter
+        else:
+            filter = self._filter
+        node = normalize_filter(filter)
+        if node is None and self._require_filter:
+            raise UserError('The knowledge base filter resolved to nothing for this run, and require_filter is set.')
+        return node
 
     def _format(self, passage: Passage) -> str:
         lines: list[str] = []

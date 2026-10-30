@@ -18,8 +18,8 @@ from pydantic_ai_harness.knowledge_base._backend import (
     KnowledgeBaseBackend,
     MetadataFilter,
     NativeFileSearchBackend,
-    ReadableKnowledgeBase,
     SearchMode,
+    is_readable,
     normalize_filter,
 )
 from pydantic_ai_harness.knowledge_base._toolset import FilterFunc, KnowledgeBaseOperations, KnowledgeBaseToolset
@@ -87,6 +87,14 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
     syntax and raises for parts it can't apply.
     """
 
+    require_filter: bool = False
+    """Refuse to search or read when the filter resolves to nothing, instead of searching unfiltered.
+
+    Set it when the filter is what separates tenants: a callable that returns `None` for a run (a
+    missing tenant, a disabled knowledge base) then fails the tool call with `UserError` rather than
+    searching across every tenant.
+    """
+
     search_mode: SearchMode | None = None
     """How searches match: `'semantic'`, `'keyword'` or `'hybrid'`; `None` for the backend's default.
 
@@ -146,6 +154,8 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
             raise ValueError(f'max_document_chars must be positive, got {self.max_document_chars}')
         if self.filter is not None and not callable(self.filter):
             normalize_filter(self.filter)
+        if self.require_filter and not self.filter:
+            raise ValueError('require_filter needs a filter')
         if self.native:
             if not isinstance(self.backend, NativeFileSearchBackend):
                 raise ValueError(f'native needs a backend the provider can search natively, not {self.backend!r}')
@@ -168,7 +178,7 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
         if self.guidance is not None:
             return self.guidance or None
         contents = f' of {self.description}' if self.description else ''
-        read = _READ_INSTRUCTIONS if isinstance(self.backend, ReadableKnowledgeBase) else ''
+        read = _READ_INSTRUCTIONS if is_readable(self.backend) else ''
         return _INSTRUCTIONS.format(contents=contents, read=read)
 
     @classmethod
@@ -212,6 +222,7 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
             self.backend,
             number_of_results=self.number_of_results,
             filter=self.filter,
+            require_filter=self.require_filter,
             search_mode=self.search_mode,
             score_threshold=self.score_threshold,
             show_sources=self.show_sources,
@@ -231,6 +242,7 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
         region_name: str | None = None,
         reranking_model: str | None = None,
         fetch_results: int | None = None,
+        read_source_documents: bool = False,
         number_of_results: int = 5,
         filter: MetadataFilter | None = None,
         search_mode: SearchMode | None = None,
@@ -245,7 +257,7 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
         """Construct the capability from serializable spec options.
 
         `knowledge_base_id` is the Bedrock knowledge base id or the OpenAI vector store id. The Bedrock
-        options (`region_name`, `reranking_model`, `fetch_results`) only apply to
+        options (`region_name`, `reranking_model`, `fetch_results`, `read_source_documents`) only apply to
         `backend='bedrock'`. A spec takes a static `filter`; a callable filter, a custom client and an
         in-memory backend are Python-only.
         """
@@ -258,10 +270,13 @@ class KnowledgeBase(AbstractCapability[AgentDepsT]):
                 region_name=region_name,
                 reranking_model=reranking_model,
                 fetch_results=fetch_results,
+                read_source_documents=read_source_documents,
             )
         else:
-            if (region_name, reranking_model, fetch_results) != (None, None, None):
-                raise ValueError('region_name, reranking_model and fetch_results only apply to backend="bedrock"')
+            if (region_name, reranking_model, fetch_results) != (None, None, None) or read_source_documents:
+                raise ValueError(
+                    'region_name, reranking_model, fetch_results and read_source_documents only apply to backend="bedrock"'
+                )
             from pydantic_ai_harness.knowledge_base._openai import OpenAIVectorStore
 
             store = OpenAIVectorStore(knowledge_base_id)

@@ -243,6 +243,15 @@ class ReadableKnowledgeBase(Protocol):
         ...
 
 
+def is_readable(backend: object) -> bool:
+    """Whether `backend` reads documents: it has `read`, and doesn't turn reading off with `can_read = False`.
+
+    A backend whose reading depends on its configuration, like `BedrockKnowledgeBase` with
+    `read_source_documents`, exposes `can_read`; one that always reads needs nothing beyond `read`.
+    """
+    return isinstance(backend, ReadableKnowledgeBase) and getattr(backend, 'can_read', True) is not False
+
+
 @runtime_checkable
 class NativeFileSearchBackend(Protocol):
     """A backend whose index the model provider can also search natively, with `FileSearchTool`."""

@@ -22,6 +22,7 @@ from pydantic_ai_harness.knowledge_base._backend import (
     Passage,
     ReadableKnowledgeBase,
     SearchMode,
+    is_readable,
     matches,
     normalize_filter,
 )
@@ -30,7 +31,12 @@ from pydantic_ai_harness.knowledge_base._in_memory import InMemoryKnowledgeBase
 from pydantic_ai_harness.knowledge_base._toolset import FilterFunc, KnowledgeBaseToolset
 
 if TYPE_CHECKING:
-    from pydantic_ai_harness.knowledge_base._bedrock import BedrockAgentRuntimeClient, BedrockKnowledgeBase
+    from pydantic_ai_harness.knowledge_base._bedrock import (
+        BedrockAgentRuntimeClient,
+        BedrockKnowledgeBase,
+        S3Client,
+        SourceConverter,
+    )
     from pydantic_ai_harness.knowledge_base._openai import OpenAIVectorStore
 
 __all__ = [
@@ -53,9 +59,12 @@ __all__ = [
     'MetadataFilter',
     'NativeFileSearchBackend',
     'OpenAIVectorStore',
+    'S3Client',
+    'SourceConverter',
     'Passage',
     'ReadableKnowledgeBase',
     'SearchMode',
+    'is_readable',
     'matches',
     'normalize_filter',
 ]
@@ -63,6 +72,8 @@ __all__ = [
 _BACKENDS = {
     'BedrockAgentRuntimeClient': '_bedrock',
     'BedrockKnowledgeBase': '_bedrock',
+    'S3Client': '_bedrock',
+    'SourceConverter': '_bedrock',
     'OpenAIVectorStore': '_openai',
 }
 

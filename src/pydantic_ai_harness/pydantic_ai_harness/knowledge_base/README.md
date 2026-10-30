@@ -99,7 +99,7 @@ Swapping the backend changes where the documents live, not how the agent uses th
 | Backend | What it searches | Reads documents | Native search |
 |---|---|---|---|
 | `InMemoryKnowledgeBase(documents)` | Documents held in process, BM25 keyword ranking over paragraph chunks | Yes | No |
-| `BedrockKnowledgeBase(knowledge_base_id)` | An [Amazon Bedrock Knowledge Base](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base.html), with hybrid search and reranking | No | No |
+| `BedrockKnowledgeBase(knowledge_base_id)` | An [Amazon Bedrock Knowledge Base](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base.html), with hybrid search and reranking | Opt-in, from the S3 data source | No |
 | `OpenAIVectorStore(vector_store_id)` | An [OpenAI vector store](https://platform.openai.com/docs/guides/retrieval) | Yes | On OpenAI Responses models |
 
 `InMemoryKnowledgeBase` keeps nothing on disk and has no embeddings, so it matches words, not
@@ -143,8 +143,37 @@ pass, set `region_name` too or give the full ARN.
 don't cover: implicit filtering, Bedrock-native filters such as ranges or `startsWith`, reranker
 metadata selection, or a managed knowledge base's `managedSearchConfiguration` (boto3 1.43 or
 later); the capability's `search_mode` must then stay unset. The capability's metadata filter is
-still applied on top of it, combined with any filter it carries. Bedrock has no API to read a
-document back, so this backend offers no `read_document`.
+still applied on top of it, combined with any filter it carries.
+
+Bedrock has no API to read a document back, and a document's chunks can't be reassembled reliably,
+so reading is opt-in and goes to the source. With `read_source_documents=True`, passages from an S3
+data source get an opaque document id, and `read_document` fetches the source object from S3, which
+needs `s3:GetObject` on the bucket. Before fetching, the run's filter is checked against the
+attributes in the object's `.metadata.json` sidecar (Bedrock's own metadata convention); with a
+filter set, an object without a sidecar is not read. Text objects are returned as they are. Other
+content, such as PDFs, goes to `convert`, a function from the object's bytes, content type and URI
+to text, and without one reads as unavailable, so the model works from the passages:
+
+```python
+from io import BytesIO
+
+from pypdf import PdfReader
+
+from pydantic_ai_harness.knowledge_base import BedrockKnowledgeBase
+
+
+def pdf_text(data: bytes, content_type: str | None, uri: str) -> str | None:
+    if content_type != 'application/pdf':
+        return None
+    return '\n\n'.join(page.extract_text() or '' for page in PdfReader(BytesIO(data)).pages)
+
+
+backend = BedrockKnowledgeBase('KB123', region_name='eu-central-1', read_source_documents=True, convert=pdf_text)
+```
+
+Other data sources (web, Confluence, SharePoint, Salesforce, custom) stay search-only. The document
+ids map to S3 locations inside the backend, in memory, so no storage path reaches the model; an id
+from another process or replica reads as unknown, and the model searches again.
 
 Throttling, quota, internal, dependency, gateway and model-not-ready errors and network failures
 become retry prompts; access, resource and validation errors raise.
@@ -190,7 +219,7 @@ manage the files. `KnowledgeBase` is for an index the application owns, searched
 | Tool | Purpose |
 |---|---|
 | `search_knowledge_base` | Search for passages relevant to a query and return the best `number_of_results`, each with its source and, where the backend reads documents, its document id. |
-| `read_document` | Return a document by the id a search showed, `max_document_chars` at a time from an `offset`, if it matches the run's filter. Only offered when the backend can read documents. |
+| `read_document` | Return a document by the id a search showed, `max_document_chars` at a time from an `offset`, if it matches the run's filter. Only offered when the backend can read documents (in-memory, OpenAI, and Bedrock with `read_source_documents`). |
 
 Each passage is rendered under a `Source:` line with its score when the backend reports one, and a
 `Document:` line when it can be opened. A document longer than `max_document_chars` ends with a
@@ -230,7 +259,9 @@ agent = Agent(
 )
 ```
 
-The callable may be async, and returning `None` searches unfiltered.
+The callable may be async, and returning `None` searches unfiltered. When the filter is what keeps
+tenants apart, set `require_filter=True`: a run whose filter resolves to nothing (a missing tenant, a
+disabled knowledge base) then fails the tool call instead of searching across every tenant.
 
 For anything beyond "every key equals one of these", write the filter as a tree, the form Haystack
 and LlamaIndex use. A condition compares one field with `==`, `!=`, `>`, `>=`, `<`, `<=`, `in` or
@@ -327,6 +358,7 @@ KnowledgeBase(
     InMemoryKnowledgeBase(),  # backend, required
     number_of_results=5,  # passages per search (1 to 100; OpenAI caps at 50)
     filter=None,  # MetadataFilter, or a callable of RunContext building one per run
+    require_filter=False,  # fail rather than search unfiltered when the filter resolves to nothing
     search_mode=None,  # 'semantic', 'keyword' or 'hybrid'; None for the backend's default
     score_threshold=None,  # drop passages scoring below this, on the backend's scale
     show_sources=True,  # Source: lines in the text; off keeps provenance in metadata only
@@ -348,7 +380,8 @@ from 0 to 1, in-memory BM25 unbounded.
 ## Your own backend
 
 Any object with an async `search` method is a backend. Add an async `read` method to get
-`read_document`, and `file_search_tool` to offer native search:
+`read_document` (and a `can_read` attribute if reading depends on configuration), and
+`file_search_tool` to offer native search:
 
 ```python
 from collections.abc import Sequence
@@ -449,7 +482,7 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[KnowledgeBase])
 ```
 
 `knowledge_base_id` is the Bedrock knowledge base id or the OpenAI vector store id. The Bedrock
-options (`region_name`, `reranking_model`, `fetch_results`) only apply to
+options (`region_name`, `reranking_model`, `fetch_results`, `read_source_documents`) only apply to
 `backend: bedrock`. A spec takes a static `filter`, in shorthand or tree form; a callable filter, a custom client and an
 in-memory backend are Python-only.
 

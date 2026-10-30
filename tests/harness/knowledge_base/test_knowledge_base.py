@@ -642,3 +642,35 @@ class TestFilters:
     def test_malformed_filters_are_rejected(self, filter: object, message: str) -> None:
         with pytest.raises(ValueError, match=message):
             normalize_filter(filter)  # pyright: ignore[reportArgumentType]
+
+
+class TestRequireFilter:
+    def test_needs_a_filter(self) -> None:
+        with pytest.raises(ValueError, match='require_filter needs a filter'):
+            KnowledgeBase[None](_SearchOnly(), require_filter=True)
+
+    async def test_a_filter_that_resolves_to_nothing_refuses_to_search_and_read(self) -> None:
+        def tenant(ctx: RunContext[object]) -> MetadataFilter | None:
+            return None if ctx.deps is None else {'tenant_id': str(ctx.deps)}
+
+        backend = _SearchOnly()
+        searching = _toolset(backend, filter=tenant, require_filter=True)
+        with pytest.raises(UserError, match='require_filter is set'):
+            await searching.search_knowledge_base(_ctx(None), 'q')
+        assert backend.calls == []
+        await searching.search_knowledge_base(_ctx('acme'), 'q')
+        assert backend.calls[0][2] == {'field': 'tenant_id', 'operator': '==', 'value': 'acme'}
+
+        reading = _toolset(InMemoryKnowledgeBase(_DOCUMENTS), filter=tenant, require_filter=True)
+        with pytest.raises(UserError, match='require_filter is set'):
+            await reading.read_document(_ctx(None), 'returns')
+
+
+class TestCanRead:
+    async def test_a_backend_can_turn_reading_off(self) -> None:
+        class _Switchable(InMemoryKnowledgeBase):
+            can_read = False
+
+        assert list(await _toolset(_Switchable(_DOCUMENTS)).get_tools(_ctx())) == ['search_knowledge_base']
+        instructions = KnowledgeBase[None](_Switchable()).get_instructions()
+        assert isinstance(instructions, str) and 'read_document' not in instructions

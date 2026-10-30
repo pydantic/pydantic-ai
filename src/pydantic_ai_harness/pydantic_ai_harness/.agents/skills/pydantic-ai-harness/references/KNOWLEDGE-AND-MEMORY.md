@@ -348,7 +348,7 @@ documents. Backends live in `pydantic_ai_harness.knowledge_base`:
 | Backend | Needs | Reads documents | Native search |
 |---|---|---|---|
 | `InMemoryKnowledgeBase(documents)` | nothing | yes | no |
-| `BedrockKnowledgeBase(knowledge_base_id, region_name=...)` | `pydantic-ai-slim[bedrock]` | no | no |
+| `BedrockKnowledgeBase(knowledge_base_id, region_name=...)` | `pydantic-ai-slim[bedrock]` | opt-in (`read_source_documents=True`, S3 sources) | no |
 | `OpenAIVectorStore(vector_store_id)` | `pydantic-ai-slim[openai]` | yes | OpenAI Responses |
 
 ```python
@@ -374,7 +374,8 @@ Key parameters: `backend` (required, positional), `number_of_results=5` (1 to 10
 50), `filter=None` (shorthand `{key: value | [values]}`, every key must match, or a tree of
 `{'field', 'operator', 'value'}` conditions with `==`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `not in`
 combined by `{'operator': 'AND' | 'OR' | 'NOT', 'conditions': [...]}`; or a sync or async callable
-of `RunContext` returning one per run), `search_mode=None` (`'semantic'`, `'keyword'`, `'hybrid'`),
+of `RunContext` returning one per run), `require_filter=False` (fail instead of searching unfiltered when the
+filter resolves to nothing), `search_mode=None` (`'semantic'`, `'keyword'`, `'hybrid'`),
 `score_threshold=None` (backend's scale), `show_sources=True`, `max_document_chars=20_000` (per
 `read_document` call; the model pages on with `offset`), `native=False`, `description=None`,
 `guidance=None` (`''` disables the instructions), `id='knowledge_base'`. Bedrock options sit on the
@@ -392,7 +393,9 @@ Gotchas:
   `filter`, since the native tool can't scope a search, and native results don't land in
   `metadata['results']`.
 - `InMemoryKnowledgeBase` is keyword BM25 without stemming or embeddings: tests and small corpora.
-- Bedrock has no document read API and no keyword mode; Bedrock and OpenAI have no `NOT` (negate
+- Bedrock has no document read API: `read_source_documents=True` reads the S3 source object instead (needs
+  `s3:GetObject`; checks the `.metadata.json` sidecar against the filter first; non-text such as PDFs needs
+  `convert=(data, content_type, uri) -> str | None`; document ids are opaque and process-local). Bedrock has no keyword mode; Bedrock and OpenAI have no `NOT` (negate
   the comparisons instead); OpenAI is semantic only. A missing field matches `!=` and `not in` only,
   as on Bedrock. Unsupported operators, modes and thresholds raise rather than being ignored.
 - Two instances share the default `id` and raise when they differ; a second knowledge base needs its
