@@ -150,7 +150,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     except LookupError:
                         # The cost of this provider/model is unknown, which is common.
                         pass
-                    except Exception as e:  # pragma: no cover
+                    except Exception as e:
                         warnings.warn(
                             f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
                         )
