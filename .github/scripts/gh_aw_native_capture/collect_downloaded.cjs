@@ -105,6 +105,7 @@ async function main() {
       const finalPath = path.join(root, 'usage/aw_session.jsonl');
       const text = fs.readFileSync(finalPath, 'utf8');
       assert(!text.includes('acceptance-secret-unique-123'), 'configured secret survived the artifact round trip');
+      assert(!text.includes('native-runtime-only-mask-456'), 'runtime-only mask survived the artifact round trip');
       assert(!text.includes('forged-native-fixture'), 'hostile fallback became authoritative after download');
       assert(!text.includes('forged-agent-errors-native-fixture'), 'unverified agent-errors became authoritative after download');
       const events = text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));

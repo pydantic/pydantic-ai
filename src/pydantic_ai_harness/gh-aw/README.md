@@ -110,6 +110,11 @@ the recording remains diagnostic-only, even when AWF reports a timeout or cancel
 `PAI_AGENT` and any caller-supplied `PYTHONPATH` are trusted engine configuration.
 Python can import from `PYTHONPATH` before the recorder starts, and `PAI_AGENT` runs in
 the recorder interpreter. Point either setting only at code you trust.
+gh-aw redacts configured secrets and MCP gateway bearer tokens from session artifacts.
+The engine parser treats runtime `::add-mask::` commands as data. gh-aw applies masks
+from captured output when publishing artifacts, rejecting masks that would change
+event structure, status, or usage.
+
 The runtime bootstrap writes the canonical stream to `agent-session.jsonl`: `session.init`,
 `user.message`, `assistant.message`, `assistant.reasoning`, `tool.execution_start`,
 `tool.execution_complete`, and `session.result`. The result includes reported usage when

@@ -889,7 +889,10 @@ engine:
           }
         }
         // Unauthenticated pipe bytes and signed model content are data, not
-        // workflow commands that can select masks for canonical event fields.
+        // workflow commands. Honoring ::add-mask:: from the agent-writable
+        // channel would let tools rewrite authenticated canonical content.
+        // gh-aw's artifact writer handles masks after verification and rejects
+        // structural changes, including status and usage.
         if (invalid || (records.length && !complete)) {
           return {
             markdown: `Incomplete agent recording: ${records.length} authenticated events; no canonical session published.`,
@@ -937,6 +940,7 @@ native tools), and usage through a non-inheritable descriptor forwarded to engin
 Ordinary child stdout and stderr go to engine stdout. After AWF exits, gh-aw selects the
 protected engine-stderr bytes from AWF's attempt metadata; the parser selects their framed
 records and writes `agent-session.jsonl`, and the conclusion collects `usage/aw_session.jsonl`.
-Import failures and interrupted runs keep their actual failure outcome, without inferred
-turns or tool completions. See `README.md` for setup, credentials, and observability.
+Import failures and complete interrupted recordings keep their actual failure outcome,
+without inferred turns or tool completions. Unterminated interruptions remain diagnostics,
+without canonical status or usage. See `README.md` for setup, credentials, and observability.
 -->

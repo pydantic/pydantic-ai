@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const [helpers, scenario, evidence, expectedExitText, expectedPythonText, ownerMarker] = process.argv.slice(2);
 const root = '/tmp/gh-aw';
 const secret = 'acceptance-secret-unique-123';
+const runtimeOnlySecret = 'native-runtime-only-mask-456';
 const forgedErrorMarker = 'forged-agent-errors-native-fixture';
 const { installActionsAdapter, prepareConclusionEnvironment, assertConclusionResults } = require('./actions_adapter.cjs');
 const { failures, logs, summaries } = installActionsAdapter();
@@ -48,7 +49,7 @@ const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filt
     assert.equal(result.data.usage.input_tokens, 100);
     assert.equal(result.data.usage.output_tokens, 2);
     const message = events.find(event => event.type === 'assistant.message');
-    assert.equal(message.data.content, secret);
+    assert.equal(message.data.content, `${secret} ${runtimeOnlySecret}`);
     assert.equal(Boolean(message.data.partial), scenario === 'failure');
   }
   assert.equal(report.untrusted_exit_sidecar_written, true);
@@ -78,6 +79,7 @@ const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filt
   else {
     const text = fs.readFileSync(canonical, 'utf8');
     assert(!text.includes(secret), 'configured secret survived published canonical session');
+    assert(!text.includes(runtimeOnlySecret), 'runtime-only mask did not redact published canonical content');
     assert(!text.includes(forgedErrorMarker), 'unverified agent-errors entered the canonical session');
     assert(text.includes('***'), 'redaction marker absent from canonical session');
     fs.copyFileSync(canonical, path.join(evidence, 'agent-session.jsonl'));
@@ -130,6 +132,7 @@ const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filt
   const callerResults = assertConclusionResults(unified, scenario, expectedJobs);
   const finalText = fs.readFileSync(finalPath, 'utf8');
   assert(!finalText.includes(secret), 'configured secret survived the final published session');
+  assert(!finalText.includes(runtimeOnlySecret), 'runtime-only mask survived the final published session');
   assert(!finalText.includes(forgedErrorMarker), 'unverified agent-errors entered the final published session');
   assert(!finalText.includes('forged-native-fixture'), 'released conclusion published hostile fallback artifacts');
   const conversation = unified.filter(event => event.provenance.component === 'agent');

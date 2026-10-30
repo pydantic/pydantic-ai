@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import gh_aw_recording
+
 import pydantic_ai.models
 from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -70,7 +71,7 @@ async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator
     if _request_count == 1:
         yield {0: DeltaToolCall(name='hostile_probe', json_args='{}')}
     else:
-        yield 'acceptance-secret-unique-123'
+        yield 'acceptance-secret-unique-123 native-runtime-only-mask-456'
         if os.environ.get('FIXTURE_INTERRUPT') == '1':
             os._exit(137)
         if _probe_failed:

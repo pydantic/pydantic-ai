@@ -615,6 +615,10 @@ Errors and calls still pending at interruption remain accurately represented; no
 completions or turns are inferred. A compatible gh-aw
 conclusion collects usage and `aw_session.jsonl`, including gateway and safe-output
 activity. These artifacts complement the Actions summary and run logs.
+gh-aw redacts configured secrets and MCP gateway bearer tokens from session artifacts.
+The engine parser treats runtime `::add-mask::` commands as data. gh-aw applies masks
+from captured output when publishing artifacts, rejecting masks that would change
+event structure, status, or usage.
 
 ### What a working run looks like
 

@@ -8,6 +8,9 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+# This runtime-only mask must reach artifact redaction through ordinary stdout.
+print('::add-mask::native-runtime-only-mask-456', flush=True)
+
 (
     parent_pid,
     expected_uid,

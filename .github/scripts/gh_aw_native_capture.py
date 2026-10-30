@@ -2,6 +2,11 @@
 
 This is a standalone CI boundary test: process, /proc, Docker, and host-native AWF
 capture behavior cannot be exercised by an in-process pytest substitute.
+
+The maintainer advancing the supported baseline updates release/source/checksum/image
+pins and regenerates the complete helper SHA-256 manifest from tagged actions/setup/js,
+including dynamic parser-registry dependencies. CI code owners review the bump and both
+native jobs must pass again; external releases do not automatically require a baseline bump.
 """
 
 from __future__ import annotations
@@ -445,10 +450,13 @@ Run the deterministic recorder fixture.
     shutil.copytree(helpers, evidence / 'released-helpers')
     engine_match = re.search(r'^  version: "([^"]+)"$', definition, re.M)
     slim_match = re.search(r'pydantic-ai-slim\[anthropic,openai,mcp,spec\]>=([0-9.]+)', definition)
+    cryptography_match = re.search(r'cryptography>=([0-9.]+)', definition)
     assert engine_match is not None, 'Engine definition must specify its runtime version'
     assert slim_match is not None, 'Engine definition must specify its framework minimum'
+    assert cryptography_match is not None, 'Engine definition must specify its signing dependency minimum'
     engine_version = engine_match.group(1)
     slim_version = slim_match.group(1)
+    cryptography_version = cryptography_match.group(1)
     execute(
         [
             str(host_python),
@@ -460,7 +468,7 @@ Run the deterministic recorder fixture.
             f'pydantic-ai-harness[coder]=={engine_version}',
             f'pydantic-clai2=={engine_version}',
             f'pydantic-ai-slim[anthropic,openai,mcp,spec]>={slim_version}',
-            'cryptography>=48.0.1',
+            f'cryptography>={cryptography_version}',
         ],
         env=env,
         log=evidence / 'install.log',
