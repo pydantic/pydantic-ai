@@ -22,6 +22,7 @@ from .messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     UserContent,
@@ -73,16 +74,16 @@ def _render_parts(parts: Sequence[ModelRequestPart]) -> list[ModelRequestPart]:
 def _render(part: CapabilityPart) -> list[SystemPromptPart | UserPromptPart]:
     """The parts `part` reaches the model as.
 
-    A system part is a system message, in its own scope. A framed part is a frame carrying the frame seal, whatever its
+    An instruction part is a system message, in its own scope. A data part is a frame carrying the frame seal, whatever its
     source: the seal says the application placed the frame, as on core's own `<tool_result>`, not that it vouches for
     the content. Its note, which does vouch, goes before it only when the source is trusted. Either way, text in the
     body that resembles a frame gets the lookalike note from `prepare_messages`, naming who wrote it (see
     `content_author`).
     """
     render = part.render
-    content = part._content()  # pyright: ignore[reportPrivateUsage]
+    content = part.model_content()
     metadata = {_PYDANTIC_AI_METADATA_KEY: {RENDERED_CAPABILITY_PART_KEY: True}}
-    if render.voice == 'system':
+    if render.voice == 'instruction':
         # Checked when the part was created.
         assert isinstance(content, str)
         return [SystemPromptPart(content, timestamp=part.timestamp, scope=part.scope, metadata=metadata)]
@@ -93,7 +94,8 @@ def _render(part: CapabilityPart) -> list[SystemPromptPart | UserPromptPart]:
     # Only the tags are marked as the framework's: the body is the part's content, which `prepare_messages` checks
     # for lookalike frames like any other text, so a body that closes the frame early is noted rather than trusted.
     author = _AUTHORS[part.source.source_kind]
-    body = [_with_author(item, author) for item in ([content] if isinstance(content, str) else content)]
+    items = [content] if isinstance(content, str | StructuredContent) else content
+    body = [_with_author(item, author) for item in items]
     framed = UserPromptPart(
         [framework_frame_text(open_tag), *body, framework_frame_text(close_tag)], timestamp=part.timestamp
     )

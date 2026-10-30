@@ -254,7 +254,7 @@ Phrase the instruction as what changed rather than as an override of the user. M
 !!! warning "Not a place for untrusted content"
     A system prompt carries operator authority, so text you put in one is treated as *your* instruction to the model. Never build a `SystemPromptPart` out of content you didn't author — tool output, a retrieved document, a fetched page, a message from another user — or a prompt injection buried in it inherits that authority.
 
-    This matters most for late-arriving results, which is a common reason to reach for `enqueue`: a background job whose tool returned `'started'` long before the work finished, a webhook, a long-running search. Deliver those as data — enqueue the payload as a framed [capability part](capabilities/custom.md#capability-parts) whose `source` says where it came from, or return it from a tool — and reserve `SystemPromptPart` for instructions you wrote yourself. Where a background result should also *change how the agent behaves*, write that instruction yourself and enqueue the untrusted payload separately.
+    This matters most for late-arriving results, which is a common reason to reach for `enqueue`: a background job whose tool returned `'started'` long before the work finished, a webhook, a long-running search. Deliver those as data — enqueue the payload as a [`DataCapabilityPart`](capabilities/custom.md#capability-parts) whose `source` says where it came from, or return it from a tool — and reserve `SystemPromptPart` for instructions you wrote yourself. Where a background result should also *change how the agent behaves*, write that instruction yourself and enqueue the untrusted payload separately.
 
 ### Framework frames and content fidelity
 
@@ -279,13 +279,13 @@ That suits a value that changes from one request to the next and is sent with ev
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, OperatorSource, OperatorText, RunContext, SystemCapabilityPart
+from pydantic_ai import Agent, OperatorSource, OperatorText, RunContext, InstructionCapabilityPart
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass(kw_only=True)
-class RequestsLeftPart(SystemCapabilityPart, namespace='requests_left'):
+class RequestsLeftPart(InstructionCapabilityPart, namespace='requests_left'):
     pass
 
 
@@ -354,7 +354,7 @@ Use a request-scoped prompt for something about the current moment. Something th
 
 ### Capability parts
 
-A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is something a capability or your application tells the model mid-conversation, defined as a subclass per kind of record: of [`FramedCapabilityPart`][pydantic_ai.messages.FramedCapabilityPart] for data in a frame on the user channel, or [`SystemCapabilityPart`][pydantic_ai.messages.SystemCapabilityPart] for the application's voice. See [Telling the model things mid-conversation](capabilities/custom.md#capability-parts) for how to define one.
+A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is something a capability or your application tells the model mid-conversation, defined as a subclass per kind of record: of [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] for data in a frame on the user channel, or [`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart] for the application's voice. See [Telling the model things mid-conversation](capabilities/custom.md#capability-parts) for how to define one.
 
 In the message history it stays the part it was enqueued as, so code that reads the history, such as a history processor, a compaction summarizer or a UI, finds it by type and never mistakes it for something the user said. It's rendered into the parts above only on the way to the model: before any model sees the history, so a [custom model](models/overview.md#custom-models) only ever gets the request parts it already maps. A [`Model.request`][pydantic_ai.models.Model.request] call made outside an agent run calls [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] first, which renders them too.
 

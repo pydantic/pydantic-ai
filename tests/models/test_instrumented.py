@@ -48,10 +48,10 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import (
     InstructionBaselinePart,
+    InstructionCapabilityPart,
     InstructionPart,
     OperatorSource,
     OperatorText,
-    SystemCapabilityPart,
 )
 from pydantic_ai.models import Model, ModelProfile, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -2909,7 +2909,7 @@ async def test_wrapped_model_receives_unprepared_request():
 
 
 @dataclass(kw_only=True)
-class _ReminderPart(SystemCapabilityPart, namespace='test_instrumented', name='reminder'):
+class _ReminderPart(InstructionCapabilityPart, namespace='test_instrumented', name='reminder'):
     pass
 
 

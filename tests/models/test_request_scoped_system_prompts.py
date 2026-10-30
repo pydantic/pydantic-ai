@@ -46,11 +46,11 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
+    InstructionCapabilityPart,
     ModelMessagesTypeAdapter,
     ModelRequestPart,
     OperatorSource,
     OperatorText,
-    SystemCapabilityPart,
 )
 from pydantic_ai.models import (
     Model,
@@ -115,7 +115,7 @@ PROMPT = 'Get the weather in Paris, then in Oslo, then summarize in one line.'
 
 
 @dataclass(kw_only=True)
-class ReminderPart(SystemCapabilityPart, namespace='test_request_scoped_prompts'):
+class ReminderPart(InstructionCapabilityPart, namespace='test_request_scoped_prompts'):
     """A capability's request-scoped reminder, which renders as a `SystemPromptPart(..., scope='request')`."""
 
 

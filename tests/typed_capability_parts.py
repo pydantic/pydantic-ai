@@ -10,10 +10,11 @@ from typing import assert_type
 
 from pydantic_ai.messages import (
     CapabilityPart,
-    FramedCapabilityPart,
+    DataCapabilityPart,
+    InstructionCapabilityPart,
     OperatorSource,
     OperatorText,
-    SystemCapabilityPart,
+    StructuredContent,
     UserContent,
     WorkspaceSource,
 )
@@ -21,12 +22,12 @@ from pydantic_ai.workspaces import Workspace
 
 
 @dataclass(kw_only=True)
-class NotePart(FramedCapabilityPart, namespace='typed', tag='note'):
+class NotePart(DataCapabilityPart, namespace='typed', tag='note'):
     pass
 
 
 @dataclass(kw_only=True)
-class ReminderPart(SystemCapabilityPart, namespace='typed'):
+class ReminderPart(InstructionCapabilityPart, namespace='typed'):
     pass
 
 
@@ -54,7 +55,8 @@ def workspace_sources(workspace: Workspace) -> None:
 
 
 def reading_parts(part: CapabilityPart) -> None:
-    # The base has no content of its own: narrow to a voice to read it.
+    # The base has no `content` field: read `model_content()`, or narrow to a voice.
     part.content  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
-    if isinstance(part, FramedCapabilityPart):
-        assert_type(part.content, str | Sequence[UserContent])
+    assert_type(part.model_content(), str | StructuredContent | Sequence[UserContent])
+    if isinstance(part, DataCapabilityPart):
+        assert_type(part.content, str | StructuredContent | Sequence[UserContent])

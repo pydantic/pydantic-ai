@@ -33,8 +33,8 @@ from pydantic_ai.messages import (
     CachePoint,
     CapabilityInstructionSource,
     CompactionPart,
+    DataCapabilityPart,
     FilePart,
-    FramedCapabilityPart,
     ImageUrl,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -1452,7 +1452,7 @@ class TestExports:
 
 
 @dataclass(kw_only=True)
-class _NotePart(FramedCapabilityPart, namespace='test_compaction', name='note', tag='note'):
+class _NotePart(DataCapabilityPart, namespace='test_compaction', name='note', tag='note'):
     pass
 
 

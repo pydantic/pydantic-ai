@@ -323,7 +323,7 @@ For text that changes during a run, such as state a tool updates, return a calla
 
 ## Telling the model things mid-conversation {#capability-parts}
 
-A capability that puts something in front of the model partway through a conversation, such as a sub-agent's report, a reviewer's feedback or a reminder of the budget left, defines a [capability part][pydantic_ai.messages.CapabilityPart] kind for it and passes instances to [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue]. A kind subclasses [`FramedCapabilityPart`][pydantic_ai.messages.FramedCapabilityPart] for data, framed on the user channel, or [`SystemCapabilityPart`][pydantic_ai.messages.SystemCapabilityPart] for the application's own words, sent as a [mid-conversation system message](../message-history.md#mid-conversation-system-prompts). The class declares how the part reaches the model, and Pydantic AI renders it before any model sees the history, so the capability never builds a tag, picks a voice or escapes text, and your code finds its parts again by type:
+A capability that puts something in front of the model partway through a conversation, such as a sub-agent's report, a reviewer's feedback or a reminder of the budget left, defines a [capability part][pydantic_ai.messages.CapabilityPart] kind for it and passes instances to [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue]. A kind subclasses [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] for data the capability inserts, such as a state update, a memory snapshot or a late tool result, which goes on the user channel in a tag, or [`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart] for an instruction in the application's own words, sent as a [mid-conversation system message](../message-history.md#mid-conversation-system-prompts). The class declares how the part reaches the model, and Pydantic AI renders it before any model sees the history, so the capability never builds a tag, picks a voice or escapes text, and your code finds its parts again by type:
 
 ```python {title="capability_parts.py"}
 from dataclasses import dataclass
@@ -331,12 +331,12 @@ from typing import Any
 
 from pydantic_ai import (
     Agent,
-    FramedCapabilityPart,
+    DataCapabilityPart,
     ModelRequest,
     OperatorSource,
     OperatorText,
     RunContext,
-    SystemCapabilityPart,
+    InstructionCapabilityPart,
 )
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
@@ -344,7 +344,7 @@ from pydantic_ai.models import ModelRequestContext
 
 @dataclass(kw_only=True)
 class ReviewFeedbackPart(
-    FramedCapabilityPart,
+    DataCapabilityPart,
     namespace='reviewer',
     name='feedback',
     tag='review_feedback',
@@ -356,7 +356,7 @@ class ReviewFeedbackPart(
 
 
 @dataclass(kw_only=True)
-class RequestsLeftPart(SystemCapabilityPart, namespace='reviewer'):
+class RequestsLeftPart(InstructionCapabilityPart, namespace='reviewer'):
     pass
 
 
@@ -402,23 +402,23 @@ print(ReviewFeedbackPart.kind)
 3. System voice takes a string literal or an [`OperatorText`][pydantic_ai.messages.OperatorText], so text your code builds, like this f-string, says it's the operator's. A type checker rejects a plain `str`.
 4. A [request-scoped](../message-history.md#request-scoped-system-prompts) part: the model sees it only in the request it's part of.
 
-The class arguments declare the part's kind and, for a framed kind, how it's framed:
+The class arguments declare the part's kind and, for a data kind, how its content is tagged:
 
 | Argument | What it does |
 |---|---|
 | `namespace`, `name` | Make up the part's [`kind`][pydantic_ai.messages.CapabilityPart.kind], `namespace.name`, which identifies it when history is stored and loaded. `name` defaults to the class name in snake_case without a `Part` suffix, and subclasses inherit the namespace. Both are lowercase snake_case, and a kind can be defined only once. |
-| `tag` | Framed only, and required there. The lowercase snake_case tag a framed part's content goes in. Prefer an existing tag that says what the content *is*, such as `tool_result`. `'system'` is refused. |
-| `attributes` | Framed only. The typed fields whose values go on the tag as attributes, in that order: strings or integers, left off when `None`. Keep them to identity and outcome, such as whose output it is. |
-| `note` | Framed only. A fixed sentence in the application's voice that goes with each framed part, naming its frame with `{frame}`, which renders as the tag, such as `<review_feedback>`. Name the frame, never its position: providers order system and user content their own way. |
+| `tag` | Data kinds only, and required there. The lowercase snake_case tag a data part's content goes in. Prefer an existing tag that says what the content *is*, such as `tool_result`. `'system'` is refused. |
+| `attributes` | Data kinds only. The typed fields whose values go on the tag as attributes, in that order: strings or integers, left off when `None`. Keep them to identity and outcome, such as whose output it is. |
+| `note` | Data kinds only. A fixed sentence in the application's voice that goes with each data part, naming its frame with `{frame}`, which renders as the tag, such as `<review_feedback>`. Name the frame, never its position: providers order system and user content their own way. |
 
-A framed part from the example reaches the model as its note, then the frame:
+A data part from the example reaches the model as its note, then the tagged content:
 
 ```text
 The accompanying <review_feedback> is feedback from an automated reviewer about your last step.
-<review_feedback seal="pydantic-ai" reviewer="loop_check">The second search repeats the first one.</review_feedback>
+<review_feedback seal="…" reviewer="loop_check">The second search repeats the first one.</review_feedback>
 ```
 
-The note is a mid-conversation system message, or a `<system seal="pydantic-ai">` block on a model without one. The frame's tags carry the [frame seal](../message-history.md#framework-frames-and-content-fidelity), and its content goes between them exactly as written: nothing is escaped, a file goes in as a file, and text in it that looks like a framework frame gets the same note as such text from a user.
+The note is a mid-conversation system message, or a sealed `<system>` block on a model without one. The tags carry the [frame seal](../message-history.md#framework-frames-and-content-fidelity), and its content goes between them exactly as written: nothing is escaped, a file goes in as a file, and text in it that looks like a framework frame gets the same note as such text from a user.
 
 ### Where the content came from
 
@@ -431,9 +431,9 @@ Every part has a [`source`][pydantic_ai.messages.CapabilityPart.source], which d
 | [`ToolResultSource(tool_name=...)`][pydantic_ai.messages.ToolResultSource]: a tool's output | No |
 | [`UserSource()`][pydantic_ai.messages.UserSource]: the user wrote it | No |
 
-A system part speaks with the operator's authority, so it needs a trusted source, and its content is a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText]: text your code builds from its own values, your configuration, or a file read with [`OperatorText.from_workspace`][pydantic_ai.messages.OperatorText.from_workspace], which refuses a workspace whose files the operator doesn't control. A type checker rejects any other string, and creating one from an untrusted source raises a [`UserError`][pydantic_ai.exceptions.UserError]. A framed part's tags always carry the seal, which says the application placed the frame, not that it vouches for what's in it; from a source that isn't trusted, the part goes out without its note, which would.
+An instruction part speaks with the operator's authority, so it needs a trusted source, and its content is a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText]: text your code builds from its own values, your configuration, or a file read with [`OperatorText.from_workspace`][pydantic_ai.messages.OperatorText.from_workspace], which refuses a workspace whose files the operator doesn't control. A type checker rejects any other string, and creating one from an untrusted source raises a [`UserError`][pydantic_ai.exceptions.UserError]. A data part's tags always carry the seal, which says the application placed the frame, not that it vouches for what's in it; from a source that isn't trusted, the part goes out without its note, which would.
 
-Text in a framed part that looks like a framework frame (a `<system>` tag or a `seal` attribute) gets a note in the application's voice naming who wrote it: the tool, the file's author or the user, by the part's source. Text from an `OperatorSource` is the application's own and gets none.
+Text in a data part that looks like a framework frame (a `<system>` tag or a `seal` attribute) gets a note in the application's voice naming who wrote it: the tool, the file's author or the user, by the part's source. Text from an `OperatorSource` is the application's own and gets none.
 
 ### Stored with the history
 
@@ -917,7 +917,7 @@ From `before_model_request`, where a change goes decides two things: whether the
 | You want to | From `before_model_request` | What happens |
 |---|---|---|
 | Steer the model with a message it sees now and that stays in the conversation | [`ctx.enqueue(part)`][pydantic_ai.tools.RunContext.enqueue] with a [capability part](#capability-parts) | It goes into the request being prepared and into the message history, as a [`ModelRequest`][pydantic_ai.messages.ModelRequest] of its own, so every later request sends it too. |
-| Remind the model of something true only for this request | `ctx.enqueue(...)` with a [`SystemCapabilityPart`](#capability-parts) kind and `scope='request'` | A [request-scoped prompt](../message-history.md#request-scoped-system-prompts): it goes into this request and into history. Anthropic sends it as a turn-scoped system message (`clear_at`) and stops showing it to the model once its request has been answered; elsewhere it's sent with its own request only. |
+| Remind the model of something true only for this request | `ctx.enqueue(...)` with an [`InstructionCapabilityPart`](#capability-parts) kind and `scope='request'` | A [request-scoped prompt](../message-history.md#request-scoped-system-prompts): it goes into this request and into history. Anthropic sends it as a turn-scoped system message (`clear_at`) and stops showing it to the model once its request has been answered; elsewhere it's sent with its own request only. |
 | Keep state the model should track, like a todo list or notes | [Instructions](#providing-instructions) with [`on_change='append'`](#instructions-that-change-during-a-conversation) | Rendered fresh for every request. A change is appended to the history as a replacement, so the cached prefix survives it. With the default `on_change='rewrite'`, a change re-sends everything after the instructions uncached. |
 | Change only what this request sends: trim, filter, redact | Assign a new list to `request_context.messages` | Request-only: history keeps the original. The list is new, but the messages and parts in it are the ones history holds, so build replacements instead of mutating them in place, or history changes too. |
 | Rewrite the history, as compaction does | Replace the contents of [`ctx.messages`][pydantic_ai.tools.RunContext.messages] (`ctx.messages[:] = ...`), and assign `request_context.messages` too if this request should be sent the result | Persistent: later requests start from the rewritten history. |

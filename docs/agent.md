@@ -1163,7 +1163,7 @@ from pydantic_ai import (
     OperatorSource,
     OperatorText,
     RunContext,
-    SystemCapabilityPart,
+    InstructionCapabilityPart,
     ToolDefinition,
     UsageLimits,
 )
@@ -1172,7 +1172,7 @@ from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass(kw_only=True)
-class WrapUpPart(SystemCapabilityPart, namespace='wrap_up'):
+class WrapUpPart(InstructionCapabilityPart, namespace='wrap_up'):
     pass
 
 

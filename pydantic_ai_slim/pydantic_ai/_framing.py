@@ -260,7 +260,7 @@ def check_capability_frame(tag: str, attribute_names: Iterable[str]) -> None:
         raise UserError(f'Framing tag names must be lowercase snake_case, like `judge_feedback`; got {tag!r}.')
     if tag == SYSTEM_TAG:
         raise UserError(
-            "`'system'` is the framework's voice tag: declare `voice='system'` for a part in the application's voice."
+            "`'system'` is the framework's voice tag: subclass `InstructionCapabilityPart` for a part in the application's voice."
         )
     names = tuple(attribute_names)
     _check_attribute_names(names)

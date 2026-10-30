@@ -55,6 +55,7 @@ from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.messages import (
     BinaryContent,
     CompactionPart,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -63,7 +64,6 @@ from pydantic_ai.messages import (
     ModelSettingsDeltaPart,
     OperatorSource,
     StructuredContent,
-    SystemCapabilityPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -573,7 +573,7 @@ def _progress_state(ctx: RunContext[None]) -> str:
 
 
 @dataclass(kw_only=True)
-class _ReminderPart(SystemCapabilityPart, namespace='test_ui_roundtrip', name='reminder'):
+class _ReminderPart(InstructionCapabilityPart, namespace='test_ui_roundtrip', name='reminder'):
     pass
 
 

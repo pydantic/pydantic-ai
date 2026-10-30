@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     CapabilityInstructionSource,
     CompactionPart,
     InstructionBaselinePart,
+    InstructionCapabilityPart,
     InstructionDeltaPart,
     InstructionDigest,
     InstructionId,
@@ -36,7 +37,6 @@ from pydantic_ai.messages import (
     NativeToolSearchReturnPart,
     OperatorSource,
     OperatorText,
-    SystemCapabilityPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -88,7 +88,7 @@ with try_import() as xai_available:
 
 
 @dataclass(kw_only=True)
-class ReminderPart(SystemCapabilityPart, namespace='test_instruction_updates'):
+class ReminderPart(InstructionCapabilityPart, namespace='test_instruction_updates'):
     """A capability's request-scoped reminder, which renders as a `SystemPromptPart(..., scope='request')`."""
 
 
