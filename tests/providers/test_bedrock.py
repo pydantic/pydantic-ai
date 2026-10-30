@@ -20,7 +20,6 @@ from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers._bedrock_model_names import (
     _AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     bedrock_claude_cache_retentions,
-    bedrock_claude_supports_automatic_caching,
     split_bedrock_model_id,
 )
 
@@ -461,7 +460,8 @@ def test_bedrock_provider_model_profile_with_unknown_geo_prefix(env: TestEnv):
     assert profile is None, f'model_profile returned {profile} for {model_name}'
 
 
-# Claude models that take automatic caching on Bedrock but not the 1-hour cache TTL, each with the reason.
+# Prefixes from the automatic-caching list whose Claude models Bedrock doesn't grant the 1-hour cache TTL, each with
+# the reason.
 _AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE: dict[str, str] = {}
 
 
@@ -470,20 +470,13 @@ def test_bedrock_automatic_caching_claude_models_take_one_hour_cache():
 
     Automatic caching is the newer feature, so a model added to its list and not to the 1-hour list most likely
     belongs on both: otherwise `cache='1h'` silently snaps down to `'5m'` for it, as it did for Claude Haiku 5.5.
-    Add a model to `_AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE` with the reason if Bedrock rejects the 1-hour TTL.
+    Add its prefix to `_AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE` with the reason if Bedrock rejects the 1-hour TTL.
     """
-    claude_model_names = [
-        name for name in get_args(LatestBedrockModelNames) if split_bedrock_model_id(name)[0] == 'anthropic'
-    ]
-    automatic_caching_models = [
-        *_AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES,
-        *(name for name in claude_model_names if bedrock_claude_supports_automatic_caching(name)),
-    ]
     missing_one_hour = [
-        name
-        for name in automatic_caching_models
-        if split_bedrock_model_id(name)[1] not in _AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE
-        and '1h' not in bedrock_claude_cache_retentions(name)
+        prefix
+        for prefix in _AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES
+        if prefix not in _AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE
+        and '1h' not in bedrock_claude_cache_retentions(prefix)
     ]
     assert missing_one_hour == []
 
