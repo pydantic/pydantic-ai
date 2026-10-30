@@ -25,6 +25,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.app import HEADER
 from tests.clai2.browser.conftest import Serve
@@ -54,6 +55,9 @@ code a
 code b
 ```
 """
+
+MILLION_TOKEN_WINDOW = 1_000_000
+"""Beta's model's context window, as `claude-code:` models have."""
 
 LONG_LINES = 200
 PREVIEW_LINES = 8
@@ -166,7 +170,13 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterator[W
             portal=portal,
             agents={
                 'alpha': Agent(TestModel(call_tools=[], custom_output_text=HOSTILE)),
-                'beta': Agent(TestModel(call_tools=[], custom_output_text='Beta answer')),
+                'beta': Agent(
+                    TestModel(
+                        call_tools=[],
+                        custom_output_text='Beta answer',
+                        profile=ModelProfile(context_window=MILLION_TOKEN_WINDOW),
+                    )
+                ),
                 'lines': Agent(TestModel(call_tools=[], custom_output_text=LINES)),
                 'gamma': Agent(TestModel(call_tools=[])),
                 'delta': failing_agent(),
@@ -414,6 +424,13 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
     await gone.hover()
     await gone.get_by_role('button', name='Worktree actions').click()
     await expect(sidebar.get_by_role('button', name='Archive all sessions in this worktree')).to_be_disabled()
+
+
+async def test_a_million_token_window_reads_in_millions(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.topbar-status .context')).to_have_text(re.compile(r' / 1M$'))
 
 
 async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
