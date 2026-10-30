@@ -510,7 +510,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         _utils.raise_if_cancelling()
         pre_hook_result = result
         result = await cap.after_node_run(run_context, node=node, result=result)
-        result = drain_pending_messages_at_end(run_context, result)
+        result = await drain_pending_messages_at_end(run_context, result)
 
         # If a capability hook or the pending-message drain changed the result, sync the graph
         # runner state so agent_run.result correctly reflects whether the run is finished.
@@ -572,7 +572,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = await lifecycle(node)
         # After every capability hook, `wrap_node_run` included, so a message a hook enqueued while
         # the run was ending still gets its turn instead of being lost.
-        result = drain_pending_messages_at_end(run_context, result)
+        result = await drain_pending_messages_at_end(run_context, result)
         if not self._graph_reflects(result):
             self._sync_graph_state(result)
         return result

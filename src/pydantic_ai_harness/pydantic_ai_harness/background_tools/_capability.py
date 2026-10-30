@@ -34,7 +34,8 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.messages import ModelRequest, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -145,6 +146,16 @@ def _format_background_failure(tool_name: str, task_id: str, error: _SignalledEr
     return make_background_completion(f'{open_tag}\n{message}\n{close_tag}', task_id)
 
 
+def _format_background_cancelled(tool_name: str, task_id: str) -> TextContent:
+    """Tell the model a background call was cancelled because the run paused, framed as the call's failed result."""
+    open_tag, close_tag = tool_result_tags(tool_name, task_id, failed=True)
+    message = (
+        'The run paused before this call finished, so it was cancelled and its result will not arrive. '
+        'Call the tool again if you still need it.'
+    )
+    return make_background_completion(f'{open_tag}\n{message}\n{close_tag}', task_id)
+
+
 def _format_background_result(
     tool_name: str, task_id: str, result: Any
 ) -> tuple[TextContent, *tuple[UserContent, ...]]:
@@ -238,8 +249,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
 
     _task_group: anyio.abc.TaskGroup = field(init=False, repr=False, compare=False)
     """Owns the run's background tasks. `wrap_run` opens it around the run, so no task outlives the run."""
-    _live: int = field(default=0, init=False, repr=False)
-    """Background tasks that have not handed over their outcome yet."""
+    _live: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False)
+    """Background tasks that have not handed over their outcome yet: the tool name, by task ID."""
     _send: MemoryObjectSendStream[_Outcome] = field(init=False, repr=False, compare=False)
     _outcomes: MemoryObjectReceiveStream[_Outcome] = field(init=False, repr=False, compare=False)
     """Outcomes in completion order; `after_node_run` takes them as they arrive."""
@@ -397,12 +408,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                     )
                 self._send.send_nowait(outcome)
             finally:
-                self._live -= 1
+                self._live.pop(task_id, None)
                 # Core counts a successful call when the tool body returns, replacing this reservation.
                 ctx.usage.tool_calls -= 1
 
         ctx.usage.tool_calls += 1
-        self._live += 1
+        self._live[task_id] = tool_name
         self._receipts.add(tool_name)
         self._task_group.start_soon(_run, name=f'background tool {tool_name} ({task_id})')
         return (
@@ -420,13 +431,13 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     ) -> NodeResult[AgentDepsT]:
         from pydantic_graph import End
 
-        if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests):
-            # At a deferred-tool pause the end-of-run drain records arrived results in the history when the
-            # step's own request ends it. After a step whose calls all deferred it would turn them into
-            # another model request instead, so finished tasks are left unswept.
-            if isinstance(ctx.messages[-1], ModelRequest):
-                for outcome in self._arrived():
-                    self._deliver(ctx, outcome)
+        if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests | PendingModelResponse):
+            # The run pauses: core keeps what is queued for the resumed run, so finished results go there too.
+            # `wrap_run` cancels the tasks still live, so the model is told their results won't arrive.
+            for outcome in self._arrived():
+                self._deliver(ctx, outcome)
+            for task_id, tool_name in self._live.items():
+                ctx.enqueue(_format_background_cancelled(tool_name, task_id))
             return result
 
         for outcome in self._arrived():

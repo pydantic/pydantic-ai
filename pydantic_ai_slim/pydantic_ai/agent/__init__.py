@@ -1797,8 +1797,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_id if run_id is not None else bootstrap_capability.get_default_run_id(),
             message_history,
         )
+        # Content a paused run left queued is delivered by this one, ahead of anything queued during it.
+        history, carried_over = _enqueue.take_carried_over(message_history or [])
         state = _agent_graph.GraphAgentState(
-            message_history=list(message_history) if message_history else [],
+            message_history=history,
+            pending_messages=carried_over,
             usage=usage,
             output_retries_used=0,
             run_step=0,

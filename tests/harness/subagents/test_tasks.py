@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
 import anyio
 import pytest
@@ -33,6 +34,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
 from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, ResponseDone
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.step_persistence import FileStepStore, StepPersistence
 from pydantic_ai_harness.subagents import (
@@ -263,6 +265,75 @@ async def test_background_receipt_then_automated_report(tmp_path: Path) -> None:
     async with DelegationTasks(directory=tmp_path).opened() as restored:
         assert restored.records[record.id].delivered
         assert not restored.reports(conversation_id='parent')
+
+
+@pytest.mark.parametrize('priority', ['asap', 'when_idle'])
+async def test_report_queued_at_a_deferred_pause_reaches_the_resumed_run_once(
+    priority: Literal['asap', 'when_idle'],
+) -> None:
+    """A report queued when the parent pauses for an approval keeps the pause and is delivered once on resume.
+
+    Core carries it to the resumed run and acknowledges it at the pause, so the owner doesn't queue it again.
+    """
+    finished = asyncio.Event()
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        returned = {part.tool_name for m in messages for part in m.parts if isinstance(part, ToolReturnPart)}
+        if 'gated' in returned:
+            yield 'parent finished'
+        elif 'delegate_task' in returned:
+            # The report reaches the parent's queue while it answers, and the answer only asks for an approval.
+            await finished.wait()
+            yield {0: DeltaToolCall(name='gated', json_args='{}', tool_call_id='gated-1')}
+        else:
+            args = json.dumps({'agent_name': 'worker', 'task': 'inspect', 'background': True})
+            yield {0: DeltaToolCall(name='delegate_task', json_args=args, tool_call_id='delegate')}
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        raise AssertionError('streamed only')
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        if update.task.status == 'finished':
+            finished.set()
+
+    owner = DelegationTasks(observer=observe)
+    child = Agent(TestModel(custom_output_text='child result'), deps_type=object, name='worker')
+
+    def parent() -> Agent[object, str | DeferredToolRequests]:
+        agent: Agent[object, str | DeferredToolRequests] = Agent(
+            FunctionModel(function=respond, stream_function=stream),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[
+                SubAgents(agents=[SubAgent(child)], agent_folders=None),
+                DelegationReports(owner, conversation_id='parent', priority=priority),
+            ],
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def gated() -> str:
+            return 'approved'
+
+        return agent
+
+    def reports(messages: Sequence[ModelMessage]) -> int:
+        return sum(
+            is_task_report(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
+        )
+
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                paused = await parent().run('go', conversation_id='parent')
+                assert isinstance(paused.output, DeferredToolRequests)
+                (record,) = owner.records.values()
+                assert record.delivered
+                resumed = await parent().run(
+                    message_history=paused.all_messages(),
+                    deferred_tool_results=DeferredToolResults(approvals={'gated-1': True}),
+                    conversation_id='parent',
+                )
+    assert resumed.output == 'parent finished'
+    assert reports(resumed.all_messages()) == 1
 
 
 def test_report_shape() -> None:

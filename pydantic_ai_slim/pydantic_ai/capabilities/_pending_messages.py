@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode
-from pydantic_ai._enqueue import deliver_asap_messages, run_queue, stamped_messages
+from pydantic_ai._enqueue import PendingMessage, carry_over, deliver_asap_messages, run_queue, stamped_messages
+from pydantic_ai._run_context import dispatch_event_now
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import EnqueuedMessagesEvent, ModelRequest
+from pydantic_ai.messages import EnqueuedMessagesEvent, ModelMessage, ModelRequest, ModelResponse
+from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_graph import End
 
@@ -68,7 +70,7 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         return deliver_asap_messages(ctx, request_context)
 
 
-def drain_pending_messages_at_end(
+async def drain_pending_messages_at_end(
     ctx: RunContext[Any],
     result: _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]],
 ) -> _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]]:
@@ -84,29 +86,16 @@ def drain_pending_messages_at_end(
     The last resulting request becomes the redirect
     [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s request; any
     earlier ones are appended to `ctx.messages` so they appear in history before the
-    redirect. When the run pauses for deferred tools and the step's own request ends the
-    history, every resulting message is appended to `ctx.messages` instead and the run ends,
-    unless a queued message is a `ModelResponse`. Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]
-    per drained [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order.
+    redirect. A run that pauses is never redirected: see `_keep_at_pause`. Emits one
+    [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] per drained
+    [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order.
     """
     if not isinstance(result, End):
         return result
 
-    # A run pausing for deferred tools hands control back to the caller, so queued messages are recorded
-    # instead of redirecting it, as long as the step's own request ends the history: after a response
-    # whose calls all deferred, a request would read as interrupting those calls on resume.
-    if isinstance(result.data.output, DeferredToolRequests) and isinstance(ctx.messages[-1], ModelRequest):
-        recorded = run_queue(ctx).drain_at_pause()
-        if recorded is not None:
-            for pending in recorded:
-                pending_messages = stamped_messages(
-                    pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
-                )
-                ctx.messages.extend(pending_messages)
-                ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
-                    EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
-                )
-            return result
+    if isinstance(result.data.output, DeferredToolRequests | PendingModelResponse):
+        await _keep_at_pause(ctx, run_queue(ctx).drain_at_pause())
+        return result
 
     # Pi-mono parity: drain `'asap'` first so anything that arrived during the
     # final step (e.g. a background task completing while the model produced
@@ -142,7 +131,48 @@ def drain_pending_messages_at_end(
         for message in pending_messages:
             if message is not final:
                 ctx.messages.append(message)
-        ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
-            EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
-        )
+        _announce(ctx, pending, pending_messages)
     return ModelRequestNode(request=final)
+
+
+async def _keep_at_pause(ctx: RunContext[Any], pending: list[PendingMessage]) -> None:
+    """Keep the content still queued when the run pauses, without giving the model another turn.
+
+    A pause (deferred tools, or a response the provider is still working on) hands control back to the caller,
+    so a redirect would skip it. When the paused step's own request ends the history, the content goes after it,
+    as it would have been delivered. Otherwise the history has to keep ending in the paused response, which is
+    what a resumed run acts on, and so does a queued `ModelResponse`, which would read as the paused one: the
+    content is carried on the last message instead, and the next run started from this history queues it again
+    (see `take_carried_over`), so it reaches the model at that run's first request.
+
+    Either way the content is now in the history, so its `EnqueuedMessagesEvent` is emitted here, and dispatched to
+    capability listeners right away (one acknowledging deliveries, like `SubAgents`, would otherwise deliver it again):
+    no node stream follows to drain it.
+    """
+    if not pending:
+        return
+    stamped = [
+        (item, stamped_messages(item, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id))
+        for item in pending
+    ]
+    if isinstance(ctx.messages[-1], ModelRequest) and not any(
+        isinstance(message, ModelResponse) for _, messages in stamped for message in messages
+    ):
+        for _, messages in stamped:
+            ctx.messages.extend(messages)
+    else:
+        ctx.messages[-1] = carry_over(ctx.messages[-1], pending)
+    for item, messages in stamped:
+        if (event := _announce(ctx, item, messages)) is not None:
+            await dispatch_event_now(ctx, event)
+
+
+def _announce(
+    ctx: RunContext[Any], pending: PendingMessage, messages: list[ModelMessage]
+) -> EnqueuedMessagesEvent | None:
+    """Emit the `EnqueuedMessagesEvent` for `pending`, unless it was emitted when an earlier run paused."""
+    if pending._announced:  # pyright: ignore[reportPrivateUsage]
+        return None
+    event = EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(messages))
+    ctx._emit_event(event)  # pyright: ignore[reportPrivateUsage]
+    return event
