@@ -3,30 +3,44 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import Mock
+from collections.abc import Iterator
 
 import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 
 
 @pytest.mark.parametrize('legacy', [False, True])
-async def test_plain_and_legacy_runs_do_not_assemble_identity_inputs(
-    legacy: bool, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_default_run_id_does_not_add_history_traversals(legacy: bool) -> None:
+    class CountingHistory(list[ModelMessage]):
+        iterations: int = 0
+
+        def __iter__(self) -> Iterator[ModelMessage]:
+            self.iterations += 1
+            return super().__iter__()
+
     class LegacyCapability(AbstractCapability[object]):
         def get_default_run_id(self) -> str:
             return 'legacy-run-id'
 
     capabilities: list[AbstractCapability[object]] = [LegacyCapability()] if legacy else []
     agent = Agent(TestModel(), capabilities=capabilities)
-    # Observe the assembly boundary while exercising the public bootstrap path.
-    factory = Mock(wraps=agent._get_run_id_inputs)  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(agent, '_get_run_id_inputs', factory)
-    await agent.run('hello', metadata={'run': True})
-    factory.assert_not_called()
+    histories: list[CountingHistory] = [
+        CountingHistory(
+            [
+                ModelRequest(parts=[UserPromptPart('previous question')], run_id='previous-run'),
+                ModelResponse(parts=[TextPart('previous answer')], run_id='previous-run'),
+            ]
+        )
+        for _ in range(2)
+    ]
+    for history, run_id in zip(histories, (None, 'explicit')):
+        await agent.run('hello', message_history=history, run_id=run_id)
+    # Explicit IDs may require a collision scan; defaults must not add extra history walks.
+    assert histories[0].iterations <= histories[1].iterations
 
 
 @pytest.mark.parametrize('provided', [None, 'legacy-run-id'])

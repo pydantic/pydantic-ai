@@ -60,9 +60,6 @@ if TYPE_CHECKING:
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
 
-# --- Handler type aliases for use in hook method signatures ---
-# These make it easier to write correct type annotations when subclassing AbstractCapability.
-
 
 class _RunIdInputs(TypedDict):
     prompt: str | Sequence[UserContent] | None
@@ -74,6 +71,11 @@ class _RunIdInputs(TypedDict):
 
 
 _RunIdInputsFactory: TypeAlias = Callable[[], _RunIdInputs]
+
+
+# --- Handler type aliases for use in hook method signatures ---
+# These make it easier to write correct type annotations when subclassing AbstractCapability.
+
 
 AgentNode: TypeAlias = '_agent_graph.AgentNode[AgentDepsT, Any]'
 """Type alias for an agent graph node (`UserPromptNode`, `ModelRequestNode`, `CallToolsNode`)."""

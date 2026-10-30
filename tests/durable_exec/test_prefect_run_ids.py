@@ -268,7 +268,7 @@ async def test_prefect_legacy_default_run_id_override(provided: str | None) -> N
     if provided is not None:
         assert result.run_id == provided
     else:
-        assert ':' not in result.run_id
+        assert uuid.UUID(result.run_id).version == 7
 
 
 async def test_prefect_legacy_default_run_id_override_delegates_to_super() -> None:

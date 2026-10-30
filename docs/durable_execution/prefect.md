@@ -390,9 +390,17 @@ reorder.
 
 !!! warning "Default ID format migration"
 
-    Cached random UUIDs replace the earlier `<flow run id>:<arrival counter>` defaults for every run using `PrefectDurability`, including sequential runs. The default `conversation_id` derived from each run ID changes with it. Treat these defaults as opaque identifiers; pass `run_id=` and `conversation_id=` explicitly if your application requires a particular format or existing externally stored IDs.
+    Cached random UUIDs replace the earlier `<flow run id>:<arrival counter>` defaults for every run
+    using `PrefectDurability`, including sequential runs. The default `conversation_id` derived from
+    each run ID changes with it. Treat these defaults as opaque identifiers; pass `run_id=` and
+    `conversation_id=` explicitly if your application requires a particular format or existing
+    externally stored IDs.
 
-    Let in-flight flows finish before upgrading if their stored records or durable capability/workspace tasks must retain their current IDs. Retrying a flow across this change computes new defaults and can re-execute tasks keyed by those IDs. Model and tool caches continue to use their existing input projection. Explicit IDs, conversation IDs inherited from message history, and execution outside a flow keep their existing behavior.
+    If stored records or durable capability/workspace tasks must retain their current IDs, let
+    in-flight flows finish before upgrading. Retrying across the upgrade recomputes defaults and
+    can re-execute tasks keyed by those IDs. Model and tool caches keep their existing input
+    projection. Explicit IDs, conversation IDs inherited from message history, and execution
+    outside a flow keep their existing behavior.
 
 ## Caching and Idempotency
 
