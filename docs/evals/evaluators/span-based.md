@@ -120,7 +120,7 @@ Match spans with specific attributes:
 {'has_attribute_keys': ['user_id', 'request_id']}
 ```
 
-Attribute conditions compare [values](#spannode-properties) natively. A dictionary or list query also matches an
+`has_attributes` compares [values](#spannode-properties) with `==`. A dictionary or list query also matches an
 attribute containing its JSON serialization, as emitted by instrumentation such as Logfire.
 
 ### Status Conditions
