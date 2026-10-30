@@ -730,6 +730,20 @@ class TestIdleTimeout:
         assert fake_e2b.set_timeout_unwound
         assert asyncio.all_tasks() == tasks_before
 
+    async def test_a_slow_upload_extends_the_timeout(self, fake_e2b: FakeE2B) -> None:
+        backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'), idle_timeout=60)  # pyright: ignore[reportArgumentType]
+        # The extension before the upload fails; the one while it is in flight succeeds.
+        fake_e2b.set_timeout_failures = 1
+        fake_e2b.write_gate = anyio.Event()
+        with anyio.fail_after(5):
+            async with anyio.create_task_group() as group:
+                group.start_soon(backend.write_bytes, '/tmp/big', b'data')
+                while not fake_e2b.set_timeout_calls:
+                    await anyio.lowlevel.checkpoint()
+                fake_e2b.write_gate.set()
+        assert fake_e2b.set_timeout_calls == [('sbx-own', 60)]
+        assert fake_e2b.sandboxes[0].files.files['/tmp/big'] == b'data'
+
     async def test_without_idle_timeout_nothing_is_extended(self, fake_e2b: FakeE2B) -> None:
         backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'))  # pyright: ignore[reportArgumentType]
         await backend.run(['true'])

@@ -277,6 +277,8 @@ class FakeFilesystem:
         self.users.append(user)
         del request_timeout
         await self._check(path)
+        if self._control.write_gate is not None:
+            await self._control.write_gate.wait()
         if path in self.directories:
             # envd's upload answers a directory with a 400 in its own words.
             raise InvalidArgumentException(f'path is a directory: {path}')
@@ -675,6 +677,9 @@ class FakeSandbox:
         await anyio.lowlevel.checkpoint()
         if self._control.set_timeout_error is not None:
             raise self._control.set_timeout_error
+        if self._control.set_timeout_failures:
+            self._control.set_timeout_failures -= 1
+            raise SandboxException('500: set_timeout failed')
         self._control.set_timeout_calls.append((self.sandbox_id, timeout))
         if self._control.set_timeout_hangs:
             try:
@@ -762,6 +767,10 @@ class FakeE2B:
     set_timeout_calls: list[tuple[str, int]] = field(default_factory=list[tuple[str, int]])
     set_timeout_error: Exception | None = None
     set_timeout_hangs: bool = False
+    # How many `set_timeout` calls fail before they succeed again.
+    set_timeout_failures: int = 0
+    # When set, `files.write` holds its response until the event is set, like a slow upload.
+    write_gate: anyio.Event | None = None
     set_timeout_unwound: bool = False
     # When set, sandboxes run commands and file operations on the host under this directory.
     host_root: Path | None = None
