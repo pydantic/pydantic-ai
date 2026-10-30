@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, assert_type
 
 import anyio
 import pytest
@@ -21,7 +21,14 @@ from pydantic_ai.capabilities import (
     SelectModel,
 )
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelResponse
+from pydantic_ai.messages import (
+    CapabilityEvent,
+    ModelMessage,
+    ModelResponse,
+    RetryFeedbackCause,
+    RetryInfo,
+    ToolRetryCause,
+)
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -117,6 +124,7 @@ class TestOutputFallbackEvent:
 
         assert (await agent.run('Answer.')).output == 'ready'
         [event] = recorder.events
+        assert_type(event.retry, RetryInfo[RetryFeedbackCause | ToolRetryCause])
         assert event.source == 'response_output'
         assert (event.source_model_id, event.target_model_id) == ('test:primary', 'test:backup')
         assert (event.retry.cause, event.retry.attempt, event.retry.max_retries) == ('model_retry', 1, 1)

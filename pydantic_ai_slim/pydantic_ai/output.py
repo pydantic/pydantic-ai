@@ -13,7 +13,7 @@ from typing_extensions import TypeAliasType, TypeForm, TypeVar
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._run_context import RunContext
-from .messages import ModelResponse, RetryInfo, ToolCallPart
+from .messages import ModelResponse, RetryFeedbackCause, RetryInfo, ToolCallPart, ToolRetryCause
 from .tools import ObjectJsonSchema, ToolDefinition
 
 __all__ = (
@@ -345,7 +345,7 @@ class OutputRetryContext:
     response: ModelResponse
     """The rejected response, identifying its actual producer when request fallback served the step."""
 
-    retry: RetryInfo[str]
+    retry: RetryInfo[RetryFeedbackCause | ToolRetryCause]
     """The accepted retry's cause, attempt, and effective budget, including output-tool overrides."""
 
     tool_name: str | None = None

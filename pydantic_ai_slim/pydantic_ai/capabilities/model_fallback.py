@@ -10,7 +10,7 @@ from pydantic_ai import exceptions
 from pydantic_ai._fallback import FallbackChain, FallbackOn, FallbackPredicates
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UsageLimitExceeded, UserError
-from pydantic_ai.messages import CapabilityEvent, ModelResponse, RetryInfo
+from pydantic_ai.messages import CapabilityEvent, ModelResponse, RetryFeedbackCause, RetryInfo, ToolRetryCause
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import OutputRetryContext
@@ -39,7 +39,7 @@ class OutputFallbackEvent(CapabilityEvent, namespace='model_fallback', name='out
     """The configured selection ID of the model prepared for the next request."""
     source: Literal['response_output', 'output_tool']
     """Whether response-level output or an output tool triggered the switch."""
-    retry: RetryInfo[str]
+    retry: RetryInfo[RetryFeedbackCause | ToolRetryCause]
     """The triggering retry's cause, attempt, and effective budget."""
 
 
@@ -151,13 +151,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         Args:
             models: The models to attempt after the one selected for the request step. When the
                 agent has no model of its own, the first of these is used for the first attempt.
-            output_retry_threshold: Move the next ordinary request step to the next candidate after this
-                many accepted output retries from the serving model. A positive integer applies
-                to every model. A mapping uses the selection ID, or `Model.model_id` for a model
-                instance, to configure each model independently; unlisted models do not trigger
-                output-driven switching. Stay at the chosen candidate, or
-                later ones, for the rest of this run. `None` keeps request-only fallback. Core's
-                output and per-tool limits remain authoritative; configure them explicitly.
             fallback_on: Conditions that trigger fallback to the next model. Accepts:
 
                 - A tuple of exception types: `(ModelRateLimitError, ModelUnavailableError)`
@@ -173,6 +166,13 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 already reached the consumer by the time it could be judged, so it's accepted as
                 is, with a `UserWarning`. A stream that fails to open, or whose provider reports
                 an error before its first event, still falls back.
+            output_retry_threshold: Move the next ordinary request step to the next candidate after this
+                many accepted output retries from the serving model. A positive integer applies
+                to every model. A mapping uses the selection ID, or `Model.model_id` for a model
+                instance, to configure each model independently; unlisted models do not trigger
+                output-driven switching. Stay at the chosen candidate, or
+                later ones, for the rest of this run. `None` keeps request-only fallback. Core's
+                output and per-tool limits remain authoritative; configure them explicitly.
         """
         super().__init__()
         if not models:

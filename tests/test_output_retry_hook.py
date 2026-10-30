@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, assert_type
 
 import pytest
 from pydantic import ValidationError
@@ -10,7 +10,15 @@ from pydantic_ai import Agent, EndStrategy, ModelRetry, PromptedOutput, RunConte
 from pydantic_ai.capabilities import AbstractCapability, Hooks, OutputContext, OutputRetryContext, WrapperCapability
 from pydantic_ai.capabilities.abstract import RawOutput
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, RetryInfo, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryFeedbackCause,
+    RetryInfo,
+    ToolCallPart,
+    ToolRetryCause,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
@@ -22,6 +30,7 @@ async def test_hook_registration_and_context(
     received: list[OutputRetryContext] = []
 
     async def record(ctx: RunContext[str], *, retry_context: OutputRetryContext) -> None:
+        assert_type(retry_context.retry, RetryInfo[RetryFeedbackCause | ToolRetryCause])
         assert ctx.deps == 'dependency'
         assert (ctx.retry, ctx.max_retries) == (1, 1)
         received.append(retry_context)
