@@ -8,8 +8,9 @@ scripted model can fail on cue with the normalized errors every model raises. Th
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import contextmanager
+from typing import Any
 
 import pytest
 
@@ -72,7 +73,7 @@ def _flaky(name: str, errors: list[Exception], answered: list[str]) -> FunctionM
 
 
 @contextmanager
-def _recorded_sleeps() -> Iterator[list[float]]:
+def _recorded_sleeps() -> Generator[list[float]]:
     """Record the waits the agent makes between attempts instead of sleeping."""
     delays: list[float] = []
 
@@ -83,7 +84,7 @@ def _recorded_sleeps() -> Iterator[list[float]]:
         yield delays
 
 
-def _kinds(attempts: list[ModelRequestAttempt] | None) -> list[tuple[str, str, str | None, float | None]]:
+def _kinds(attempts: Sequence[ModelRequestAttempt] | None) -> list[tuple[str, str, str | None, float | None]]:
     return [(a.model_name, a.kind, (a.error or '').split(':')[0] or None, a.retry_after) for a in attempts or []]
 
 
@@ -364,7 +365,11 @@ async def test_a_usage_limit_is_not_retried():
 
 
 def _recording(
-    name: str, errors: list[Exception], settings: list[ModelSettings | None], own: ModelSettings | None = None
+    name: str,
+    errors: list[Exception],
+    settings: list[ModelSettings | None],
+    own: ModelSettings | None = None,
+    model_class: type[FunctionModel] = FunctionModel,
 ) -> FunctionModel:
     """A model that records the settings each attempt is sent with, raises each of `errors` in turn, then answers."""
     remaining = list(errors)
@@ -375,7 +380,7 @@ def _recording(
             raise remaining.pop(0)
         return ModelResponse(parts=[TextPart(f'{name} answered')])
 
-    return FunctionModel(respond, model_name=name, settings=own)
+    return model_class(respond, model_name=name, settings=own)
 
 
 async def test_turns_off_provider_sdk_retries():
@@ -422,13 +427,12 @@ class _NoSdkRetriesModel(FunctionModel):
 
 async def test_a_model_without_sdk_retries_is_not_sent_max_retries():
     """A model that ignores `max_retries` isn't sent it, so it doesn't warn about it."""
-    answering = _NoSdkRetriesModel(_recording('primary', [], []).function, model_name='primary')
+    answering = _recording('primary', [], [], model_class=_NoSdkRetriesModel)
     with pytest.warns(UserWarning, match='max_retries'):
         await Agent(answering, model_settings={'max_retries': 0}).run('x')
 
     settings: list[ModelSettings | None] = []
-    recording = _recording('primary', [ModelConnectionError('primary', 'reset')], settings)
-    model = _NoSdkRetriesModel(recording.function, model_name='primary')
+    model = _recording('primary', [ModelConnectionError('primary', 'reset')], settings, model_class=_NoSdkRetriesModel)
     agent = Agent(model, capabilities=[RetryOnModelErrors()])
     with _recorded_sleeps():
         await agent.run('x')
@@ -572,12 +576,14 @@ async def test_a_hook_retrying_the_same_model_records_a_retry():
     """Any hook raising `RetryModelRequest` without a model records the attempt it moved on from as a retry."""
     answered: list[str] = []
 
-    async def retry_once(ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception):
+    async def retry_once(
+        ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
         if request_context.attempt == 1:
             raise RetryModelRequest()
         raise error  # pragma: no cover
 
-    hooks = Hooks[None]()
+    hooks = Hooks()
     hooks.on.model_request_error(retry_once)
     agent = Agent(_flaky('primary', [ModelAPIError('primary', 'boom')], answered), capabilities=[hooks])
     result = await agent.run('x')
