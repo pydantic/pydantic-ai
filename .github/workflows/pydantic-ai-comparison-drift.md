@@ -47,11 +47,6 @@ network:
     - livekit.com # vs-livekit: LiveKit Cloud
     - docs.pipecat.ai # vs-pipecat
     - elevenlabs.io # vs-livekit and vs-pipecat: the cascaded voice rows
-    - learn.microsoft.com # vs-microsoft-agent-framework
-    - docs.openhands.dev # vs-openhands
-    - strandsagents.com # vs-strands
-    - docs.aws.amazon.com # vs-strands: AWS Support and Lambda durable functions
-    - aws.amazon.com # vs-strands: AWS announcements
     # vs-pi: Pi's docs live in earendil-works/pi, read through the GitHub tools.
 safe-outputs:
   footer: false
