@@ -75,6 +75,7 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.knowledge_base import InMemoryKnowledgeBase
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.subagents import AgentOverride
@@ -214,6 +215,8 @@ def _check_sub_agents(merged: Any) -> None:
 def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
     assert (merged.destination, merged.env, merged.read_only) == ('second', None, False)
 
+
+_KNOWLEDGE = InMemoryKnowledgeBase()
 
 COMBINE_POLICY: dict[str, Policy] = {
     # -- One per agent: a default `id`, and `combine` says what two of them mean. --
@@ -457,6 +460,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ExaSearch': Narrows(
         'one Exa search configuration per id, and its domain lists are an access boundary',
         lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+    ),
+    'KnowledgeBase': Narrows(
+        'one knowledge base per id, and its backend and filter scope what the agent can retrieve',
+        lambda cls: (cls(_KNOWLEDGE), cls(_KNOWLEDGE, filter={'tenant_id': 'acme'})),
     ),
     'GitHub': Narrows(
         'one GitHub connection per id; two that differ need their own ids and tool prefixes',

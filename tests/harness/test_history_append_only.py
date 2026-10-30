@@ -225,6 +225,12 @@ _CODE_MODE_SEARCHES = _code_mode_discoveries(_SEARCH_TIDES, _TIDES_FROM_CODE)
 _CODE_MODE_LOADS = _code_mode_discoveries(_LOAD_TIDAL, _TIDES_FROM_CODE, ('load_capability', {'id': 'forecasting'}))
 
 
+def _knowledge_base() -> AbstractCapability[Any]:
+    from pydantic_ai_harness.knowledge_base import Document, InMemoryKnowledgeBase, KnowledgeBase
+
+    return KnowledgeBase(InMemoryKnowledgeBase([Document('policy', 'Items can be returned within 30 days.')]))
+
+
 def _modal_sandbox() -> AbstractCapability[Any]:
     # Imported here, not at module level, so collecting this file never imports the Modal SDK. The test has
     # already skipped when `modal` isn't installed (`OPTIONAL_DEPENDENCIES`).
@@ -255,6 +261,7 @@ FIXTURES: dict[str, Fixture] = {
     'Advisor': lambda _: Advisor(TestModel()),
     'ApprovalReviewer': lambda _: ApprovalReviewer(TestModel(), question='Is this safe?'),
     'AskUser': lambda _: AskUser(answerer=None),
+    'KnowledgeBase': lambda _: _knowledge_base(),
     'BubblewrapSandbox': lambda tmp_path: BubblewrapSandbox(LocalWorkspace(tmp_path)),
     'CapabilityCreation': lambda tmp_path: [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)],
     'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),

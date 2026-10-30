@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         ToolGuardrail,
     )
     from .ipython_code_mode import IPythonCodeMode
+    from .knowledge_base import KnowledgeBase
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -129,6 +130,7 @@ __all__ = [
     'InputBlocked',
     'InputGuardrail',
     'InputGuardrailFunc',
+    'KnowledgeBase',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -211,6 +213,7 @@ _CAPABILITY_EXPORTS = {
     'FileSystem': 'filesystem',
     'Grain': 'grain',
     'IPythonCodeMode': 'ipython_code_mode',
+    'KnowledgeBase': 'knowledge_base',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
     'ManagedPrompt': 'logfire',

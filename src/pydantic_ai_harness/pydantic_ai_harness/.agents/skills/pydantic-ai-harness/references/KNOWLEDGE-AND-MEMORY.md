@@ -3,8 +3,9 @@
 Capabilities that give an agent knowledge beyond its prompt: `Memory` (a persistent Markdown
 notebook the model writes and searches across runs), `ConversationSearch` (BM25 recall over
 history `StepPersistence` already stored, including turns compaction dropped), `Skills` (Agent
-Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch Pydantic AI docs pages on
-demand). Only `Skills` needs an extra.
+Skills `SKILL.md` files loaded on demand), `PydanticAIDocs` (fetch Pydantic AI docs pages on
+demand), and `KnowledgeBase` (search and read a document corpus the application provides). Only
+`Skills` needs an extra; `KnowledgeBase`'s hosted backends need their service's client library.
 
 | Need | Use |
 |---|---|
@@ -12,6 +13,7 @@ demand). Only `Skills` needs an extra.
 | Exact details from earlier turns or past runs of a conversation | `ConversationSearch` + `StepPersistence` |
 | Specialized instructions the model pulls in only when relevant | `Skills` |
 | Agent that writes Pydantic AI code and needs current docs | `PydanticAIDocs` |
+| Cited answers from documents the application provides (manuals, policies), scoped per tenant | `KnowledgeBase` |
 
 ## Memory
 
@@ -336,11 +338,68 @@ local path, the first read of each topic in a run fetches it from GitHub (every 
 `cache=False`). `~` is not expanded. It never runs git, so keep a local checkout current yourself. Use `pydantic_ai_harness.pydantic_ai_docs`; the old `docs`
 module and `PyaiDocs` names are deprecated (keep `PyaiDocs` only to load old specs).
 
+## KnowledgeBase
+
+Retrieval from a corpus the application provides, over a pluggable backend. Tools:
+`search_knowledge_base(query)` (passages under `Source:` / `Document:` lines, citations in
+`ToolReturn.metadata['results']`) and `read_document(document_id)` when the backend can read
+documents. Backends live in `pydantic_ai_harness.knowledge_base`:
+
+| Backend | Needs | Reads documents | Native search |
+|---|---|---|---|
+| `InMemoryKnowledgeBase(documents)` | nothing | yes | no |
+| `BedrockKnowledgeBase(knowledge_base_id, region_name=...)` | `pydantic-ai-slim[bedrock]` | no | no |
+| `OpenAIVectorStore(vector_store_id)` | `pydantic-ai-slim[openai]` | yes | OpenAI Responses |
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import KnowledgeBase
+from pydantic_ai_harness.knowledge_base import Document, InMemoryKnowledgeBase
+
+agent = Agent(
+    'test',
+    deps_type=str,
+    capabilities=[
+        KnowledgeBase(
+            InMemoryKnowledgeBase([Document('returns', 'Returns within 30 days.', metadata={'tenant_id': 'acme'})]),
+            filter=lambda ctx: {'tenant_id': ctx.deps},
+            description='the shop policies',
+        )
+    ],
+)
+```
+
+Key parameters: `backend` (required, positional), `number_of_results=5` (1 to 100; OpenAI caps at
+50), `filter=None` (a backend-neutral `{key: value}` or `{key: [values]}` dict, every key must
+match, or a sync or async callable of `RunContext` returning one per run), `show_sources=True`,
+`max_document_chars=20_000`, `native=False`, `description=None`, `guidance=None` (`''` disables
+the instructions), `id='knowledge_base'`. Bedrock options sit on the backend: `search_type`
+(`'HYBRID'` / `'SEMANTIC'`), `reranking_model`, `fetch_results`, `retrieval_configuration` (raw
+`retrievalConfiguration`; the capability's filter is still combined into it), `client`.
+
+Gotchas:
+- A backend is any object with `async search(query, *, limit, filter)`; add `async read(document_id,
+  *, max_chars, filter)` for `read_document`. `read` must return `None` for a document outside the
+  filter, or a tenant-scoped agent can open other tenants' documents by id (`matches` helps).
+  Backends raise `ModelRetry` for transient failures.
+- `native=True` sends the provider's `FileSearchTool` on models that support it (OpenAI vector
+  stores on OpenAI Responses) and keeps the local tool elsewhere. It can't be combined with
+  `filter`, since the native tool can't scope a search, and native results don't land in
+  `metadata['results']`.
+- `InMemoryKnowledgeBase` is keyword BM25 without stemming or embeddings: tests and small corpora.
+- Bedrock has no document read API; Bedrock rejects an `andAll` nested in `andAll`, so the
+  backend combines filter clauses at one level.
+- Two instances share the default `id` and raise when they differ; a second knowledge base needs its
+  own `id`, `PrefixTools`, and `guidance=''`.
+- A spec supports `backend: bedrock | openai` with `knowledge_base_id` and a static `filter`.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/memory/
 - https://pydantic.dev/docs/ai/harness/conversation-search/
 - https://pydantic.dev/docs/ai/harness/skills/
 - https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/
+- https://pydantic.dev/docs/ai/harness/knowledge-base/
 - https://pydantic.dev/docs/ai/harness/step-persistence/
 - https://pydantic.dev/docs/ai/capabilities/on-demand/
