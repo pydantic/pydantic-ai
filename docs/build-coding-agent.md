@@ -5,7 +5,7 @@ description: "Build your own coding agent in Python with Pydantic AI: start from
 
 # Build your own coding agent in Python
 
-Build your own coding agent in Python with [Pydantic AI](index.md) and [Pydantic AI Harness](harness/index.md): an agent that reads your code, edits files, runs commands and tests, works with any model, and is yours to change down to the last tool. Pydantic AI is the agent framework; Pydantic AI Harness is its library of [capabilities](capabilities/overview.md), plus complete agents built from them, such as [`Coder`](harness/coder.md). A *harness* is everything around the model that turns it into an agent: the loop, the tools, the workspace, and the context management.
+Build your own coding agent in Python with [Pydantic AI](index.md) and [Pydantic AI Harness](harness/index.md): an agent that reads your code, edits files, runs commands and tests, works with any model that can call tools, and is yours to change down to the last tool. Pydantic AI is the agent framework; Pydantic AI Harness is its library of [capabilities](capabilities/overview.md), plus complete agents built from them, such as [`Coder`](harness/coder.md). A *harness* is everything around the model that turns it into an agent: the loop, the tools, the workspace, and the context management.
 
 This guide starts from `Coder` in a few lines, takes it apart into the capabilities it is made of, swaps and adds pieces, and then runs the result where you use coding agents: the terminal, your editor, a web UI, and CI.
 
@@ -36,7 +36,7 @@ Run it in a project and talk to it:
 python coding_agent.py
 ```
 
-Ask it to find out why a test fails and fix it. The agent explores the repository, reads files, edits them, and runs the tests until they pass. To run one task from code instead, call `agent.run_sync('Fix the failing test in tests/test_parser.py.')` and print `result.output`.
+Give it a real task, such as "Find out why `tests/test_parser.py` fails, fix the cause without weakening the test, and rerun it." The agent explores the repository, reads and edits files, and runs the test to check its fix; review the diff before you keep it. To run one task from code instead, call `agent.run_sync('Fix the failing test in tests/test_parser.py.')` and print `result.output`.
 
 [`LocalWorkspace('.')`](workspace.md) is where the agent works: its file tools and commands run on your machine, in this directory, as you. It is not a sandbox; [Run it in a sandbox](#run-it-in-a-sandbox) shows how to isolate it.
 
@@ -122,13 +122,13 @@ agent = Agent(
 
 - [Planning](harness/planning.md) gives the model a plan it writes and updates as it works, and reminds it of the plan as the conversation grows.
 - [Skills](harness/skills.md) reads [Agent Skills](capabilities/on-demand.md) (`SKILL.md` files) from a directory in the workspace, here `.agents/skills`, and loads each one only when the model asks for it. Install the `skills` extra.
-- [Guardrails](harness/guardrails.md) check tool calls before they run. This one asks you in the terminal before each `shell` command; it applies to the agent's delegates too, because they run with the same capabilities. To decide on a server or in a queue instead, return `GuardrailResult.approve()` and the run ends with [deferred tool requests](deferred-tools.md#human-in-the-loop-tool-approval) you answer later. To let a second model approve the harmless calls first, add [Approval Reviewer](harness/approval-reviewer.md).
+- [Guardrails](harness/guardrails.md) check tool calls before they run. This one asks you in the terminal before each call to the `shell` tool, including calls from the agent's delegates, which run with the same capabilities. File edits and other tools, like the `run_tests` tool below, need guardrails of their own if you want to approve them too. To decide on a server or in a queue instead, return `GuardrailResult.approve()` and the run ends with [deferred tool requests](deferred-tools.md#human-in-the-loop-tool-approval) you answer later. To let a second model approve the harmless calls first, add [Approval Reviewer](harness/approval-reviewer.md).
 
 Other capabilities slot in the same way: [Memory](harness/memory.md) across sessions, [Web Search](capabilities/web-search.md) and [Web Fetch](capabilities/web-fetch.md) for documentation, [summarizing compaction](harness/compaction.md) for very long conversations, [Detect Loops](harness/detect-loops.md), and [Spend Limits](harness/spend.md). The [capability index](harness/index.md#capabilities) lists all of them.
 
 ### Run it in a sandbox
 
-`LocalWorkspace` runs the model's commands on your machine. To isolate them, swap it for a sandbox capability; the tools stay the same and now run in the sandbox. A local [Docker](harness/docker-sandbox.md) container with your project mounted and no network:
+`LocalWorkspace` runs the model's commands on your machine. To isolate them, swap it for a sandbox capability; the tools stay the same and now run in the sandbox. A local [Docker](harness/docker-sandbox.md) container with your project mounted at `/workspace`, where commands start, and no network:
 
 ```python {test="skip" lint="skip"}
 from pathlib import Path
@@ -145,9 +145,13 @@ sandbox = DockerSandbox(
 agent = Agent('{{ anthropic:large }}', name='coder', capabilities=[sandbox, Coder()])
 ```
 
+The mount is writable, so the agent's edits land in your project while the rest of your files stay out of reach. With no network, the image needs your test dependencies already installed: build one from your project instead of using `python:3.13-slim` as is.
+
 Or a cloud sandbox, such as [Modal](harness/modal-sandbox.md), [E2B](harness/e2b-sandbox.md), [Daytona](harness/daytona-sandbox.md), [Sprites](harness/sprites-sandbox.md), or [boxd](harness/boxd-sandbox.md):
 
 ```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
 
 agent = Agent('{{ anthropic:large }}', name='coder', capabilities=[ModalSandbox(), Coder()])
@@ -157,17 +161,17 @@ agent = Agent('{{ anthropic:large }}', name='coder', capabilities=[ModalSandbox(
 
 ### Use a different model
 
-The model is a string. Swap it for [any provider](models/overview.md) Pydantic AI supports, and install that provider's extra:
+The model is a string. Swap it for a model from [any provider](models/overview.md) Pydantic AI supports, install that provider's extra, and set its API key:
 
 ```python {test="skip" lint="skip"}
 agent = Agent('{{ openai:medium }}', name='coder', capabilities=[LocalWorkspace('.'), Coder()])
 ```
 
-To pick the model per run, leave it off the agent and pass `model=` to `run()`, or let users choose one in the [CLI](cli.md) or [web UI](web.md). [Model Fallback](capabilities/model-fallback.md) moves to another model when a request fails.
+Models differ in how well they edit code and check their own work, so try a few on your own tasks. To pick the model per run, leave it off the agent and pass `model=` to `run()`, or let users choose one in the [CLI](cli.md) or [web UI](web.md). [Model Fallback](capabilities/model-fallback.md) moves to another model when a request fails.
 
 ### Add your own tool
 
-A tool is a Python function. Tools get the run's workspace through `ctx.workspace`, so this one runs the project's tests on your machine or in the sandbox, whichever the agent has:
+`Coder` can already run tests through `shell`, but a dedicated tool pins down your project's exact test command. A tool is a Python function, and it gets the run's workspace through `ctx.workspace`, so this one runs the tests on your machine or in the sandbox, whichever the agent has:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent, RunContext
@@ -197,9 +201,11 @@ from pydantic_ai_harness.coder import Coder
 
 
 async def changed_files(ctx: RunContext) -> str:
-    """List the files changed on this branch since main."""
-    result = await ctx.workspace.run(['git', 'diff', '--name-only', 'origin/main...'], timeout=30)
-    return result.stdout
+    """List the tracked files changed since this branch left main, including uncommitted changes."""
+    result = await ctx.workspace.run(['git', 'diff', '--name-only', '--merge-base', 'origin/main'], timeout=30)
+    if result.exit_code != 0:
+        return f'Could not list changed files: {result.stderr}'
+    return result.stdout or 'No changes.'
 
 
 our_conventions = Capability(
@@ -223,14 +229,7 @@ The agent is one `Agent` object. The same module serves the terminal, an editor,
 
 ### In the terminal
 
-`agent.to_cli_sync()` above is Pydantic AI's [CLI](cli.md). For a full terminal coding client with saved sessions, model switching, and plugins, run your agent in [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2), which is built on `Coder`:
-
-```bash
-uv tool install pydantic-clai2
-clai2 --agent coding_agent:agent
-```
-
-CLAI imports `agent` from `coding_agent.py` in the directory you start it in, and keeps the agent's own model.
+`agent.to_cli_sync()` above opens Pydantic AI's [CLI](cli.md): an interactive chat in your terminal, with commands such as `/multiline` and `/usage`. The [`clai`](cli.md#custom-agents) command runs the same agent with `clai --agent coding_agent:agent`.
 
 ### In your editor
 
@@ -271,7 +270,7 @@ Install `pydantic-ai-slim[web]` and run it with `uvicorn coding_agent:app`. With
 
 ## Keep long runs going
 
-A coding run can take an hour. To survive a crashed worker or a deploy mid-run, add a [durable execution](durable_execution/overview.md) capability next to the workspace. With Temporal:
+A coding run can take an hour. To survive a crashed worker or a deploy mid-run, run the agent under a [durable execution](durable_execution/overview.md) engine. With Temporal, add its capability next to the workspace:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
@@ -286,7 +285,7 @@ agent = Agent(
 )
 ```
 
-`Coder` also works under DBOS and Prefect; the [workspace guide](workspace.md#harness-workspace-capabilities) lists what each engine supports. Without a workflow engine, [Step Persistence](harness/step-persistence.md) saves a snapshot after every step, so you can resume or fork a run later.
+The capability alone does not make a run durable: the run has to execute inside a Temporal workflow your worker runs, as the [Temporal guide](durable_execution/temporal.md) shows. A resumed run picks up after its last completed step, so the workspace has to survive too, and commands that already ran are not undone. `Coder` also works under DBOS and Prefect; the [workspace guide](workspace.md#harness-workspace-capabilities) lists what each engine supports. Without a workflow engine, [Step Persistence](harness/step-persistence.md) saves a snapshot after every step, so you can resume or fork a run later.
 
 ## See what it did
 
@@ -297,6 +296,8 @@ uvx logfire-cli wizard --task pydantic-ai
 ```
 
 It signs you in, picks a project, and has your coding agent add the instrumentation. To add it by hand, call `logfire.configure()` and `logfire.instrument_pydantic_ai()` before the agent runs; see [Using Logfire](logfire.md#using-logfire). The traces are standard OpenTelemetry, so [any OTel backend](logfire.md#using-opentelemetry) works too.
+
+To tell whether a new model, instruction, or tool makes the agent better, keep a few representative tasks with checks of their own and run them against each version, by hand or with [Pydantic Evals](evals.md).
 
 ## Next steps
 
