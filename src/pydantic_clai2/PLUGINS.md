@@ -1534,7 +1534,8 @@ many files the session has changed) lists what the session changed, one diff per
 turn** and **This session** come from the session's own `write_file` and `edit_file` calls, so
 they also work outside Git. **Uncommitted** is `git diff HEAD` in the session's directory, and
 **Branch vs base** compares the files with where the branch left `origin/HEAD`, `main`, or
-`master`. It uses the same column as Monty and plugins' side panels, so opening one closes the others.
+`master`. It uses the same column as Monty and plugins' side panels, so opening one closes the
+others.
 
 Images pasted or dropped into the composer go with the next prompt: the page shows each as a
 thumbnail until it is sent, and sends them with the text (`POST /api/sessions/ID/input` with
