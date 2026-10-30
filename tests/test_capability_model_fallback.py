@@ -50,7 +50,6 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     ModelFallback,
     NativeTool,
-    RaiseContentFilterError,
     ResolveModelId,
     SelectModel,
     WrapModelRequestHandler,
@@ -2683,10 +2682,11 @@ def _answering(name: str, calls: list[str]) -> FunctionModel:
     return FunctionModel(respond, model_name=name)
 
 
-async def test_falls_back_when_a_model_refuses_by_default():
-    """A refusal the run would end on with `ContentFilterError` falls back to the next model."""
+@pytest.mark.parametrize('text', [None, 'I cannot help with that.'], ids=['empty', 'with-text'])
+async def test_falls_back_when_a_model_refuses_by_default(text: str | None):
+    """A response the content filter ended falls back to the next model, whether or not it has partial text."""
     calls: list[str] = []
-    agent = Agent(_refusal('primary', calls), capabilities=[ModelFallback(_answering('backup', calls))])
+    agent = Agent(_refusal('primary', calls, text), capabilities=[ModelFallback(_answering('backup', calls))])
     result = await agent.run('x')
     assert result.output == 'backup answered'
     assert calls == ['primary', 'backup']
@@ -2707,23 +2707,15 @@ async def test_a_refusal_ends_the_run_when_opted_out():
     assert calls == ['primary']
 
 
-async def test_a_refusal_with_text_is_the_output():
-    """A refusal with text is valid output, as without `ModelFallback`, unless `RaiseContentFilterError` is added."""
+async def test_a_refusal_with_text_is_the_output_when_opted_out():
+    """With `fallback_on=(ModelAPIError,)`, a refusal with text is the run's output, as without `ModelFallback`."""
     calls: list[str] = []
     agent = Agent(
         _refusal('primary', calls, 'I cannot help with that.'),
-        capabilities=[ModelFallback(_answering('backup', calls))],
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError,))],
     )
     assert (await agent.run('x')).output == 'I cannot help with that.'
     assert calls == ['primary']
-
-    calls.clear()
-    agent = Agent(
-        _refusal('primary', calls, 'I cannot help with that.'),
-        capabilities=[ModelFallback(_answering('backup', calls)), RaiseContentFilterError()],
-    )
-    assert (await agent.run('x')).output == 'backup answered'
-    assert calls == ['primary', 'backup']
 
 
 async def test_only_content_filter_error_names_refusals():
@@ -2756,13 +2748,16 @@ async def test_fallback_model_falls_back_on_refusals_when_named():
         await Agent(FallbackModel(_refusal('primary', calls), _answering('backup', calls))).run('x')
     assert calls == ['primary']
 
-    calls.clear()
-    model = FallbackModel(
-        _refusal('primary', calls), _answering('backup', calls), fallback_on=(ModelAPIError, ContentFilterError)
-    )
-    result = await Agent(model).run('x')
-    assert result.output == 'backup answered'
-    assert calls == ['primary', 'backup']
+    for text in (None, 'I cannot help with that.'):
+        calls.clear()
+        model = FallbackModel(
+            _refusal('primary', calls, text),
+            _answering('backup', calls),
+            fallback_on=(ModelAPIError, ContentFilterError),
+        )
+        result = await Agent(model).run('x')
+        assert result.output == 'backup answered'
+        assert calls == ['primary', 'backup']
 
 
 async def test_spec_falls_back_on_refusals_by_default_and_can_opt_out():
