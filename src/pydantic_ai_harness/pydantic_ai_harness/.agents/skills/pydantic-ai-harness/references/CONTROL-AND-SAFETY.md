@@ -24,6 +24,7 @@ judge model. All are
 | Keep injected instructions, exfiltration commands, hidden text out of memory and skills | `Memory(scanner=ArtifactScanner())`, `Skills(..., scanner=ArtifactScanner())` |
 | Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
 | Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
+| Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with `ask_permissions` in a `HandleDeferredToolCalls` handler |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
@@ -384,6 +385,51 @@ Gotchas:
   and are durable operations under Temporal, DBOS, and Prefect (give the reviewer an explicit `id`).
 - Reviewed arguments leave the process for the reviewer provider, including calls it leaves for the
   person. This is a model-based filter, not an authorization boundary.
+
+## Permissions
+
+Holds the `FileSystem` writes and `Shell` commands a permission mode asks about by raising
+`ApprovalRequired`: `'full'` (default) asks about nothing, `'auto'` asks about commands matching
+`ask_commands` (`DEFAULT_ASK_COMMANDS`: `rm -rf`, `git push`, `sudo`, network clients, installs), and
+`'read-only'` asks about every write and command. Other tools are not checked.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import HandleDeferredToolCalls, LocalWorkspace
+
+from pydantic_ai_harness import Coder
+from pydantic_ai_harness.permissions import (
+    PermissionDecision,
+    PermissionRequest,
+    Permissions,
+    ask_permissions,
+)
+
+
+async def approve(request: PermissionRequest) -> PermissionDecision:
+    return PermissionDecision(approved=input(f'{request.subject}? [y/N] ') == 'y')
+
+
+agent = Agent(
+    'anthropic:claude-sonnet-5-5',
+    capabilities=[
+        LocalWorkspace('.'),
+        Coder(),
+        Permissions('auto'),
+        HandleDeferredToolCalls(handler=lambda ctx, requests: ask_permissions(requests, approve)),
+    ],
+)
+```
+
+Gotchas:
+
+- Without a handler a held call ends the run as `DeferredToolRequests` output, like `requires_approval=True`.
+- `mode` may be a function of the run context, read on every call. `PermissionDecision(remember=True)`
+  skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
+  `remembered` set; inside durable execution nothing is remembered.
+- Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
+- `ask_commands` patterns are a convenience, not a sandbox: use a sandbox workspace when the agent must not
+  reach something.
 
 ## SpendLimits
 

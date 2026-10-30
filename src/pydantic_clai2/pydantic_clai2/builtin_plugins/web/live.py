@@ -5,15 +5,19 @@ ones. One that never says which watches the default session, as every browser di
 """
 
 import asyncio
-from collections.abc import Callable, Generator, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import partial
 
 import anyio
 
 from pydantic_ai_harness.ask_user import Answerer, AskUserAnswer, AskUserRequest, AskUserResponse, check_response
+from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    ApprovalInfo,
+    Diff,
     QuestionAsked,
     QuestionClosed,
     Questions,
@@ -24,6 +28,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump_session,
     questions_info,
 )
+from pydantic_clai2.runtime.permissions import approval_question, decision, proposed_diff
 
 QUEUE_LIMIT = 10_000
 """Messages a browser may fall behind by before it is told to reconnect, so a stalled tab cannot hold a whole session."""
@@ -130,10 +135,15 @@ class BrowserAnswerer:
         publish: Callable[[QuestionAsked | QuestionClosed, str | None], None],
         terminal: Answerer | None,
         session: Callable[[], str | None] = lambda: None,
+        terminal_approval: Callable[[PermissionRequest], Awaitable[AskUserResponse]] | None = None,
     ) -> None:
-        """`publish` takes each message with the conversation ID of the session asking, from `session`."""
+        """`publish` takes each message with the conversation ID of the session asking, from `session`.
+
+        `terminal_approval` races the browser's approval card in the terminal, as `terminal` races its questions.
+        """
         self._publish = publish
         self._terminal = terminal
+        self._terminal_approval = terminal_approval
         self._session = session
         self._open: dict[str, _Open] = {}
 
@@ -171,8 +181,29 @@ class BrowserAnswerer:
         return entry.request
 
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
+        return await self._ask(request, terminal=None if self._terminal is None else partial(self._terminal, request))
+
+    async def approve(self, request: PermissionRequest) -> PermissionDecision:
+        """Ask whether a call `/permissions` holds may run, as an approval card here and a question in the terminal."""
+        approval = ApprovalInfo(
+            tool=request.call.tool_name,
+            action=request.action,
+            subject=request.subject,
+            reason=request.reason,
+            diff=None if (diff := proposed_diff(request)) is None else Diff(path=request.subject, diff=diff),
+        )
+        terminal = None if self._terminal_approval is None else partial(self._terminal_approval, request)
+        return decision(await self._ask(approval_question(request), approval=approval, terminal=terminal))
+
+    async def _ask(
+        self,
+        request: AskUserRequest,
+        *,
+        terminal: Callable[[], Awaitable[AskUserResponse]] | None,
+        approval: ApprovalInfo | None = None,
+    ) -> AskUserResponse:
         child = DelegationTasks.child_id()
-        questions = questions_info(request, asker=None if child is None else f'Task [{child[:8]}]')
+        questions = questions_info(request, asker=None if child is None else f'Task [{child[:8]}]', approval=approval)
         session = self._session()
         entry = _Open(
             questions=questions, request=request, answered=asyncio.get_running_loop().create_future(), session=session
@@ -180,23 +211,26 @@ class BrowserAnswerer:
         self._open[request.id] = entry
         self._publish(QuestionAsked(questions=questions), session)
         try:
-            if self._terminal is None:
+            if terminal is None:
                 return await entry.answered
-            return await self._race(request, entry.answered, self._terminal)
+            return await self._race(entry.answered, terminal)
         finally:
             del self._open[request.id]
             self._publish(QuestionClosed(id=request.id), session)
 
     async def _race(
-        self, request: AskUserRequest, browser: asyncio.Future[AskUserResponse], terminal: Answerer
+        self, browser: asyncio.Future[AskUserResponse], terminal: Callable[[], Awaitable[AskUserResponse]]
     ) -> AskUserResponse:
         answers: list[AskUserResponse] = []
         async with anyio.create_task_group() as race:
 
-            async def first(answer: asyncio.Future[AskUserResponse] | Answerer) -> None:
-                answers.append(await answer if isinstance(answer, asyncio.Future) else await answer(request))
+            async def first(answer: Callable[[], Awaitable[AskUserResponse]]) -> None:
+                answers.append(await answer())
                 race.cancel_scope.cancel()
 
-            race.start_soon(first, browser)
+            async def from_browser() -> AskUserResponse:
+                return await browser
+
+            race.start_soon(first, from_browser)
             race.start_soon(first, terminal)
         return answers[0]

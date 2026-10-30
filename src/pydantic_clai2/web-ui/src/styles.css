@@ -2127,6 +2127,42 @@ pre {
   opacity: 0.7;
 }
 
+.switch.permissions select {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  outline: 0;
+}
+
+/* Approval card */
+
+.approval-tool {
+  margin-left: auto;
+  color: var(--muted);
+  font: 12px ui-monospace, 'SF Mono', Menlo, monospace;
+  font-weight: 400;
+}
+
+.approval-reason {
+  margin: 0 0 8px;
+  color: var(--text-soft);
+}
+
+.approval-subject {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow: auto;
+  border-radius: 10px;
+  background: var(--active);
+  font: 12.5px/1.5 ui-monospace, 'SF Mono', Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Theme picker */
 
 .theme-picker {

@@ -31,6 +31,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/login [NAME[@PROFILE]]` | Sign in: `openai-codex`, `github-copilot`, or one a plugin adds; `@PROFILE` adds another account |
 | `/accounts` | Add, rename, reorder, and sign out of accounts |
 | `/keys` | Manage saved API keys |
+| `/permissions [full\|auto\|read-only]` | Show or set what runs without asking |
 | `/set [KEY [VALUE]]` | Change a setting; no arguments opens the menu (alias `/settings`) |
 | `/config show\|get\|set\|reset` | Read or write saved settings; writes apply on restart |
 | `/system_prompt` | View the system prompt and edit your own instructions |
@@ -100,6 +101,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.tool_retries` | `3` | Default retries per tool call. Explicit tool retry limits take precedence. |
 | `run.code_mode` | `true` | Fold tools into a sandboxed run_code that runs each statement while the model writes. Off, every tool is called natively. |
 | `run.speculative_code_mode` | `false` | Also start read-only calls in run_code before the model reaches them. Turns on code mode for its runs. Ctrl+X Ctrl+S toggles it. |
+| `run.permissions` | `"full"` | What runs without asking: full runs everything; auto asks before commands that delete, push, install, or reach the network; read-only asks before every file write and command. /permissions sets it. |
 | `run.instructions` | `""` | Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. /system_prompt edits them. |
 | `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
 | `sessions.naming` | `true` | Name saved sessions in the background using a model. |
@@ -1784,6 +1786,33 @@ The menu is the built-in `ask_user` plugin around the harness's
 `Answerer`; the terminal menu is one, and [PLUGINS.md](../PLUGINS.md#ask_user-questions-answered-from-the-terminal)
 shows how to put a different one, a web form for instance, in its place.
 `/plugins disable ask_user` removes the tool.
+
+### Permissions
+
+`/permissions` chooses what the agent may do without asking, for this session:
+
+| Mode | File writes | Shell commands |
+|---|---|---|
+| `full` (default) | run | run |
+| `auto` | run | run, except commands that delete (`rm -rf`), push (`git push`), rewrite history (`git reset --hard`, `git clean`), use `sudo`, reach the network (`curl`, `ssh`, ...), or install packages |
+| `read-only` | ask | ask |
+
+A held call waits for your answer: the inline picker in the terminal, or an approval card in the web UI,
+showing the command or the file change; the terminal prints the command (or a path too long for the
+picker) in full above it. **Approve** runs it once, **Approve for this session** also runs the
+same tool on the same command (or the same file) without asking for the rest of the conversation, and **Deny** tells
+the model the call did not run, with the reason you type, if any. The web UI shows the mode as a chip by the
+prompt box and changes it there too. A change applies from the next tool call, also during a turn, except
+that code mode's sandbox keeps the folder as the turn mounted it until the next prompt.
+
+The mode is the `run.permissions` setting: `/permissions MODE` saves it as the default for new sessions too,
+and Settings, General edits it. It is harness [`Permissions`](../../../docs/harness/permissions.md), which checks
+the coding tools' file writes and commands only; other tools, such as MCP servers', run as before. File tools
+only reach files inside the session's folder, so `auto` lets them write. In `read-only`, code mode's sandbox
+gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
+can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
+sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
+per run rather than bound to the agent. The model is told to do the work itself instead.
 
 ### Compacting the conversation
 

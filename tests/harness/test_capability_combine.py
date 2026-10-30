@@ -341,6 +341,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ToolGuardrail': Anonymous('several guards is the design'),
     'ToolCallJudge': Anonymous('one per risk question; stacked judges must all allow a call'),
     'ApprovalReviewer': Anonymous('one per risk question; each answers the approval requests the ones before it left'),
+    'Permissions': Anonymous('each mode holds the calls it asks about, so stacked ones ask when any of them would'),
     'ManagedPrompt': Anonymous(
         'one per prompt name; the name derives its `id`, so two of one prompt are rejected when the agent is built'
     ),

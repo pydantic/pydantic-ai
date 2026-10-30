@@ -4,6 +4,7 @@ import type { Attachment } from './attachments'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
+import { PermissionsChip } from './components/PermissionsChip'
 import { Switches } from './components/Switches'
 import { Transcript } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
@@ -595,7 +596,12 @@ export function App() {
       ref={composer}
       running={chat.running}
       meter={<TurnMeter status={status} startedAt={chat.turnStartedAt} />}
-      controls={<Switches status={status} running={chat.running} onError={showError} />}
+      controls={
+        <>
+          <PermissionsChip status={status} onError={showError} />
+          <Switches status={status} running={chat.running} onError={showError} />
+        </>
+      }
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
       placeholder={chat.running ? `Queue a follow-up, or steer with ${STEER_KEY}…` : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
