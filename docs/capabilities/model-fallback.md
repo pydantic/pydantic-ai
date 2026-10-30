@@ -148,7 +148,7 @@ print(refusals)
 #> ["primary: I can't help with that request."]
 ```
 
-A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] takes the same `fallback_on`.
+[`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] records that `primary` was rejected, but not its `provider_details`, so the handler is the place to read the refusal text. The example keeps it in a list for brevity; an application would log it instead. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] takes the same `fallback_on`.
 
 A few things to know about falling back on refusals:
 
