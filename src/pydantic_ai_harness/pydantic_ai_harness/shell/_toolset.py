@@ -18,7 +18,8 @@ from typing import Any
 import anyio
 
 from pydantic_ai import RunContext
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import Workspace, WorkspaceTimeoutError
@@ -554,13 +555,39 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
 def _job_id(ctx: RunContext[AgentDepsT]) -> str | None:
     """The job directory name for this tool call, or `None` to have `Job.launch` pick a random one.
 
-    Derived from the run and tool call, not the run alone, so separate launches in one run get distinct
-    directories while a retried activity or a replayed workflow (where `Job.launch` is called again but its
-    workspace call returns the recorded result) names the job it launched the first time.
+    The name stands for the call, so running it again finds the job it launched the first time instead of
+    running its command twice: a retried activity, a replayed workflow (where `Job.launch` is called again but
+    its workspace call returns the recorded result), or a conversation continued after a crash, which is a new
+    run. A call is its tool call ID within the model response that made it, where core keeps the ID unique;
+    the same ID in another response, even an empty one, is another call. See `_response_key`.
     """
-    if ctx.run_id is None or ctx.tool_call_id is None:
+    if ctx.tool_call_id is None or (response := _response_key(ctx, ctx.tool_call_id)) is None:
         return None
-    return hashlib.sha256(f'{ctx.run_id}:{ctx.tool_call_id}'.encode()).hexdigest()[:32]
+    return hashlib.sha256(f'{response}:{ctx.tool_call_id}'.encode()).hexdigest()[:32]
+
+
+def _response_key(ctx: RunContext[AgentDepsT], tool_call_id: str) -> str | None:
+    """What names the model response holding call `tool_call_id`, the same each time the call runs.
+
+    The response is the last in the history to hold the call. One that a run committed keeps that run's ID and
+    its timestamp in the history. One rebuilt without a run ID, as from a UI's messages each request, has a new
+    timestamp each time and keeps only its place in the conversation, which every run resolves. Where there is
+    no history, as inside a Temporal activity, which doesn't carry it, the run's ID and step name the response
+    the step's tool calls come from.
+    """
+    try:
+        messages = ctx.messages
+    except UserError:  # a run context rebuilt in a durable unit carries no history
+        messages = []
+    for index in reversed(range(len(messages))):
+        response = messages[index]
+        if isinstance(response, ModelResponse) and any(
+            isinstance(part, ToolCallPart) and part.tool_call_id == tool_call_id for part in response.parts
+        ):
+            if response.run_id is None:
+                return f'{ctx.conversation_id}:{index}'
+            return f'{response.run_id}:{response.timestamp.isoformat()}'
+    return None if ctx.run_id is None else f'{ctx.run_id}:{ctx.run_step}'
 
 
 def _labelled(stdout: str, stderr: str, *, empty: str | None, trailer: str | None = None) -> str:
