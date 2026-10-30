@@ -3303,6 +3303,30 @@ textarea.setting-input {
   color: var(--text);
 }
 
+.dialog-option-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog-option:hover:not(.active) {
+  background: var(--hover);
+}
+
+/* A Git checkout's New worktree…, at the end of its row while the pointer is on it. */
+.dialog-option-worktree {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  border: 1px solid var(--border);
+  opacity: 0;
+}
+
+.dialog-option-row:hover .dialog-option-worktree {
+  opacity: 1;
+}
+
 .dialog-option-label {
   display: flex;
   align-items: center;
