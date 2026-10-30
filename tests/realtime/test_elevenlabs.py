@@ -530,6 +530,8 @@ async def test_response_usage_presence(tool_only: bool, usage_location: str, usa
         response['usage'] = usage
     else:
         terminal['usage'] = usage
+        if usage is not None:
+            response['usage'] = {}
     ws = FakeWebSocket(frames(created('resp-1'), terminal))
     connection = ElevenLabsRealtimeConnection(ws)  # pyright: ignore[reportArgumentType]
     events = await collect_codec_events(connection)
@@ -544,8 +546,19 @@ async def test_response_usage_presence(tool_only: bool, usage_location: str, usa
             unmeasured_requests=int(usage is None),
         )
         assert event.provider_response_id == 'resp-1'
-        if tool_only:
-            assert event.finish_reason == 'tool_call'
+        assert event.finish_reason == ('tool_call' if tool_only else 'stop')
+        assert event.provider_details == {'status': 'completed'}
+
+
+async def test_superseded_response_without_usage_is_unmeasured() -> None:
+    """A late completion still contributes usage, without ending or annotating the newer response."""
+    ws = FakeWebSocket(frames(created('old'), created('new'), done('old', status='cancelled')))
+    connection = ElevenLabsRealtimeConnection(ws)  # pyright: ignore[reportArgumentType]
+    events = await collect_codec_events(connection)
+    [event] = [event for event in events if isinstance(event, SessionUsage) and event.provider_response_id == 'old']
+    assert event.usage == RequestUsage(unmeasured_requests=1)
+    assert event.provider_details is None
+    assert not any(isinstance(event, ResponseDone) and event.provider_response_id == 'old' for event in events)
 
 
 def _call(response_id: str, call_id: str) -> dict[str, Any]:
@@ -812,7 +825,12 @@ async def test_audio_tags_are_stripped_from_transcripts() -> None:
             OutputTranscript(text=' there!', item_id='item_1', response_id='resp_1'),
             OutputTranscript(text=' How are you?', item_id='item_1', response_id='resp_1'),
             OutputTranscript(text='Hello there! How are you?', is_final=True, item_id='item_1', response_id='resp_1'),
-            SessionUsage(usage=RequestUsage(unmeasured_requests=1), provider_response_id='resp_1'),
+            SessionUsage(
+                usage=RequestUsage(unmeasured_requests=1),
+                provider_response_id='resp_1',
+                finish_reason='stop',
+                provider_details={'status': 'completed'},
+            ),
             ResponseDone(provider_response_id='resp_1', finish_reason='stop', provider_details={'status': 'completed'}),
             ResponseEnded(
                 response_id='resp_1',
