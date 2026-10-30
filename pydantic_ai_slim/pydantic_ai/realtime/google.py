@@ -51,6 +51,7 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -669,6 +670,7 @@ async def _seed_request_parts(
                 InstructionDeltaPart,
                 InstructionBaselinePart,
                 ToolAvailabilityDeltaPart,
+                CapabilityLoadDeltaPart,
                 ModelSettingsDeltaPart,
             ),
         ):
