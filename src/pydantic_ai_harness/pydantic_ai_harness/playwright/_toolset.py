@@ -1535,32 +1535,40 @@ class PlaywrightBrowserSession:
         on. A `close()` failure still exits the driver, and when the run is
         already unwinding the teardown error is dropped: the exception the caller
         is carrying is the one worth reporting.
+
+        Teardown is shielded, so a run cancelled by an `anyio` scope still closes
+        Chromium and exits the driver before the cancellation propagates. Without
+        it, the cancellation interrupts each wait, and an in-flight page-event task
+        leaves both processes running until the Python process exits.
         """
         driver_cm = self._driver_cm
         self._driver_cm = None
         self._driver = None
-        if self._event_tasks:
-            for task in self._event_tasks:
-                task.cancel()
-            await asyncio.gather(*self._event_tasks, return_exceptions=True)
-            self._event_tasks.clear()
-        if driver_cm is None:  # pragma: no cover
-            return
-        try:
-            browser = self._browser
-            if browser is not None:
-                self.page = None
-                self.pages = []
-                self._browser = None
-                try:
-                    await browser.close()
-                finally:
+        # No deadline: the deprecated `TemporalAgent` wrapper runs `wrap_run` in the workflow, where
+        # an `anyio` deadline becomes a durable timer that breaks replay of earlier histories.
+        with anyio.CancelScope(shield=True):
+            if self._event_tasks:
+                for task in self._event_tasks:
+                    task.cancel()
+                await asyncio.gather(*self._event_tasks, return_exceptions=True)
+                self._event_tasks.clear()
+            if driver_cm is None:  # pragma: no cover
+                return
+            try:
+                browser = self._browser
+                if browser is not None:
+                    self.page = None
+                    self.pages = []
+                    self._browser = None
+                    try:
+                        await browser.close()
+                    finally:
+                        await driver_cm.__aexit__(None, None, None)
+                elif self._driver_entered:
                     await driver_cm.__aexit__(None, None, None)
-            elif self._driver_entered:
-                await driver_cm.__aexit__(None, None, None)
-        except Exception:
-            if exc_type is None:
-                raise
+            except Exception:
+                if exc_type is None:
+                    raise
 
 
 class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
