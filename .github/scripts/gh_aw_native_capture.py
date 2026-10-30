@@ -396,8 +396,7 @@ def main() -> None:
         )
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         downloads: list[concurrent.futures.Future[None]] = [executor.submit(download, *job) for job in download_jobs]
-        for future in downloads:
-            future.result()
+        [future.result() for future in downloads]
     for name in ('gh-aw', 'awf'):
         (work / 'bin' / name).chmod(0o755)
     execute([str(work / 'bin/gh-aw'), 'version'], env=env, log=evidence / 'gh-aw-version.log', timeout=20)
