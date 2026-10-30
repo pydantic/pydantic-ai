@@ -46,7 +46,13 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.messages import CapabilityPart, InstructionBaselinePart, InstructionPart, OperatorSource
+from pydantic_ai.messages import (
+    InstructionBaselinePart,
+    InstructionPart,
+    OperatorSource,
+    OperatorText,
+    SystemCapabilityPart,
+)
 from pydantic_ai.models import Model, ModelProfile, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -2903,7 +2909,7 @@ async def test_wrapped_model_receives_unprepared_request():
 
 
 @dataclass(kw_only=True)
-class _ReminderPart(CapabilityPart, namespace='test_instrumented', name='reminder', voice='system'):
+class _ReminderPart(SystemCapabilityPart, namespace='test_instrumented', name='reminder'):
     pass
 
 
@@ -2922,7 +2928,11 @@ def _reminder_agent(profile: ModelProfile, settings: InstrumentationSettings | N
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            ctx.enqueue(_ReminderPart(content=f'Reminder {ctx.run_step}.', source=OperatorSource(), scope='request'))
+            ctx.enqueue(
+                _ReminderPart(
+                    content=OperatorText(f'Reminder {ctx.run_step}.'), source=OperatorSource(), scope='request'
+                )
+            )
             return request_context
 
     agent = Agent(

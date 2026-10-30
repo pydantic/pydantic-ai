@@ -21,7 +21,6 @@ from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
     CapabilityInstructionSource,
-    CapabilityPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -36,6 +35,8 @@ from pydantic_ai.messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     OperatorSource,
+    OperatorText,
+    SystemCapabilityPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -87,7 +88,7 @@ with try_import() as xai_available:
 
 
 @dataclass(kw_only=True)
-class ReminderPart(CapabilityPart, namespace='test_instruction_updates', voice='system'):
+class ReminderPart(SystemCapabilityPart, namespace='test_instruction_updates'):
     """A capability's request-scoped reminder, which renders as a `SystemPromptPart(..., scope='request')`."""
 
 
@@ -628,7 +629,11 @@ async def test_instruction_updates_coexist_with_request_scoped_prompts(inline_sy
             self, ctx: RunContext[State], request_context: ModelRequestContext
         ) -> ModelRequestContext:
             self.requests += 1
-            ctx.enqueue(ReminderPart(content=f'Reminder {self.requests}.', source=OperatorSource(), scope='request'))
+            ctx.enqueue(
+                ReminderPart(
+                    content=OperatorText(f'Reminder {self.requests}.'), source=OperatorSource(), scope='request'
+                )
+            )
             return request_context
 
     agent = Agent(

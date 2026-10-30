@@ -11,7 +11,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Final
+from typing import Final, Literal, TypeAlias
 
 from . import _utils
 from ._frame_seal import framework_frame_text
@@ -24,6 +24,7 @@ from .messages import (
     ModelRequestPart,
     SystemPromptPart,
     TextContent,
+    UserContent,
     UserPromptPart,
 )
 
@@ -72,33 +73,66 @@ def _render_parts(parts: Sequence[ModelRequestPart]) -> list[ModelRequestPart]:
 def _render(part: CapabilityPart) -> list[SystemPromptPart | UserPromptPart]:
     """The parts `part` reaches the model as.
 
-    A `'system'` part is a system message, in its own scope. A `'framed'` part from a trusted source is a frame
-    carrying the frame seal, preceded by its note when the kind has one; from any other source, the frame carries
-    no seal and the note is left out, so the content is data like any other text from a user or a tool, and gets
-    the same lookalike note from `prepare_messages` when it contains something that resembles a frame.
+    A system part is a system message, in its own scope. A framed part is a frame carrying the frame seal, whatever its
+    source: the seal says the application placed the frame, as on core's own `<tool_result>`, not that it vouches for
+    the content. Its note, which does vouch, goes before it only when the source is trusted. Either way, text in the
+    body that resembles a frame gets the lookalike note from `prepare_messages`, naming who wrote it (see
+    `content_author`).
     """
     render = part.render
+    content = part._content()  # pyright: ignore[reportPrivateUsage]
     metadata = {_PYDANTIC_AI_METADATA_KEY: {RENDERED_CAPABILITY_PART_KEY: True}}
     if render.voice == 'system':
         # Checked when the part was created.
-        assert isinstance(part.content, str)
-        return [SystemPromptPart(part.content, timestamp=part.timestamp, scope=part.scope, metadata=metadata)]
+        assert isinstance(content, str)
+        return [SystemPromptPart(content, timestamp=part.timestamp, scope=part.scope, metadata=metadata)]
     assert render.tag is not None
     # TODO(#11029): deliver content from a source the operator doesn't control on the tool channel instead, as a
     # framework-inserted read and its result, rebuilding #11837.
-    sealed = part.source.trusted
-    open_tag, close_tag = capability_frame_tags(render.tag, sealed=sealed, attrs=part.rendered_attributes())
+    open_tag, close_tag = capability_frame_tags(render.tag, sealed=True, attrs=part.rendered_attributes())
     # Only the tags are marked as the framework's: the body is the part's content, which `prepare_messages` checks
     # for lookalike frames like any other text, so a body that closes the frame early is noted rather than trusted.
-    body = [part.content] if isinstance(part.content, str) else part.content
-    content = [_frame_text(open_tag, sealed=sealed), *body, _frame_text(close_tag, sealed=sealed)]
-    framed = UserPromptPart(content, timestamp=part.timestamp)
-    if render.note is None or not sealed:
+    author = _AUTHORS[part.source.source_kind]
+    body = [_with_author(item, author) for item in ([content] if isinstance(content, str) else content)]
+    framed = UserPromptPart(
+        [framework_frame_text(open_tag), *body, framework_frame_text(close_tag)], timestamp=part.timestamp
+    )
+    if render.note is None or not part.source.trusted:
         return [framed]
     reference, _ = capability_frame_tags(render.tag, sealed=False, attrs={})
     note = render.note.replace('{frame}', reference)
     return [SystemPromptPart(note, timestamp=part.timestamp, metadata=metadata), framed]
 
 
-def _frame_text(text: str, *, sealed: bool) -> str | TextContent:
-    return framework_frame_text(text) if sealed else text
+ContentAuthor: TypeAlias = Literal['user', 'tool', 'file', 'application']
+"""Who wrote a capability part's content, for the lookalike note: the lookalike sources, or the application itself."""
+
+_AUTHORS: Final[dict[str, ContentAuthor]] = {
+    'operator': 'application',
+    'workspace': 'file',
+    'tool-result': 'tool',
+    'user': 'user',
+}
+"""The author of the content from each kind of `CapabilityPartSource`, by its `source_kind`."""
+
+CONTENT_AUTHOR_KEY: Final = 'content_author'
+"""The key under the reserved `__pydantic_ai__` namespace of a rendered body's `TextContent` naming its author."""
+
+
+def _with_author(item: UserContent, author: ContentAuthor) -> UserContent:
+    """`item` marked with who wrote it, when it's text; other content, such as a file, as it is."""
+    if isinstance(item, str):
+        return TextContent(item, metadata={_PYDANTIC_AI_METADATA_KEY: {CONTENT_AUTHOR_KEY: author}})
+    if not isinstance(item, TextContent):
+        return item
+    metadata = item.metadata if _utils.is_str_dict(item.metadata) else {}
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    namespace = namespace if _utils.is_str_dict(namespace) else {}
+    return replace(item, metadata={**metadata, _PYDANTIC_AI_METADATA_KEY: {**namespace, CONTENT_AUTHOR_KEY: author}})
+
+
+def content_author(item: TextContent) -> ContentAuthor:
+    """Who wrote `item`: the author a rendered capability part's body was marked with, or else the user."""
+    namespace = item.metadata.get(_PYDANTIC_AI_METADATA_KEY) if _utils.is_str_dict(item.metadata) else None
+    author = namespace.get(CONTENT_AUTHOR_KEY) if _utils.is_str_dict(namespace) else None
+    return author if author in ('tool', 'file', 'application') else 'user'

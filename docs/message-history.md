@@ -279,13 +279,13 @@ That suits a value that changes from one request to the next and is sent with ev
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, CapabilityPart, OperatorSource, RunContext
+from pydantic_ai import Agent, OperatorSource, OperatorText, RunContext, SystemCapabilityPart
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass(kw_only=True)
-class RequestsLeftPart(CapabilityPart, namespace='requests_left', voice='system'):
+class RequestsLeftPart(SystemCapabilityPart, namespace='requests_left'):
     pass
 
 
@@ -299,7 +299,7 @@ class ShowRequestsLeft(AbstractCapability[Any]):
             left = limit - ctx.usage.requests
             ctx.enqueue(
                 RequestsLeftPart(
-                    content=f'{left} model request(s) left in this run.',
+                    content=OperatorText(f'{left} model request(s) left in this run.'),
                     source=OperatorSource(),
                     scope='request',
                 )
@@ -354,7 +354,7 @@ Use a request-scoped prompt for something about the current moment. Something th
 
 ### Capability parts
 
-A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is something a capability or your application tells the model mid-conversation, defined as a subclass per kind of record that declares how it reaches the model: as data in a frame on the user channel, or in the application's voice. See [Telling the model things mid-conversation](capabilities/custom.md#capability-parts) for how to define one.
+A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is something a capability or your application tells the model mid-conversation, defined as a subclass per kind of record: of [`FramedCapabilityPart`][pydantic_ai.messages.FramedCapabilityPart] for data in a frame on the user channel, or [`SystemCapabilityPart`][pydantic_ai.messages.SystemCapabilityPart] for the application's voice. See [Telling the model things mid-conversation](capabilities/custom.md#capability-parts) for how to define one.
 
 In the message history it stays the part it was enqueued as, so code that reads the history, such as a history processor, a compaction summarizer or a UI, finds it by type and never mistakes it for something the user said. It's rendered into the parts above only on the way to the model: before any model sees the history, so a [custom model](models/overview.md#custom-models) only ever gets the request parts it already maps. A [`Model.request`][pydantic_ai.models.Model.request] call made outside an agent run calls [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] first, which renders them too.
 

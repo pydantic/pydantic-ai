@@ -81,6 +81,7 @@ from pydantic_ai.messages import (
     EnqueuedMessagesEvent,
     FilePart,
     FinalResultEvent,
+    FramedCapabilityPart,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     InstructionBaselinePart,
@@ -959,7 +960,7 @@ class GoldenCheckpointEvent(CapabilityEvent, namespace='golden', name='checkpoin
 
 
 @dataclass(kw_only=True)
-class GoldenReportPart(CapabilityPart, namespace='golden', name='report', tag='report', attributes=('label',)):
+class GoldenReportPart(FramedCapabilityPart, namespace='golden', name='report', tag='report', attributes=('label',)):
     label: str
 
 

@@ -172,7 +172,7 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     elif isinstance(part, CapabilityPart):
         # A capability's record, rendered on the way to the model: its content fills the window. The frame's tags and
         # a kind's note aren't counted.
-        return [''.join(user_prompt_texts(UserPromptPart(part.content)))]
+        return [''.join(user_prompt_texts(UserPromptPart(part._content())))]  # pyright: ignore[reportPrivateUsage]
     elif isinstance(part, SpeechPart):
         # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
         # words the provider bills against the window -- not the binary audio, which has no

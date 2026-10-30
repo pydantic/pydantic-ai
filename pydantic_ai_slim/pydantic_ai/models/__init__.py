@@ -45,7 +45,7 @@ from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
 from .._canonical_system import accepts_stateless_artifact
-from .._capability_parts import is_rendered_capability_part, render_capability_parts
+from .._capability_parts import content_author, is_rendered_capability_part, render_capability_parts
 from .._file_input import (
     KNOWN_DOCUMENT_MEDIA_TYPES,
     FileInputKind,
@@ -4005,12 +4005,16 @@ def _lookalike_sources(part: ModelRequestPart) -> list[LookalikeSource]:
         part = _translate_legacy_retry_part(part)
     if isinstance(part, UserPromptPart):
         items: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
-        sources: list[LookalikeSource] = []
-        if any(resembles_frame(text) for item in items if (text := _text_of(item)) is not None):
-            sources.append('user')
+        # A rendered capability part's body names its author: a tool, a file's author, the user, or the application,
+        # whose own text gets no note.
+        authors = {
+            'user' if isinstance(item, str) else content_author(item)
+            for item in items
+            if isinstance(item, str | TextContent) and (text := _text_of(item)) is not None and resembles_frame(text)
+        }
         if any(resembles_frame(text) for item in items if (text := _text_file_content(item)) is not None):
-            sources.append('file')
-        return sources
+            authors.add('file')
+        return [source for source in get_args(LookalikeSource) if source in authors]
     if isinstance(part, ToolReturnPart):
         texts = (
             _text_of(item) if (text := _text_file_content(item)) is None else text

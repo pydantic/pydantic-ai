@@ -358,7 +358,9 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
             attributes['detect_loops.fingerprints'] = loop.fingerprints
         ctx.tracer.start_span('loop detected', attributes=attributes).end()
         if not isinstance(action, str):
-            result = action(ctx, loop)
+            # The handler is the application's code, not this capability's, so what it enqueues is the application's:
+            # neither attributed to this capability nor warned about as hand-built capability speech.
+            result = action(replace(ctx, _capability=None), loop)
             if inspect.isawaitable(result):
                 await result
         elif action == 'error':

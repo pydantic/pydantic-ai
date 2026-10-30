@@ -1160,9 +1160,10 @@ from typing import Any
 
 from pydantic_ai import (
     Agent,
-    CapabilityPart,
     OperatorSource,
+    OperatorText,
     RunContext,
+    SystemCapabilityPart,
     ToolDefinition,
     UsageLimits,
 )
@@ -1171,7 +1172,7 @@ from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass(kw_only=True)
-class WrapUpPart(CapabilityPart, namespace='wrap_up', voice='system'):
+class WrapUpPart(SystemCapabilityPart, namespace='wrap_up'):
     pass
 
 
@@ -1193,8 +1194,10 @@ class WrapUpNearRequestLimit(AbstractCapability[Any]):
         if left is not None and left <= self.warn_at:
             ctx.enqueue(  # (2)!
                 WrapUpPart(
-                    content=f'{left} model request(s) left in this run: '
-                    'produce your final output now, using what you have.',
+                    content=OperatorText(
+                        f'{left} model request(s) left in this run: '
+                        'produce your final output now, using what you have.'
+                    ),
                     source=OperatorSource(),
                     scope='request',
                 )

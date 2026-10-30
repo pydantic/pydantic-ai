@@ -53,13 +53,13 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.messages import (
     CapabilityInstructionSource,
-    CapabilityPart,
     InstructionId,
     InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     OperatorSource,
+    SystemCapabilityPart,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -356,7 +356,7 @@ def _count(text: str) -> int:
 
 
 @dataclass(kw_only=True)
-class ReminderPart(CapabilityPart, namespace='test_history_append_only', voice='system'):
+class ReminderPart(SystemCapabilityPart, namespace='test_history_append_only'):
     """A capability's request-scoped reminder, which renders as a `SystemPromptPart(..., scope='request')`."""
 
 
