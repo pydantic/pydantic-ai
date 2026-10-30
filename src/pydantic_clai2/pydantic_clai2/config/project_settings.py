@@ -118,6 +118,8 @@ def load_project_settings(workspace: Path) -> ProjectSettings:
         if user_only:
             keys = ', '.join(_SET_KEYS[name] for name in sorted(user_only))
             raise ValueError(f'{keys} are user-only settings; configure them with `/set`, not in the project file.')
+        if 'worktree_remove_commands' in raw:
+            raise ValueError('`worktree_remove_commands` is user-only and cannot be set in a project file')
         overrides = {_SET_KEYS[name]: value for name, value in raw.items() if name in _SET_KEYS}
         resolve_settings(overrides)
     except (OSError, ValueError) as exc:
