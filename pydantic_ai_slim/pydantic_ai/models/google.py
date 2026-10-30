@@ -433,9 +433,14 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
 
 
 def _map_api_error(
-    e: errors.APIError | httpx2.TransportError, model_name: str, model_id_namespace: str = 'google'
+    e: errors.APIError | httpx2.TransportError | httpx2.HTTPStatusError,
+    model_name: str,
+    model_id_namespace: str = 'google',
 ) -> ModelAPIError:
     """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
+    if isinstance(e, httpx2.HTTPStatusError):
+        # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
+        return _model_errors.transport_status_error(model_name, e.response)
     if isinstance(e, httpx2.TransportError):
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
@@ -1130,7 +1135,7 @@ class GoogleModel(Model[Client]):
         try:
             with map_decode_errors(self._model_name, errors.UnknownApiResponseError):
                 return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
-        except (errors.APIError, httpx2.TransportError) as e:
+        except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
@@ -1396,7 +1401,7 @@ class GoogleModel(Model[Client]):
         try:
             with map_decode_errors(self._model_name, errors.UnknownApiResponseError):
                 first_chunk = await peekable_response.peek()
-        except (errors.APIError, httpx2.TransportError) as e:
+        except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
