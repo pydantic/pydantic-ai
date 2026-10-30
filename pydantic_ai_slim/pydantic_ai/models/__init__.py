@@ -1128,6 +1128,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _max_cache_retention(
         *cache_settings: CacheSetting | None,
     ) -> timedelta | None:
+        if '12h' in cache_settings:
+            return timedelta(hours=12)
         if '1h' in cache_settings:
             return timedelta(hours=1)
         if '30m' in cache_settings:

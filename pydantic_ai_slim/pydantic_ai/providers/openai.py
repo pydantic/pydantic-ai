@@ -111,10 +111,15 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # shared with OpenAI-compatible endpoints that don't necessarily accept them.
                 supports_cache=bool(profile.get('openai_supports_prompt_cache_breakpoints')),
                 # OpenAI ignores `CachePoint.ttl`. GPT-5.6 and later accept a request-wide
-                # `prompt_cache_options.ttl`, whose only value is `'30m'`; earlier models have no retention
-                # tier to request (`prompt_cache_retention` is a maximum-retention policy, not a tier).
+                # `prompt_cache_options.ttl` of `'30m'` (the default) or, on the Responses API only, `'12h'`
+                # (verified live on every GPT-5.6, GPT-6 and GPT-6.1 model; `OpenAIChatModel` leaves `'12h'` out,
+                # as Chat Completions rejects it). Azure OpenAI only offers `'30m'`, so this is set here rather
+                # than in `openai_model_profile`. Earlier models have no retention tier to request
+                # (`prompt_cache_retention` is a maximum-retention policy, not a tier).
                 # https://developers.openai.com/api/docs/guides/prompt-caching
-                supported_cache_retentions=('30m',) if profile.get('openai_supports_prompt_cache_breakpoints') else (),
+                supported_cache_retentions=('30m', '12h')
+                if profile.get('openai_supports_prompt_cache_breakpoints')
+                else (),
                 # Prompt cache diagnostics are documented for GPT-5.6 and later, the models with explicit cache
                 # breakpoints. Earlier models accept the field but always answer `unavailable`. Set here rather than
                 # in `openai_model_profile` because OpenAI-compatible Responses endpoints don't all accept it:

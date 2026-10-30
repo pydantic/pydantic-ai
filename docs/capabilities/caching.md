@@ -39,9 +39,9 @@ The [`Caching.retention`][pydantic_ai.capabilities.Caching.retention] value acce
 
 - `True` (the capability's default) — cache with the provider's default retention
 - `False` — disable library-managed caching, for example to override a `cache` value in the model's default settings
-- `'5m'` / `'30m'` / `'1h'` — cache with a specific retention, snapped to the nearest tier the provider supports: down where a shorter tier exists (`'30m'` becomes `'5m'` on Anthropic, which offers 5 minutes and 1 hour), otherwise up to the shortest one (every value becomes `'30m'` on OpenAI GPT-5.6 and later)
+- `'5m'` / `'30m'` / `'1h'` / `'12h'` — cache with a specific retention, snapped to the nearest tier the provider supports: down where a shorter tier exists (`'30m'` becomes `'5m'` and `'12h'` becomes `'1h'` on Anthropic, which offers 5 minutes and 1 hour), otherwise up to the shortest one (`'5m'` becomes `'30m'` on OpenAI GPT-5.6 and later)
 
-Retention, or TTL (time to live), is how long the provider keeps a cached prefix after its last use. Start with the default. Consider Anthropic's `'1h'` when a conversation commonly continues more than five minutes after its last request: its cache writes cost more, so a prefix needs at least two reads to beat uncached input (see [Cost](#cost)).
+Retention, or TTL (time to live), is how long the provider keeps a cached prefix after its last use. Start with the default. Consider Anthropic's `'1h'` when a conversation commonly continues more than five minutes after its last request: its cache writes cost more, so a prefix needs at least two reads to beat uncached input (see [Cost](#cost)). OpenAI's `'12h'` (GPT-5.6 and later, on the Responses API) suits instructions or reference material reused across gaps of hours, such as runs that pause for human approval: its writes cost 2.5x, so like Anthropic's `'1h'` a prefix needs at least two reads to beat uncached input.
 
 These are the same values accepted by the underlying `cache` model setting, which is unset by default. Provider-specific cache settings, such as `anthropic_cache` or `bedrock_cache_instructions`, take precedence: when any of them is set, including to `False`, the unified setting is ignored for that request.
 
@@ -89,7 +89,7 @@ Pydantic AI places cache breakpoints, markers that end the content eligible for 
 | Anthropic on the legacy `AsyncAnthropicBedrock` client on other models | `anthropic_cache_instructions`, `anthropic_cache_tool_definitions` and `anthropic_cache_messages` set to `'5m'` | The same, set to `'1h'` | Without `anthropic_cache_messages` | `'1h'` snaps to `'5m'` on the models AWS doesn't grant the 1-hour TTL |
 | Bedrock (Claude and Nova) | `bedrock_cache_instructions`, `bedrock_cache_tool_definitions` and `bedrock_cache_messages` set to `True` | The same, set to `'1h'` | Without `bedrock_cache_messages` | `'1h'` snaps to `'5m'` on the models AWS doesn't grant the 1-hour TTL |
 | OpenRouter (Anthropic and Gemini) | `openrouter_cache_instructions`, `openrouter_cache_tool_definitions` and `openrouter_cache_messages` set to `'5m'` | The same, set to `'1h'` | Without `openrouter_cache_messages` | Gemini routes take no tool definition breakpoint and no TTL |
-| OpenAI (GPT-5.6 and later, on the OpenAI API and the Azure OpenAI v1 API) | `openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}` and `openai_cache_instructions=True` | The same | `mode='explicit'`, so only the instructions are written | `'30m'` is the only TTL OpenAI accepts. Requests that can't carry an instruction breakpoint, such as those continuing server-side state (`openai_previous_response_id` or `openai_conversation_id`), keep the implicit breakpoint with `messages=False`, so they cache like `Caching()` |
+| OpenAI (GPT-5.6 and later, on the OpenAI API and the Azure OpenAI v1 API) | `openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}` and `openai_cache_instructions=True` | The same | `mode='explicit'`, so only the instructions are written | `Caching('12h')` sends `'ttl': '12h'` on the OpenAI Responses API; Chat Completions and Azure only accept `'30m'`, which every other value snaps to. Requests that can't carry an instruction breakpoint, such as those continuing server-side state (`openai_previous_response_id` or `openai_conversation_id`), keep the implicit breakpoint with `messages=False`, so they cache like `Caching()` |
 | Providers that only cache implicitly | No effect | No effect | No effect | Such as Google and OpenAI models before GPT-5.6 |
 
 ### Going beyond the unified setting
@@ -125,7 +125,7 @@ OpenAI caches prompts implicitly once they pass a minimum length (1,024 tokens o
 
 On models before GPT-5.6, how long a cached prefix lives depends on the retention policy, which [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] overrides per request.
 
-On GPT-5.6 and later, a cached prefix stays eligible for reuse for 30 minutes after its most recent write or read. [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options] sets the TTL and the mode: in the default implicit mode OpenAI also places a breakpoint of its own, in explicit mode only the request's breakpoints are cached. A [`CachePoint`][pydantic_ai.messages.CachePoint] adds a breakpoint after a user content block, and [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] adds one after the static instructions, but none after the `on_change='append'` instructions that follow them. OpenAI writes at most four breakpoints per request and drops the earliest first, so a second instruction breakpoint would push out the one after the static instructions first.
+On GPT-5.6 and later, a cached prefix stays eligible for reuse for 30 minutes after its most recent write or read, or 12 hours with the `'12h'` TTL, which only the Responses API accepts. [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options] sets the TTL and the mode: in the default implicit mode OpenAI also places a breakpoint of its own, in explicit mode only the request's breakpoints are cached. A [`CachePoint`][pydantic_ai.messages.CachePoint] adds a breakpoint after a user content block, and [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] adds one after the static instructions, but none after the `on_change='append'` instructions that follow them. OpenAI writes at most four breakpoints per request and drops the earliest first, so a second instruction breakpoint would push out the one after the static instructions first.
 
 On any model, [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_key] groups requests that share a prefix to improve hit rates.
 
@@ -154,9 +154,9 @@ On Anthropic and OpenAI GPT-5.6 and later, writing a prefix to the cache costs m
 | Provider | Cache write | Cache read |
 |---|---|---|
 | Anthropic (incl. Bedrock, Vertex AI and Foundry) | 1.25x the input price for the 5-minute cache, 2x for the 1-hour cache | 0.1x |
-| OpenAI GPT-5.6 and later | 1.25x | 0.1x |
+| OpenAI GPT-5.6 and later | 1.25x for the 30-minute cache, 2.5x for the 12-hour cache | 0.1x |
 
-So a 5-minute cache (1.25x) breaks even after one read and Anthropic's 1-hour cache (2x) after two. A cached prefix is read back by the next request that starts with it before the retention expires: in an agent run with tool calls that's every request after the first, and in a conversation that continues through [`message_history`](../message-history.md) it's every turn that arrives in time. A single request that's never repeated only pays the write premium.
+So a 5-minute or 30-minute cache (1.25x) breaks even after one read, and Anthropic's 1-hour cache (2x) and OpenAI's 12-hour cache (2.5x) after two. A cached prefix is read back by the next request that starts with it before the retention expires: in an agent run with tool calls that's every request after the first, and in a conversation that continues through [`message_history`](../message-history.md) it's every turn that arrives in time. A single request that's never repeated only pays the write premium.
 
 ## What invalidates a cache
 

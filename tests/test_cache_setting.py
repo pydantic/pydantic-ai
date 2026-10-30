@@ -44,8 +44,14 @@ with try_import() as bedrock_imports:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as openai_imports:
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+    from pydantic_ai.models.openai import (
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+    )
     from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -94,6 +100,10 @@ class TestSnapCacheRetention:
             ('5m', ('1h',), '1h'),
             ('5m', ('30m',), '30m'),
             ('1h', ('30m',), '30m'),
+            ('12h', ('30m', '12h'), '12h'),
+            ('1h', ('30m', '12h'), '30m'),
+            ('12h', ('5m', '1h'), '1h'),
+            ('12h', ('30m',), '30m'),
             # No retention tier to request: caching at the provider's default retention.
             ('1h', (), True),
         ],
@@ -465,6 +475,96 @@ class TestOpenRouterCacheTranslation:
         assert result.get('openrouter_cache_instructions') is False
         assert 'openrouter_cache_tool_definitions' not in result
         assert params.cache is True
+
+
+_OPENAI_12H_MODELS = (
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-6-astra',
+    'gpt-6-sol',
+    'gpt-6-luna',
+    'gpt-6.1-sol',
+    'gpt-6.1-terra',
+)
+"""Every model OpenAI serves with explicit prompt cache breakpoints, all verified live to accept the 12-hour TTL on Responses."""
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+class TestOpenAICacheRetention:
+    """GPT-5.6 and later accept a `'12h'` TTL on the Responses API only, and Azure OpenAI only offers `'30m'`."""
+
+    @pytest.mark.parametrize('model_name', _OPENAI_12H_MODELS)
+    def test_responses_sends_12h(self, model_name: str):
+        model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key='test'))
+        assert model.profile.get('supported_cache_retentions') == ('30m', '12h')
+        settings, params = model.prepare_request(ModelSettings(cache='12h'), ModelRequestParameters())
+        assert params.cache == '12h'
+        assert settings == {
+            'openai_prompt_cache_options': {'mode': 'implicit', 'ttl': '12h'},
+            'openai_cache_instructions': True,
+        }
+        assert model.resolve_cache_retention(ModelSettings(cache='12h')) == timedelta(hours=12)
+
+    @pytest.mark.parametrize('model_name', _OPENAI_12H_MODELS)
+    def test_chat_snaps_12h_to_30m(self, model_name: str):
+        """Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400, so the unified setting sends `'30m'`."""
+        model = OpenAIChatModel(model_name, provider=OpenAIProvider(api_key='test'))
+        settings, params = model.prepare_request(ModelSettings(cache='12h'), ModelRequestParameters())
+        assert params.cache == '30m'
+        assert settings == {
+            'openai_prompt_cache_options': {'mode': 'implicit', 'ttl': '30m'},
+            'openai_cache_instructions': True,
+        }
+        assert model.resolve_cache_retention(ModelSettings(cache='12h')) == timedelta(minutes=30)
+
+    def test_responses_snaps_1h_down_to_30m(self):
+        model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='test'))
+        settings, params = model.prepare_request(ModelSettings(cache='1h'), ModelRequestParameters())
+        assert params.cache == '30m'
+        assert cast(OpenAIResponsesModelSettings, settings or {}).get('openai_prompt_cache_options') == {
+            'mode': 'implicit',
+            'ttl': '30m',
+        }
+
+    def test_responses_stable_prefix_only_12h(self):
+        model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='test'))
+        settings, _ = model.prepare_request(
+            ModelSettings(cache=CacheConfig(retention='12h', messages=False)), ModelRequestParameters()
+        )
+        assert cast(OpenAIResponsesModelSettings, settings or {}).get('openai_prompt_cache_options') == {
+            'mode': 'explicit',
+            'ttl': '12h',
+        }
+
+    def test_explicit_12h_options_resolve_to_12h(self):
+        model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='test'))
+        assert model.resolve_cache_retention(
+            OpenAIResponsesModelSettings(openai_prompt_cache_options={'ttl': '12h'})
+        ) == timedelta(hours=12)
+        assert (
+            model.resolve_cache_retention(
+                OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '12h'})
+            )
+            is None
+        )
+
+    def test_azure_snaps_12h_to_30m(self):
+        provider = AzureProvider(azure_endpoint='https://example.openai.azure.com/openai/v1/', api_key='test')
+        model = OpenAIResponsesModel('gpt-5.6-sol', provider=provider)
+        assert model.profile.get('supported_cache_retentions') == ('30m',)
+        settings, params = model.prepare_request(ModelSettings(cache='12h'), ModelRequestParameters())
+        assert params.cache == '30m'
+        assert cast(OpenAIResponsesModelSettings, settings or {}).get('openai_prompt_cache_options') == {
+            'mode': 'implicit',
+            'ttl': '30m',
+        }
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    def test_anthropic_snaps_12h_down_to_1h(self):
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
+        _, params = model.prepare_request(ModelSettings(cache='12h'), ModelRequestParameters())
+        assert params.cache == '1h'
 
 
 class TestResolveCacheRetentionUnified:
