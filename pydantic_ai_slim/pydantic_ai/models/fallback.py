@@ -54,9 +54,9 @@ from . import (
 from ._continuation import cancel_suspended_job, mark_suspended_job_cancelled
 from ._request_timeout import (
     RequestDeadline,
-    carried_deadline,
     carry_deadline,
     enforce_request_deadline,
+    resume_deadline,
     start_request_deadline,
 )
 
@@ -250,7 +250,7 @@ class FallbackModel(Model):
             assert isinstance(suspended_response, ModelResponse)
             prepared_parameters = model_request_parameters
             start = AttemptStart()
-            deadline = _pinned_request_deadline(suspended_response, pinned, model_settings)
+            deadline = _pinned_request_deadline(suspended_response, pinned, model_settings, stream=False)
             try:
                 with suppress_unsupported_setting_warnings():
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
@@ -315,7 +315,7 @@ class FallbackModel(Model):
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
-                deadline = start_request_deadline(model, model_settings)
+                deadline = start_request_deadline(model, model_settings, stream=False)
                 with enforce_request_deadline(deadline):
                     response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
@@ -378,7 +378,7 @@ class FallbackModel(Model):
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
                 start = AttemptStart()
-                deadline = _pinned_request_deadline(suspended_response, pinned, model_settings)
+                deadline = _pinned_request_deadline(suspended_response, pinned, model_settings, stream=True)
                 try:
                     with suppress_unsupported_setting_warnings():
                         _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
@@ -422,7 +422,7 @@ class FallbackModel(Model):
                         with suppress_unsupported_setting_warnings():
                             _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                         prepared_messages = model.prepare_messages(messages, model_request_parameters)
-                        deadline = start_request_deadline(model, model_settings)
+                        deadline = start_request_deadline(model, model_settings, stream=True)
                         streamed_response = await stack.enter_async_context(
                             request_stream_until_first_event(
                                 model,
@@ -507,8 +507,8 @@ class FallbackModel(Model):
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
 
-    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
-        # Each model it tries gets a fresh deadline of its own instead.
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        # Each model it tries gets fresh deadlines of its own instead.
         return None
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
@@ -629,17 +629,14 @@ class FallbackModel(Model):
 
 
 def _pinned_request_deadline(
-    suspended_response: ModelResponse, model: Model, model_settings: ModelSettings | None
+    suspended_response: ModelResponse, model: Model, model_settings: ModelSettings | None, *, stream: bool
 ) -> RequestDeadline | None:
-    """The deadline of a continuation segment for the model the suspended response is pinned to.
+    """The deadlines of a continuation segment for the model the suspended response is pinned to.
 
-    What's left of the deadline that model got when it was picked carries over, so the continuation stays one request
-    to it. A nested `FallbackModel` gets none, as it carries over the deadline of the model it picked itself.
+    What's left of the deadlines that model got when it was picked carries over, so the continuation stays one request
+    to it. A nested `FallbackModel` gets none, as it carries over the deadlines of the model it picked itself.
     """
-    deadline = start_request_deadline(model, model_settings)
-    if deadline is not None and (expires_at := carried_deadline(suspended_response)) is not None:
-        return deadline.until(expires_at)
-    return deadline
+    return resume_deadline(start_request_deadline(model, model_settings, stream=stream), suspended_response)
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

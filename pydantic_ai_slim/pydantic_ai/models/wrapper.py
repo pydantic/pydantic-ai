@@ -303,8 +303,8 @@ class WrapperModel(Model):
         # attribute lookup succeeds and `__getattr__` never forwards.
         return self.wrapped.resolve_cache_retention(model_settings)
 
-    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
-        return self.wrapped._start_request_deadline(model_settings)
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        return self.wrapped._start_request_deadline(model_settings, stream=stream)
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         # Defined on the base class too, so it must forward explicitly, like `resolve_cache_retention`.

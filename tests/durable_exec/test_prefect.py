@@ -36,12 +36,16 @@ from pydantic_ai import (
     AgentRunResultEvent,
     AgentStreamEvent,
     CapabilityEvent,
+    CapabilityInstructionSource,
+    CapabilityLoadDeltaPart,
     CustomEvent,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     FunctionToolset,
+    InstructionBaselinePart,
+    InstructionId,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -54,11 +58,11 @@ from pydantic_ai import (
     RunTimedOut,
     TextPart,
     TextPartDelta,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart
 from pydantic_ai._instrumentation import include_content_ctx
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -100,6 +104,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelHTTPError,
+    ModelRequestTimeout,
     ModelRetry,
     RunCancelled,
     ToolFailed,
@@ -107,6 +112,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
+from pydantic_ai.messages import LoadCapabilityReturnPart
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -115,7 +121,7 @@ from pydantic_ai.models import (
     ModelSelectionContext,
 )
 from pydantic_ai.models._batch_model import BatchPool
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel, StreamFunctionDef
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -194,6 +200,7 @@ except ImportError:  # pragma: lax no cover
 from .._inline_snapshot import snapshot
 from ..append_only import drain_events
 from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
+from ..clock_utils import LONG_TIMEOUT, Clock
 from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
@@ -3128,6 +3135,214 @@ async def test_prefect_durability_simple_agent() -> None:
     assert output == 'Echo: Hello Prefect'
 
 
+def _load_capability_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Opens a case, calls `invoice_status` once it's visible, then answers with its result."""
+    returns = {
+        part.tool_name: part.content
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    }
+    if 'invoice_status' in returns:
+        return ModelResponse(parts=[TextPart(str(returns['invoice_status']))])
+    if 'invoice_status' in {tool.name for tool in info.function_tools}:
+        return ModelResponse(parts=[ToolCallPart('invoice_status', {}, tool_call_id='invoice')])
+    return ModelResponse(parts=[ToolCallPart('open_case', {}, tool_call_id='open')])
+
+
+def _billing_capability() -> Capability[object]:
+    billing = Capability[object](id='billing', description='Billing.', defer_loading=True)
+
+    @billing.tool_plain
+    def invoice_status() -> str:
+        return 'Invoice paid.'
+
+    return billing
+
+
+@pytest.mark.parametrize('hook', ['before_run', 'before_model_request', 'after_model_request'])
+async def test_prefect_durability_load_capability_from_a_capability_hook(hook: str) -> None:
+    """Capability hooks run in the flow, so a load from one takes effect on the request that follows."""
+    hooks = Hooks[object]()
+    if hook == 'before_run':
+
+        @hooks.on.before_run
+        async def load_before_run(ctx: RunContext[object]) -> None:
+            ctx.load_capability('billing')
+
+    elif hook == 'before_model_request':
+
+        @hooks.on.before_model_request
+        async def load_before_request(
+            ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.load_capability('billing')
+            return request_context
+
+    else:
+
+        @hooks.on.after_model_request
+        async def load_after_request(
+            ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if response.tool_calls:
+                ctx.load_capability('billing')
+            return response
+
+    agent = Agent(
+        FunctionModel(_load_capability_model),
+        name=f'prefect_load_capability_{hook}',
+        capabilities=[_billing_capability(), hooks, PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Was my invoice paid?')).output
+
+    # From `before_run` or `before_model_request`, the first request already has `invoice_status`. From
+    # `after_model_request`, the model first calls `open_case`, which this agent doesn't have: the run answers with a
+    # retry, so a request follows, and that one has `invoice_status`.
+    assert await run_agent() == 'Invoice paid.'
+
+
+async def test_prefect_durability_load_capability_from_tool_hook() -> None:
+    """A tool hook runs in the flow around the tool's task, so it can load a capability whose tool the model then calls."""
+    hooks = Hooks[object]()
+
+    @hooks.on.after_tool_execute
+    async def load_billing(
+        ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
+    ) -> Any:
+        if tool_def.name == 'open_case':
+            ctx.load_capability('billing')
+        return result
+
+    agent = Agent(
+        FunctionModel(_load_capability_model),
+        name='prefect_load_capability_hook',
+        capabilities=[_billing_capability(), hooks, PrefectDurability()],
+    )
+
+    @agent.tool_plain
+    def open_case() -> str:
+        return 'Case opened.'
+
+    @flow
+    async def run_agent() -> list[ModelMessage]:
+        return (await agent.run('Was my invoice paid?')).all_messages()
+
+    assert await run_agent() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Was my invoice paid?', timestamp=IsDatetime()),
+                    InstructionBaselinePart(
+                        instructions=[
+                            InstructionPart(
+                                content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- billing: Billing.\
+""",
+                                dynamic=True,
+                                on_change='append',
+                                id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                            )
+                        ]
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- billing: Billing.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='open_case', args={}, tool_call_id='open')],
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
+                model_name='function:_load_capability_model:',
+                model_id='function:function:_load_capability_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='open_case', content='Case opened.', tool_call_id='open', timestamp=IsDatetime()
+                    ),
+                    CapabilityLoadDeltaPart(loaded=['billing'], tool_call_id='open'),
+                    ToolAvailabilityDeltaPart(tools_added=['invoice_status'], tool_call_id='open'),
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- billing: Billing.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='invoice_status', args={}, tool_call_id='invoice')],
+                usage=RequestUsage(input_tokens=64, output_tokens=4),
+                model_name='function:_load_capability_model:',
+                model_id='function:function:_load_capability_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='invoice_status',
+                        content='Invoice paid.',
+                        tool_call_id='invoice',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- billing: Billing.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Invoice paid.')],
+                usage=RequestUsage(input_tokens=67, output_tokens=7),
+                model_name='function:_load_capability_model:',
+                model_id='function:function:_load_capability_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_prefect_durability_load_capability_from_tool_raises() -> None:
+    """A tool runs as a task, whose recorded result replays without re-running it, so it can't load a capability."""
+    agent = Agent(
+        FunctionModel(_load_capability_model),
+        name='prefect_load_capability_tool',
+        capabilities=[_billing_capability(), PrefectDurability()],
+    )
+
+    @agent.tool
+    async def open_case(ctx: RunContext[object]) -> str:
+        ctx.load_capability('billing')
+        return 'Case opened.'  # pragma: no cover
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Open a billing case.')).output
+
+    with pytest.raises(UserError, match=r'`ctx.load_capability\(\)` is not supported inside a durable execution'):
+        await run_agent()
+
+
 def test_resolve_tool_task_config_reads_metadata() -> None:
     """Per-tool Prefect config from `tool_def.metadata['prefect']` takes priority over the by-name dict."""
     from pydantic_ai.durable_exec.prefect._toolset import resolve_tool_task_config
@@ -5585,3 +5800,73 @@ def test_rebuilt_request_policy_follows_the_run(
             assert policy is not None
             assert policy.include_content is run_include_content
     assert include_content_ctx.get() is None
+
+
+# --- `ModelSettings['first_event_timeout']` runs in the model task of the deprecated `PrefectAgent` ---
+
+
+# The task runs on the test's event loop, so the tests move its clock past the deadline rather than wait for it.
+first_event_clock = Clock()
+
+
+async def _stalls_before_first_event(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    yield {}  # opens the stream without producing an event
+    first_event_clock.advance()
+    await asyncio.sleep(3600)
+
+
+async def _pauses_after_first_event(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'partial '
+    first_event_clock.advance(2 * LONG_TIMEOUT)
+    # A deadline that has passed cancels this wait before it ends.
+    await asyncio.sleep(0.01)
+    yield 'answer'
+
+
+async def _drain_first_event_stream(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+def _first_event_timeout_prefect_agent(name: str, stream_function: StreamFunctionDef) -> PrefectAgent[None, str]:  # pyright: ignore[reportDeprecated]
+    agent = Agent(
+        FunctionModel(stream_function=stream_function, model_name='slow'),
+        name=name,
+        model_settings={'first_event_timeout': LONG_TIMEOUT},
+    )
+    return PrefectAgent(agent, event_stream_handler=_drain_first_event_stream)  # pyright: ignore[reportDeprecated]
+
+
+stalled_first_event_prefect_agent = _first_event_timeout_prefect_agent(
+    'stalled_first_event_agent', _stalls_before_first_event
+)
+paused_first_event_prefect_agent = _first_event_timeout_prefect_agent(
+    'paused_first_event_agent', _pauses_after_first_event
+)
+
+
+async def test_prefect_agent_first_event_timeout_stalled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The task consumes the stream, so it enforces the deadline on a stream that stalls before its first event."""
+    first_event_clock.install(monkeypatch)
+
+    @flow(name='test_prefect_agent_first_event_timeout_stalled')
+    async def run_agent() -> AgentRunResult[str]:
+        return await stalled_first_event_prefect_agent.run('hello')
+
+    with pytest.raises(ModelRequestTimeout) as exc_info:
+        await run_agent()
+
+    assert (exc_info.value.setting, exc_info.value.timeout) == ('first_event_timeout', LONG_TIMEOUT)
+
+
+async def test_prefect_agent_first_event_timeout_paused_after_first_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flow only gets the response once the task has consumed it, which isn't a late first event."""
+    first_event_clock.install(monkeypatch)
+
+    @flow(name='test_prefect_agent_first_event_timeout_paused_after_first_event')
+    async def run_agent() -> AgentRunResult[str]:
+        return await paused_first_event_prefect_agent.run('hello')
+
+    assert (await run_agent()).output == 'partial answer'

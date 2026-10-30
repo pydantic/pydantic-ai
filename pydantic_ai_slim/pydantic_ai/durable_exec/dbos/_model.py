@@ -12,13 +12,14 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models._request_timeout import RequestDeadline, open_durable_unit_stream
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
 from .._operation_backend import durable_unit_scope
 from .._utils import reject_serving_wrapper
-from ._utils import StepConfig
+from ._utils import StepConfig, in_workflow_code
 
 
 class DBOSModel(WrapperModel):
@@ -68,8 +69,8 @@ class DBOSModel(WrapperModel):
         ) -> ModelResponse:
             event_stream_handler = self._get_event_stream_handler()
             with durable_unit_scope():
-                async with super(DBOSModel, self).request_stream(
-                    messages, model_settings, model_request_parameters, run_context
+                async with open_durable_unit_stream(
+                    self.wrapped, messages, model_settings, model_request_parameters, run_context
                 ) as streamed_response:
                     if event_stream_handler is not None:
                         assert run_context is not None, (
@@ -94,6 +95,11 @@ class DBOSModel(WrapperModel):
             await super(DBOSModel, self).cancel_suspended_response(response)
 
         self._dbos_wrapped_cancel_suspended_response_step = wrapped_cancel_suspended_response_step
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        # In a workflow, the step consumes the stream before this side gets it, so the step enforces the
+        # `first_event_timeout` deadline, and this side just `request_timeout`'s.
+        return super()._start_request_deadline(model_settings, stream=stream and not in_workflow_code())
 
     def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
         return reject_serving_wrapper(self, wrap, 'DBOSAgent', 'DBOSDurability')
@@ -124,7 +130,7 @@ class DBOSModel(WrapperModel):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         # If not in a workflow (could be in a step), just call the wrapped request_stream method.
-        if DBOS.workflow_id is None or DBOS.step_id is not None:
+        if not in_workflow_code():
             async with super().request_stream(
                 messages, model_settings, model_request_parameters, run_context
             ) as streamed_response:

@@ -13,7 +13,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | Python | Python |
 | License | MIT | MIT |
 | Model providers | OpenAI first; others via LiteLLM | [Many](../models/overview.md) |
-| Extensibility | Tools, guardrails, handoffs | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Tools, guardrails, handoffs | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | `SandboxAgent`, or build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenAI tracing, OTel via adapters | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | None documented for the SDK; [API Enterprise](https://openai.com/api/pricing/) for the API | [For the framework itself](../enterprise-support.md), no platform required |
@@ -47,3 +47,10 @@ built from the pieces `Coder` puts together.
 **Can I run my agents in CI?** Yes. [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs Pydantic AI agents
 from a Markdown workflow file in GitHub Actions, or run a Python script directly with `uv run`;
 nothing requires an Action.
+
+*Last checked: 2026-09-26*
+
+## Sources
+
+- [OpenAI Agents SDK documentation](https://openai.github.io/openai-agents-python/)
+- [OpenAI Agents SDK voice documentation](https://openai.github.io/openai-agents-python/voice/quickstart/)
