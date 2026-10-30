@@ -1695,6 +1695,7 @@ jobs:
       mongodb: ${{ steps.detect.outputs.mongodb }}
       postgres: ${{ steps.detect.outputs.postgres }}
       redis: ${{ steps.detect.outputs.redis }}
+      kubernetes: ${{ steps.detect.outputs.kubernetes }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1730,6 +1731,8 @@ jobs:
             "$H/pydantic_ai_harness/spend" tests/harness/step_persistence tests/harness/media tests/harness/spend \
             tests/harness/_postgres_sqlite.py "$H/integration_tests/postgres"
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
+          detect kubernetes "$H/pydantic_ai_harness/kubernetes_sandbox" tests/harness/kubernetes_sandbox \
+            "$H/integration_tests/kubernetes" pydantic_ai_slim/pydantic_ai/workspaces
 
   harness-localstack-integration:
     name: harness LocalStack integration tests
@@ -1884,6 +1887,92 @@ jobs:
 
       - run: make integration-redis
 
+  # The unit suite runs the backend against a Python stand-in for sandboxd; this runs the same
+  # conformance rules against the real daemon, built from an agent-sandbox release tag. No cluster.
+  harness-kubernetes-integration:
+    name: harness Kubernetes sandbox integration tests
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.kubernetes == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SANDBOXD_REQUIRE_LIVE: "1"
+      SANDBOXD_BIN: ${{ github.workspace }}/.bin/sandboxd
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      # The release the backend's sandboxd assumptions were verified against; `GOTOOLCHAIN=auto`
+      # fetches the Go version its module requires.
+      - run: go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.7
+        env:
+          GOBIN: ${{ github.workspace }}/.bin
+          GOTOOLCHAIN: auto
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-kubernetes
+
+      - run: make integration-kubernetes
+
+  # The job above stands in for the cluster. This one runs the backend end to end on a kind cluster:
+  # the agent-sandbox controller and sandboxd from the same release tag, the SDK and `kubectl
+  # port-forward`, and in-cluster connections over the pod network, which a route makes reachable.
+  harness-kubernetes-cluster-integration:
+    name: harness Kubernetes sandbox cluster tests
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.kubernetes == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KUBERNETES_CLUSTER_REQUIRE_LIVE: "1"
+      KUBERNETES_LIVE_KUBECONFIG: ${{ github.workspace }}/.bin/kubeconfig
+      # For the steps here that call `kubectl` themselves; `make` passes the file on by itself.
+      KUBECONFIG: ${{ github.workspace }}/.bin/kubeconfig
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # Pinned rather than the runner image's copies, so the cluster is the one the tests were written against.
+      - name: Install kind and kubectl
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64
+          echo "aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d  $RUNNER_TEMP/kind" | sha256sum --check
+          curl -fsSLo "$RUNNER_TEMP/kubectl" https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl
+          echo "6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f  $RUNNER_TEMP/kubectl" | sha256sum --check
+          sudo install "$RUNNER_TEMP/kind" "$RUNNER_TEMP/kubectl" /usr/local/bin/
+
+      - run: src/pydantic_ai_harness/integration_tests/kubernetes/cluster/up.sh
+
+      # kind's pods are reachable from the host once their range routes through the node's container.
+      - name: Route the pod network
+        run: |
+          node=pydantic-ai-live-control-plane
+          sudo ip route add "$(kubectl get node "$node" -o jsonpath='{.spec.podCIDR}')" \
+            via "$(docker inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' "$node")"
+          echo KUBERNETES_POD_NETWORK=1 >> "$GITHUB_ENV"
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-kubernetes
+
+      - run: make integration-kubernetes-cluster
+
   # Release gate: resolve the workspace at the top of the ranges this tag declares and run the
   # suite there, so we can't publish a version whose own dependency ranges already admit an SDK
   # we cannot drive (the `anthropic` 1.0.0 case). Tag refs only — on every other event the job
@@ -1965,6 +2054,8 @@ jobs:
       - harness-mongodb-integration
       - harness-postgres-integration
       - harness-redis-integration
+      - harness-kubernetes-integration
+      - harness-kubernetes-cluster-integration
       - latest-versions-canary
       - coverage
     runs-on: ubuntu-latest
@@ -1988,20 +2079,20 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-kubernetes-integration,harness-kubernetes-cluster-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-kubernetes-integration,harness-kubernetes-cluster-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-kubernetes-integration,harness-kubernetes-cluster-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-kubernetes-integration,harness-kubernetes-cluster-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-kubernetes-integration,harness-kubernetes-cluster-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-kubernetes-integration,harness-kubernetes-cluster-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 

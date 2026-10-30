@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         ToolGuardrail,
     )
     from .ipython_code_mode import IPythonCodeMode
+    from .kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -129,6 +130,8 @@ __all__ = [
     'InputBlocked',
     'InputGuardrail',
     'InputGuardrailFunc',
+    'KubernetesSandbox',
+    'KubernetesSandboxBackend',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -211,6 +214,7 @@ _CAPABILITY_EXPORTS = {
     'FileSystem': 'filesystem',
     'Grain': 'grain',
     'IPythonCodeMode': 'ipython_code_mode',
+    'KubernetesSandbox': 'kubernetes_sandbox',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
     'ManagedPrompt': 'logfire',
@@ -261,6 +265,7 @@ _CONSTANT_EXPORTS = {
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'DockerSandboxBackend': 'docker_sandbox',
     'E2BSandboxBackend': 'e2b_sandbox',
+    'KubernetesSandboxBackend': 'kubernetes_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'ModalSandboxBackend': 'modal_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',

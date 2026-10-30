@@ -84,7 +84,7 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
 ```
 
-`E2BSandbox`, `SpritesSandbox`, `DaytonaSandbox`, `BoxdSandbox`, `SmolSandbox` and `BoxLiteSandbox` (local microVMs), and `DockerSandbox(image='python:3.13-slim')` (a local Docker or Podman container) work the same way. See
+`E2BSandbox`, `SpritesSandbox`, `DaytonaSandbox`, `BoxdSandbox`, `KubernetesSandbox` (a pod from a Kubernetes agent-sandbox warm pool), `SmolSandbox` and `BoxLiteSandbox` (local microVMs), and `DockerSandbox(image='python:3.13-slim')` (a local Docker or Podman container) work the same way. See
 [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) for credentials, lifetimes, and sharing a
 workspace between runs.
 
@@ -267,7 +267,7 @@ any:
 
 | Reference | Capabilities |
 |---|---|
-| [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `SmartSearch` (`.smart_search`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `DaytonaSandbox` (`.daytona_sandbox`, `[daytona]`); `BoxdSandbox` (`.boxd_sandbox`, `[boxd]`); `SmolSandbox` (`.smol_sandbox`, `[smol]`); `BoxLiteSandbox` (`.boxlite_sandbox`, `[boxlite]`); `DockerSandbox` (`.docker_sandbox`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrapSandbox` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
+| [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `SmartSearch` (`.smart_search`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `DaytonaSandbox` (`.daytona_sandbox`, `[daytona]`); `BoxdSandbox` (`.boxd_sandbox`, `[boxd]`); `KubernetesSandbox` (`.kubernetes_sandbox`, `[kubernetes]`); `SmolSandbox` (`.smol_sandbox`, `[smol]`); `BoxLiteSandbox` (`.boxlite_sandbox`, `[boxlite]`); `DockerSandbox` (`.docker_sandbox`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrapSandbox` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
 | [Code Mode](./references/CODE-MODE.md) | `CodeMode` (`.code_mode`, `[codemode]`); `IPythonCodeMode` (`.ipython_code_mode`, `[ipython]`) |
 | [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent`, `DelegationReports` (`.subagents`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
 | [Context Management](./references/CONTEXT-MANAGEMENT.md) | `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `RelevanceCompaction`, `TieredCompaction`, `FallbackCompaction`, `CompactOnRequest`, `ClampOversizedMessages`, `DeduplicateFileReads`, `WarnNearLimits`, `ReportContextUsage` (`.compaction`); `ToolOutputLimits` (`.tool_output_limits`); `WarnOnCacheBusts` (`.warn_on_cache_busts`); media stores, not a capability (`.media`) |

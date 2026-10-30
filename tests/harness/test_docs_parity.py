@@ -162,6 +162,7 @@ _CAPABILITY_PAGE_META = {
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
     'docker-sandbox.md': ('docker_sandbox', 'Docker Sandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
+    'kubernetes-sandbox.md': ('kubernetes_sandbox', 'Kubernetes Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'boxd-sandbox.md': ('boxd_sandbox', 'boxd Sandbox'),
