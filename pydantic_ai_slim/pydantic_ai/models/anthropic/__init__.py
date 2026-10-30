@@ -2512,7 +2512,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
 
-        # `extra_body['tools']` replaces these tools on the wire, so leave them as the server tool call filter expects.
+        # `extra_body['tools']` replaces these tools on the wire, so the setting isn't applied to them. That keeps
+        # `_get_enabled_server_tool_names`, which rebuilds the tools through this method, filtering as if it were unset.
         extra_body = model_settings.get('extra_body')
         if (allowed_callers := model_settings.get('anthropic_web_tools_allowed_callers')) is not None and not (
             _is_str_mapping(extra_body) and 'tools' in extra_body
