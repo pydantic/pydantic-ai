@@ -27,6 +27,7 @@ from ...messages import (
     AudioUrl,
     BinaryContent,
     CachePoint,
+    CapabilityPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -954,8 +955,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=_new_message_id(), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app)
                         )
                     )
-            elif isinstance(part, (InstructionDeltaPart, InstructionBaselinePart)):
-                pass  # Operator instruction state stays in trusted server-side history.
+            elif isinstance(part, (InstructionDeltaPart, InstructionBaselinePart, CapabilityPart)):
+                # Operator instruction state stays in trusted server-side history, and so do capability parts until
+                # they have a carrier whose trust a client can't change (#11029).
+                pass
             elif isinstance(part, ModelSettingsDeltaPart):
                 flush_user_content()
                 result.append(

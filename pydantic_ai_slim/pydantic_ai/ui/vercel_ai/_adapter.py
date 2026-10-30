@@ -20,6 +20,7 @@ from ...messages import (
     AudioUrl,
     BinaryContent,
     CachePoint,
+    CapabilityPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -848,9 +849,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(part, UserPromptPart):
                 add('user', *_convert_user_prompt_part(part, starts_new_prompt=seen_user_prompt))
                 seen_user_prompt = True
-            elif isinstance(part, ToolReturnPart | InstructionDeltaPart | InstructionBaselinePart):
+            elif isinstance(part, ToolReturnPart | InstructionDeltaPart | InstructionBaselinePart | CapabilityPart):
                 # Tool returns are merged into the tool call in the assistant message, and operator
-                # instruction state stays in trusted server-side history.
+                # instruction state stays in trusted server-side history. So do capability parts, until they
+                # have a carrier whose trust a client can't change (#11029).
                 pass
             elif isinstance(part, ModelSettingsDeltaPart):
                 add('user', DataUIPart(type=MODEL_SETTINGS_DELTA_DATA_TYPE, data=model_settings_delta_payload(part)))

@@ -29,6 +29,7 @@ import re
 import threading
 import unicodedata
 import warnings
+from collections.abc import Iterable, Mapping
 from typing import Final, Literal, NewType, get_args
 
 from .exceptions import UserError
@@ -189,10 +190,18 @@ def _require_known(tag: str) -> None:
 def open_tag(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> str:
     """Core's [`open_tag`][pydantic_ai.framing.open_tag], which also takes the `'system'` voice tag."""
     _require_known(tag)
-    if invalid := [name for name in attrs if not _ATTRIBUTE_NAME.fullmatch(name)]:
+    return _open_tag(tag, attrs)
+
+
+def _check_attribute_names(names: Iterable[str]) -> None:
+    if invalid := [name for name in names if not _ATTRIBUTE_NAME.fullmatch(name)]:
         raise UserError(
             f'Framing tag attribute names must match `[a-z_][a-z0-9_]*`; got {", ".join(map(repr, invalid))}.'
         )
+
+
+def _open_tag(tag: str, attrs: Mapping[str, str | None]) -> str:
+    _check_attribute_names(attrs)
     rendered = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items() if value is not None)
     return f'<{tag}{rendered}>'
 
@@ -238,6 +247,34 @@ def frame(tag: FramingTag | RegisteredTag, body: str, /, *, sealed: bool, **attr
 def frame_tags(tag: FramingTag | RegisteredTag, /, *, sealed: bool, **attrs: str | None) -> tuple[str, str]:
     """The opening and closing tags of a [`frame`][pydantic_ai._framing.frame], for a body that isn't a string, such as a file."""
     return open_tag(tag, seal=FRAME_SEAL if sealed else None, **attrs), close_tag(tag)
+
+
+def check_capability_frame(tag: str, attribute_names: Iterable[str]) -> None:
+    """Raise unless `tag` and `attribute_names` can frame a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart].
+
+    The tag is lowercase snake_case and isn't the `'system'` voice tag; one of Pydantic AI's own data tags, such as
+    `'tool_result'`, is fine. It isn't registered with `register_tag`: a capability part's body is never escaped, so
+    there's no escape set for it to join. No attribute is called `seal`, which the frame seal takes.
+    """
+    if not _TAG_NAME.fullmatch(tag):
+        raise UserError(f'Framing tag names must be lowercase snake_case, like `judge_feedback`; got {tag!r}.')
+    if tag == SYSTEM_TAG:
+        raise UserError(
+            "`'system'` is the framework's voice tag: declare `voice='system'` for a part in the application's voice."
+        )
+    names = tuple(attribute_names)
+    _check_attribute_names(names)
+    if 'seal' in names:
+        raise UserError('`seal` is the frame seal attribute, which the framework sets: name the attribute differently.')
+
+
+def capability_frame_tags(tag: str, /, *, sealed: bool, attrs: Mapping[str, str | None]) -> tuple[str, str]:
+    """The opening and closing tags of a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]'s frame.
+
+    Like [`frame_tags`][pydantic_ai._framing.frame_tags], for a tag the part's class declared, which
+    `check_capability_frame` has checked and nothing registers.
+    """
+    return _open_tag(tag, {'seal': FRAME_SEAL if sealed else None, **attrs}), f'</{tag}>'
 
 
 def frame_seal_announcement(*, system_role: bool) -> str:

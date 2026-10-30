@@ -235,8 +235,12 @@ def event_family_schema(
     tag_field: str,
     unknown_type: type[Any],
     envelope_fields: frozenset[str],
+    family: str = 'event',
 ) -> pydantic_core.core_schema.CoreSchema:
-    """Build the tagged union over an event registry, degrading unregistered tags to `unknown_type`."""
+    """Build the tagged union over an event registry, degrading unregistered tags to `unknown_type`.
+
+    `family` names what the registry holds in the warning about an unregistered tag.
+    """
     # Snapshot the registry: the union's choices are fixed once this schema is built, so a class
     # registered later must degrade to the unknown envelope rather than produce a dangling tag.
     known_tags = frozenset(registry)
@@ -253,7 +257,7 @@ def event_family_schema(
         return _UNKNOWN_TAG if isinstance(value, unknown_type) else None
 
     unknown_schema = pydantic_core.core_schema.no_info_before_validator_function(
-        _gather_unknown_payload(tag_field, unknown_type, envelope_fields),
+        _gather_unknown_payload(tag_field, unknown_type, envelope_fields, family),
         handler.generate_schema(unknown_type),
         serialization=pydantic_core.core_schema.wrap_serializer_function_ser_schema(_flatten_unknown),
     )
@@ -288,7 +292,7 @@ def _canonicalizing_schema(handler: pydantic.GetCoreSchemaHandler, event_cls: ty
 
 
 def _gather_unknown_payload(
-    tag_field: str, unknown_type: type[Any], envelope_fields: frozenset[str]
+    tag_field: str, unknown_type: type[Any], envelope_fields: frozenset[str], family: str
 ) -> Callable[[Any], Any]:
     """Before-validator for the unknown-event envelope: move unrecognized payload fields into `data`.
 
@@ -306,8 +310,8 @@ def _gather_unknown_payload(
             if payload:
                 envelope['data'] = payload
             warnings.warn(
-                f'Unknown event {tag_field} {value.get(tag_field)!r}; validating as {unknown_type.__name__}. '
-                f'Is the module that defines this event imported? (A serializer built before the event '
+                f'Unknown {family} {tag_field} {value.get(tag_field)!r}; validating as {unknown_type.__name__}. '
+                f'Is the module that defines this {family} imported? (A serializer built before the {family} '
                 f'class was defined also treats it as unknown.)',
                 UserWarning,
                 stacklevel=2,

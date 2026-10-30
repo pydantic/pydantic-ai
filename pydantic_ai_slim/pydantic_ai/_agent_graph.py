@@ -81,6 +81,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
+from ._capability_parts import render_capability_parts
 from ._context_size import context_input_tokens
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -3178,7 +3179,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             messages = _clean_message_history(list(messages), repair_last_response=True)
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
             request_context.model_request_parameters = model_request_parameters
-            prepared = model.prepare_messages(messages, model_request_parameters)
+            # Rendered here rather than left to `prepare_messages`, which a custom model may override: no model ever
+            # sees a `CapabilityPart`.
+            prepared = model.prepare_messages(render_capability_parts(messages), model_request_parameters)
             # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
             # it, behind that request's `CachePoint`, so an inserted message isn't guaranteed to reach the
             # wire as a turn of its own. A rewrite that needs its own turn belongs in the adapter, where
@@ -3250,7 +3253,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # Projection can split a foreign native tool-search exchange into a trailing
                 # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
                 # frontier, so its tool calls must not get synthesized returns.
-                messages = _merge_consecutive_messages(model.prepare_messages(list(messages), model_request_parameters))
+                messages = _merge_consecutive_messages(
+                    model.prepare_messages(render_capability_parts(list(messages)), model_request_parameters)
+                )
                 request_context.messages = messages
 
         # The limits were checked at the start of the step, before the first attempt. A later attempt is checked
