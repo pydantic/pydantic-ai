@@ -1030,9 +1030,11 @@ class RealtimeSession:
                 # An instruction function failed, as it would fail a standard run's request.
                 self._park_error(e)
                 return
-            update = _instructions.session_instruction_update(
-                self._instruction_prefix, self._instruction_changes, current
-            )
+            # Only the changes still in history were delivered: one the provider refused was taken out of it.
+            delivered = [
+                message for message in history if any(message is change for change in self._instruction_changes)
+            ]
+            update = _instructions.session_instruction_update(self._instruction_prefix, delivered, current)
             if update.unaddressable_changed and not self._warned_unaddressable_instructions:
                 self._warned_unaddressable_instructions = True
                 warnings.warn(

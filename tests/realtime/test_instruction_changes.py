@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 from collections.abc import Callable
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 
@@ -22,6 +23,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RealtimeSessionErrorEvent,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -30,8 +32,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.realtime._utils import InstructionChangeContext
 from pydantic_ai.realtime.codec import (
+    InputRejected,
     OutputTranscript,
     RealtimeCodecEvent,
+    RealtimeInput,
     ResponseDone,
     TextContext,
     ToolCall,
@@ -39,7 +43,13 @@ from pydantic_ai.realtime.codec import (
 )
 
 from ..conftest import IsDatetime
-from .test_session import BlockingRealtimeConnection, FakeRealtimeConnection, FakeRealtimeModel, _profile  # pyright: ignore[reportPrivateUsage]
+from .test_session import (  # pyright: ignore[reportPrivateUsage]
+    BlockingRealtimeConnection,
+    FakeRealtimeConnection,
+    FakeRealtimeModel,
+    _AnswersEachInput,
+    _profile,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -525,3 +535,39 @@ Speak like a cowboy.
             ),
         ]
     )
+
+
+async def test_change_the_provider_refused_is_sent_again() -> None:
+    """A change the provider refused never reached the model, so the next refresh sends it again."""
+    agent, state = _changing_agent()
+    refused: list[int] = []
+
+    def answer(index: int, content: RealtimeInput) -> list[RealtimeCodecEvent]:
+        if isinstance(content, InstructionChangeContext) and not refused:
+            refused.append(index)
+            return [InputRejected(index, refused='content'), RealtimeSessionErrorEvent('Refused.')]
+        return list(_TURN) if isinstance(content, str) else []
+
+    connection = _AnswersEachInput(answer)
+    async with agent.realtime(FakeRealtimeModel(connection)).session() as session:
+        state['mood'] = 'calm'
+        for text in ('One.', 'Two.'):
+            await session.send(text)
+            with anyio.fail_after(5):
+                await session.wait_for_reply()
+        # Asks for a response, so it goes out after the second refresh.
+        await session.send('Three.', respond=True)
+        changes = [
+            message
+            for message in session.all_messages()
+            if any(isinstance(part, InstructionDeltaPart) for part in message.parts)
+        ]
+
+    assert [type(content).__name__ for content in connection.sent] == [
+        'str',
+        'InstructionChangeContext',
+        'str',
+        'InstructionChangeContext',
+        'str',
+    ]
+    assert len(changes) == 1
