@@ -46,6 +46,9 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/fork [@MODEL] PROMPT` | Run a copy of the conversation in the background; `/fork cancel N` stops one |
 | `/forks` | Show this session's background forks |
 | `/tasks` | Inspect and control delegated tasks |
+| `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
+| `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
+| `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer CLAI is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
 | `/reload` | Reload CLAI's own code without restarting |
 | `/exit` | Quit |
@@ -102,6 +105,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `sessions.naming` | `true` | Name saved sessions in the background using a model. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
+| `worktrees.remove_commands` | `{}` | User-only repository-to-argv map for confirmed exit cleanup. See [Register a worktree removal command](#register-a-worktree-removal-command). |
 
 ### Environment variables at a glance
 
@@ -266,9 +270,10 @@ an interactive session, which installs after CLAI exits. The flag cannot be comb
 `--fork-session`.
 
 `/update now` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
-typed in the page or in the terminal: the page shows uv's progress and the result. After
-an install, CLAI restarts with the web UI on the same port and token, so the page
-reconnects by itself and names the new version. `clai2 --web` keeps `--web`, `--port`,
+typed in the page or in the terminal: the page shows uv's progress, over Settings too while
+it is open, and the result. After an install, CLAI restarts with the web UI on the same port
+and token, so the page reconnects by itself and names the new version, and Settings › About
+names the versions it updated from and to. `clai2 --web` keeps `--web`, `--port`,
 and `--token-file`; a terminal session that ran `/web` comes back with the web UI running.
 Like any command, `/update now` entered while a turn runs waits for the turn to end.
 
@@ -282,7 +287,9 @@ run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
 
 In the web UI, `/update` opens the same menu as the Settings window's **About** section, whose
-**Update…** button asks before it runs `/update now`.
+**Update…** button asks before it runs `/update now`. When CLAI can't restart from that session, for
+example while another live session runs a turn, **Update…** shows the reason as an error instead and
+saves nothing; in the terminal, the menu shows the reason and stays open.
 
 ### Environment variables
 
@@ -585,6 +592,16 @@ among them. `/fast` still toggles, as in the terminal.
 removes the native effort override. Custom parameters stay unchanged: remove any
 that override effort with `/model settings` first. Models without an effort
 control say so. Like `/fast`, `/effort` waits for the current turn to finish.
+
+`/commit [MESSAGE]` stages and commits every change in the session's directory;
+without MESSAGE the session's model drafts one from the changes. `/push` runs
+`git push -u origin BRANCH`; on the default branch it asks for `/push confirm`.
+`/pr` shows a pull request title and description the model drafts from the
+branch; `/pr confirm` then pushes the branch and opens exactly that with `gh`,
+and `/pr TITLE` does so with your title instead. The web UI's git chip
+does the same, with a file list and the drafts to edit first. A plugin's own
+`/commit`, `/push`, or `/pr` replaces these; a skill of the same name is hidden
+by them, and CLAI says so.
 
 First select `openai-codex:gpt-6-astra` with `/model`, then open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
@@ -1017,6 +1034,10 @@ for wrapped or pasted text, not to fill the terminal. Text pastes of five or mor
 lines, or at least 1,000 characters, display as `[paste N lines]`. The full text
 is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
+Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
+accent colour, with the prompt text in bold. This keeps your prompts apart from
+answers. Steering messages, commands entered during a turn, and prompts restored by
+`/resume` look the same.
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders and no prompt marker, so they cannot drift out of alignment.
@@ -2317,7 +2338,10 @@ The worker uses up to 2,400 characters of recent user/assistant text, plus the
 previous summary once a model has generated one. Until then, the fallback title
 is not offered as a name to keep. When the conversation is longer than that
 text, its first 400 characters are sent as well, so sessions begun from one
-template are told apart. It refreshes generated names after 16 content
+template are told apart. The worker is also given the titles of the other
+sessions in the same workspace, and asked for a sentence-case title that differs
+from them; a title one of them already has, in any letter case, is numbered, as
+in `Fix renderer (2)`. It refreshes generated names after 16 content
 revisions; revisions, unlike message offsets, survive compaction. This is a
 bounded current summary, not a lossless incremental transcript archive. Opening
 the browser backfills up to ten eligible sessions. Queue length, request count,
@@ -2458,13 +2482,61 @@ unchanged worktree that CLAI reopened, or one you launched inside, is kept witho
 asking.
 
 If the worktree changed, CLAI asks whether to remove its checkout. Enter, Ctrl-C,
-or EOF keeps it; only `y` or `yes` confirms removal, and the branch is kept. Git
-removal runs without `--force`, so dirty or locked worktrees are kept with an
-explanation. The main checkout is never removed. Headless runs, piped input, and
-startup errors keep the worktree without prompting. `/new`, `/resume`, and `/reload` do not remove the checkout:
+or EOF keeps it; only `y` or `yes` confirms removal. By default, removal keeps
+the branch and uses Git without `--force`, so dirty or locked worktrees are kept
+with an explanation. You can register a user-only removal command for an exact
+repository in `config.db` with the `worktrees.remove_commands` user setting; when
+unset or empty (`{}`), removal uses Git. See
+[Register a removal command](#register-a-worktree-removal-command). The command runs
+only after this explicit confirmation, from outside the target checkout, and CLAI
+considers it successful only if the checkout is actually gone. The main checkout is never
+removed. Headless runs, piped input, and startup errors keep the worktree without
+prompting. `/new`, `/resume`, and `/reload` do not remove the checkout:
 they leave the shell using the same working directory.
 Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to continue a saved session.
 `--worktree` cannot be combined with `--resume`, `--continue`, `config`, or `plugins`.
+
+#### Register a worktree removal command
+
+For a repository where Git cannot perform the cleanup you want, set
+`worktrees.remove_commands` in your user settings. It maps the repository's
+canonical absolute Git common directory to a nonempty argv list. Find the key
+with `git rev-parse --path-format=absolute --git-common-dir` inside that repository.
+The match is exact, with no wildcards. Keys resolving to the same directory are
+rejected rather than silently choosing one command. For example:
+
+```sh
+clai2 config set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["/absolute/path/to/cleanup-worktree", "{path}", "{branch}"]}'
+```
+
+The executable is your own cleanup program. Only whole argv tokens are
+substituted: `{path}` is the absolute target checkout, `{branch}` is its current
+branch (empty when detached), and `{repo}` is Git's main-worktree location: the
+parent of a non-bare `.git` directory, or the common directory for other layouts.
+Embedded placeholders such as
+`--worktree={path}` are rejected; pass `"--worktree", "{path}"` instead. CLAI does
+not invoke a shell or expand variables.
+
+To call a user-defined shell function, explicitly invoke its shell. For example,
+a zsh function named `cleanup_worktree` could use this argv:
+
+```json
+["zsh", "-ic", "cleanup_worktree \"$1\"", "clai2-remove", "{branch}"]
+```
+
+Interactive zsh loads your rc files, adding startup overhead and possibly output.
+The branch reaches the function as `$1`; CLAI never inserts it into shell text.
+Neither the function nor the cleanup program above ships with CLAI.
+
+CLAI warns that the command may delete the branch and uncommitted files before
+asking for confirmation. The command inherits stdin, stdout, stderr, and the
+terminal, has no timeout, and can be interrupted with Ctrl-C. A command failure
+does not fall back to Git. If the saved configuration cannot be read or validated
+on exit, CLAI warns and offers the existing Git cleanup prompt instead. If Git
+metadata cannot be read to prepare a registered command, CLAI keeps the checkout
+and reports the error. `.clai/settings.json` cannot set `worktree_remove_commands`;
+CLAI refuses to start if it does. Automatic removal of unchanged worktrees and
+`/workspaces destroy` continue to use Git.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
 original repository root. Without `--force`, Git refuses to remove a dirty worktree:
@@ -2491,8 +2563,14 @@ queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
 asks which folder, offering every worktree of the repositories it has sessions in,
-and completing a typed path to any directory, with every worktree of each repository it finds;
-with `/web`, it starts in the folder of the session you are looking at.
+and completing a typed path to any directory, with every worktree of each repository it finds.
+**New worktree…**, on a folder's row or below the list for the row the arrow keys
+select, checks out a new branch of that folder's repository
+first, from the base you name (by default its `HEAD`), in `.worktrees/` as
+[`--worktree`](#git-worktrees) does, and starts the session there; without a branch
+name, it makes `clai-NAME` with a generated NAME. The worktree stays when the
+session closes. With `/web`, New session starts in the folder of the session you are
+looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
 
@@ -2510,6 +2588,14 @@ many sessions run at once.
   draft, which returns past the newest. Elsewhere in a multiline draft, Up/down
   move the caret, and with command suggestions open they pick one. Queued
   messages are edited in the list above the composer instead.
+- **`@` files.** Typing `@` at the start of the composer or after a space lists the
+  session folder's files and folders that best match what follows, such as
+  `README.md` for `@READ`. In a Git repository these are the files Git tracks or
+  would add, so `.gitignore` applies; elsewhere, all but those in hidden folders,
+  `node_modules`, and `__pycache__`. Up/down pick one, and Tab or Enter puts its
+  path in the prompt; a folder stays open to list what it holds. Enter on a file
+  already typed in full sends the prompt as it is; Tab still takes the highlighted
+  one. The path is sent as you see it, and the agent reads the file with its tools.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
   no background fork or delegated task, and no browser or terminal showing it; a
   page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `clai2 --web`
@@ -2672,7 +2758,10 @@ lists them all. Saved servers are available to the agent from the next prompt,
 with tool names prefixed by the server name. A server connects on the first
 prompt that needs it (or `/mcp start`) and stays connected; one that cannot
 connect is marked `error` and left out rather than failing the prompt. An OAuth
-server signs in only with `/mcp auth NAME`, never in the middle of a prompt. A
+server signs in only with `/mcp auth NAME`, never in the middle of a prompt.
+Switch on **On demand** (`"defer_loading": true`) to keep a server's tools out of
+prompts until the agent loads them by the server's description; see
+[Load a server's tools on demand](../PLUGINS.md#load-a-servers-tools-on-demand). A
 repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See
 [Connect MCP servers](../PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
@@ -2704,10 +2793,14 @@ emitted.
 
 ### Herdr integration
 
-Enable `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane to report
-CLAI2's state, session reference, model/token metadata, and conversation title,
-and to let herdr reopen the conversation after a herdr restart. It starts
-disabled and does nothing outside herdr. See
+The built-in `herdr` plugin is enabled by default inside a [herdr](https://herdr.dev)
+pane. It reports CLAI2's state, session reference, model/token metadata, and
+conversation title, and lets herdr reopen the conversation after a herdr restart.
+It does nothing outside herdr, on Windows, or without a terminal. Use
+`/plugins disable herdr` to opt out. The new default also applies on upgrade;
+an existing saved opt-out is preserved.
+CLAI2's separate `notifications` plugin is unchanged; use
+`/plugins disable notifications` if you prefer only herdr's alerts. See
 [the plugin guide](../PLUGINS.md#herdr-integration) for details and limitations.
 
 ### Agent of Empires integration
@@ -2898,6 +2991,9 @@ leave content out by default, so the team gets UX telemetry and timing; turn on
 
 The plugin owns an isolated Logfire instance. Disable, reload, or exit flushes
 and shuts down that instance without shutting down application-global providers.
+CLAI waits at most three seconds for this, then warns that some telemetry may
+not have been sent and lets cleanup finish in the background. If an export is
+stuck, OpenTelemetry can still delay CLAI's exit.
 The existing global propagator is preserved. Logfire's SDK may install shared
 executor context-propagation helpers; those SDK hooks are not removed on unload.
 The plugin does not mutate a supplied agent. While enabled, its explicit per-run

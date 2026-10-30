@@ -68,7 +68,9 @@ from .._adapter import (
     model_settings_delta_from_payload,
     model_settings_delta_payload,
     parse_tool_retry,
+    part_canonical_system,
     resolve_allow_uploaded_files,
+    restore_canonical_system,
     retry_feedback_from_payload,
     retry_feedback_payload,
     structured_content_from_payload,
@@ -105,6 +107,7 @@ from .request_types import (
     FileUIPart,
     ProviderMetadata,
     ReasoningUIPart,
+    RegenerateMessage,
     RequestData,
     SourceDocumentUIPart,
     SourceUrlUIPart,
@@ -230,6 +233,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         sdk_version: Literal[5, 6, 7] = 5,
         server_message_id: str | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        manage_message_history: Literal['client', 'server'] = 'client',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -248,6 +252,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             sdk_version=sdk_version,
             server_message_id=server_message_id,
             manage_system_prompt=manage_system_prompt,
+            manage_message_history=manage_message_history,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -281,6 +286,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
         on_cancel: OnCancelFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        manage_message_history: Literal['client', 'server'] = 'client',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -316,6 +322,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             on_complete=on_complete,
             on_cancel=on_cancel,
             manage_system_prompt=manage_system_prompt,
+            manage_message_history=manage_message_history,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -357,6 +364,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def conversation_id(self) -> str | None:
         """Conversation ID from the top-level `id` field of the Vercel AI request body (the chat ID)."""
         return self.run_input.id
+
+    def _regenerates(self) -> bool:
+        return isinstance(self.run_input, RegenerateMessage)
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
@@ -525,7 +535,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         pending_enqueued = []
 
                     if isinstance(part, TextUIPart):
-                        builder.add(load_text_part(part.text, load_provider_metadata(part.provider_metadata)))
+                        provider_meta = load_provider_metadata(part.provider_metadata)
+                        builder.add(load_text_part(part.text, provider_meta))
+                        restore_canonical_system(
+                            builder, provider_meta.get('provider_name'), provider_meta.get('canonical_system')
+                        )
                     elif isinstance(part, ReasoningUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         builder.add(
@@ -536,6 +550,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 provider_name=provider_meta.get('provider_name'),
                                 provider_details=provider_meta.get('provider_details'),
                             )
+                        )
+                        restore_canonical_system(
+                            builder, provider_meta.get('provider_name'), provider_meta.get('canonical_system')
                         )
                     elif isinstance(part, FileUIPart):
                         try:
@@ -560,6 +577,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 provider_details=provider_meta.get('provider_details'),
                             )
                         )
+                        restore_canonical_system(
+                            builder, provider_meta.get('provider_name'), provider_meta.get('canonical_system')
+                        )
                     elif isinstance(part, DataUIPart):
                         if (
                             part.type == COMPACTION_DATA_TYPE
@@ -567,6 +587,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             and (compaction_part := compaction_part_from_payload(part.data)) is not None
                         ):
                             builder.add(compaction_part)
+                            restore_canonical_system(
+                                builder, compaction_part.provider_name, part.data.get('canonical_system')
+                            )
                         elif part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
                             # The event stream emits the delta after the tool result that caused it, so
                             # the AI SDK attaches it to the assistant message. Adding it here lands it on
@@ -659,16 +682,22 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             return_tool_kind = (
                                 parse_tool_kind(raw_return_tool_kind) if isinstance(raw_return_tool_kind, str) else None
                             )
+                            call_provider_name = call_meta.get('provider_name') or provider_name
                             builder.add(
                                 NativeToolCallPart(
                                     tool_name=tool_name,
                                     tool_call_id=tool_call_id,
                                     args=args,
                                     id=call_meta.get('id') or part_id,
-                                    provider_name=call_meta.get('provider_name') or provider_name,
+                                    provider_name=call_provider_name,
                                     provider_details=call_meta.get('provider_details') or provider_details,
                                     tool_kind=call_tool_kind or tool_kind,
                                 )
+                            )
+                            restore_canonical_system(
+                                builder,
+                                call_provider_name,
+                                call_meta.get('canonical_system') or provider_meta.get('canonical_system'),
                             )
 
                             if has_tool_output:
@@ -711,6 +740,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     tool_kind=tool_kind,
                                 )
                             )
+                            restore_canonical_system(builder, provider_name, provider_meta.get('canonical_system'))
 
                             if part.state == 'output-available':
                                 # A synthesized interrupted return dumps as neutral `output-available`
@@ -922,6 +952,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     signature=part.signature,
                     provider_name=part.provider_name,
                     provider_details=part.provider_details,
+                    canonical_system=part_canonical_system(msg, part.provider_name),
                 )
                 ui_parts.append(ReasoningUIPart(text=part.content, state='done', provider_metadata=provider_metadata))
             elif isinstance(part, FilePart):
@@ -933,6 +964,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             id=part.id,
                             provider_name=part.provider_name,
                             provider_details=part.provider_details,
+                            canonical_system=part_canonical_system(msg, part.provider_name),
                             vendor_metadata=part.content.vendor_metadata,
                         ),
                     )
@@ -954,6 +986,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         id=part.id,
                         provider_name=part.provider_name,
                         provider_details=part.provider_details,
+                        canonical_system=part_canonical_system(msg, part.provider_name),
                         tool_kind=part.tool_kind,
                     )
                     return_meta = dump_provider_metadata(
@@ -1015,6 +1048,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         id=part.id,
                         provider_name=part.provider_name,
                         provider_details=part.provider_details,
+                        canonical_system=part_canonical_system(msg, part.provider_name),
                         tool_kind=part.tool_kind,
                     )
                     # No result found → the tool call is deferred (awaiting approval or external result).
@@ -1044,12 +1078,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
             elif isinstance(part, ToolCallPart):
-                ui_parts.extend(cls._dump_tool_call_part(part, tool_results, sdk_version))
+                ui_parts.extend(
+                    cls._dump_tool_call_part(
+                        part, tool_results, sdk_version, part_canonical_system(msg, part.provider_name)
+                    )
+                )
             elif isinstance(part, CompactionPart):
                 ui_parts.append(
                     DataUIPart(
                         type=COMPACTION_DATA_TYPE,
-                        data=compaction_payload(part),
+                        data=compaction_payload(part, canonical_system=part_canonical_system(msg, part.provider_name)),
                     )
                 )
             elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -1057,13 +1095,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             else:
                 assert_never(part)
 
-        return _with_text_citations(ui_parts, text_runs)
+        return _with_text_citations(ui_parts, text_runs, msg)
 
     @staticmethod
     def _dump_tool_call_part(
         part: ToolCallPart,
         tool_results: dict[str, ToolReturnPart],
         sdk_version: Literal[5, 6, 7] = 5,
+        canonical_system: str | None = None,
     ) -> list[UIMessagePart]:
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
         tool_result = tool_results.get(part.tool_call_id)
@@ -1080,6 +1119,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             id=part.id,
             provider_name=part.provider_name,
             provider_details=part.provider_details,
+            canonical_system=canonical_system,
             tool_kind=part.tool_kind,
             outcome=carried_outcome,
             retry=tool_retry_payload(tool_result.retry)
@@ -1203,6 +1243,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         Consecutive `TextPart`s come back as one, with the first part's `id` and `provider_details` and all of
         their citations, anchored in the merged text.
 
+        A response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] rides in the
+        `providerMetadata` of each part with the response's `provider_name`, and comes back on the loaded response
+        together with that `provider_name`, so its signed and encrypted data is still sent only to the system that
+        can verify it. The response's other provider fields, such as `provider_url`, aren't carried.
+
         Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
         rewritten to `{'INVALID_JSON': '<raw args>'}` (see
         [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict]), so the raw string is
@@ -1293,7 +1338,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         return result
 
 
-def _with_text_citations(ui_parts: list[UIMessagePart], text_runs: dict[int, list[TextPart]]) -> list[UIMessagePart]:
+def _with_text_citations(
+    ui_parts: list[UIMessagePart], text_runs: dict[int, list[TextPart]], response: ModelResponse
+) -> list[UIMessagePart]:
     """Set each UI text part's provider metadata, with its citations, and list its web sources after it.
 
     Sources follow their text part as `source-url` parts, matching the event stream.
@@ -1304,7 +1351,7 @@ def _with_text_citations(ui_parts: list[UIMessagePart], text_runs: dict[int, lis
         result.append(ui_part)
         if isinstance(ui_part, TextUIPart):
             text_parts = text_runs[index]
-            ui_part.provider_metadata = dump_text_metadata(text_parts)
+            ui_part.provider_metadata = dump_text_metadata(text_parts, response=response)
             result.extend(
                 SourceUrlUIPart(source_id=chunk.source_id, url=chunk.url, title=chunk.title)
                 for chunk in iter_citation_source_chunks(merged_text_citations(text_parts), source_urls)

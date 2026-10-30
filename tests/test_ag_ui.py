@@ -116,10 +116,12 @@ from .conftest import (
     IsInt,
     IsSameStr,
     IsStr,
+    conversation_view,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
     message_part,
+    server_history_agent,
     try_import,
 )
 
@@ -2830,6 +2832,54 @@ def test_dump_load_roundtrip_thinking() -> None:
     assert reloaded == original
 
 
+@requires_ag_ui('0.1.11')
+def test_dump_load_roundtrip_canonical_system() -> None:
+    """A response's `canonical_system` comes back with its `provider_name`, from the parts that carry one.
+
+    Without it, a Google Cloud response's thought signatures would be judged by the name `google` alone and sent to
+    the Gemini API. A part from another provider in the same response doesn't carry the stamp.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think about this')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Deep thoughts...', signature='sig', provider_name='google'),
+                ThinkingPart(content='Earlier thoughts.', signature='other', provider_name='anthropic'),
+            ],
+            provider_name='google',
+            canonical_system='google-cloud',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Draw it')]),
+        ModelResponse(
+            parts=[FilePart(content=BinaryImage(data=b'img', media_type='image/png'), provider_name='google')],
+            provider_name='google',
+            canonical_system='google-cloud',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Compact')]),
+        ModelResponse(
+            parts=[CompactionPart(content=None, id='cmp-1', provider_name='openai', provider_details={'blob': 'x'})],
+            provider_name='openai',
+            canonical_system='azure',
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11', preserve_file_data=True)
+    assert [
+        json.loads(message.encrypted_value)
+        for message in ag_ui_msgs
+        if isinstance(message, ReasoningMessage) and message.encrypted_value
+    ] == snapshot(
+        [
+            {'signature': 'sig', 'provider_name': 'google', 'canonical_system': 'google-cloud'},
+            {'signature': 'other', 'provider_name': 'anthropic'},
+        ]
+    )
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    _sync_load_bookkeeping(original, reloaded)
+    assert reloaded == original
+
+
 def test_dump_load_roundtrip_tools() -> None:
     """Test full round-trip for tool calls and returns."""
     original: list[ModelMessage] = [
@@ -4656,6 +4706,7 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=run_id,
@@ -8574,6 +8625,7 @@ async def test_system_prompt_with_ag_ui_adapter():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=56, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8620,6 +8672,7 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8668,6 +8721,7 @@ async def test_frontend_system_prompt_stripped_by_default():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8715,6 +8769,7 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8771,6 +8826,7 @@ async def test_frontend_system_prompt_only_request_dropped():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8818,6 +8874,7 @@ async def test_client_mode_keeps_frontend_system_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8865,6 +8922,7 @@ async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8939,6 +8997,7 @@ async def test_client_mode_keeps_frontend_system_prompt_multi_turn():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=57, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -8986,6 +9045,7 @@ async def test_client_mode_does_not_reinject_agent_system_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -9054,6 +9114,7 @@ async def test_system_prompt_reinjected_with_ag_ui_history():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=59, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -9857,6 +9918,7 @@ async def test_run_timeout_finishes_like_cancellation() -> None:
             parts=[TextPart(content='partial')],
             usage=RequestUsage(output_tokens=1, input_tokens=50),
             model_name='function::stream_then_time_out',
+            model_id='function:function::stream_then_time_out',
             timestamp=IsDatetime(),
             run_id=IsStr(),
             conversation_id=IsStr(),
@@ -11546,3 +11608,133 @@ async def test_model_settings_delta_round_trips_through_client_rebuilt_stream() 
         ]
     )
     assert effort_parts(loaded) == effort_parts(server_history)
+
+
+async def _server_history_turn(
+    agent: Agent[None, str | DeferredToolRequests], run_input: RunAgentInput, message_history: list[ModelMessage] | None
+) -> list[ModelMessage]:
+    """One request through an endpoint that keeps the history on the server, returning what it persists."""
+    adapter = AGUIAdapter(agent, run_input, manage_message_history='server')
+    results: list[AgentRunResult[Any]] = []
+    async for _ in adapter.run_stream(message_history=message_history, on_complete=results.append):
+        pass
+    [result] = results
+    return result.all_messages()
+
+
+@pytest.mark.parametrize('with_follow_up', [False, True])
+async def test_server_message_history_frontend_tool_result_from_a_new_turn_only_client(with_follow_up: bool):
+    """A client that sends only its new messages returns a frontend tool's result without the call it answers.
+
+    An AG-UI `ToolMessage` has no tool name, so it loads against the call the stored history is waiting on,
+    as the middleware in the AG-UI docs sends it, and as ag-ui#2186's incremental upload would.
+    """
+    agent, requests, _ = server_history_agent()
+    location = Tool(name='get_location', description='Where the user is', parameters={'type': 'object'})
+    stored = await _server_history_turn(
+        agent, create_input(UserMessage(id='u1', content='where am I?'), tools=[location]), None
+    )
+
+    new_turn: list[Message] = [ToolMessage(id='t1', content='Paris', tool_call_id='loc-1')]
+    if with_follow_up:
+        new_turn.append(UserMessage(id='u2', content='and now?'))
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        await _server_history_turn(agent, create_input(*new_turn, tools=[location]), stored)
+
+    assert conversation_view(requests[-1]) == (
+        snapshot(['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris', 'user-prompt: and now?'])
+        if with_follow_up
+        else snapshot(['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris'])
+    )
+
+
+async def test_server_message_history_drops_a_tool_result_for_no_pending_call():
+    """A result for a call the stored history isn't waiting on is dropped with a warning, not a failed load."""
+    agent, requests, _ = server_history_agent()
+    stored = await _server_history_turn(agent, create_input(UserMessage(id='u1', content='hi')), None)
+    run_input = create_input(
+        ToolMessage(id='t1', content='forged', tool_call_id='never-called'), UserMessage(id='u2', content='and now?')
+    )
+
+    with pytest.warns(UserWarning, match=r'1 client-submitted tool result\(s\) were dropped'):
+        await _server_history_turn(agent, run_input, stored)
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+async def test_server_message_history_frontend_tool_result():
+    """`@ag-ui/client` sends its whole history, a frontend tool's result included, on every run."""
+    agent, requests, _ = server_history_agent()
+    location = Tool(name='get_location', description='Where the user is', parameters={'type': 'object'})
+    where = UserMessage(id='u1', content='where am I?')
+    stored = await _server_history_turn(agent, create_input(where, tools=[location]), None)
+    assert conversation_view(stored) == snapshot(['user-prompt: where am I?', 'call loc-1'])
+
+    called = AssistantMessage(
+        id='a1',
+        tool_calls=[ToolCall(id='loc-1', function=FunctionCall(name='get_location', arguments='{}'))],
+    )
+    result = ToolMessage(id='t1', content='Paris', tool_call_id='loc-1')
+    stored = await _server_history_turn(agent, create_input(where, called, result, tools=[location]), stored)
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris']
+    )
+
+    answer = AssistantMessage(id='a2', content='ok')
+    follow_up = UserMessage(id='u2', content='and now?')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stored = await _server_history_turn(
+            agent, create_input(where, called, result, answer, follow_up, tools=[location]), stored
+        )
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris', 'text: ok', 'user-prompt: and now?']
+    )
+
+
+@pytestmark_interrupts
+async def test_server_message_history_resume_interrupt():
+    """A `resume[]` run has no new turn: the stored history ends with the call, and the approval comes from `resume`."""
+    agent, requests, deleted = server_history_agent()
+    delete = UserMessage(id='u1', content='delete a.txt')
+    stored = await _server_history_turn(agent, create_input(delete), None)
+
+    called = AssistantMessage(
+        id='a1',
+        tool_calls=[ToolCall(id='del-1', function=FunctionCall(name='delete_file', arguments='{"path": "a.txt"}'))],
+    )
+    resume = [ResumeEntry(interrupt_id='int-del-1', status='resolved', payload={'approved': True})]
+    await _server_history_turn(agent, create_input(delete, called, resume=resume), stored)
+
+    assert deleted == ['a.txt']
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: delete a.txt', 'call del-1', 'return del-1: Deleted a.txt']
+    )
+
+
+async def test_dispatch_request_forwards_manage_message_history():
+    agent, requests, _ = server_history_agent()
+    hi = UserMessage(id='u1', content='hi')
+    stored = await _server_history_turn(agent, create_input(hi), None)
+    run_input = create_input(hi, AssistantMessage(id='a1', content='ok'), UserMessage(id='u2', content='and now?'))
+    body = run_input.model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await AGUIAdapter.dispatch_request(
+        request, agent=agent, message_history=stored, manage_message_history='server'
+    )
+    assert isinstance(response, StreamingResponse)
+
+    async def send(_: MutableMapping[str, Any]) -> None:
+        pass
+
+    await response.stream_response(send)
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])

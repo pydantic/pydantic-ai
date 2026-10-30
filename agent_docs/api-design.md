@@ -19,10 +19,10 @@
 - Add a `[!WARNING]` PR section that names affected code, the policy exception, and the migration.
 - Add an exact API-check waiver when the deterministic compatibility gate reports the permitted change.
 - Treat model-name `Literal` aliases (listed under `model_name_literals` in `.github/api-compatibility-allowlist.json`; add one there when the gate reports a change to it) as autocompletion aids. The gate passes changes to their `Literal` string members; any other change to them still needs a waiver. Removing a name from an alias without a `str |` arm is a permitted compatibility impact: add the `compatibility impact` label and a release note. Code that passes the removed name stops type-checking.
-- Treat registry constants (listed under `growing_collections` in `.github/api-compatibility-allowlist.json`, such as CLAI's `SETTING_FIELDS` and `STRING_SETTINGS`) as growing: the gate passes a change that only adds entries to the `dict` or `set` literal. Removing an entry or changing an entry's value still needs a waiver, and removing a setting needs a deprecation first. List another registry there when adding entries to it is never a compatibility impact.
+- Treat registry constants (listed under `growing_collections` in `.github/api-compatibility-allowlist.json`, such as CLAI's `SETTING_FIELDS` and `STRING_SETTINGS`, or `CAPABILITY_TYPES`) as growing: the gate passes a change that only adds entries to the `dict` or `set` literal, or, for a comprehension over a single tuple or list literal like `CAPABILITY_TYPES`, only adds items to that sequence. Removing an entry or changing an entry's value still needs a waiver, as does changing a comprehension's key, value or filter, and removing a setting needs a deprecation first. List another registry there when adding entries to it is never a compatibility impact.
 
 <!-- rule:146 -->
-- Prefix implementation details with underscore (`_`) and exclude from `__all__` — prevents accidental API surface expansion and signals internal-only usage — Keeps the public API surface minimal and clearly separates internal implementation from stable public interfaces, preventing backward compatibility obligations for internal code.
+- Prefix implementation details with underscore (`_`) and exclude them from `__all__` to avoid accidental public API commitments.
 <!-- rule:29 -->
 - Export commonly-used types and classes from top-level `pydantic_ai` package — hides internal structure and simplifies user imports — Makes the public API easier to use and allows internal refactoring without breaking user code that would otherwise depend on specific submodule paths
 <!-- rule:124 -->
@@ -32,7 +32,7 @@
 <!-- rule:491 -->
 - Keep old names as deprecated aliases when renaming public API elements — prevents breaking existing code — Maintains backward compatibility so users can migrate gradually rather than experiencing immediate breakage when upgrading
 <!-- rule:775 -->
-- Return new collections from transform functions instead of mutating inputs — prevents surprising side effects and makes code easier to reason about (exceptions: performance-critical paths or functions named `update_*`/`*_inplace`) — Immutable transforms prevent surprising side effects and make code easier to reason about, improving maintainability across the codebase
+- Return new collections from transform functions instead of mutating inputs to prevent surprising side effects. Exceptions: performance-critical paths or functions named `update_*`/`*_inplace`.
 <!-- rule:367 -->
 - Don't access or modify private attributes (`_prefixed`) — use public APIs, properties, or constructor parameters — Prevents breakage when internal implementation changes and ensures compatibility with library updates
 <!-- rule:72 -->

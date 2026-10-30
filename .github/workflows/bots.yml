@@ -4,18 +4,19 @@ name: PR Bots
 on:
   # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed for fork PRs; inputs are validated before use
   pull_request_target:
-    types: [opened, synchronize, labeled, unlabeled]
+    types: [opened, synchronize, edited, labeled, unlabeled]
 
 permissions: {}
 
 concurrency:
-  group: pr-bots-${{ github.event.pull_request.number }}${{ github.event.action == 'unlabeled' && github.event.label.name != 'douwebot:review-agent-config' && format('-noop-{0}', github.run_id) || '' }}
+  # Size-only edits and no-op labels must not replace a pending review in the shared PR slot.
+  group: pr-bots-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && '-size' || ((github.event.action == 'labeled' && github.event.label.name != 'douwebot' && github.event.label.name != 'douwebot:review-agent-config') || (github.event.action == 'unlabeled' && github.event.label.name != 'douwebot:review-agent-config')) && format('-noop-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event.action == 'synchronize' || (github.event.action == 'unlabeled' && github.event.label.name == 'douwebot:review-agent-config') }}
 
 jobs:
   size-label:
     name: Size Label
-    if: github.event.action == 'opened' || github.event.action == 'synchronize'
+    if: github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'edited'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -23,63 +24,29 @@ jobs:
       pull-requests: write
     steps:
       # pull_request_target must only read generated-file declarations from trusted base code.
-      - name: Checkout base attributes
+      - name: Checkout trusted size calculator
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Calculate PR size and set label
+        shell: bash
         run: |
           set -euo pipefail
 
           # Fetch file changes for this PR
           FILES=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --paginate | jq -s 'add')
 
-          # Use Git's attribute matching, including nested rules and overrides.
-          GENERATED=$(echo "$FILES" | jq -j '.[] | .filename, "\u0000"' |
-            git check-attr -z --stdin linguist-generated |
-            jq -Rs 'split("\u0000") | [range(0; length; 3) as $i |
-              select(.[$i + 2] == "true" or .[$i + 2] == "set") | .[$i]]')
-          FILES=$(echo "$FILES" | jq --argjson generated "$GENERATED" '
-            map(select(.filename as $path | $generated | index($path) | not))')
-
-          # Calculate lines by category (excluding generated files, uv.lock and cassettes)
-          CODE=$(echo "$FILES" | jq '[.[] | select(
-            (.filename | (startswith("tests/") or startswith("docs/") or endswith(".md")) | not) and
-            (.filename != "uv.lock") and
-            (.filename | contains("/cassettes/") | not)
-          ) | .additions + .deletions] | add // 0')
-
-          DOCS=$(echo "$FILES" | jq '[.[] | select(
-            (.filename | (startswith("docs/") or endswith(".md"))) and
-            (.filename != "uv.lock") and
-            (.filename | contains("/cassettes/") | not)
-          ) | .additions + .deletions] | add // 0')
-
-          TESTS=$(echo "$FILES" | jq '[.[] | select(
-            (.filename | startswith("tests/")) and
-            (.filename | contains("/cassettes/") | not) and
-            (.filename | endswith(".md") | not)
-          ) | .additions + .deletions] | add // 0')
-
-          # Calculate weighted score: code + 50% docs + 50% tests
-          SCORE=$((CODE + DOCS / 2 + TESTS / 2))
-
-          echo "Code: $CODE, Docs: $DOCS, Tests: $TESTS"
-          echo "Weighted score: $SCORE"
-
-          # Determine size label based on cutoffs
-          if [ $SCORE -le 100 ]; then
-            SIZE="size: S"
-          elif [ $SCORE -le 500 ]; then
-            SIZE="size: M"
-          elif [ $SCORE -le 1500 ]; then
-            SIZE="size: L"
-          else
-            SIZE="size: XL"
+          : "${BASE_SHA:?base SHA required}"
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
           fi
-
+          CALCULATED=$(printf '%s' "$FILES" | bash .github/scripts/pr_size.sh "$BASE_SHA")
+          SIZE=$(jq -r '.size' <<<"$CALCULATED")
+          SCORE=$(jq -r '.score' <<<"$CALCULATED")
+          jq -r '"Code: \(.code), Docs: \(.docs), Tests: \(.tests)"' <<<"$CALCULATED"
+          echo "Weighted score: $SCORE"
           echo "Size: $SIZE"
 
           # Read live labels so queued events cannot overwrite newer label state.
@@ -101,6 +68,7 @@ jobs:
           echo "Set label: $SIZE (score: $SCORE)"
         env:
           GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
   # Labels a pull request that changes a core definition the durable engines depend on
   # (`scripts/durable_exec_contract.json`), and unlabels it once a later push no longer does.
@@ -279,9 +247,11 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-      issues: write
-      pull-requests: write
+      issues: read
+      pull-requests: read
       actions: read
+    outputs:
+      result: ${{ steps.review.outputs.structured_output }}
     steps:
       # Two checkouts, and the split is the security design, not a convenience.
       #
@@ -295,7 +265,7 @@ jobs:
       # https://github.com/anthropics/claude-code-action/blob/main/docs/security.md
       #
       # Be precise about what remains, because it is not "no pwn-request risk":
-      # this job holds a write-scoped token and the API keys, and
+      # this job holds a read-only token and the API keys, and
       # `persist-credentials: false` only keeps the token out of `.git/config`.
       # Prompt injection is NOT prevented and cannot be — reading
       # attacker-authored text IS this job's purpose (the diff, code comments,
@@ -304,8 +274,8 @@ jobs:
       #   - the fork cannot reach the instruction layer (this split, plus the
       #     guard below for anything `--add-dir` might still autoload);
       #   - no step builds, installs or runs the checked-out code;
-      #   - the token is `contents: read`, so a steered reviewer can write
-      #     comments but cannot push code or reach other secrets;
+      #   - the token cannot publish reviews or push code; a separate trusted
+      #     job validates and publishes structured findings with a run/head receipt;
       #   - the tool allowlist below grants no arbitrary-exec sink;
       #   - `allowed_non_write_users` makes the action scrub Anthropic/cloud/
       #     Actions secrets from subprocess envs and run them under bubblewrap
@@ -461,7 +431,8 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
 
-      - uses: anthropics/claude-code-action@97c53473391bff1901034d4b454b5bac7ab7a029 # v1.0.239
+      - id: review
+        uses: anthropics/claude-code-action@97c53473391bff1901034d4b454b5bac7ab7a029 # v1.0.239
         env:
           # Native tracing exports from Claude itself, retaining subprocess credential scrubbing.
           # https://code.claude.com/docs/en/monitoring-usage#traces-beta
@@ -505,7 +476,8 @@ jobs:
           claude_args: |
             --model claude-opus-5-5[1m]
             --add-dir pr-head
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh api repos/${{ github.repository }}/pulls/comments/:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),WebSearch,WebFetch"
+            --json-schema '{"$defs":{"Finding":{"description":"One inline finding; GitHub validates the position against the pinned diff.","properties":{"path":{"title":"Path","type":"string"},"line":{"exclusiveMinimum":0,"title":"Line","type":"integer"},"side":{"enum":["LEFT","RIGHT"],"title":"Side","type":"string"},"body":{"minLength":1,"title":"Body","type":"string"}},"required":["path","line","side","body"],"title":"Finding","type":"object"}},"description":"Structured review judgment; source identity is supplied by the host.","properties":{"verdict":{"enum":["APPROVE","REQUEST_CHANGES","INCOMPLETE"],"title":"Verdict","type":"string"},"comments":{"items":{"$ref":"#/$defs/Finding"},"title":"Comments","type":"array"},"discussion":{"title":"Discussion","type":"string"}},"required":["verdict","comments","discussion"],"title":"ReviewResult","type":"object"}'
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh api repos/${{ github.repository }}/pulls/comments/:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),WebSearch,WebFetch"
 
           prompt: |
             REPO: ${{ github.repository }}
@@ -570,12 +542,12 @@ jobs:
             While gathering context and learning about the PR, keep track of problems/points of discussion as you find them, and wait to post comments until the end,
             as the comments you write will be better, less duplicative and more focused on the changes that really matter if you have the full set of problems as context.
 
-            For each identified issue that is determined to be worth a new comment, use `mcp__github_inline_comment__create_inline_comment` to attach the feedback to a specific line of code.
+            For each issue worth a new comment, add an entry to the structured comments array.
               - Only lines with an `NL:` or `OL:` prefix in the diff are commentable. For OL lines, use `side: LEFT`.
               - Include the reasoning, but don't quote specific rules from the `AGENTS.md` files.
               - Include a concrete suggestion if appropriate (but to not use ` ```suggestion ` blocks as they can render incorrectly when the line numbers are off)
-              - If the same issue shows up in multiple places, post a comment on each instance but have later comments refer to the first comment using a link.
-            - Use `gh pr comment` only for important feedback that doesn't relate to a specific line or file, not for a summary of feedback you've already posted inline.
+              - If the same issue shows up in multiple places, identify each instance in the comment body.
+            - Put important feedback without a commentable line in the structured discussion field.
 
             Your comments should be:
             - actionable: they should request a change, flag a concern that needs discussion, and/or suggest an improvement; don't comment on positive aspects of the PR like "excellent design choices".
@@ -583,24 +555,52 @@ jobs:
             - friendly without being sycophantic: use the tone and language of a helpful and encouraging project maintainer, but no need to compliment the author on positive aspects of the PR or point out changes that are good.
             - non-repetitive: don't repeat things pointed out in earlier review comments, unless it looks like they'll be forgotten if you don't point them out; e.g. when they're marked as resolved/outdated but the problem persists without a satisfactory resolution (like a maintainer comment saying the comment does not need to be addressed).
 
-            Before publishing review feedback, run `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json headRefOid --jq .headRefOid` and compare the result with the reviewed head `${{ github.event.pull_request.head.sha }}`. If they differ, stop without publishing findings or a verdict.
+            Before returning the structured result, run `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json headRefOid --jq .headRefOid` and compare the result with the reviewed head `${{ github.event.pull_request.head.sha }}`. If they differ, return INCOMPLETE with no findings. The trusted publisher checks the head again and skips publication for a closed or moved PR.
 
-            # Final verdict
+            # Structured review result
 
-            Complete the review before submitting a verdict. Classify each finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking. Do not prefix comments about repository-rule violations with `Optional:`. Record each actionable finding inline.
-            Include unaddressed blocking findings from earlier rounds when choosing the verdict. Verify those findings against the current diff.
-            - Submit `REQUEST_CHANGES` when any blocking finding remains outstanding, including a concrete scope blocker that prevents a complete review.
-            - Submit `APPROVE` when the review is complete and no blocking findings remain outstanding, even when optional findings remain.
-            - Submit no verdict when the review is incomplete for another reason or the reviewed head has changed.
-
-            Immediately before submitting the verdict, repeat the `gh pr view` head check above. If the head changed, stop without a verdict. Otherwise submit one formal review through the already-allowed endpoint, with `commit_id` set to the reviewed head `${{ github.event.pull_request.head.sha }}`. For approval, run `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews --method POST -f event=APPROVE -f commit_id=${{ github.event.pull_request.head.sha }} -f body='No blocking findings.'`. For requested changes, use the same endpoint and `commit_id`, set `event=REQUEST_CHANGES`, and use the concise body `Blocking findings are recorded inline.` Inline comments carry finding details.
+            Return the requested JSON result. The trusted publisher posts one review and all findings.
+            Do not post reviews or comments through tools. The GitHub token is read-only.
+            Set verdict to REQUEST_CHANGES when any blocking finding remains, including earlier unaddressed findings.
+            Set verdict to APPROVE only after a complete review with no blocking findings.
+            Set verdict to INCOMPLETE when review coverage is incomplete for another reason.
+            Keep optional findings in comments with an Optional: prefix. Repository-rule violations are blocking.
+            Each inline comment needs path, line, side (LEFT or RIGHT), and body.
+            Put important feedback without a commentable line in discussion; otherwise use an empty string.
+            Do not duplicate earlier findings; assess them when choosing the verdict.
 
             You are meant to be helpful to the contributor and the maintainer, so your comments should never add noise to the conversation:
-            - Do not post a redundant top-level summary comment. Submit the required concise formal review body, and use inline comments for actionable findings.
+            - Do not add a redundant summary to discussion. Return actionable inline findings in comments.
             - Do not comment on lines that do not need improvement, maintainer awareness, or discussion; comments pointing out a good choice are just noise.
             - Do not post multiple comments for the same exact issue unless it shows up in different places.
 
             It bears repeating that you are the first line of defense against low-quality contributions and maintainer headaches, and you have a big role in ensuring that every contribution to this project meets or exceeds the high standards that the Pydantic brand is known and loved for.
+
+  publish-review:
+    name: Publish douwebot review
+    needs: review
+    if: always() && needs.review.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Publish structured review from trusted default-branch code
+        id: publish
+        if: needs.review.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
+          REVIEW_RESULT: ${{ needs.review.outputs.result }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          gh api -H 'Accept: application/vnd.github.raw+json' "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/publish_douwebot_review.py?ref=${TRUSTED_REF}" > "$RUNNER_TEMP/publish_douwebot_review.py"
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 "$RUNNER_TEMP/publish_douwebot_review.py"
 
       - name: Remove douwebot label
         if: always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
@@ -612,7 +612,7 @@ jobs:
       # identical from the PR: the label is gone either way and no comment lands.
       # A silent breakage went unnoticed for three weeks that way.
       - name: Report review failure
-        if: failure() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
+        if: always() && (needs.review.result == 'failure' || steps.publish.outcome == 'failure') && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
             "The \`douwebot\` run failed — see [the run](${RUN_URL}) for why. This is not a verdict on this PR. If the cause was transient, re-apply the \`douwebot\` label to retry."
@@ -621,7 +621,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Report approval request failure
-        if: failure() && github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'
+        if: always() && (needs.review.result == 'failure' || steps.publish.outcome == 'failure') && github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
             "The \`douwebot:review-agent-config\` run failed — see [the run](${RUN_URL}) for why. This is not a verdict on this PR. To retry, remove and reapply the label; the original event cannot be rerun."

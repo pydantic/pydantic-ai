@@ -56,9 +56,9 @@
     },
     {
       "against": "v2.62.0",
-      "fingerprint": "8cb8cd8599117122d06cdb06c3f0113ddd97f018c56417a2dd65310dd85c2439",
-      "reason": "clai2 0.x: adds the built-in `hooks` declaration to `DEFAULT_PLUGINS`; every existing declaration is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11423"
+      "fingerprint": "f68f11981b239bbeb67fb773b7b3867dae32610591a7dc708b398d14e003ba28",
+      "reason": "clai2 0.x: intentional default change enabling the guarded `herdr` integration. Saved disabled declarations are preserved; `/plugins disable herdr` opts out. Also retains the `hooks` declaration approved in #11423; every other declaration is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11661"
     },
     {
       "against": "v2.61.0",
@@ -377,6 +377,66 @@
       "fingerprint": "c2655ed50f60d9b53296c110ea2267134651aa29c6bfa49d4beb7ffcceede410",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `forks=forks`.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "0db3082753bca3bf3a60d72f9e3a16e0f3657081d2a83d3d268c4e890e9d609d",
+      "reason": "Adds the new `output_speech_timestamps` setting's name to `RealtimeModelSettingName`, which lists every `RealtimeModelSettings` field; every existing name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11685"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "fbafe599901fd7eb81f8f1d60de36cd164ab7165f0c43d44fe0a6b09b096cfff",
+      "reason": "Adds the new `output_speech_timestamp_granularity` flag to `DEFAULT_REALTIME_PROFILE`, defaulting to `None`; every existing key and value is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11685"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "1f28bd82488fed51fe34f0d297be062343323b9c5ee5879b3975b0c270f97b27",
+      "reason": "Adds `OutputSpeechTimestamps` to the `RealtimeCodecEvent` union a connection yields, for the speech timestamps Azure AI Voice Live reports; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11685"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "2018a1f6f9f174b7c4f2eaa1f0c7f1e8ed6452a63fda3ffee7095e81516c3afc",
+      "reason": "Harness 0.x: `Planning.cache_ttl` is deprecated and has no effect, because the plan reminder no longer places a cache breakpoint of its own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "9be216257b6cf2a0b4fb6c866822cd4230b68487f7423e74113ccd0e9ea1fb40",
+      "reason": "Harness 0.x: `Planning.cache_ttl` is deprecated and has no effect, because the plan reminder no longer places a cache breakpoint of its own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "51c9835f3d0b470684680c992c6a4df453c356ad85fe788921de808a6624054c",
+      "reason": "Harness 0.x: `Planning.from_spec`'s `cache_ttl` follows the deprecated `Planning.cache_ttl`, defaulting to `None`; an explicit `'5m'` or `'1h'` warns that it's ignored.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "4f48f3cbafd028241e3620a3564f13cde10fcf648b18bd76b1a881f743ec9241",
+      "reason": "False positive: `Planning` still inherits `wrap_model_request` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the fallback plan record is now added in `before_model_request`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "0ebfc0d0d25c2f768c0ec1c2604912ca16fa2cb12507e9c5da73a71953048f14",
+      "reason": "False positive: Griffe compares the expression assigned to `Case.evaluators`. `Evaluator` instances are kept unchanged; only plain functions, newly accepted, are wrapped in `FunctionEvaluator`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10292"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "7c52c60298d3103deb2c4c5a9c9b14e136c9881cb0ebc8478d71eb50f70cc9ac",
+      "reason": "`pydantic_ai.agent.RealtimeEvent` was only imported under `TYPE_CHECKING`, so importing it at runtime always raised `ImportError`; `RealtimeEvent` is still exported from `pydantic_ai.realtime`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10189"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "ab788952b39a2021c1a9eb1c2009ddb950f83d8876f0e7624346c8dc3294ea8d",
+      "reason": "harness 0.x: adds the 'flagged' value to `SkipReason` for skills an opt-in `Skills(scanner=...)` leaves out; it only appears with a scanner configured, and existing values are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11470"
     }
   ],
   "model_name_literals": [
@@ -509,6 +569,10 @@
     {
       "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
       "symbol": "STRING_SETTINGS"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/capabilities/__init__.py",
+      "symbol": "CAPABILITY_TYPES"
     }
   ]
 }

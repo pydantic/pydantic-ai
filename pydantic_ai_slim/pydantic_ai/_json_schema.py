@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, TypeAlias
+from typing import Any, ClassVar, Literal, TypeAlias, cast
 
 from pydantic import JsonValue
 
+from ._utils import contains_ref
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
@@ -236,6 +238,11 @@ class JsonSchemaTransformer(ABC):
                 handled_pattern_properties[key] = self._handle(value)
             schema['patternProperties'] = handled_pattern_properties
 
+        if (property_names := schema.get('propertyNames')) is not None and self._walks_keyword_subschema(
+            property_names
+        ):
+            schema['propertyNames'] = self._handle(property_names)
+
         return schema
 
     def _handle_array(self, schema: JsonSchema) -> JsonSchema:
@@ -249,7 +256,18 @@ class JsonSchemaTransformer(ABC):
         elif items:
             schema['items'] = self._handle(items)
 
+        if (contains := schema.get('contains')) is not None and self._walks_keyword_subschema(contains):
+            schema['contains'] = self._handle(contains)
+
         return schema
+
+    def _walks_keyword_subschema(self, subschema: _JsonSchemaNode) -> bool:
+        """Whether to walk a `propertyNames` or `contains` subschema.
+
+        Inlining drops `$defs`, so a `$ref` left under either would point at nothing. A subschema without one
+        is left as written, so `transform()` doesn't rewrite a schema that was already valid.
+        """
+        return self.prefer_inlined_defs and contains_ref(subschema)
 
     def _handle_union(self, schema: JsonSchema, union_kind: Literal['allOf', 'anyOf', 'oneOf']) -> JsonSchema:
         try:
@@ -313,17 +331,45 @@ class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True)
 
-    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
-        schema = super()._handle_object(schema)
-        if (property_names := schema.get('propertyNames')) is not None:
-            schema['propertyNames'] = self._handle(property_names)
-        return schema
-
-    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
-        schema = super()._handle_array(schema)
-        if (contains := schema.get('contains')) is not None:
-            schema['contains'] = self._handle(contains)
-        return schema
+    def _walks_keyword_subschema(self, subschema: _JsonSchemaNode) -> bool:
+        # Unlike the base class, walk one without a `$ref` too: `transform()` is the identity here, so the walk
+        # only collapses single-member unions.
+        return True
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         return schema
+
+
+DEFINITION_KEYS = ('$defs', 'definitions')
+"""The keys a schema keeps its definitions under: `$defs`, and draft-07 `definitions`."""
+
+
+def split_definitions(schema: JsonSchema) -> tuple[JsonSchema, list[object]]:
+    """A schema without its definitions, and the definitions under `DEFINITION_KEYS`."""
+    root = {key: value for key, value in schema.items() if key not in DEFINITION_KEYS}
+    definitions: list[object] = []
+    for key in DEFINITION_KEYS:
+        group = schema.get(key)
+        if isinstance(group, dict):
+            definitions.extend(cast(dict[str, object], group).values())
+    return root, definitions
+
+
+def inline_objects(schema: object, depth: int = 1) -> Iterator[tuple[JsonSchema, int]]:
+    """Each object with `properties` reached from `schema` through properties, array items and `anyOf`, and its depth.
+
+    The depth is the number of such objects along the path, the object included. `$ref`s aren't followed and
+    definitions aren't entered: providers that limit strict schemas were observed to count this way.
+    """
+    if not isinstance(schema, dict):
+        return
+    node = cast(JsonSchema, schema)
+    properties = node.get('properties')
+    children: list[object] = [node.get('items'), *node.get('anyOf', [])]
+    child_depth = depth
+    if isinstance(properties, dict):
+        yield node, depth
+        children.extend(cast(dict[str, object], properties).values())
+        child_depth = depth + 1
+    for child in children:
+        yield from inline_objects(child, child_depth)

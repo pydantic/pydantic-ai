@@ -311,11 +311,13 @@ COMBINE_POLICY: dict[str, Policy] = {
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
     '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
+    '_SetToolStrict': Anonymous('Coder-local strict default; it only fills a `strict` still unset, so the first wins'),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'DockerSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DaytonaSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'BoxdSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SmolSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'BoxLiteSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'BubblewrapSandbox': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
@@ -355,6 +357,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnNearLimits': Anonymous('a passive observer; several thresholds compose'),
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
+    'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '

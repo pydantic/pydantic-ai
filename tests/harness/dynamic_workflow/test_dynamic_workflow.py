@@ -941,6 +941,77 @@ async def test_sub_agent_usage_limits_generous_allows_run() -> None:
     assert out == 'done'
 
 
+async def test_sub_agents_run_under_parent_usage_limits() -> None:
+    # Without `sub_agent_usage_limits`, a sub-agent sharing the parent's usage must be bounded by
+    # the parent run's `usage_limits`, not pydantic-ai's default `request_limit` of 50.
+    sub_requests = 60
+
+    def researcher_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if sum(isinstance(m, ModelResponse) for m in messages) < sub_requests - 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='step', args={})])
+        return ModelResponse(parts=[TextPart('researched')])
+
+    researcher: Agent[object, str] = Agent(FunctionModel(researcher_fn), name='researcher')
+
+    @researcher.tool_plain
+    def step() -> str:
+        return 'next'
+
+    def parent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if returns := _workflow_returns(messages):
+            return ModelResponse(parts=[TextPart(str(returns[0].content))])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='run_workflow', args={'code': "await researcher(task='dig')"})]
+        )
+
+    agent: Agent[object, str] = Agent(
+        FunctionModel(parent_fn), capabilities=[DynamicWorkflow[object](agents=[researcher])]
+    )
+    result = await agent.run('research', usage_limits=UsageLimits(request_limit=10_000))
+    assert result.output == 'researched'
+    assert result.usage.requests == sub_requests + 2
+
+
+async def test_sub_agents_hit_parent_usage_limits() -> None:
+    # The parent's limit is checked against the shared counter, so it bounds the whole tree.
+    researcher: Agent[object, str] = Agent(TestModel(), name='researcher')
+
+    @researcher.tool_plain
+    def step() -> str:
+        return 'next'
+
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=researcher)])
+    ctx = _ctx()
+    ctx.usage_limits = UsageLimits(request_limit=2)
+    ctx.usage.requests = 1
+    with pytest.raises(ModelRetry, match='The next request would exceed the request_limit of 2'):
+        await _run_script(ts, "await researcher(task='x')", ctx)
+
+
+async def test_sub_agent_usage_limits_replace_parent_usage_limits() -> None:
+    # An explicit `sub_agent_usage_limits` replaces the parent's limits rather than intersecting them:
+    # a shared counter that already spent the parent's limit doesn't trip a sub-agent under its own cap.
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], sub_agent_usage_limits=UsageLimits(request_limit=10_000))
+    ctx = _ctx()
+    ctx.usage_limits = UsageLimits(request_limit=2)
+    ctx.usage.requests = 2
+    assert await _run_script(ts, "await sub(task='x')", ctx) == 'ok'
+
+
+async def test_isolated_sub_agents_ignore_parent_usage_limits() -> None:
+    # With `forward_usage=False` each sub-agent counts on its own, so the parent's limits don't apply.
+    researcher: Agent[object, str] = Agent(TestModel(custom_output_text='done'), name='researcher')
+
+    @researcher.tool_plain
+    def step() -> str:
+        return 'next'
+
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=researcher)], forward_usage=False)
+    ctx = _ctx()
+    ctx.usage_limits = UsageLimits(request_limit=1)
+    assert await _run_script(ts, "await researcher(task='x')", ctx) == 'done'
+
+
 # --- Errors / output shapes ------------------------------------------------
 
 

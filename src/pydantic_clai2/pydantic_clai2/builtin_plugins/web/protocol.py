@@ -881,6 +881,7 @@ class Project:
 
     key: str
     name: str
+    """Its folder's name, or the shortest end of its path no other listed project of that name shares."""
     current: bool
     worktrees: list[Worktree]
 

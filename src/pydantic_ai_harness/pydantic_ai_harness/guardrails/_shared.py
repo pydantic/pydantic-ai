@@ -10,17 +10,16 @@ from __future__ import annotations
 
 import functools
 import inspect
-import re
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from types import UnionType
-from typing import Annotated, Any, ForwardRef, Literal, Union, assert_never, get_args, get_origin
+from typing import Literal, assert_never
 
 from typing_extensions import TypeIs
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 
@@ -175,7 +174,7 @@ def takes_ctx(func: Callable[..., object]) -> bool:
     introspected is treated as taking the value only.
     """
     try:
-        parameters = inspect.signature(func).parameters.values()
+        parameters = tuple(inspect.signature(func).parameters.values())
     except ValueError:  # pragma: no cover - callable without an introspectable signature
         return False
     positional = [
@@ -186,14 +185,8 @@ def takes_ctx(func: Callable[..., object]) -> bool:
     if len(positional) < 2:
         has_args = any(parameter.kind is inspect.Parameter.VAR_POSITIONAL for parameter in parameters)
         return has_args and len(parameters) > 1
-    if positional[1].default is inspect.Parameter.empty:
-        return True
-    annotation = _resolve(func, positional[0].annotation)
-    while get_origin(annotation) is Annotated:
-        annotation = get_args(annotation)[0]
-    either = annotation is inspect.Parameter.empty or annotation is Any or annotation is object
-    unresolved = isinstance(annotation, str) or _has_forward_ref(annotation)
-    if either or (unresolved and not _is_run_context(annotation)):
+    decision = takes_context(func, parameters=parameters)
+    if decision is None:
         warnings.warn(
             f'Guard {_guard_name(func)} has a second positional parameter with a default and a first parameter '
             'that is unannotated, `Any`, `object` or unresolvable, so it is passed the RunContext first, as before. '
@@ -203,56 +196,7 @@ def takes_ctx(func: Callable[..., object]) -> bool:
             stacklevel=2,
         )
         return True
-    return _is_run_context(annotation)
-
-
-def _resolve(func: Callable[..., object], annotation: object) -> object:
-    """A string annotation (under `from __future__ import annotations`) evaluated in `func`'s module.
-
-    Only this one annotation is evaluated, so a type elsewhere in the signature that is imported only
-    for type checking does not stop it resolving. When it cannot be evaluated itself, the string is
-    kept rather than turning a working guard into an error.
-    """
-    if not isinstance(annotation, str):
-        return annotation
-    target = inspect.unwrap(func.func if isinstance(func, functools.partial) else func)
-    # A callable instance's annotations come from its class's `__call__`.
-    namespace = getattr(target, '__globals__', None) or getattr(type(target).__call__, '__globals__', {})
-    try:
-        return eval(annotation, namespace)  # same as `typing.get_type_hints`
-    except Exception:
-        return annotation
-
-
-def _is_run_context(annotation: object) -> bool:
-    """Whether a type annotation is `RunContext`, a subscripted `RunContext`, or one in a union or `Annotated`.
-
-    A string annotation that could not be resolved is matched by name.
-    """
-    if isinstance(annotation, str):
-        return _names_run_context(annotation)
-    if isinstance(annotation, ForwardRef):
-        return _names_run_context(annotation.__forward_arg__)
-    if annotation is RunContext:
-        return True
-    origin = get_origin(annotation)
-    if origin is RunContext:
-        return True
-    if origin is Annotated:
-        return _is_run_context(get_args(annotation)[0])
-    if origin is Union or origin is UnionType:
-        return any(_is_run_context(arg) for arg in get_args(annotation) if arg is not type(None))
-    return False
-
-
-def _has_forward_ref(annotation: object) -> bool:
-    """Whether a type annotation holds a quoted name that was never resolved, as in `Optional['Deps']`."""
-    return isinstance(annotation, ForwardRef) or any(_has_forward_ref(arg) for arg in get_args(annotation))
-
-
-def _names_run_context(annotation: str) -> bool:
-    """Whether a string annotation names `RunContext`, qualified or not, as in `'RunContext[D] | None'`."""
-    return re.search(r'(?<!\w)RunContext\b', annotation) is not None
+    return decision
 
 
 async def evaluate(

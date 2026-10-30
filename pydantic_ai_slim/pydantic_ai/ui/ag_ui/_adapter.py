@@ -74,9 +74,13 @@ from .._adapter import (
     compaction_payload,
     model_settings_delta_from_payload,
     model_settings_delta_payload,
+    part_canonical_system,
+    pending_tool_calls,
+    restore_canonical_system,
     structured_content_from_payload,
     structured_content_payload,
     tool_availability_delta_from_payload,
+    warn_dropped_tool_results,
 )
 from .._utils import MCP_APPS_UI_TYPE, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
 
@@ -432,6 +436,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        manage_message_history: Literal['client', 'server'] = 'client',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -446,6 +451,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             ag_ui_version=ag_ui_version,
             preserve_file_data=preserve_file_data,
             manage_system_prompt=manage_system_prompt,
+            manage_message_history=manage_message_history,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -458,6 +464,35 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the AG-UI run input."""
         return self.load_messages(self.run_input.messages, preserve_file_data=self.preserve_file_data)
+
+    def _server_held_client_messages(self, message_history: Sequence[ModelMessage]) -> list[ModelMessage]:
+        """Load a tool result the client sends without its call against the call `message_history` is waiting on.
+
+        A `ToolMessage` carries no tool name, so it only loads after the `AssistantMessage` that made the
+        call, which a client sending only its new messages leaves out. The stored history's pending call
+        stands in for it, so nothing the client sends decides which call it answers. A result for a call
+        that isn't pending is dropped with a warning, as `manage_message_history='server'` drops it anyway.
+        """
+        messages = self.run_input.messages
+        called = {call.id for m in messages if isinstance(m, AssistantMessage) for call in m.tool_calls or ()}
+        orphaned = {m.tool_call_id for m in messages if isinstance(m, ToolMessage) and m.tool_call_id not in called}
+        if not orphaned:
+            return self.messages
+        pending = [call for call in pending_tool_calls(message_history) if call.tool_call_id in orphaned]
+        if dropped := len(orphaned) - len(pending):
+            warn_dropped_tool_results(dropped, stacklevel=5)
+        answered = {call.tool_call_id for call in pending}
+        dropped_ids = orphaned - answered
+        kept = [m for m in messages if not isinstance(m, ToolMessage) or m.tool_call_id not in dropped_ids]
+        if pending:
+            calls = [
+                ToolCall(
+                    id=call.tool_call_id, function=FunctionCall(name=call.tool_name, arguments=call.args_as_json_str())
+                )
+                for call in pending
+            ]
+            kept = [AssistantMessage(id='pydantic_ai-pending-tool-calls', tool_calls=calls), *kept]
+        return self.load_messages(kept, preserve_file_data=self.preserve_file_data)
 
     @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:
@@ -705,6 +740,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             provider_details=metadata.get('provider_details'),
                         )
                     )
+                    restore_canonical_system(builder, metadata.get('provider_name'), metadata.get('canonical_system'))
 
                 case ActivityMessage() as activity_msg:
                     if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
@@ -715,6 +751,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
                         if (compaction_part := compaction_part_from_payload(activity_msg.content)) is not None:
                             builder.add(compaction_part)
+                            restore_canonical_system(
+                                builder, compaction_part.provider_name, activity_msg.content.get('canonical_system')
+                            )
                     elif activity_msg.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE:
                         # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
                         # They carry their own message ids, so the activity's id isn't kept on them.
@@ -746,6 +785,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 provider_name=activity_content.get('provider_name'),
                                 provider_details=activity_content.get('provider_details'),
                             )
+                        )
+                        restore_canonical_system(
+                            builder, activity_content.get('provider_name'), activity_content.get('canonical_system')
                         )
                     elif activity_msg.activity_type == UPLOADED_FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
@@ -1059,7 +1101,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     from ag_ui.core import ReasoningMessage
 
                     flush()
-                    encrypted = thinking_encrypted_metadata(part)
+                    encrypted = thinking_encrypted_metadata(
+                        part, canonical_system=part_canonical_system(msg, part.provider_name)
+                    )
                     result.append(
                         ReasoningMessage(
                             id=_new_message_id(),
@@ -1118,6 +1162,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         file_content['provider_name'] = part.provider_name
                     if part.provider_details is not None:
                         file_content['provider_details'] = part.provider_details
+                    if (canonical_system := part_canonical_system(msg, part.provider_name)) is not None:
+                        file_content['canonical_system'] = canonical_system
                     if part.content.vendor_metadata is not None:
                         file_content['vendor_metadata'] = part.content.vendor_metadata
                     result.append(
@@ -1133,7 +1179,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ActivityMessage(
                         id=_new_message_id(),
                         activity_type=COMPACTION_ACTIVITY_TYPE,
-                        content=compaction_payload(part),
+                        content=compaction_payload(
+                            part, canonical_system=part_canonical_system(msg, part.provider_name)
+                        ),
                     )
                 )
             elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -1161,6 +1209,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           metadata must not be restored as server-side state. The one thing `load_messages` keeps in
           the reserved `__pydantic_ai__` namespace is the AG-UI message id, which comes back on the
           last message dumped from each `ModelMessage`.
+        - A response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] comes back,
+          with its `provider_name`, only from a part that carries the response's `provider_name`: a
+          `ThinkingPart`, a `CompactionPart`, or a `FilePart` with `preserve_file_data=True`. Its other
+          provider fields, such as `provider_url`, are lost.
         - `TextPart.id`, `.provider_name`, `.provider_details`, `.citations` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are
