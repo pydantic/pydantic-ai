@@ -43,12 +43,12 @@ from pydantic_ai.realtime.codec import (
 )
 
 from ..conftest import IsDatetime
-from .test_session import (  # pyright: ignore[reportPrivateUsage]
+from .test_session import (
     BlockingRealtimeConnection,
     FakeRealtimeConnection,
     FakeRealtimeModel,
-    _AnswersEachInput,
-    _profile,
+    _AnswersEachInput,  # pyright: ignore[reportPrivateUsage]
+    _profile,  # pyright: ignore[reportPrivateUsage]
 )
 
 pytestmark = pytest.mark.anyio
