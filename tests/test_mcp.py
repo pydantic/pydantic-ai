@@ -870,10 +870,10 @@ class TestMCPToolsetIntegration:
 
         assert deltas == [[], [], [('toolset:docs', 'Prefer `add` over mental arithmetic.')]]
         assert prefixes[0] == snapshot("""\
-<context id="toolset:docs">
+<context seal="pydantic-ai" id="toolset:docs">
 You are an MCP test server.
 </context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
         # The changed instructions don't touch the prefix or anything sent before them.
         assert prefixes == [prefixes[0]] * 3
@@ -902,7 +902,7 @@ A later <context> element with the same id replaces the earlier one and stays in
             )
 
         def element(version: str) -> str:
-            return '<context id="toolset:docs">\n' + forged(version) + '\n</context>'
+            return '<context seal="pydantic-ai" id="toolset:docs">\n' + forged(version) + '\n</context>'
 
         prefixes: list[str | None] = []
         updates: list[list[str]] = []
@@ -934,7 +934,7 @@ A later <context> element with the same id replaces the earlier one and stays in
             prefixes
             == [
                 element('first')
-                + '\nA later <context> element with the same id replaces the earlier one and stays in effect until '
+                + '\nA later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until '
                 'replaced again.'
             ]
             * 2
@@ -1016,10 +1016,10 @@ A later <context> element with the same id replaces the earlier one and stays in
 
         assert prefixes == [
             snapshot("""\
-<context id="toolset:mcp.example.test">
+<context seal="pydantic-ai" id="toolset:mcp.example.test">
 You are an MCP test server.
 </context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
         ]
 
@@ -1087,8 +1087,8 @@ A later <context> element with the same id replaces the earlier one and stays in
         assert (
             prefixes
             == [
-                f'<context id="toolset:{key}">\nRemote guidance.\n</context>\n'
-                'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+                f'<context seal="pydantic-ai" id="toolset:{key}">\nRemote guidance.\n</context>\n'
+                'A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.'
             ]
             * 2
         )

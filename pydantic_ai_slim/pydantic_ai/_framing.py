@@ -324,12 +324,41 @@ def lookalike_frame_note(source: LookalikeSource, *, preceding: bool) -> str:
     )
 
 
-_LOOKALIKE_FRAME: Final = re.compile(
-    # A `<system` opener in any case or spacing, also cut off at the end of the text, or any opening tag that
-    # carries a `seal` attribute. One `[^<>]*` run per `<` keeps the scan linear.
-    r'<\s*(?:system(?=[\s/>]|$)|[a-z][\w.:-]*\s(?:[^<>]*\s)?seal\s*=)',
-    re.IGNORECASE,
-)
+_system_voice_tags: tuple[str, ...] = (SYSTEM_TAG, CONTEXT_TAG, CONTEXT_DIFF_TAG)
+"""The tags whose content speaks in system voice: core's own, and any added with `add_system_voice_tag`."""
+
+
+def _lookalike_pattern(tags: tuple[str, ...]) -> re.Pattern[str]:
+    # An opener of a system-voice tag in any case or spacing, also cut off at the end of the text, or any opening
+    # tag that carries a `seal` attribute. One `[^<>]*` run per `<` keeps the scan linear.
+    names = '|'.join(re.escape(tag) for tag in sorted(tags, key=len, reverse=True))
+    return re.compile(rf'<\s*(?:(?:{names})(?=[\s/>]|$)|[a-z][\w.:-]*\s(?:[^<>]*\s)?seal\s*=)', re.IGNORECASE)
+
+
+_lookalike_frame: re.Pattern[str] = _lookalike_pattern(_system_voice_tags)
+
+
+def add_system_voice_tag(name: str) -> None:
+    """Have text that opens the tag `name` count as a lookalike frame, as a `<system>` opener does.
+
+    The single source of the tags the lookalike check looks for: core's `system`, `context` and `context_diff`,
+    plus the tag of any instruction or system-voice capability part that declares its own. Adding a tag twice is a
+    no-op. Private: capability parts are the supported way to declare one.
+
+    Raises:
+        UserError: If `name` isn't lowercase letters with single underscores between words.
+    """
+    global _system_voice_tags, _lookalike_frame
+
+    if not _TAG_NAME.fullmatch(name):
+        raise UserError(f'System-voice tag names must match {_TAG_NAME.pattern!r}, got {name!r}.')
+    with _registration_lock:
+        if name in _system_voice_tags:
+            return
+        tags = (*_system_voice_tags, name)
+        _lookalike_frame = _lookalike_pattern(tags)
+        _system_voice_tags = tags
+
 
 _ENTITY_OPENER: Final = re.compile(r'&(?:lt|#0*60|#x0*3c);', re.IGNORECASE)
 """An HTML-entity-encoded `<`, which a model may read as one."""
@@ -338,7 +367,7 @@ _ENTITY_CLOSER: Final = re.compile(r'&(?:gt|#0*62|#x0*3e);', re.IGNORECASE)
 
 _CONFUSABLES: Final = str.maketrans(
     {
-        # Cyrillic and Greek letters that look like the Latin letters of `system` and `seal`.
+        # Cyrillic and Greek letters that look like the Latin letters of `system`, `context`, `context_diff` and `seal`.
         'а': 'a', 'А': 'A', 'α': 'a', 'Α': 'A',
         'е': 'e', 'Е': 'E', 'ε': 'e', 'Ε': 'E',
         'ѕ': 's', 'Ѕ': 'S',
@@ -346,6 +375,10 @@ _CONFUSABLES: Final = str.maketrans(
         'т': 't', 'Т': 'T', 'τ': 't', 'Τ': 'T',
         'м': 'm', 'М': 'M', 'Μ': 'M',
         'ӏ': 'l', 'Ӏ': 'l', 'ι': 'l', 'Ι': 'l',
+        'с': 'c', 'С': 'C', 'ϲ': 'c', 'Ϲ': 'C',
+        'о': 'o', 'О': 'O', 'ο': 'o', 'Ο': 'O',
+        'х': 'x', 'Х': 'X', 'Χ': 'X',
+        'Ν': 'N', 'і': 'i', 'І': 'I', 'ԁ': 'd',
     }
 )  # fmt: skip
 
@@ -355,16 +388,18 @@ def _comparable(text: str) -> str:
 
     Entity-encoded `<`s and `>`s are decoded, compatibility forms folded (NFKC, which also turns a full-width `<` into `<`),
     invisible format characters (Unicode category `Cf`, such as a zero-width space or joiner) dropped, and Cyrillic
-    and Greek look-alikes of the letters in `system` and `seal` folded to Latin.
+    and Greek look-alikes of the letters in the system-voice tags and `seal` folded to Latin.
     """
     text = unicodedata.normalize('NFKC', _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text)))
     return ''.join(char for char in text if unicodedata.category(char) != 'Cf').translate(_CONFUSABLES)
 
 
 def resembles_frame(text: str) -> bool:
-    """Whether `text` contains something a model could read as a framework frame: a `<system` opener, or a tag with a `seal`.
+    """Whether `text` contains something a model could read as a framework frame: a system-voice opener or a `seal`ed tag.
+
+    The system-voice tags are `<system`, `<context` and `<context_diff`, plus any added with `add_system_voice_tag`.
 
     Matched on the text as a model reads it (see `_comparable`), so a zero-width character, a look-alike letter or
     an entity-encoded `<` doesn't hide one. The text itself is never changed.
     """
-    return _LOOKALIKE_FRAME.search(_comparable(text)) is not None
+    return _lookalike_frame.search(_comparable(text)) is not None

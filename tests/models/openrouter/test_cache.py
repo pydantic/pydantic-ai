@@ -1385,10 +1385,10 @@ async def test_openrouter_cache_instructions_add_a_point_after_appending_blocks(
         [
             'Static instructions.',
             """\
-<context id="agent:catalog">
+<context seal="pydantic-ai" id="agent:catalog">
 Catalog.
 </context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
         ]
     )

@@ -64,7 +64,7 @@ class _Run:
     loaded: str | None = None
 
 
-_STATEMENT = re.compile(r'<context id="capability:[^"]*">\n(.*)\n</context>', re.DOTALL)
+_STATEMENT = re.compile(r'<context seal="pydantic-ai" id="capability:[^"]*">\n(.*)\n</context>', re.DOTALL)
 
 
 def _model(run: _Run, load: str | None) -> FunctionModel:
@@ -103,10 +103,10 @@ def _loaded(library: Path, name: str, body: str = 'Follow these directions.') ->
 def _catalog(*entries: str) -> str:
     """The deferred capability catalog as `FunctionModel` receives it: tagged, since its changes are appended."""
     return (
-        '<context id="capability:deferred_capabilities">\n'
+        '<context seal="pydantic-ai" id="capability:deferred_capabilities">\n'
         'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
         "A capability's tools stay hidden until it is loaded:\n" + '\n'.join(entries) + '\n</context>\n'
-        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+        'A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.'
     )
 
 

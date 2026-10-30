@@ -3189,10 +3189,10 @@ def _withdrawal_text(*, inline_system: bool) -> str:
 def _context_element(instruction_id: InstructionId | str | None, content: str) -> str:
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
 
-    The text is the operator's and goes in as written. The element speaks in system voice (a native system
-    message, or inside a `<system seal="...">` block), so it carries no seal of its own.
+    The text is the operator's and goes in as written. The element speaks in system voice, like `<system>`, so it
+    carries the frame seal wherever it goes: a lookalike `<context>` in user or tool text gets a note instead.
     """
-    return frame(CONTEXT_TAG, f'\n{content}\n', sealed=False, id=_id_attribute(instruction_id))
+    return frame(CONTEXT_TAG, f'\n{content}\n', sealed=True, id=_id_attribute(instruction_id))
 
 
 def _id_attribute(instruction_id: InstructionId | str | None) -> str | None:
@@ -3205,11 +3205,12 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
     diff = '\n'.join(
         difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
     )
-    return frame(CONTEXT_DIFF_TAG, f'\n{diff}\n', sealed=False, id=_id_attribute(instruction_id))
+    return frame(CONTEXT_DIFF_TAG, f'\n{diff}\n', sealed=True, id=_id_attribute(instruction_id))
 
 
 _SUPERSESSION_SENTENCE = (
-    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+    f'A later {frame_tags(CONTEXT_TAG, sealed=True)[0]} element with the same id replaces the earlier one and stays '
+    'in effect until replaced again.'
 )
 
 

@@ -1,18 +1,18 @@
 --- expected
 +++ actual
 @@ -118 +118 @@
--   "text": "<context id=\"capability:progress:state\">\nThe user has asked 1 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
-+   "text": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
-@@ -189,4 +188,0 @@
+-   "text": "<context seal=\"pydantic-ai\" id=\"capability:progress:state\">\nThe user has asked 1 question(s) so far.\n</context>\nA later <context seal=\"pydantic-ai\"> element with the same id replaces the earlier one and stays in effect until replaced again."
++   "text": "<context seal=\"pydantic-ai\" id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context seal=\"pydantic-ai\"> element with the same id replaces the earlier one and stays in effect until replaced again."
+@@ -193,4 +192,0 @@
 -    },
 -    {
--     "text": "<system seal=\"pydantic-ai\"><context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context></system>",
+-     "text": "<system seal=\"pydantic-ai\"><context seal=\"pydantic-ai\" id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context></system>",
 -     "type": "text"
-@@ -213 +209 @@
--   "text": "<context id=\"capability:progress:state\">\nThe user has asked 1 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
-+   "text": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
-@@ -284,4 +279,0 @@
+@@ -217 +213 @@
+-   "text": "<context seal=\"pydantic-ai\" id=\"capability:progress:state\">\nThe user has asked 1 question(s) so far.\n</context>\nA later <context seal=\"pydantic-ai\"> element with the same id replaces the earlier one and stays in effect until replaced again."
++   "text": "<context seal=\"pydantic-ai\" id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context seal=\"pydantic-ai\"> element with the same id replaces the earlier one and stays in effect until replaced again."
+@@ -292,4 +287,0 @@
 -    },
 -    {
--     "text": "<system seal=\"pydantic-ai\"><context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context></system>",
+-     "text": "<system seal=\"pydantic-ai\"><context seal=\"pydantic-ai\" id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context></system>",
 -     "type": "text"
