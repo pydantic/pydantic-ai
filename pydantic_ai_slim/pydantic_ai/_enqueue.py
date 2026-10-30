@@ -11,10 +11,14 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
 
-from ._utils import fill_run_metadata
+import pydantic
+from typing_extensions import TypedDict
+
+from ._utils import fill_run_metadata, is_str_dict
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
+    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     CompactionPart,
     EnqueuedMessagesEvent,
     InstructionBaselinePart,
@@ -167,6 +171,10 @@ class PendingMessage:
     content an earlier call enqueues late (say, from a task it started) mustn't go next to the later return.
     """
 
+    _announced: bool = field(default=False, repr=False, compare=False)
+    """Whether the [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] for this content was already
+    emitted: content carried over from a paused run (see `carry_over`) had it emitted when that run paused."""
+
     @classmethod
     def from_content(
         cls,
@@ -233,14 +241,9 @@ class PendingMessageQueue(list[PendingMessage]):
                 self._closed = True
             return asap, when_idle
 
-    def drain_at_pause(self) -> list[PendingMessage] | None:
-        """Drain and close the queue for a deferred-tool pause, or leave it untouched if it holds a `ModelResponse`.
-
-        A recorded response would read as the paused one when the run resumes.
-        """
+    def drain_at_pause(self) -> list[PendingMessage]:
+        """Drain and close the queue for a run that pauses, in delivery order."""
         with self._lock:
-            if any(isinstance(message, ModelResponse) for pending in self for message in pending.messages):
-                return None
             drained = [*self._pop_priority('asap'), *self._pop_priority('when_idle')]
             self._closed = True
             return drained
@@ -282,6 +285,75 @@ def stamped_messages(
     return messages
 
 
+_CARRIED_OVER_KEY = 'pending_messages'
+"""Key in the reserved `__pydantic_ai__` metadata namespace of a paused run's last message holding the content that
+was still queued when the run paused."""
+
+
+class _CarriedOver(TypedDict):
+    """One `PendingMessage` carried over from a paused run, as stored under `_CARRIED_OVER_KEY`."""
+
+    enqueue_id: str
+    priority: PendingMessagePriority
+    messages: list[ModelMessage]
+
+
+_carried_over_adapter = pydantic.TypeAdapter(
+    list[_CarriedOver],
+    config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64'),
+)
+
+
+def carry_over(message: ModelMessage, pending: Sequence[PendingMessage]) -> ModelMessage:
+    """A copy of `message`, the last message of a run that pauses, holding `pending` for the next run to deliver.
+
+    The history keeps ending in the message a resumed run acts on, and the content survives a JSON round trip of it.
+    It lives in the reserved metadata namespace, which UI adapters strip from client-supplied messages.
+    """
+    metadata = dict(message.metadata or {})
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    namespace = dict(namespace) if is_str_dict(namespace) else {}
+    carried = [
+        _CarriedOver(enqueue_id=item.enqueue_id, priority=item.priority, messages=item.messages) for item in pending
+    ]
+    namespace[_CARRIED_OVER_KEY] = [
+        *namespace.get(_CARRIED_OVER_KEY, ()),
+        *_carried_over_adapter.dump_python(carried, mode='json'),
+    ]
+    metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
+    return replace(message, metadata=metadata)
+
+
+def take_carried_over(history: Sequence[ModelMessage]) -> tuple[list[ModelMessage], list[PendingMessage]]:
+    """Split the content a paused run carried over (see `carry_over`) off the end of `history`.
+
+    Returns the history with its last message replaced by a copy without that content, and the content to queue
+    on the run resuming from it. Only the last message is read: content on an earlier one belongs to a pause the
+    conversation has already moved past, so it stays where it is rather than being delivered out of place.
+    """
+    messages = list(history)
+    last = messages[-1] if messages else None
+    namespace = (last.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY) if last is not None else None
+    if last is None or not is_str_dict(namespace) or _CARRIED_OVER_KEY not in namespace:
+        return messages, []
+    carried = _carried_over_adapter.validate_python(namespace[_CARRIED_OVER_KEY])
+    namespace = {key: value for key, value in namespace.items() if key != _CARRIED_OVER_KEY}
+    metadata = {key: value for key, value in (last.metadata or {}).items() if key != _PYDANTIC_AI_METADATA_KEY}
+    if namespace:
+        metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
+    messages[-1] = replace(last, metadata=metadata or None)
+    pending = [
+        PendingMessage(
+            messages=item['messages'],
+            priority=item['priority'],
+            enqueue_id=item['enqueue_id'],
+            _announced=True,
+        )
+        for item in carried
+    ]
+    return messages, pending
+
+
 def run_queue(ctx: RunContext[Any]) -> PendingMessageQueue:
     """The run's pending-message queue.
 
@@ -314,9 +386,15 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
 
     One [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] is emitted per drained
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in the order the content lands in history,
-    describing it exactly as delivered. A UI adapter streams them in that order and its client loads them
+    describing it exactly as delivered, except for content carried over from a paused run, whose event was
+    emitted when that run paused. A UI adapter streams them in that order and its client loads them
     back in that order, so the client's history renders like the server's.
     """
+    # Resuming a suspended response re-sends the history ending in it, so there's nowhere to put new content: it
+    # waits for the next request.
+    last = request_context.messages[-1] if request_context.messages else None
+    if isinstance(last, ModelResponse) and last.state == 'suspended':
+        return request_context
     drained = run_queue(ctx).pop_priority('asap')
     if not drained:
         return request_context
@@ -383,6 +461,8 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
         request_context.messages = [*request_context.messages, *messages]
         ctx.messages.extend(messages)
         events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=tuple(messages)))
+    announced = {pending.enqueue_id for pending in drained if pending._announced}  # pyright: ignore[reportPrivateUsage]
     for event in events:
-        ctx._emit_event(event)  # pyright: ignore[reportPrivateUsage]
+        if event.enqueue_id not in announced:
+            ctx._emit_event(event)  # pyright: ignore[reportPrivateUsage]
     return request_context

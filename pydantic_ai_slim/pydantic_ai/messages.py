@@ -6660,6 +6660,10 @@ class EnqueuedMessagesEvent:
     `messages` then holds a request of its own with the delivered parts, a view of what was delivered rather
     than a message in history, and `parts` holds those parts as they sit in history. Events are emitted in
     the order their content lands in history.
+
+    Content still queued when a run pauses is announced at the pause, where it's committed to the history for the
+    resumed run to deliver. No node stream follows the pause, so capability `on_event` listeners receive it right
+    away, but event stream handlers don't. Its delivery in the resumed run emits no event.
     """
 
     enqueue_id: str

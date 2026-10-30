@@ -510,7 +510,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         _utils.raise_if_cancelling()
         pre_hook_result = result
         result = await cap.after_node_run(run_context, node=node, result=result)
-        result = drain_pending_messages_at_end(run_context, result)
+        result = await drain_pending_messages_at_end(run_context, result)
 
         # If a capability hook or the pending-message drain changed the result, sync the graph
         # runner state so agent_run.result correctly reflects whether the run is finished.
@@ -572,7 +572,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = await lifecycle(node)
         # After every capability hook, `wrap_node_run` included, so a message a hook enqueued while
         # the run was ending still gets its turn instead of being lost.
-        result = drain_pending_messages_at_end(run_context, result)
+        result = await drain_pending_messages_at_end(run_context, result)
         if not self._graph_reflects(result):
             self._sync_graph_state(result)
         return result
@@ -758,13 +758,15 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end).
+                    or a redirect if the agent would otherwise end; a run that pauses leaves the
+                    content to the run resuming from its history instead).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the
             [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when it's
-            delivered, or `None` when there was nothing to enqueue (an empty call).
+            delivered, or when the run pauses with it still queued, or `None` when there was nothing
+            to enqueue (an empty call).
 
         Raises:
             UserError: If the run has ended, since there'd be nowhere to deliver the message.

@@ -113,6 +113,14 @@ async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentS
     """Dispatch an immediately dispatched capability event and mark it for stream deduplication."""
     if not isinstance(event, _messages.CapabilityEvent) or event.event_dispatch != 'immediate':
         return
+    await dispatch_event_now(ctx, event)
+
+
+async def dispatch_event_now(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
+    """Dispatch a buffered event to capability listeners now, and mark it so a stream yielding it later doesn't again.
+
+    For events listeners must see even when no node stream will drain the buffer, like those emitted as the run ends.
+    """
     # Mark before awaiting listeners: awaiting yields the event loop, and a concurrent stream
     # consumer (e.g. the `run_stream_events` reader task) could drain the buffered event in that
     # window and dispatch it a second time if it weren't already marked. Each marker carries a
@@ -1002,9 +1010,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end; at a deferred-tool pause the
-                    content is added to the history instead, unless every call in the paused step
-                    was deferred). From a `before_model_request`
+                    or a redirect if the agent would otherwise end; a run that pauses leaves the
+                    content to the run resuming from its history instead). From a `before_model_request`
                     hook, that's the request being prepared. In a realtime session, an active
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.
@@ -1016,7 +1023,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Returns:
             The `enqueue_id` of the queued message, echoed on the
             [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when it's
-            delivered, or `None` when there was nothing to enqueue (an empty call).
+            delivered, or when the run pauses with it still queued, or `None` when there was nothing
+            to enqueue (an empty call).
 
         Raises:
             UserError: If the run or realtime session has ended, or this `RunContext` isn't backed
