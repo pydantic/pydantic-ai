@@ -1244,8 +1244,11 @@ async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
         # From the keyboard, the button below makes a worktree of the row the arrow keys select.
         await page.keyboard.press('Escape')
         await dialog.get_by_role('listbox').focus()
-        while await rows[crossed].get_attribute('aria-selected') != 'true':
+        for _ in range(await dialog.get_by_role('option').count()):
+            if await rows[crossed].get_attribute('aria-selected') == 'true':
+                break
             await page.keyboard.press('ArrowDown')
+        await expect(rows[crossed]).to_have_attribute('aria-selected', 'true')
         await below.get_by_role('button', name=f'New worktree of {crossed} · main…').click()
         await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed} · main')).to_be_visible()
     finally:
