@@ -25,6 +25,7 @@ import asyncio
 import logging
 import posixpath
 import shlex
+import time
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -237,6 +238,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             again when attaching to it. When it runs out, E2B pauses the sandbox rather than
             killing it, and attaching resumes it. The default, 3600, is the most E2B's Hobby plan
             allows; Pro plans allow up to 86400.
+        idle_timeout: Seconds without use after which E2B pauses the sandbox. While the backend is in
+            use, including during a long command, it extends the sandbox's lifetime with E2B's
+            `set_timeout`, but never past `sandbox_timeout` from when the backend first used it.
+            `None` keeps the fixed `sandbox_timeout` lifetime.
         working_dir: Absolute directory commands start in and relative paths resolve against.
             E2B has no create-time working directory, so this is applied per command, including
             on an attached sandbox; `None` uses the sandbox's own default, discovered with
@@ -253,6 +258,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         template: str | None = None,
         allow_internet_access: bool = True,
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
+        idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
     ) -> None:
@@ -263,6 +269,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         check_env_types(env)
         if type(sandbox_timeout) is not int or sandbox_timeout < 1:
             raise ValueError(f'sandbox_timeout must be an integer of at least 1, got {sandbox_timeout!r}.')
+        if idle_timeout is not None and (type(idle_timeout) is not int or idle_timeout < 1):
+            raise ValueError(f'idle_timeout must be an integer of at least 1 or None, got {idle_timeout!r}.')
         self._ref = ref if sandbox is None else WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
         self._sandbox = sandbox
         self._user = 'user'
@@ -276,6 +284,11 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self._acquisition: asyncio.Task[e2b.AsyncSandbox] | None = None
         self._template = template
         self._sandbox_timeout = sandbox_timeout
+        self._idle_timeout = idle_timeout
+        # Monotonic times: when the sandbox pauses unless extended, and past which it is never extended.
+        # A sandbox passed in has an unknown lifetime, so its first operation extends it.
+        self._expires_at = 0.0
+        self._deadline = time.monotonic() + sandbox_timeout
         self._env = dict(env) if env is not None else None
         self._allow_internet_access = allow_internet_access
         self._probe_setsid = template is not None or sandbox is not None or ref is not None
@@ -312,7 +325,41 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         """`get_sandbox()` for the backend's own operations, which all make E2B requests."""
         # Also for a sandbox the caller passed in: `get_sandbox()` returns that one on Trio too.
         _require_asyncio()
-        return await self.get_sandbox()
+        sandbox = await self.get_sandbox()
+        await self._keep_alive(sandbox)
+        return sandbox
+
+    @property
+    def _initial_timeout(self) -> int:
+        """The lifetime requested on create and attach."""
+        if self._idle_timeout is None:
+            return self._sandbox_timeout
+        return min(self._idle_timeout, self._sandbox_timeout)
+
+    async def _keep_alive(self, sandbox: e2b.AsyncSandbox) -> None:
+        """Reset an `idle_timeout` once less than half of it is left, up to the `sandbox_timeout` deadline."""
+        if self._idle_timeout is None:
+            return
+        now = time.monotonic()
+        if self._expires_at - now > self._idle_timeout / 2:
+            return
+        timeout = min(self._idle_timeout, int(self._deadline - now))
+        if timeout < 1:
+            return
+        try:
+            await sandbox.set_timeout(timeout)
+        except Exception:
+            # The operation itself reports a sandbox that is gone; a failed extension is retried next time.
+            logger.warning('Could not extend the timeout of E2B sandbox %s', sandbox.sandbox_id, exc_info=True)
+            return
+        self._expires_at = now + timeout
+
+    async def _keep_alive_during(self, sandbox: e2b.AsyncSandbox) -> None:
+        """Keep extending an `idle_timeout` until cancelled, for a command that makes no other request."""
+        assert self._idle_timeout is not None
+        while True:
+            await self._keep_alive(sandbox)
+            await asyncio.sleep(self._idle_timeout / 2)
 
     async def _acquire_detached(self) -> e2b.AsyncSandbox:
         try:
@@ -333,6 +380,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 # Record the new sandbox before setup, so a failed mkdir still leaves
                 # a ref the caller can use to clean up the billed sandbox.
                 self._sandbox = sandbox
+                now = time.monotonic()
+                self._expires_at = now + self._initial_timeout
+                self._deadline = now + self._sandbox_timeout
                 self._ref = WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
                 self._working_dir_pending = ref is None and self._working_dir is not None
             if self._working_dir_pending:
@@ -500,7 +550,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 try:
                     return await e2b.AsyncSandbox.create(
                         template=self._template,
-                        timeout=self._sandbox_timeout,
+                        timeout=self._initial_timeout,
                         envs=dict(self._env) if self._env is not None else None,
                         allow_internet_access=self._allow_internet_access,
                         # Pause at the end of the lifetime instead of killing, so the files survive.
@@ -531,7 +581,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             try:
                 # Without `timeout`, a resumed sandbox gets E2B's 300 seconds; a running one keeps
                 # the longer of its current and the given lifetime.
-                return await e2b.AsyncSandbox.connect(sandbox_id, timeout=self._sandbox_timeout)
+                return await e2b.AsyncSandbox.connect(sandbox_id, timeout=self._initial_timeout)
             except e2b.SandboxException as error:
                 if type(error) is not e2b.SandboxException or not _is_lifetime_refusal(error):
                     raise
@@ -675,11 +725,18 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     on_stderr=count,
                 )
                 assert handle is not None
+                # An asyncio task rather than a task group, which would wrap the command's errors.
+                keep_alive = (
+                    asyncio.create_task(self._keep_alive_during(sandbox)) if self._idle_timeout is not None else None
+                )
                 try:
                     result = await handle.wait()
                 except e2b.CommandExitException as exited:
                     # A nonzero exit is a completed result; the SDK's exception carries it.
                     result = exited
+                finally:
+                    if keep_alive is not None:
+                        keep_alive.cancel()
             if output_bytes > _MAX_OUTPUT_BYTES:
                 # The SDK builds the handle before its pump delivers any output, so one exists here.
                 assert handle is not None

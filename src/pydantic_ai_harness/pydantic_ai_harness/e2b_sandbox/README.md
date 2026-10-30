@@ -39,6 +39,10 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 A sandbox lives for 1 hour (`sandbox_timeout=3600`, the most E2B's Hobby plan allows), then pauses; the next run resumes it. Pro plans allow up to `E2BSandbox(sandbox_timeout=86400)`. A lifetime over your plan's limit raises `WorkspaceUnavailableError`, with the limit in the message.
 
+To pause a sandbox only when it goes unused, pass `idle_timeout`: `E2BSandbox(idle_timeout=600)` pauses it after 10 minutes without use. While a run uses the sandbox, including during a long command, its lifetime is extended, up to `sandbox_timeout` from the run's first use.
+
+For runs longer than an hour, use a Pro plan and pass both, such as `E2BSandbox(sandbox_timeout=86400, idle_timeout=600)`: a busy run keeps the sandbox for up to 24 hours, and a finished one pauses it after 10 minutes instead of billing for the rest of the day.
+
 Commands start in the home directory, `/home/user`, which holds dotfiles and the pip cache. Pass a project directory, such as `E2BSandbox(working_dir='/home/user/project')`, so the project is not the home directory; it is created for you on a new sandbox.
 
 E2B's default template does not include ripgrep (`rg`). `Coder` can search without it, but installing `rg` makes searches faster. Build a reusable [template](https://e2b.dev/docs/template/quickstart) once, outside an agent run (building can take a minute):
@@ -222,6 +226,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 | `template` | E2B template name or ID for a new sandbox. Default: `None`, E2B's `base`. An unknown template fails on first use. |
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
 | `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
+| `idle_timeout` | Seconds without use before E2B pauses the sandbox. While a run uses it, its lifetime is extended, up to `sandbox_timeout`. Default: `None`, the fixed `sandbox_timeout` lifetime. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user` on the default template, where commands run as `user`); prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. The agent's commands can read these values, and a new sandbox keeps them for every process, so leave out secrets the agent should not see. |
 
