@@ -34,23 +34,24 @@ class ContextFile:
     """The file's text content."""
 
 
-def _walk_dirs(workspace_dir: Path, home_dir: Path | None) -> list[Path]:
-    """Directories to scan, ancestor-first (home first, workspace last).
+def directories_up_to(directory: Path, top: Path | None) -> list[Path]:
+    """`directory` and each of its ancestors up to `top` inclusive, ancestor-first.
 
-    Walk up from `workspace_dir` to `home_dir` inclusive. When `home_dir` is
-    `None`, or is not an ancestor of `workspace_dir`, only `workspace_dir` is
-    scanned. The workspace backend handles filesystem path behavior.
+    When `top` is `None`, or is not an ancestor of `directory`, only `directory` is
+    returned. The walk-up scans these with `top` as the home directory, and nested
+    traversal with `top` as the working directory. The workspace backend handles
+    filesystem path behavior.
     """
-    if home_dir is None:
-        return [workspace_dir]
-    chain: list[Path] = [workspace_dir]
-    if workspace_dir != home_dir:
-        for parent in workspace_dir.parents:
+    if top is None:
+        return [directory]
+    chain: list[Path] = [directory]
+    if directory != top:
+        for parent in directory.parents:
             chain.append(parent)
-            if parent == home_dir:
+            if parent == top:
                 break
         else:
-            return [workspace_dir]
+            return [directory]
     return list(reversed(chain))
 
 
@@ -94,7 +95,7 @@ async def discover_instruction_files(
     seen_paths: set[Path] = set()
     seen_hashes: set[str] = set()
     found: list[ContextFile] = []
-    for directory in _walk_dirs(workspace_dir, home_dir):
+    for directory in directories_up_to(workspace_dir, home_dir):
         for filename in filenames:
             candidate = await _real_file(workspace, directory / filename)
             if candidate is None or candidate in seen_paths:
@@ -109,17 +110,22 @@ async def discover_instruction_files(
     return found
 
 
-async def find_dir_context_file(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> ContextFile | None:
-    """Return the first existing instruction file in `directory`, or `None`."""
+async def dir_context_file_path(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> Path | None:
+    """Return the path of the first existing instruction file in `directory`, without reading it."""
     for filename in filenames:
         candidate = await _real_file(workspace, directory / filename)
         if candidate is not None:
-            return ContextFile(
-                directory=directory,
-                path=candidate,
-                content=(await workspace.read_bytes(str(candidate))).decode('utf-8', errors='replace'),
-            )
+            return candidate
     return None
+
+
+async def find_dir_context_file(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> ContextFile | None:
+    """Return the first existing instruction file in `directory`, or `None`."""
+    path = await dir_context_file_path(workspace, directory, filenames)
+    if path is None:
+        return None
+    content = (await workspace.read_bytes(str(path))).decode('utf-8', errors='replace')
+    return ContextFile(directory=directory, path=path, content=content)
 
 
 def render_context_file(file: ContextFile, *, label: str) -> str:
