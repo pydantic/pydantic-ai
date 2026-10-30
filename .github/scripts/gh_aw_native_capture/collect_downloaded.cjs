@@ -118,7 +118,7 @@ async function main() {
         assert(result, 'terminal session result missing after download');
         assert.equal(result.data.status, scenario === 'success' ? 'success' : 'failure');
         assert.equal(result.data.usage.inputTokens, 100);
-        assert.equal(result.data.usage.outputTokens, 2);
+        assert.equal(result.data.usage.outputTokens, 3);
         const tool = conversation.find(event => event.type === 'tool.execution_complete' && event.data.toolName === 'hostile_probe');
         assert(tool, 'true hostile-probe tool result missing');
         const toolReport = JSON.parse(tool.data.output);

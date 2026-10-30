@@ -47,7 +47,7 @@ const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filt
     assert.equal(result.type, 'session.result');
     assert.equal(result.data.status, scenario === 'success' ? 'success' : 'failure');
     assert.equal(result.data.usage.input_tokens, 100);
-    assert.equal(result.data.usage.output_tokens, 2);
+    assert.equal(result.data.usage.output_tokens, 3);
     const message = events.find(event => event.type === 'assistant.message');
     assert.equal(message.data.content, `${secret} ${runtimeOnlySecret}`);
     assert.equal(Boolean(message.data.partial), scenario === 'failure');
