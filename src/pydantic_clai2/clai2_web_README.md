@@ -81,7 +81,8 @@ outside Git too, and show each file once, as one diff from before the first chan
 disk now. A file the session wrote whole counts as created, unless the last commit has it with
 content the session did not write, which it is then compared with. These scopes read the
 conversation, so after `/compact` they start from the compacted summary. **Uncommitted** is
-`git diff HEAD` in the session's directory (untracked files are left out, as there), and **Branch
+`git diff HEAD` in the session's directory, with untracked files that are not ignored listed as
+added, as `git status` and the git chip count them, and **Branch
 vs base** compares the files, uncommitted changes included, with where the branch left its base:
 `origin/HEAD`, else `main` or `master`. Each file shows its status (A, M, or D) and added and
 removed lines; click it to jump to its diff. Files with many changed lines start collapsed. The
