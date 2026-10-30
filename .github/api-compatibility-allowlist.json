@@ -437,6 +437,12 @@
       "fingerprint": "ab788952b39a2021c1a9eb1c2009ddb950f83d8876f0e7624346c8dc3294ea8d",
       "reason": "harness 0.x: adds the 'flagged' value to `SkipReason` for skills an opt-in `Skills(scanner=...)` leaves out; it only appears with a scanner configured, and existing values are unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11470"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "a6296755aaa4051c8d8f5d14b7d1f9be06bb330538c9d66370553e403a112697",
+      "reason": "`RepoContextSettings.nested_traversal` keeps its type and default; only its `Field` description changed, to say nested traversal also reacts to writes and edits.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11701"
     }
   ],
   "model_name_literals": [
