@@ -40,9 +40,8 @@ DataTag = Literal[
     'validation_errors',
     'retry_feedback',
     'conversation_summary',
-    'answer_note',
 ]
-"""Built-in data tags, which say where content came from. Extensions can render these and registered tags."""
+"""Pydantic AI's own data tags, which say where content came from. Extensions can render these and registered tags."""
 
 FramingTag = Literal['system', DataTag]
 """Every tag Pydantic AI itself writes into prompt text: the `'system'` voice tag and the data tags."""

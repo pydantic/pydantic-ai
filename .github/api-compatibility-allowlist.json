@@ -1,12 +1,6 @@
 {
   "allowed_breakages": [
     {
-      "against": "v2.63.0",
-      "fingerprint": "eae52d7ded8dd156b9f9487b98bceb8d78667414ad31ec4a4075c9086d296dae",
-      "reason": "The maintainer-selected built-in `answer_note` design and explicit core compatibility exception are recorded at https://github.com/pydantic/pydantic-ai/pull/11664#issuecomment-6509741654 (David's approval, relayed by the PR author). All core data frames now escape this spelling, including without notes; update exhaustive tag handling and exact-byte expectations. This exception is separate from Harness 0.x.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11664"
-    },
-    {
       "against": "v2.62.0",
       "fingerprint": "78216eb81400af46f893b51ddc502505de40494f0e809618b9157955c6e33186",
       "reason": "`SignInRequired` was renamed to `SignInRequiredError` (#11326); the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",

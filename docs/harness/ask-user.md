@@ -155,7 +155,6 @@ With notes, `ask_user_result` returns a [`ToolReturn`][pydantic_ai.messages.Tool
 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] content rather than tool data.
 Each note is framed by `<answer_note header="...">` and `</answer_note>` text items. Headers and
 framing tags inside text are escaped; images remain multimodal items between those boundaries.
-The built-in `answer_note` tag is escaped inside all core data frames, even when notes are not used.
 The boundary items are `TextContent` with `metadata` containing
 `origin='user.pydantic-ai-harness.ask_user.answer_note.v1'`, `request_id` and `header`, so applications
 can identify the record without matching visible text.

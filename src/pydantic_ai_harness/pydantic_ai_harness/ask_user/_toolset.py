@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Final, overload
+from typing import overload
 
 import anyio
 from typing_extensions import TypeIs
 
 from pydantic_ai.exceptions import CallDeferred
-from pydantic_ai.framing import close_tag, neutralize_tags, open_tag
+from pydantic_ai.framing import close_tag, neutralize_tags, open_tag, register_tag
 from pydantic_ai.messages import TextContent, ToolReturn, UserContent
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
@@ -35,7 +35,7 @@ TIMED_OUT = (
 """The tool result when the answerer does not return within `AskUser.timeout`."""
 
 
-_ANSWER_NOTE_TAG: Final = 'answer_note'
+_ANSWER_NOTE_TAG = register_tag('answer_note')
 """Frames a user's note accompanying an answer, keyed by the question header."""
 
 # Harness-prefixed origins mark generated data in compaction; these notes are the user's own words.
