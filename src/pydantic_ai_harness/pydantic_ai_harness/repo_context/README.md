@@ -46,7 +46,8 @@ context first, most specific last. Files are deduped by the path a symlink resol
 to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors
 sharing identical content load once. Where the workspace can resolve symlinks, a
 symlinked file is labeled with its target's name, so `CLAUDE.md -> AGENTS.md`
-reaches the model as `AGENTS.md`.
+reaches the model as `AGENTS.md`. A file in an ancestor is labeled relative to the
+working directory, such as `../AGENTS.md`, not by its absolute path.
 
 When `home_dir` is `None` (the default), only the working directory is scanned -- no
 walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.

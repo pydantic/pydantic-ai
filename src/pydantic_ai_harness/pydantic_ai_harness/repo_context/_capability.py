@@ -21,6 +21,7 @@ from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
 from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
+    context_file_label,
     discover_instruction_files,
     find_dir_context_file,
     render_context_file,
@@ -312,17 +313,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         The contents and the path are the repository's, not the operator's or the framework's, so they go on
         the user channel in a `<context-file>` tag. Only the pointer's own wording is in system voice.
         """
-        label = self._label(context_file.path)
+        assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'
+        label = context_file_label(context_file.path, self._cached_working_dir)
         if self.nested_inject == 'contents':
             return [render_context_file(context_file, label=label)]
         return [SystemPromptPart(_POINTER_NOTE), render_context_file_path(label)]
-
-    def _label(self, path: Path) -> str:
-        assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'
-        try:
-            return path.relative_to(self._cached_working_dir).as_posix()
-        except ValueError:
-            return path.as_posix()
 
     async def _working_dir(self, workspace: Workspace) -> Path:
         if self._cached_working_dir is None:
