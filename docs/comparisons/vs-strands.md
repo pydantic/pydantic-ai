@@ -11,7 +11,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | Python (also TypeScript) | Python |
 | License | Apache-2.0 | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Tools, hooks, plugins | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Tools, hooks, plugins | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Strands harness, or build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | None documented for Strands; [AWS Support](https://aws.amazon.com/premiumsupport/) for the cloud | [For the framework itself](../enterprise-support.md), no platform required |
