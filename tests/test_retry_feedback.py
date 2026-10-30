@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 from cassetter import Cassette
 from pydantic import BaseModel, ValidationError
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import Agent, BinaryImage, ModelRequestContext, RunContext, capture_run_messages
@@ -1144,6 +1145,46 @@ async def test_root_level_input_is_serialized_once_per_distinct_value():
                 'msg': 'Input should be a valid integer, unable to parse string as an integer',
                 'input': 'bad',
             },
+        ]
+    )
+
+
+@pydantic_dataclass
+class AlwaysInvalid:
+    a: int
+
+    def __post_init__(self):
+        raise ValueError('never valid')
+
+
+async def test_a_validation_error_whose_input_is_not_json_is_retried():
+    """A pydantic dataclass's `__post_init__` error carries an `ArgsKwargs` as its `input`, which JSON
+    can't represent; the tool call is retried with that input as text rather than ending the run."""
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('check', {})])
+        return ModelResponse(parts=[TextPart('understood')])
+
+    agent = Agent(FunctionModel(respond))
+
+    @agent.tool_plain
+    def check() -> str:
+        AlwaysInvalid(a=0)
+        return 'unreachable'  # pragma: no cover
+
+    result = await agent.run('go')
+
+    retried = message_part(result.all_messages(), ToolReturnPart, message_index=2)
+    assert retried.outcome == 'retried'
+    assert retried.content == snapshot(
+        [
+            {
+                'type': 'value_error',
+                'loc': [],
+                'msg': 'Value error, never valid',
+                'input': "ArgsKwargs((), {'a': 0})",
+            }
         ]
     )
 
