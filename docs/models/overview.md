@@ -763,6 +763,8 @@ print(result.output)
     ones the agent loop would have accepted. To instead raise on `content_filter` responses that still
     carry partial or refusal text, add the
     [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
+    [Falling back when a model refuses](../capabilities/model-fallback.md#refusals) puts this together
+    for safety refusals.
 
 #### Native Tool Failure Example
 
