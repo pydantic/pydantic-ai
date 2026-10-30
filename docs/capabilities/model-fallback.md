@@ -142,7 +142,7 @@ The policy state is isolated per run. Passing saved message history into a new r
 
 Graph-level streaming through `run(event_stream_handler=...)`, `run_stream_events()`, and `iter()` can continue to the next candidate after validation rejects a completed response. `run_stream()` does not replace final output already delivered to its consumer.
 
-[`OutputFallbackEvent`][pydantic_ai.capabilities.OutputFallbackEvent] reports an output-driven switch when the next candidate is prepared. It includes `source_model_id`, `target_model_id`, the triggering retry's `source` and `retry` metadata, and output-tool identity when applicable. A successful sibling, exhausted retry budget, or final candidate that stays in place produces no switch event. Observe individual output retries through [`on_output_retry`](../hooks.md#accepted-output-retries).
+[`OutputFallbackEvent`][pydantic_ai.capabilities.OutputFallbackEvent] reports an output-driven switch when the next candidate is prepared. It includes `source_model_id`, `target_model_id`, the triggering retry's `source` and `retry` metadata, and output-tool identity when applicable. A successful sibling, exhausted retry budget, or final candidate that stays in place produces no switch event. Observe individual output retries through [`on_output_retry`](../hooks.md#output-retries).
 
 A `model_fallback.output_fallback` event on the current trace span records the same switch, with `model_fallback.source_model_id`, `model_fallback.target_model_id`, and `model_fallback.source`. These events contain no response content and add no usage charges.
 

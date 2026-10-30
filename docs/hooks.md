@@ -249,7 +249,7 @@ Output processing hooks fire when the output is processed — extracting values,
 
 See [Output hooks](capabilities/custom.md#output-hooks) for the full lifecycle, signatures, and details on how output validators interact with processing hooks.
 
-### Accepted output retries
+### Output retries
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
 |---|---|---|
