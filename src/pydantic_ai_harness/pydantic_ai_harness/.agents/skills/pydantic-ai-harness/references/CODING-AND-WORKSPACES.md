@@ -532,6 +532,8 @@ a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserErro
 `FileSystem` reads or lists, shallowest first, each directory once while its note is in the
 conversation (`nested_inject='pointer'` or `'contents'`), in the message tail so the cached prefix
 stays stable.
+With it on, the instructions also gain one static sentence: each instruction file applies to its
+subtree, the deeper file wins, and the user's direct instructions win over all of them.
 
 ## Macroscope
 
