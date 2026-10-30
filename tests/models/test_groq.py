@@ -668,7 +668,6 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '19aa9d06f3b9'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
@@ -5728,7 +5727,6 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '52fb098e67e5'}},
             ),
             ModelResponse(
                 parts=[
@@ -5850,7 +5848,6 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '52fb098e67e5'}},
             ),
             ModelResponse(
                 parts=[

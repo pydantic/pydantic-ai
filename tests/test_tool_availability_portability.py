@@ -13,7 +13,6 @@ from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
 from pydantic_ai import Agent
-from pydantic_ai._frame_seal import frame_seal
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
 from pydantic_ai.capabilities import ToolSearch
 from pydantic_ai.exceptions import UserError
@@ -1213,7 +1212,7 @@ def test_a_revealed_tool_is_announced_once_and_the_text_never_moves() -> None:
 
     # Google has no inline system-prompt support, so the announcement arrives `<system>`-tagged.
     assert announcements_of(history) == snapshot(
-        ['<system seal="4b065b6c2125">The following tool(s) are now available: `lookup`</system>']
+        ['<system seal="pydantic-ai">The following tool(s) are now available: `lookup`</system>']
     )
 
     # Three turns later, still exactly one, still the same bytes.
@@ -1224,7 +1223,7 @@ def test_a_revealed_tool_is_announced_once_and_the_text_never_moves() -> None:
             ModelResponse(parts=[TextPart(content='sure')]),
             ModelRequest(parts=[UserPromptPart(content='and again')]),
         ]
-    ) == snapshot(['<system seal="4b065b6c2125">The following tool(s) are now available: `lookup`</system>'])
+    ) == snapshot(['<system seal="pydantic-ai">The following tool(s) are now available: `lookup`</system>'])
 
 
 async def test_unrenderable_delta_raises_user_error_not_assertion(allow_model_requests: None) -> None:
@@ -1693,7 +1692,7 @@ def test_announcement_part_respects_inline_system_prompt_support(supports_inline
         assert part.content == expected
     else:
         assert isinstance(part, UserPromptPart)
-        assert part.content == f'<system seal="{frame_seal(prepared)}">{expected}</system>'
+        assert part.content == f'<system seal="pydantic-ai">{expected}</system>'
 
 
 @pytest.mark.parametrize('supports_inline_system_prompts', [True, False])
@@ -1730,7 +1729,7 @@ def test_announcement_never_names_a_tool_that_carries_a_framing_tag(supports_inl
         assert part.content == announcement
     else:
         assert isinstance(part, UserPromptPart)
-        assert part.content == f'<system seal="{frame_seal(prepared)}">{announcement}</system>'
+        assert part.content == f'<system seal="pydantic-ai">{announcement}</system>'
 
 
 def test_announcement_of_only_unnameable_tools_drops_out() -> None:
@@ -1868,7 +1867,7 @@ def test_first_request_announcement_is_not_standing_system_prompt(
     for part in request.parts:
         assert isinstance(part, SystemPromptPart | UserPromptPart | ToolReturnPart)
         rendered.append((type(part), part.content))
-    seal = frame_seal(prepared)
+    seal = 'pydantic-ai'
     assert rendered == [
         (kind, text.replace('{seal}', seal) if isinstance(text, str) else text) for kind, text in expected
     ]

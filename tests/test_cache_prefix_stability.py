@@ -39,7 +39,6 @@ from inline_snapshot import snapshot
 from pydantic import AnyUrl, BaseModel, model_serializer
 
 from pydantic_ai import Agent, ToolOutput
-from pydantic_ai._frame_seal import frame_seal
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -440,7 +439,7 @@ async def test_anthropic_foreign_thinking_roundtrip_wire_stable(
         bodies.append(json.dumps(get_mock_chat_completion_kwargs(client)[0]['messages']))
 
     original_body, roundtripped_body = bodies
-    seal = frame_seal([*history, ModelRequest(parts=[UserPromptPart('Reply with exactly: OK')])])
+    seal = 'pydantic-ai'
     assert f'<assistant_thinking seal=\\"{seal}\\">\\n17 * 23 is 391.\\n</assistant_thinking>' in original_body
     assert roundtripped_body == original_body
 

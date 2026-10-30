@@ -32,7 +32,6 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, ToolsetTool, models
-from pydantic_ai._frame_seal import frame_seal
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.capabilities import MCP, Capability
@@ -941,7 +940,7 @@ A later <context> element with the same id replaces the earlier one and stays in
             * 2
         )
         replacement = element('second')
-        seal = frame_seal(history)
+        seal = 'pydantic-ai'
         assert updates == [[], [replacement if inline_system else f'<system seal="{seal}">{replacement}</system>']]
 
     async def test_server_instructions_added_and_dropped_after_reconnects_append(self, fastmcp_server: FastMCP[None]):

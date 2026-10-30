@@ -139,6 +139,7 @@ from ..messages import (
     _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _render_system_prompt_context,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_model_text,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
@@ -3607,13 +3608,14 @@ _CONVERSATION_SUMMARY_PROVENANCE = (
 )
 
 
-def _conversation_summary_text(content: str | None) -> str:
+def _conversation_summary_text(content: str | None, *, sealed: bool = True) -> str:
     """*content* framed as a summary of the conversation it replaced, with where it came from.
 
     A summarization model wrote it from a history that can include tool output; it goes in as written, and the
-    frame `seal` on the frame is what tells it apart from a lookalike.
+    frame `seal` on the frame is what tells it apart from a lookalike. Realtime sessions, which don't announce the
+    seal, pass `sealed=False`.
     """
-    return frame(CONVERSATION_SUMMARY_TAG, f'\n{_CONVERSATION_SUMMARY_PROVENANCE}\n\n{content or ""}\n', sealed=True)
+    return frame(CONVERSATION_SUMMARY_TAG, f'\n{_CONVERSATION_SUMMARY_PROVENANCE}\n\n{content or ""}\n', sealed=sealed)
 
 
 def _standing_system_prompt_count(request: ModelRequest) -> int:
@@ -3921,7 +3923,9 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
     )
 
 
-def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
+def _wrap_non_leading_system_prompts(
+    messages: list[ModelMessage], *, standing_prompt_count: int, sealed: bool = True
+) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system seal="...">`-tagged `UserPromptPart`s.
 
     The content goes in as written; the frame `seal` is what tells the block apart from a `<system>` tag in text
@@ -3949,7 +3953,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
         start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
-                UserPromptPart(content=frame(SYSTEM_TAG, part.content, sealed=True), timestamp=part.timestamp)
+                UserPromptPart(content=frame(SYSTEM_TAG, part.content, sealed=sealed), timestamp=part.timestamp)
                 if index >= start and isinstance(part, SystemPromptPart)
                 else part
                 for index, part in enumerate(msg.parts)
@@ -4557,7 +4561,7 @@ def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool)
             part = translated
         elif not isinstance(part, RetryFeedbackPart) or keep_feedback:
             return part
-        text = part.model_response()
+        text = _retry_feedback_model_text(part, sealed=True)
         if not _retry_feedback_speaks_for_the_harness(part):
             return UserPromptPart(content=text, timestamp=part.timestamp)
         if in_standing_run:

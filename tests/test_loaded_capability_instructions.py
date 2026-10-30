@@ -699,7 +699,7 @@ async def test_wire_shape_after_the_load_without_a_system_channel(
                 },
                 {
                     'text': """\
-<system seal="1208732e2ccb"><context id="capability:housekeeping">
+<system seal="pydantic-ai"><context id="capability:housekeeping">
 Use trash.
 </context></system>\
 """,

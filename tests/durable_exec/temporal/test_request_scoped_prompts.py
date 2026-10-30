@@ -84,7 +84,7 @@ def _model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     _seen_by_model.append(
         [
             # The conversation's frame seal is left out of the tag, so the assertions below name it.
-            re.sub(r'^<system seal="[0-9a-f]{12}">', '<system>', str(part.content))
+            re.sub(r'^<system seal="pydantic-ai">', '<system>', str(part.content))
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts

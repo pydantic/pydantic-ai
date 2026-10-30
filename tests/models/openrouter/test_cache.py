@@ -26,7 +26,6 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._frame_seal import frame_seal
 from pydantic_ai._framing import frame_seal_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
@@ -374,7 +373,7 @@ async def test_openrouter_cache_instructions_dynamic_only_e2e(
     system_messages = [m for m in messages if m['role'] == 'system']
     assert system_messages[-1] == {
         'role': 'system',
-        'content': frame_seal_announcement(frame_seal(result.all_messages()), system_role=False),
+        'content': frame_seal_announcement(system_role=False),
     }
     for m in messages:
         content = m['content']
@@ -514,15 +513,19 @@ async def test_openrouter_cache_point_anthropic_e2e(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='The "context" you provided is just the sentence "Here is some important context to cache." repeated 20 times, with no actual information in it. If you meant to include a document, data, or instructions, it didn\'t come through, so please resend it and I\'ll summarize it.'
+                        content="""\
+The only content in your message is the sentence "Here is some important context to cache," repeated 20 times, so there's no actual context to summarize beyond that repetition.
+
+If you meant to include a document, data, or instructions, it didn't come through, so please resend it and I'll summarize it.\
+"""
                     )
                 ],
                 usage=RequestUsage(
                     input_tokens=220,
-                    output_tokens=79,
+                    output_tokens=89,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.00123'),
+                    cost=Decimal('0.00133'),
                 ),
                 model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
@@ -531,15 +534,15 @@ async def test_openrouter_cache_point_anthropic_e2e(
                 provider_details={
                     'finish_reason': 'end_turn',
                     'downstream_provider': 'Claude Platform on AWS',
-                    'cost': 0.00123,
-                    'upstream_inference_cost': 0.00123,
+                    'cost': 0.00133,
+                    'upstream_inference_cost': 0.00133,
                     'upstream_inference_prompt_cost': 0.00044,
-                    'upstream_inference_completions_cost': 0.00079,
+                    'upstream_inference_completions_cost': 0.00089,
                     'is_byok': False,
                     'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1793245781-HlXrbmTffbww3WdDds8E',
+                provider_response_id='gen-1793320356-y7p4bocdIJDqiMllB4I4',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -587,15 +590,13 @@ async def test_openrouter_cache_point_gemini_e2e(
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    TextPart(content='The provided context emphasizes the importance of caching specific information.')
-                ],
+                parts=[TextPart(content='There is important context to cache.')],
                 usage=RequestUsage(
                     input_tokens=169,
-                    output_tokens=11,
+                    output_tokens=7,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.0000782'),
+                    cost=Decimal('0.0000682'),
                 ),
                 model_name='google/gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -604,15 +605,15 @@ async def test_openrouter_cache_point_gemini_e2e(
                 provider_details={
                     'finish_reason': 'STOP',
                     'downstream_provider': 'Google AI Studio',
-                    'cost': 7.82e-05,
-                    'upstream_inference_cost': 7.82e-05,
+                    'cost': 6.82e-05,
+                    'upstream_inference_cost': 6.82e-05,
                     'upstream_inference_prompt_cost': 5.07e-05,
-                    'upstream_inference_completions_cost': 2.75e-05,
+                    'upstream_inference_completions_cost': 1.75e-05,
                     'is_byok': False,
                     'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1793245783-WFfpEIu9EAm2OrSz4Idv',
+                provider_response_id='gen-1793320358-9ioz8maIdKglPjdAbhLG',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -653,20 +654,19 @@ async def test_openrouter_cache_instructions_e2e(
                 instructions=IsStr(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '0211f593bf76'}},
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='I specialize in caching, including how to design, implement, and troubleshoot caches (like in-memory, CDN, browser, and database caching) to make systems faster and more efficient.'
+                        content='I specialize in caching: helping you design, implement, and troubleshoot strategies like browser, CDN, application-level, and database caching to make systems faster and more efficient.'
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=538,
-                    output_tokens=58,
+                    input_tokens=568,
+                    output_tokens=56,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.001656'),
+                    cost=Decimal('0.001696'),
                 ),
                 model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
@@ -675,15 +675,15 @@ async def test_openrouter_cache_instructions_e2e(
                 provider_details={
                     'finish_reason': 'end_turn',
                     'downstream_provider': 'Claude Platform on AWS',
-                    'cost': 0.001656,
-                    'upstream_inference_cost': 0.001656,
-                    'upstream_inference_prompt_cost': 0.001076,
-                    'upstream_inference_completions_cost': 0.00058,
+                    'cost': 0.001696,
+                    'upstream_inference_cost': 0.001696,
+                    'upstream_inference_prompt_cost': 0.001136,
+                    'upstream_inference_completions_cost': 0.00056,
                     'is_byok': False,
                     'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1793245783-rd441PzxAb9dt1d59NcU',
+                provider_response_id='gen-1793320358-HtJSKlKTCpWOz0V2lUQi',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -723,16 +723,15 @@ async def test_openrouter_cache_messages_e2e(
                 instructions='Be helpful.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '171e2e6c6553'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello!')],
                 usage=RequestUsage(
-                    input_tokens=192,
+                    input_tokens=225,
                     output_tokens=6,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.000444'),
+                    cost=Decimal('0.00051'),
                 ),
                 model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
@@ -741,15 +740,15 @@ async def test_openrouter_cache_messages_e2e(
                 provider_details={
                     'finish_reason': 'end_turn',
                     'downstream_provider': 'Claude Platform on AWS',
-                    'cost': 0.000444,
-                    'upstream_inference_cost': 0.000444,
-                    'upstream_inference_prompt_cost': 0.000384,
+                    'cost': 0.00051,
+                    'upstream_inference_cost': 0.00051,
+                    'upstream_inference_prompt_cost': 0.00045,
                     'upstream_inference_completions_cost': 6e-05,
                     'is_byok': False,
                     'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1793245784-K3WC6EFopIjKI8iUZBHw',
+                provider_response_id='gen-1793320359-hAlBKOKIyLGPqJDfhIvD',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -829,7 +828,7 @@ I have one tool:
                     'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1793245785-chU1vKT3PVfawqA9ergc',
+                provider_response_id='gen-1793320360-ENiErXLJUGhlxRRaOci5',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -956,17 +955,16 @@ async def test_openrouter_cache_streaming_e2e(
                 instructions=IsStr(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '171e2e6c6553'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello!')],
                 usage=RequestUsage(
-                    input_tokens=526,
+                    input_tokens=559,
                     output_reasoning_tokens=0,
-                    cache_write_tokens=522,
+                    cache_write_tokens=555,
                     output_tokens=6,
                     details={'is_byok': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.001373'),
+                    cost=Decimal('0.0014555'),
                 ),
                 model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
@@ -977,13 +975,13 @@ async def test_openrouter_cache_streaming_e2e(
                     'downstream_provider': 'Claude Platform on AWS',
                     'finish_reason': 'end_turn',
                     'service_tier': 'default',
-                    'cost': 0.001373,
-                    'upstream_inference_cost': 0.001373,
-                    'upstream_inference_prompt_cost': 0.001313,
+                    'cost': 0.0014555,
+                    'upstream_inference_cost': 0.0014555,
+                    'upstream_inference_prompt_cost': 0.0013955,
                     'upstream_inference_completions_cost': 6e-05,
                     'is_byok': False,
                 },
-                provider_response_id='gen-1793245787-olOL6AJI149NjOALyCKk',
+                provider_response_id='gen-1793320361-Hd8DOCQVNhqGqXhVFTQ9',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1482,15 +1480,15 @@ async def test_openrouter_cache_earlier_breakpoint_raised_to_later_longer_ttl_e2
         [{'type': 'ephemeral', 'ttl': '1h'}, {'type': 'ephemeral', 'ttl': '1h'}]
     )
     # OpenRouter doesn't split cache writes by TTL, so `cost` prices them all as five-minute writes. The recorded
-    # response's own `cost` (0.023636) is the one-hour write price: 5888 tokens at $4/MTok, plus input and output.
+    # response's own `cost` (0.023756) is the one-hour write price: 5918 tokens at $4/MTok, plus input and output.
     assert result.usage == snapshot(
         RunUsage(
             details={'is_byok': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-            input_tokens=5905,
+            input_tokens=5935,
             output_reasoning_tokens=0,
             output_tokens=5,
-            cache_write_tokens=5888,
-            cost=Decimal('0.014804'),
+            cache_write_tokens=5918,
+            cost=Decimal('0.014879'),
             requests=1,
         )
     )

@@ -648,7 +648,7 @@ class TestInputGuardrailRedaction:
 
         def unsealed(text: str) -> str:
             # `prepare_messages` puts the conversation's frame seal on the background result's frame.
-            return re.sub(r' seal="[0-9a-f]{12}"', '', text)
+            return re.sub(r' seal="pydantic-ai"', '', text)
 
         def guard(prompt: str) -> bool | GuardrailResult:
             guard_calls.append(unsealed(prompt))

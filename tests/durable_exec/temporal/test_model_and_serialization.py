@@ -43,7 +43,6 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai._frame_seal import frame_seal
 from pydantic_ai._framing import frame_seal_announcement
 from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
@@ -3134,13 +3133,13 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
     # Foundry serves no mid-conversation system messages, so the instructions end with what `<system seal>` means.
-    seal = frame_seal(messages)
+    seal = 'pydantic-ai'
     assert rendered_requests == snapshot(
         [
             {
                 'system': [
                     {'type': 'text', 'text': 'leading'},
-                    {'type': 'text', 'text': frame_seal_announcement(seal, system_role=False)},
+                    {'type': 'text', 'text': frame_seal_announcement(system_role=False)},
                 ],
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},

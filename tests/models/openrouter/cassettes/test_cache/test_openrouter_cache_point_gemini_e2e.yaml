@@ -47,6 +47,8 @@ interactions:
       - "*"
       access-control-expose-headers:
       - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -62,9 +64,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793245783-WFfpEIu9EAm2OrSz4Idv
+        id: gen-1793320358-9ioz8maIdKglPjdAbhLG
         object: chat.completion
-        created: 1793245783
+        created: 1793320358
         model: google/gemini-2.5-flash
         provider: Google AI Studio
         system_fingerprint: null
@@ -76,14 +78,14 @@ interactions:
           native_finish_reason: STOP
           message:
             role: assistant
-            content: The provided context emphasizes the importance of caching specific information.
+            content: There is important context to cache.
             refusal: null
             reasoning: null
         usage:
           prompt_tokens: 169
-          completion_tokens: 11
-          total_tokens: 180
-          cost: 0.0000782
+          completion_tokens: 7
+          total_tokens: 176
+          cost: 0.0000682
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -91,11 +93,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.0000782
+            upstream_inference_cost: 0.0000682
             upstream_inference_prompt_cost: 0.0000507
-            upstream_inference_completions_cost: 0.0000275
+            upstream_inference_completions_cost: 0.0000175
           completion_tokens_details:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-29T03:49:43.466334+00:00
+  recorded_at: 2026-10-30T00:32:38.823654+00:00

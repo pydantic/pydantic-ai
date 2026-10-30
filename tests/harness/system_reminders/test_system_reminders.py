@@ -167,7 +167,7 @@ def _llm_reminder(text: str, model: str = 'function:fn:') -> str:
     return f'{_LLM_NOTE}\n\n{_llm_data(text, model)}'
 
 
-_FRAME_SEAL_OPENER = re.compile(r'<system seal="[0-9a-f]{12}">')
+_FRAME_SEAL_OPENER = re.compile(r'<system seal="pydantic-ai">')
 
 
 def _unref(text: str) -> str:

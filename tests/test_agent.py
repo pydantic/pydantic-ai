@@ -1274,7 +1274,6 @@ def test_plain_response_then_tuple():
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '03ad23ca93a2'}},
             ),
             ModelResponse(
                 parts=[
@@ -1994,7 +1993,6 @@ def test_output_type_text_output_function_with_retry():
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '1c3595eb10b2'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
@@ -3150,7 +3148,6 @@ def test_native_output():
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '55ee6d40e1c8'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -3231,7 +3228,6 @@ def test_prompted_output_function_with_retry():
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '1c3595eb10b2'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
@@ -3878,7 +3874,6 @@ def test_empty_response():
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '03ad23ca93a2'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
@@ -3934,7 +3929,6 @@ def test_empty_response_exceeds_max_retries():
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '03ad23ca93a2'}},
             ),
             ModelResponse(
                 parts=[],
@@ -9186,7 +9180,6 @@ def test_empty_final_response():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '03ad23ca93a2'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='baz')],
@@ -9987,7 +9980,6 @@ def test_adding_tools_during_run():
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '14cb37865890'}},
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foo', tool_call_id=IsStr())],
@@ -10009,7 +10001,6 @@ def test_adding_tools_during_run():
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '14cb37865890'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
@@ -10894,7 +10885,6 @@ async def test_thinking_only_response_retry():
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '03ad23ca93a2'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
@@ -10957,7 +10947,6 @@ async def test_retry_message_no_tools():
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '03ad23ca93a2'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='result')],
@@ -11020,7 +11009,6 @@ async def test_thinking_only_response_retry_with_tool_output():
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '03ad23ca93a2'}},
             ),
             ModelResponse(
                 parts=[
@@ -11146,7 +11134,6 @@ async def test_thinking_only_response_after_tool_call_retries():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': '03ad23ca93a2'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Your progress is saved.')],
@@ -13545,7 +13532,6 @@ async def test_agent_allows_none_output_validator_retry():
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],

@@ -48,6 +48,8 @@ interactions:
       - "*"
       access-control-expose-headers:
       - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -63,9 +65,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793245781-HlXrbmTffbww3WdDds8E
+        id: gen-1793320356-y7p4bocdIJDqiMllB4I4
         object: chat.completion
-        created: 1793245781
+        created: 1793320356
         model: anthropic/claude-sonnet-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -77,18 +79,17 @@ interactions:
           native_finish_reason: end_turn
           message:
             role: assistant
-            content: >-
-              The "context" you provided is just the sentence "Here is some important context
-              to cache." repeated 20 times, with no actual information in it. If you meant to
-              include a document, data, or instructions, it didn't come through, so please
-              resend it and I'll summarize it.
+            content: |-
+              The only content in your message is the sentence "Here is some important context to cache," repeated 20 times, so there's no actual context to summarize beyond that repetition.
+
+              If you meant to include a document, data, or instructions, it didn't come through, so please resend it and I'll summarize it.
             refusal: null
             reasoning: null
         usage:
           prompt_tokens: 220
-          completion_tokens: 79
-          total_tokens: 299
-          cost: 0.00123
+          completion_tokens: 89
+          total_tokens: 309
+          cost: 0.00133
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -96,11 +97,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.00123
+            upstream_inference_cost: 0.00133
             upstream_inference_prompt_cost: 0.00044
-            upstream_inference_completions_cost: 0.00079
+            upstream_inference_completions_cost: 0.00089
           completion_tokens_details:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-29T03:49:43.012969+00:00
+  recorded_at: 2026-10-30T00:32:37.976025+00:00

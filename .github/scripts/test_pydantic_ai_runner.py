@@ -1103,7 +1103,7 @@ def _retry_feedback_text(part: ModelRequestPart | ModelResponsePart) -> str | No
     per-conversation frame seal is left out, so the assertions can spell the text out.
     """
     if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<retry_feedback ' in part.content:
-        return re.sub(r'<retry_feedback seal="[0-9a-f]{12}">', '<retry_feedback>', part.content)
+        return part.content.replace('<retry_feedback seal="pydantic-ai">', '<retry_feedback>')
     return None
 
 

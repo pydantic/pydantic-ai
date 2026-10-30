@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import pytest
 
 import pydantic_ai.models
+
+# Registered at import, before any test escapes text: `register_tag` warns when a tag arrives after escaping
+# started, which `filterwarnings = error` turns into a failure in whichever test first imports Planning.
+import pydantic_ai_harness.planning._toolset  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 

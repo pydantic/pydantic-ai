@@ -115,7 +115,7 @@ def _all_good_model() -> FunctionModel:
 
 def _unsealed(text: str) -> str:
     """`text` without the conversation's frame seal, which `prepare_messages` puts on the judge's frame."""
-    return re.sub(r' seal="[0-9a-f]{12}"', '', text)
+    return re.sub(r' seal="pydantic-ai"', '', text)
 
 
 def _plain(value: Any) -> Any:
@@ -589,11 +589,11 @@ class TestSteering:
         assert system_entry['role'] == 'system'
         # The judge's frame is the conversation's first one on the user channel, so the frame seal announcement
         # comes with it, carrying the seal `prepare_messages` put on the frame.
-        seal = re.search(r'seal="([0-9a-f]{12})"', user_turn['content'][-1]['text'])
+        seal = re.search(r'seal="(pydantic-ai)"', user_turn['content'][-1]['text'])
         assert seal is not None
         assert [block['text'] for block in system_entry['content']] == [
             _FRAMING,
-            frame_seal_announcement(seal.group(1), system_role=True),
+            frame_seal_announcement(system_role=True),
         ]
 
         def blocks(messages: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:

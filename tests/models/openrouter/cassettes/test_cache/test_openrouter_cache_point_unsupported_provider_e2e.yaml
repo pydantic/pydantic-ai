@@ -39,6 +39,8 @@ interactions:
       - "*"
       access-control-expose-headers:
       - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -54,9 +56,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793245767-OEZdFrqhNFqtYKjkRuhu
+        id: gen-1793320341-Nv6MewAWOx469TxWdxyZ
         object: chat.completion
-        created: 1793245767
+        created: 1793320341
         model: openai/gpt-5-mini
         provider: OpenAI
         system_fingerprint: null
@@ -69,32 +71,22 @@ interactions:
           message:
             role: assistant
             content: >-
-              The text contains only repeated instances of the phrase "Some context" and
-              provides no substantive information.
+              The passage consists of repeated placeholder lines ("Some context.") indicating
+              unspecified or missing contextual information.
             refusal: null
-            reasoning: |-
-              **Summarizing user context**
-
-              The user is asking me to summarize content that consists of repeated phrases saying "Some context." I think the best way to put it is: "The text is a repetition of the phrase 'Some context' with no additional information." I want to keep it concise and avoid too much quoting, ensuring it's exactly one sentence as requested. It's possible that the user intentionally wants me to summarize such filler content. I'll finalize it!
+            reasoning: null
             reasoning_details:
-            - type: reasoning.summary
-              summary: |-
-                **Summarizing user context**
-
-                The user is asking me to summarize content that consists of repeated phrases saying "Some context." I think the best way to put it is: "The text is a repetition of the phrase 'Some context' with no additional information." I want to keep it concise and avoid too much quoting, ensuring it's exactly one sentence as requested. It's possible that the user intentionally wants me to summarize such filler content. I'll finalize it!
-              format: openai-responses-v1
-              index: 0
             - type: reasoning.encrypted
               data: >-
-                gAAAAABq4sJKcGWqWKjUzOVIs8appXXIvV9GbsUoEm7PTbBjtWjejkOJtOC_HEXtI1SOsbw-SBg6fAebhuGA9UWcKCSarJV8OKAa2va8hRignmn3NhHncetiJl1hYJvNpqjmYjtK8ut0vnLCeHunDOlp72F--egOPqLO5vbw3MSwU_BUi7uXysuL659jSRhzIevItgBfExTX6LK8vY8SJ_jVI0FwbufYmJQcgpZMB7XR8zkwCC0Y1s8JM-zIAblrHA-rScORGYP6Y98_oZw-BqCs-_gcPx8655bd9a2jWyzkMmvgfOJEiB67k9S6g_SZoGJNEmEDG8O_rHT_1XJjYs2cyprtoMo2xuEzRxyq0z0vKWIZIU686NMmmKlN2NtBSwhH04V49EF11mjn9hPpbCImEf6whZr7ljhr4PUS7cjakJ2DfZcvnFftBIkgDXyWFE8WK4qiqz17OJATL596eLKCh-8JD7QCk582pislZ_gQ9YHGh5H7zHpzFZNZUA81QoYEj5ki7cL_tnsXT3rJArA09LvpB-tFiFQuPsDIzYT3XHNx65rIbtjxdcC1rbk7HVNigDgs_0WVazp_CKMjHPmibc0FjEv7qu26ubRLV4tD7Sgw_4wfSY61Mffmolq9ce0P89oxNvwtEg9lBPNIypAZhymXrmPlSwzBe36XKYCWyLgWsZOUu7CF5YcfNPzASriNVeTiDrWx5_uqcfX_eQ9GpVqykJFEok1ZqG11b1Gwd8vfU-dew-BqRObJ3nKmINn0YK3ksdTCF0d6iN2gmHJVXYkslhSTsEUJ33PbsSWHK2IxMZ2ZiMrgpN0Gi_wKfU9AMSF-SbTWKPPQ8aDpuk17QTLwSvEbACjOQulLyrTAiNBht7RNyR0dcxENyvwWxL2A4JMuZprgkP1Aco7YOqnqSCePeJKRltExCMTt9I_rXNAdDsWp2R8wQXcY1NhTlLexrvxdkZ1VwJJ7oevIVSuPZd0hijVzKA1LNCY80ATjnnKpt9KzgIkMxWM2mxi1TjwK3NN2agTWy-PkdZo4gL-d_peREppzelWH2ViGBHWsPIr_JorUQfv06BG1KpE6BuRuK0cRHqmTev-6TXZvsJIbM3aJsMIJlM5jHzG27jQ-sW50uqrPiPy2mZ4ntqlfEIxxhC4XVN2V0Q8CgqLrGwhmu8Y5kKqXnWcHUJdfeeYqSJShZ4nFH77lZetkKYo4fafYbNAg2ew0xK9ZpJiLk_xGmGQmdjQWcIhBr-GSJkHZIdDFtPo5jj3T5h3BNCNZ0C0lka3d84qtCS5fkPmM_VS8M74M8TnStVITiBkOjx-NREz_J01b49MPgkXT2ux4-saB_7WIdNV84t-YlPypDjWcmMlDfLF2oFQlGsLIfPJEttzEa2TOQeXjlOtRBSO21OZfwm3AmMP1lJsvV2ylmst6GuS_uAS4Jkc-wX_FvX27n-XABi_9kUPkenKwj8mt5_wLD2rX1wJsm7uOEaicMzgHy5GpPeBQprMEQcZLY7BhxFsCJHlY9jWmUTaTmtnDM0LHnR1rAPg62zEEP1eaWFLjYpmjK-WA5kDKay8zAtUgmN1IijzISKBgNE31--n1G90m8DET0_AViGfVx9t-rBJ95wyUE9NFi-nO2oJPZWFZHK0z8ShofxfE5xABg5ikfc5pUR-OhIY0MyBxZnrvLr2dnOC2hhHDlTh03c_6VTivTeNtdi7xRHtnvzjuf72l-BbpZ3j4d_sXv6D88gsUACSlgKMzRs_nWfowoIeUTYnx3FI8u5WKXHLhGo-EylRYyy8xWWVjTFLa_I1wJssb-qQX4RFNRuhqMuCj2ZODrk3Hef6mYZWvLT5T3txUExoCvWbWEXRHYe7y-V08FoMPHQLQDBpAws0wuMT0XYDsL_Ylzeoy2HFelnP5BOUpGvPZPNxXWsfpeugumxLArQ3alhmMMHRrj7tU273_BY9OWXS54JTUNcLvOCgCiCujaGOvNC7aZhv6hfeT2fWF7Ke64BokVGud1pbtHYhkSgpGQ_ebdC4NLHur0YdRxcqGRgTDxZlo-DZwg2Jg6nuBKJK2x7AT6nHafPQLcS2Q0AQz67EbXdfk9G8hSDnHHHatXXWkwm99Mj_ScXmNUojwtDncjbRi7AXiWUtMYIaB7aMRK3L60S4-TV5Rv7sgOp9839Z6TPqcgOiqro2KIjz4wGmcnRqaZwBmJoASRT_Z_S8Wuj4QGmoMdtuciZsStb9F_WKlsgBNv3SUwB4pauAqE4OxfpKoSQTIeF-D1WCqGtSYRTh1ErTL-AcgTv9r3b1-dZCDE7pyo_UOEc0eyoc4P9D0mlb86whwquUYLM0VPOwMknxhpHEuLEHkmFr6e9W63ajkdKAablam_GrVabFdyb1b3Jz_AeksFFTgB5z3xBslaN6IwVTtfFfJ9g0_-Po0SJaToF3eUeI2We_GqaFE1MAEkDS5WvdwrS2DOpePXEEiXKhaRpF519W5sYqf7ek_mEKVMAlmL8EU7PDhRftUCq3VbtESKm29dYPYKPLuIsGglPvs55MhOcs8bY-f4b7fC9SU43nUnPpejocu3vjr2AJ7RhSwLnL_TmIU8Yx9ir7EYce4rhcpeNHh_vzXTQ2vAUK9K_3cuO6AWBoqJEs3m9O7Hj7MMKtozxyQEDIdgwto3qXhARJIb-SEXYL4eq_fox0Q2XzXcMf1nfyIHNLYKAGdJSRbti-5_Gh1_3zzrfzjtjSJkma4IDLGcLwRVxwDjqrFkwjlxcBOs63uxjuFDfqG6x4m_BXW7DAiBx8flfa1gX79Vv685zSpVkFIufm6bSYO99-fcb7hvLPOdPvWE8yWzofPWg3zNrJcJzDlA9ir4U5QR7tgLyE7yhIJ_aq1LT15YMT8FxFXzvSk9E4nhvqv1nm8KEFNyNmJTCNUwmkvbCePlp4VL_HBdkgEAjmaJRAoxyhfXnZ1K8zZ51rPhdh4u3vmkorD-PJLzEq9hW3uOBEUMcAzwUshMonkAFLauVZgD-orM0sKFP7-RmnWSSHwjdacs9hRccVOGfPDqsHbI-xOWYWzCGVxQCcLka_3LW4D4zt9IX7Sm3quDuzHAxngMX9RCegdaD4MZZmZ1LiSTuE_altnwyu4j6XN0ZJddMyY4ovDkKiHp14tK_Kn00laIsBEuZcrnt86hJ_sRWUrK-ihymc_oE_SnOYM3iTAcBnvYGGmAYvyeHj6.eyJlbmRwb2ludF9zbHVnIjoib3BlbmFpL2dwdC01LW1pbmktMjAyNS0wOC0wN3xvcGVuYWkifQ
+                gAAAAABq4-WXRoji6RTDKebvJqq_8eENxVk_1RwO4GXF6nRAeP7lqZ976Y08irT1GvaMMYBupz00qlp-bjzMr5ozW5-x56LNjV9YBFVFNRMFl5qLaWPX21h0stcvESiC0_TTTE-gSn_PEjslyHs_zmAD87VekNwpyw09azOXfWoVE_5eDRUMBzcN6ktLE1PjuI2jxnUnyTfcqxUpu7Nily8RpCUIUbtF-7YhJ_koCkI5RrIcWwR_2Thma-32loeMkah8DcpcoBns7TiDOANconMIJa4wZEK_AY3gVONrfT5Gcn64Cu4Kpldj-cs6FfVE6deDKSuGSag9E4MYQ5-hgVNqk3O675R1rgb7wGqEMJisUSUYywS2audUS3OVIya8LFt0rr5irHQZaa1wPh6vwwQZXtnwBeSzhgmTTABEnYwZQmX3UzdizBj_0-xmBJcBeziFY7-yklMtQAjNIN3J8LnczW-sruJmC7W38-CyQ6GgNNBhj834a-rUIUpuTL-_Dzeg4DQAPMr6mhAow-Gdim9NGQLJ3XcDo_S7S4AlTJKv1_Vkg8Voz6jjT0IbOae8uZZKaReKMCnEBUP5oQ9dJrQaYOxjdnrfFy4YbdxicPfSy_lAw6ps58oOcmk_UnO-5KeeZ3h_5_je0fcKqEvnu5_9m30lbS4wC6i09MVuXNfillSVz7seDxxit13Ph0hbEVXqMhD4hpReppTYrHkIZTxsjFCUPOxtAtFaoEChMSoJrvNjRlIn5cu8t0O5fG4tOLqpGa83HD-9jh_lOf6Q4JmlE6TNPg-EvZMGXqe1ae1bkI-p5URfVsmZgDMrD8WdLpSRjslrNEWFfQ9G3G5n8s_ARkpMh2RJIwdcdY_uSkGMDK-Q1OB-QIHAgGaWZMN2IUogF1MCV6kTx0NhfYVWSJ7_DcXHdDkbFOqt9RixPGPP-wri3970n05vcEepRMBPCAFMTkvw-pmpBhO_Bf-o2KgRSHGcN21-UIktClU0ynMgSRyDLHNbKeyYh7yYLSkkq_xyGxhVre9l1IOWjIxy0e3UL8W1w-VCNnTQHGgZ6SP6CfMKz_6qap0iLGv73GUJvqp0QoV6IYNp5PViZKUL__3YXlmeSCfpTIZvcrLc7FN0iHtwqf_bkOgyhy-pUHszmQCMsAUkkNaiB37zCEeS-VagJtk43fzujlzv0_Q1ovyDaEqOa3K0kGEonpTXgARFb9vj8tURYIJEXNmxqjLQ_lADVGDRUMVeuyD3qMiZFjcKdwUQo_iRVep62xhtPUmJpFIcLZwBFEQDaaoK2Gowa_liLYhQv7cOsP-R6Q2bD-bKKsppHSxHq7Ze8rB0KZOTq9wlIp_wjxgJRVSTyGAycUKC6M6fv8LZbHEvcZTHsR5qXiasC4dT1JWOLhzLAPyV2eXcmnTPqZ3PO3JrmXfl6aogN7mynwScFjHmQnRW4WyNWHJ7pM14bXUfKxAzIhqVTb1PV3oklX1T_ZQklH2bSUnaQbDnHUhJ4Xc7D6Cj-yK7HqW0o-gmafWsG_toM0jo4OWo37E87wiLCvkRttDPyeeN6WIoluShPY3tnqTzBvYGbvRvrOptKHwzWO1LwXLyFQBmlDg7fVL0vlpTAb6kgT7nHTwG18QN9TsVT_5wfF4oDqyn0oD2JZTmlMRsw4fjF_65-JUzg5TXRd6oihVRzE47qEIVPvYy3tBBz0oMMJzejmdYbZVFZyc0DFeTuTzU3fhV-ZuMxNR0Cle79oLkNrdieY3x8mqPVZ4_gmp8Wqmz_LtU18iyN4oBLKaxp-O_eENjEzO_YcC9tBFFS88HmkOcKgVThoYgrhee6vZ83hy6f-CBS4ykcWPEdRP5gQlTCpkhZaPKxQajk3AQQ0UU-4-Dv-8S7jtdAgg0cuXleOW-8Kel9S9cxV8q2p3IBECxWmGuQ3js3fFiUZGVw18MnZstlLEYOQKBsRyFCb0bGs7SyvL7LmaRNebdUq8BKrKv4Z2Hz1B5zNj2_uLiOR5qY_essFbmQQJDyt_OWTzoKIDP4fJ5DykULDfxU0fieBn7a9bdMiRC2uUmfEZxBbtb7cwezSqd7-BU2TfIpGXcbI5xIzhk7CHmFYZB9ugsumM318rCbpOriUJrV4Om-1peozNEny9xhUFbWzU1Eo3jZBO53qjs0CVen9aPRXP1R-OPh0Vt5K8FHaSdyJ9W1uTYWUJ0-KXfDKJLMjV3nIGkWuvVDe8YiWxOUZkZW9wy-2UTImAhbIyRXk88hr4fZwM4LoVQmKdlhfShQ0afcHfS0I773NHftmNP4J_XCzFM-qDxfI0U1fZV9wyjIfSdicaEh3MmLZe0pR3YCaBYbOlYA1tXtCPPdssQQKyu9p6WxSjzDfQDfhEoc3_oLt3eRR6zZUBnUWu4_jlXCMVUxLkNzSDsn6U-pr-n8B80vZ_nmL01p8I8Ewbc-AN5Rf1L5zKw79GOWcC1qvXBincfcz2tB_fpMwOoRN1uk6ZSahXdD-nR_gRFOiIS0g1TyKdCdlZxCWVMlkFwd12-ePaIh7wpPXCU9hiZD3952fao88lSRbBoKRB71RrT2L0Qe9R-yxDuwAAr2ssnK_Lyz-zNNC65vCTlRuR8yaaiKehj679ScMkz6zzE9ps1JM6M-KmhuJOTEATne4Lvp35Bm0qbwYd6kDVE_WvbsDviLm2iftxXHXopzag-Bar3mPVlBDqtPUaCR-8oOwpP8_QfyqT3Pb8v-iHGrdMYHmaBhDb6nEyyMtf_4uffymLn4uQRqXbKuTklZILX3jcHim88cQQKP8qBMsB3SEg-Rqw5lpIwX8MUfcDdcapN7lDMN7hEaOiJBxp5nD3RM0J2-9EUP5jamwgzW6OdUdEOPQ3nNUoIsAeKKm2qU1T5WvosThKkAg7vkk2tLJBEGZ-R-fogKBMWBnpcjzAk64qMTcpATvLas1vxFUQiyxOOpOrtrlRh4DytpcDeG8I8-Uzbp1ATTVbvAVU_qqA59LDl7r1LgwJ-yraB3QXlXZXW-9Jl8VJL1LS-wY73bA_M1qhgv2VxwN108DY_ZsLIL6hAvrK8iVQR8roTo1G_MqqwQpeM3H5RZ0glwD7iOEuaU8rLM7S8olbOZQcFX0OCXDYfdH61Jr5GpvzbDx5xFWdD5u7-uvCBcclHKAs7KWEDRIkAkCR9xlPtaT1DNJ-jUuyppPxbDCyWi5nTNWXQATws_kdLa4W8CSOqVGJfjw1T03a3bVsDotOLiR3hY7weNYDhGpCj81LYJUn0PZgCz8cWwSFAhuWfyfh1RdYBFfHEGorNJo6IgxNq4isaNsBTJR01MF_JpCRvssdbvWRjElgy6GHIhuzlvZLBhw990SM2thyF7c5qgyuc9489O3z92s-ylZ9n7JmjjruYbCPH60v3hmHGIsO9ZyqTjR8dok03JxGv4wgtKHI0gSfH1DOvlDEedTNWx6Im3_jF66SwmqzQsqQwo4uBuGUEWr8ebztsMp1Ifgx4D_oGF6i-35vx7Zj3CwtLU9jDTn7b3Zt-ENOZhWHcVwR_pEUEV3AnptWhpY1z1R8pWBkA1GwKdXb-gDo1iTTEDK6eq8TnXJvIrxZ2GEBZEhGGZr96AcJAIqt3T8irII_GxEg0uRkstUwjRNvMywEHmfIhcdt3r0tZqAimYtecm0G2qVJTcSV20HAahPqsF7CadKaKLxd6SznbEC2WO8Lo98qMO3Z7hhxGZibuO4-96n2eoMuQn3Y73tMYXKfrkZwhXayRj_X3HM1N-sq43GpRbeU=.eyJlbmRwb2ludF9zbHVnIjoib3BlbmFpL2dwdC01LW1pbmktMjAyNS0wOC0wN3xvcGVuYWkifQ
               format: openai-responses-v1
-              id: rs_09b928009f9269ad016ae2c248581c87d185f37146b8441f36
-              index: 1
+              id: rs_0be7ad212d7fbce1016ae3e595d5cc87d1aefa57e8a07a79bf
+              index: 0
         usage:
           prompt_tokens: 73
-          completion_tokens: 141
-          total_tokens: 214
-          cost: 0.00030025
+          completion_tokens: 176
+          total_tokens: 249
+          cost: 0.00037025
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -102,11 +94,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.00030025
+            upstream_inference_cost: 0.00037025
             upstream_inference_prompt_cost: 0.00001825
-            upstream_inference_completions_cost: 0.000282
+            upstream_inference_completions_cost: 0.000352
           completion_tokens_details:
-            reasoning_tokens: 64
+            reasoning_tokens: 128
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-29T03:49:30.703178+00:00
+  recorded_at: 2026-10-30T00:32:24.030328+00:00

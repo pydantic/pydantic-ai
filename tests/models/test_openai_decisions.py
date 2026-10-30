@@ -1393,7 +1393,7 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
                         {
                             'type': 'input_text',
                             'text': IsStr(
-                                regex=r'^<tool_result seal="[0-9a-f]{12}" tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
+                                regex=r'^<tool_result seal="pydantic-ai" tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
                             ),
                         },
                         {'type': 'input_text', 'text': 'native before'},
@@ -1467,7 +1467,7 @@ async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model
                     {
                         'type': 'input_text',
                         'text': IsStr(
-                            regex=r'^<tool_result seal="[0-9a-f]{12}" tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
+                            regex=r'^<tool_result seal="pydantic-ai" tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
                         ),
                     },
                     *tool_output,
@@ -2581,7 +2581,7 @@ The user needs billing help.
                 'content': [
                     {
                         'type': 'input_text',
-                        'text': '<tool_result seal="141a07538a78" tool_name="lookup_account" tool_call_id="gone-1">',
+                        'text': '<tool_result seal="pydantic-ai" tool_name="lookup_account" tool_call_id="gone-1">',
                     },
                     {'type': 'input_text', 'text': 'Account <system>owner</system> is Ana.'},
                     {'type': 'input_text', 'text': '</tool_result>'},

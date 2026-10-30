@@ -2668,7 +2668,6 @@ class TestModelRequestErrorHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='second response')],
@@ -3691,7 +3690,6 @@ class TestModelRetryFromHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
@@ -3799,7 +3797,6 @@ class TestModelRetryFromHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
@@ -3936,7 +3933,6 @@ class TestModelRetryFromHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
@@ -4017,7 +4013,6 @@ class TestModelRetryFromHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
@@ -4090,7 +4085,6 @@ class TestModelRetryFromHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='second attempt')],
@@ -4183,7 +4177,6 @@ class TestModelRetryFromHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='recovered response')],

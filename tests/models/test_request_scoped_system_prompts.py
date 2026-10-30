@@ -43,7 +43,6 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
-from pydantic_ai._frame_seal import frame_seal
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestPart
@@ -139,7 +138,7 @@ class TurnReminder(AbstractCapability[Any]):
 
 def unref(value: Any) -> Any:
     """`value` with the conversation's frame seal left out of every `<system seal="...">` tag, so assertions name the tag."""
-    return json.loads(re.sub(r'<system seal=\\"[0-9a-f]{12}\\">', '<system>', json.dumps(value)))
+    return json.loads(re.sub(r'<system seal=\\"pydantic-ai\\">', '<system>', json.dumps(value)))
 
 
 def weather_agent(model: Any, **kwargs: Any) -> Agent[None, str]:
@@ -820,10 +819,10 @@ def test_current_request_scoped_prompts_move_to_the_last_request():
             ModelRequest(
                 parts=[
                     UserPromptPart(content='Are you there?', timestamp=IsDatetime()),
-                    UserPromptPart(content='<system seal="03ad23ca93a2">Reminder A.</system>', timestamp=IsDatetime()),
-                    UserPromptPart(content='<system seal="03ad23ca93a2">Reminder B.</system>', timestamp=IsDatetime()),
+                    UserPromptPart(content='<system seal="pydantic-ai">Reminder A.</system>', timestamp=IsDatetime()),
+                    UserPromptPart(content='<system seal="pydantic-ai">Reminder B.</system>', timestamp=IsDatetime()),
                 ],
-                metadata={'__pydantic_ai__': {'request_scoped_tail': 2, 'frame_seal': '03ad23ca93a2'}},
+                metadata={'__pydantic_ai__': {'request_scoped_tail': 2}},
             ),
         ]
     )
@@ -931,12 +930,12 @@ async def test_bedrock_message_cache_point_goes_before_the_request_scoped_prompt
         [
             {'toolResult': {'toolUseId': 'call_2', 'content': [{'text': 'Oslo: 18C'}], 'status': 'success'}},
             {'cachePoint': {'type': 'default'}},
-            {'text': '<system seal="0e877ab95862">Reminder 2.</system>'},
+            {'text': '<system seal="pydantic-ai">Reminder 2.</system>'},
         ]
     )
     assert 'Reminder 1.' not in str(tool_loop['messages'])
     assert only_reminder['messages'] == snapshot(
-        [{'role': 'user', 'content': [{'text': '<system seal="b88c46fecf28">Reminder.</system>'}]}]
+        [{'role': 'user', 'content': [{'text': '<system seal="pydantic-ai">Reminder.</system>'}]}]
     )
 
 
@@ -967,11 +966,11 @@ async def test_openrouter_message_cache_control_goes_before_the_request_scoped_p
                 'tool_call_id': 'call_2',
                 'content': [{'type': 'text', 'text': 'Oslo: 18C', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
             },
-            {'role': 'user', 'content': '<system seal="0e877ab95862">Reminder 2.</system>'},
+            {'role': 'user', 'content': '<system seal="pydantic-ai">Reminder 2.</system>'},
         ]
     )
     assert only_reminder['messages'] == snapshot(
-        [{'role': 'user', 'content': '<system seal="b88c46fecf28">Reminder.</system>'}]
+        [{'role': 'user', 'content': '<system seal="pydantic-ai">Reminder.</system>'}]
     )
 
 
@@ -1124,7 +1123,7 @@ def duplicate_text_history(lasting: ModelRequestPart | None = None) -> list[Mode
     By default the lasting text is user text, carrying the conversation's frame seal as the reminder does. On a model
     without mid-conversation system messages, `lasting` is a lasting `SystemPromptPart` with the reminder's text.
     """
-    seal = frame_seal([ModelRequest(parts=[UserPromptPart('Weather in Paris?')])])
+    seal = 'pydantic-ai'
     return [
         ModelRequest(parts=[UserPromptPart('Weather in Paris?')]),
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1')]),

@@ -27,7 +27,6 @@ from cassetter import Cassette
 from pydantic import BaseModel, JsonValue
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput
-from pydantic_ai._frame_seal import frame_seal
 from pydantic_ai._framing import frame_seal_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -455,7 +454,7 @@ async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests:
     }
     assert announcement == {
         'role': 'system',
-        'content': frame_seal_announcement(frame_seal([ModelRequest(parts=[UserPromptPart('Hi')])]), system_role=False),
+        'content': frame_seal_announcement(system_role=False),
     }
 
 

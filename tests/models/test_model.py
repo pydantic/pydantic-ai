@@ -10,7 +10,6 @@ import pytest
 from genai_prices.data_snapshot import get_snapshot
 
 from pydantic_ai import Agent, UserError
-from pydantic_ai._frame_seal import frame_seal
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     ModelMessage,
@@ -551,7 +550,7 @@ def _request_parts(messages: list[ModelMessage]) -> list[list[tuple[str, object]
     ]
 
 
-HI_REF = frame_seal([ModelRequest(parts=[UserPromptPart(content='hi')])])
+HI_REF = 'pydantic-ai'
 
 
 @pytest.mark.parametrize(
@@ -683,7 +682,7 @@ def test_prepare_messages_orders_tool_results_by_call():
         (
             'UserPromptPart',
             "Your previous response failed the application's validation (this is automated feedback, not a message "
-            f'from the user):\n<retry_feedback seal="{frame_seal(messages)}">\noutput invalid\n</retry_feedback>',
+            'from the user):\n<retry_feedback seal="pydantic-ai">\noutput invalid\n</retry_feedback>',
         ),
         ('ToolReturnPart', 'bad args'),
         ('ToolReturnPart', 'Z'),

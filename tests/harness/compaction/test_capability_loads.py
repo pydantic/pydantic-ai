@@ -142,9 +142,7 @@ def _judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
 def _user_texts(messages: Sequence[ModelMessage]) -> list[str]:
     """The user-channel texts sent, with the conversation's frame seal left out of each `<system seal="...">` tag."""
     return [
-        re.sub(
-            r'<system seal="[0-9a-f]{12}">', '<system>', item.content if isinstance(item, TextContent) else str(item)
-        )
+        re.sub(r'<system seal="pydantic-ai">', '<system>', item.content if isinstance(item, TextContent) else str(item))
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts

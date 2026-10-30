@@ -279,7 +279,6 @@ class TestOnOutputValidateError:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
@@ -425,7 +424,6 @@ class TestOnOutputValidateErrorModelRetry:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
@@ -493,7 +491,6 @@ class TestModelRetryFromOutputHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
@@ -558,7 +555,6 @@ class TestModelRetryFromOutputHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
@@ -622,7 +618,6 @@ class TestModelRetryFromOutputHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='this is long enough')],
@@ -697,7 +692,6 @@ class TestModelRetryFromOutputHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good')],
@@ -763,7 +757,6 @@ class TestModelRetryFromOutputHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 5}')],
@@ -2308,7 +2301,6 @@ class TestOutputHookErrorPaths:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
@@ -2468,7 +2460,6 @@ class TestOutputHookErrorPaths:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 1}')],
@@ -2621,7 +2612,6 @@ class TestOutputHookErrorPaths:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 99}')],
@@ -2835,7 +2825,6 @@ class TestDefaultOutputErrorHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
-                    metadata={'__pydantic_ai__': {'frame_seal': 'b038b66b1180'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 7}')],

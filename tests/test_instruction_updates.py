@@ -14,7 +14,6 @@ from _pytest.mark.structures import ParameterSet
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
-from pydantic_ai._frame_seal import frame_seal
 from pydantic_ai._framing import frame_seal_announcement
 from pydantic_ai._instructions import recorded_prefix
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessHistory
@@ -1387,10 +1386,9 @@ async def test_instruction_updates_downgraded_empty_block_is_not_sent(case: str,
             # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
             await agent.run('Continue.', model_settings={'max_tokens': 1024})
     # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions end with what `<system seal>` means.
-    seal = frame_seal([ModelRequest(parts=[UserPromptPart('Continue.')])])
     assert bodies[0]['system'] == [
         {'type': 'text', 'text': 'Stable.'},
-        {'type': 'text', 'text': frame_seal_announcement(seal, system_role=False)},
+        {'type': 'text', 'text': frame_seal_announcement(system_role=False)},
     ]
 
 
@@ -1686,7 +1684,7 @@ def context_statements(messages: list[ModelMessage]) -> list[str]:
     ]
 
 
-CONTINUE_REF = frame_seal([ModelRequest(parts=[UserPromptPart('Continue.')])])
+CONTINUE_REF = 'pydantic-ai'
 """The frame seal of a conversation that opens with 'Continue.', as most of these do."""
 
 RENDERINGS: dict[bool, tuple[str, list[str]]] = {
@@ -1857,7 +1855,7 @@ def expected_update(case: WireCase, instruction_id: str, content: str | None, hi
             else 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
         )
     element = f'<context id="{instruction_id}">\n{content}\n</context>'
-    return element if case.inline_system else f'<system seal="{frame_seal(history)}">{element}</system>'
+    return element if case.inline_system else f'<system seal="pydantic-ai">{element}</system>'
 
 
 @pytest.fixture

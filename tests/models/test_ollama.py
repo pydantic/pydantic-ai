@@ -297,7 +297,6 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'frame_seal': 'e0d40c4db840'}},
             ),
             ModelResponse(
                 parts=[

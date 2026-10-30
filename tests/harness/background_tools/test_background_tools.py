@@ -77,7 +77,7 @@ def _ack_seen(messages: list[ModelMessage]) -> bool:
 
 def _unsealed(text: str) -> str:
     """`text` without the conversation's frame seal, which `prepare_messages` puts on a background result's frame."""
-    return re.sub(r' seal="[0-9a-f]{12}"', '', text)
+    return re.sub(r' seal="pydantic-ai"', '', text)
 
 
 def _plain(value: Any) -> Any:

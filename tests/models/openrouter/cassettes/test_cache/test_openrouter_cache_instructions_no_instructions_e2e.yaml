@@ -31,6 +31,8 @@ interactions:
       - "*"
       access-control-expose-headers:
       - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -46,9 +48,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793245776-QVGLZCW6R12BvEyS9Wb6
+        id: gen-1793320352-RM0AVzlSo9v53qBjdwRf
         object: chat.completion
-        created: 1793245776
+        created: 1793320352
         model: anthropic/claude-sonnet-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -82,4 +84,4 @@ interactions:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-29T03:49:37.909840+00:00
+  recorded_at: 2026-10-30T00:32:33.046436+00:00
