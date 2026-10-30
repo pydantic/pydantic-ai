@@ -39,6 +39,7 @@ from ._ordering import collect_leaves, is_innermost, sort_capabilities
 from .abstract import (
     AbstractCapability,
     AgentModel,
+    ModelSelection,
     RawOutput,
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
@@ -49,7 +50,13 @@ from .wrapper import WrapperCapability
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent
-    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
+    from pydantic_ai.models import (
+        KnownModelName,
+        Model,
+        ModelRequestContext,
+        ModelResolutionContext,
+        ModelSelectionContext,
+    )
     from pydantic_ai.output import OutputContext, OutputRetryContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -431,6 +438,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 else:
                     model = capability_model
         return model if model is not None else default
+
+    def _get_step_model(self, ctx: ModelSelectionContext[AgentDepsT]) -> ModelSelection | None:
+        model: ModelSelection | None = None
+        for capability in self._dispatch:
+            if capability.defer_loading is not True and (selection := capability._get_step_model(ctx)) is not None:
+                model = selection
+        return model
+
+    @property
+    def _has_step_model(self) -> bool:
+        return any(capability.defer_loading is not True and capability._has_step_model for capability in self._dispatch)
 
     @property
     def has_resolve_model_id(self) -> bool:

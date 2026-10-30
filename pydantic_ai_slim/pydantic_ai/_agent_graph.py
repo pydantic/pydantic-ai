@@ -2892,6 +2892,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
+        await _select_model(ctx, resume_suspended=True)
+
         _refresh_loaded_capability_ids(ctx)
         _refresh_discovered_tool_names(ctx)
 
@@ -4239,12 +4241,25 @@ def _model_selection_context(
     )
 
 
-async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+async def _select_model(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]], *, resume_suspended: bool = False
+) -> None:
     selector = ctx.deps.model_selector
-    if selector is None or ctx.deps.model_selected_for_step == ctx.state.run_step:
+    if not ctx.deps.root_capability._has_step_model and (  # pyright: ignore[reportPrivateUsage]
+        resume_suspended or selector is None or ctx.deps.model_selected_for_step == ctx.state.run_step
+    ):
         return
+    selection_context = _model_selection_context(ctx)
+    selection = ctx.deps.root_capability._get_step_model(selection_context)  # pyright: ignore[reportPrivateUsage]
+    if selection is not None:
+        # Persistent retirement outranks an ordinary selector, including when the initial model
+        # was explicit. Do not evaluate or enter a model the policy has already replaced.
+        model, model_id = await ctx.deps.evaluate_model_selector(lambda _: selection, selection_context)
+    else:
+        if resume_suspended or selector is None or ctx.deps.model_selected_for_step == ctx.state.run_step:
+            return
+        model, model_id = await ctx.deps.evaluate_model_selector(selector, selection_context)
 
-    model, model_id = await ctx.deps.evaluate_model_selector(selector, _model_selection_context(ctx))
     await ctx.deps.enter_model(model)
     ctx.deps.model = model
     ctx.deps.model_id = model_id

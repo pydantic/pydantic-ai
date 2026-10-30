@@ -435,7 +435,7 @@ agent = Agent(deps_type=Deps, capabilities=[AdaptiveModel()])
 
 [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] is a synchronous configuration method, but the [`ModelSelector`][pydantic_ai.capabilities.ModelSelector] it returns may be synchronous or asynchronous. [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, the run's prompt, the messages the selected model will be sent (ending with the request being routed), usage, the run's output retry count and budget, and its usage limits, deadline, `run_id` and `conversation_id`. Keep `get_model()` itself cheap; perform I/O in an async selector.
 
-A model or model ID returned directly from `get_model()` is resolved once per run. A selector returned from `get_model()` is evaluated before every logical model request step.
+A model or model ID returned directly from `get_model()` is resolved once per run. A selector returned from `get_model()` is evaluated before every logical model request step while it controls selection. If [`ModelFallback`'s output policy](model-fallback.md#output-validation-retries) takes over, its persistent candidate replaces the selector for later steps in that run.
 
 A capability's model slots in below a call-site `run(model=...)` argument and a run-level `spec=` model, and above the agent constructor's model. From highest to lowest priority:
 

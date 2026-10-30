@@ -21,7 +21,7 @@ from tests.durable_exec._output_fallback import make_agent, make_models
 if sys.version_info >= (3, 14):  # pragma: lax no cover
     pytest.skip('temporalio sandbox is incompatible with Python 3.14', allow_module_level=True)
 
-pytestmark = [
+pytestmark: list[pytest.MarkDecorator] = [
     pytest.mark.temporal,
     pytest.mark.xdist_group(name='temporal-durability'),
 ]

@@ -16,11 +16,11 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import OutputRetryContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from .abstract import AbstractCapability, AgentModel, CapabilityOrdering
+from .abstract import AbstractCapability, AgentModel, CapabilityOrdering, ModelSelection
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.models import ModelRequestContext, ModelSelectionContext
 
 __all__ = ('ModelFallback', 'OutputFallbackEvent')
 
@@ -66,6 +66,15 @@ _SPEC_FALLBACK_ERRORS: dict[str, type[ModelAPIError]] = {
 }
 
 
+@dataclass(frozen=True)
+class _OutputRetryState:
+    """Keep the serving selection and its unwrapped producer as one response snapshot."""
+
+    producer: Model
+    selection: Model | str
+    threshold: int | None
+
+
 @dataclass(init=False)
 class ModelFallback(AbstractCapability[AgentDepsT]):
     """Attempt other models when the one serving a request fails or returns a rejected response.
@@ -90,8 +99,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
 
     Set `output_retry_threshold` to move the next ordinary step to another model after output
     validation failures consume allowed retries. That model receives the validation feedback and
-    remains the starting candidate for this run. The agent's output/per-tool retry limits and usage
-    limits still apply.
+    remains the starting candidate for this run. Selection happens before step settings, tool
+    preparation, and request hooks, without using a request attempt to redirect the step. The agent's
+    output/per-tool retry limits and usage limits still apply.
 
     Each attempt re-runs
     [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
@@ -120,10 +130,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
 
     _output_model: Model | str | None = field(repr=False)
     _output_cursor: int = field(repr=False)
-    _output_failures: list[tuple[Model, int]] = field(repr=False)
-    _output_producer: Model | None = field(repr=False)
-    _output_selection: Model | str | None = field(repr=False)
-    _output_threshold: int | None = field(repr=False)
+    # Retain producers so a later model cannot reuse an earlier producer's object ID.
+    _output_failures: dict[int, tuple[Model, int]] = field(repr=False)
+    _output_response: _OutputRetryState | None = field(repr=False)
     _output_transition: OutputRetryContext | None = field(repr=False)
 
     _predicates: FallbackPredicates = field(repr=False)
@@ -199,10 +208,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self.models = list(models)
         self._output_model = None
         self._output_cursor = 0
-        self._output_failures = []
-        self._output_producer = None
-        self._output_selection = None
-        self._output_threshold = None
+        self._output_failures = {}
+        self._output_response = None
         self._output_transition = None
         self._predicates = FallbackPredicates.parse(fallback_on, owner='ModelFallback')
         self._supplies_model = False
@@ -244,16 +251,29 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         # `SelectModel`'s, outranks it rather than being overridden by it.
         return True
 
+    def _get_step_model(self, ctx: ModelSelectionContext[AgentDepsT]) -> ModelSelection | None:
+        if self.output_retry_threshold is None:
+            return None
+        if ctx.messages and isinstance(last := ctx.messages[-1], ModelResponse) and last.state == 'suspended':
+            if isinstance(self.output_retry_threshold, Mapping) and last.model_id not in self.output_retry_threshold:
+                return None
+            # A provider-side continuation takes precedence over output retirement, including when
+            # its model cannot be recovered from this chain and the step's current model must continue it.
+            return next((model for model in self.models if _pin_id(model) == last.model_id), None)
+        return self._output_model
+
+    @property
+    def _has_step_model(self) -> bool:
+        return bool(self.output_retry_threshold)
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> ModelFallback[AgentDepsT]:
         """Return a fresh copy so each run tracks its own chain position."""
         return replace_no_init(
             self,
             _output_model=None,
             _output_cursor=0,
-            _output_failures=[],
-            _output_producer=None,
-            _output_selection=None,
-            _output_threshold=None,
+            _output_failures={},
+            _output_response=None,
             _output_transition=None,
             _step=None,
             _cursor=0,
@@ -305,14 +325,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 # The step would continue a provider-side job on a model other than the one that started it; send
                 # it to that model instead, before anything is sent.
                 raise RetryModelRequest(self.models[index])
-        if (
-            first_attempt
-            and self._output_model is not None
-            and not (messages and isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended')
-        ):
-            if not _matches_model(self._output_model, request_context.model, request_context.model_id):
-                self._moved = True
-                raise RetryModelRequest(self._output_model)
         self._pin_checked = True
         moved, self._moved = self._moved, False
         if moved and self._already_attempted(request_context.model):
@@ -325,10 +337,10 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             and _matches_model(self._output_model, request_context.model, request_context.model_id)
         ):
             retry = self._output_transition
-            assert self._output_selection is not None
+            assert self._output_response is not None
             await ctx.emit(
                 OutputFallbackEvent(
-                    source_model_id=_pin_id(self._output_selection),
+                    source_model_id=_pin_id(self._output_response.selection),
                     target_model_id=request_context.model_id or request_context.model.model_id,
                     source=retry.source,
                     retry=retry.retry,
@@ -341,7 +353,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 span.add_event(
                     'model_fallback.output_fallback',
                     attributes={
-                        'model_fallback.source_model_id': _pin_id(self._output_selection),
+                        'model_fallback.source_model_id': _pin_id(self._output_response.selection),
                         'model_fallback.target_model_id': request_context.model_id or request_context.model.model_id,
                         'model_fallback.source': retry.source,
                     },
@@ -382,12 +394,12 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 producer = request_context.model
                 while isinstance(producer, WrapperModel):
                     producer = producer.wrapped
-                self._output_producer = producer
-                self._output_selection = request_context.model_id or request_context.model
-                self._output_threshold = (
-                    self.output_retry_threshold.get(request_context.model_id or producer.model_id)
+                self._output_response = _OutputRetryState(
+                    producer=producer,
+                    selection=request_context.model_id or request_context.model,
+                    threshold=self.output_retry_threshold.get(request_context.model_id or producer.model_id)
                     if isinstance(self.output_retry_threshold, Mapping)
-                    else self.output_retry_threshold
+                    else self.output_retry_threshold,
                 )
             # A suspended response's continuation, in this run or a later one that resumes it, goes back to the
             # model that started the provider-side job, which the agent records as the response's `model_id`.
@@ -398,21 +410,16 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         raise self._advance()
 
     async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
-        if self._output_threshold is None:
+        response = self._output_response
+        if response is None or response.threshold is None:
             return
-        assert self._output_producer is not None
-        assert self._output_selection is not None
-        for index, (producer, count) in enumerate(self._output_failures):
-            if producer is self._output_producer:
-                failures = count + 1
-                self._output_failures[index] = (producer, failures)
-                break
-        else:
-            failures = 1
-            self._output_failures.append((self._output_producer, failures))
+        producer_id = id(response.producer)
+        previous = self._output_failures.get(producer_id)
+        failures = 1 if previous is None else previous[1] + 1
+        self._output_failures[producer_id] = (response.producer, failures)
         # Every charge belongs to the model that produced this response. Failed siblings must not
         # retire an untried candidate while the next step's switch is still pending.
-        if failures >= self._output_threshold and self._output_transition is None:
+        if failures >= response.threshold and self._output_transition is None:
             for index in range(self._cursor, len(self.models)):
                 candidate = self.models[index]
                 if not self._already_attempted(candidate):
@@ -421,7 +428,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                     self._output_transition = retry_context
                     break
             else:
-                self._output_model = self._output_selection
+                self._output_model = response.selection
                 self._output_cursor = len(self.models)
 
     def _new_chain(self) -> FallbackChain:

@@ -28,6 +28,7 @@ from .abstract import (
     AgentModel,
     AgentNode,
     CapabilityDescription,
+    ModelSelection,
     NodeResult,
     RawOutput,
     RawToolArgs,
@@ -43,7 +44,13 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
-    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
+    from pydantic_ai.models import (
+        KnownModelName,
+        Model,
+        ModelRequestContext,
+        ModelResolutionContext,
+        ModelSelectionContext,
+    )
     from pydantic_ai.output import OutputContext, OutputRetryContext
     from pydantic_ai.run import AgentRunResult
 
@@ -287,6 +294,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _model_is_default(self) -> bool:
         # A subclass that supplies its own model makes a selection of its own, not a stand-in.
         return type(self).get_model is WrapperCapability.get_model and self.wrapped._model_is_default()
+
+    def _get_step_model(self, ctx: ModelSelectionContext[AgentDepsT]) -> ModelSelection | None:
+        return self.wrapped._get_step_model(ctx)
+
+    @property
+    def _has_step_model(self) -> bool:
+        return type(self)._get_step_model is not WrapperCapability._get_step_model or self.wrapped._has_step_model
 
     @property
     def has_resolve_model_id(self) -> bool:

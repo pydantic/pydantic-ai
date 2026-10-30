@@ -33,6 +33,8 @@ agent = Agent(deps_type=Deps, capabilities=[SelectModel(select_model)])
 
 See [Selecting the model](custom.md#selecting-the-model) to implement the hook in a custom capability and for precedence and lifecycle details.
 
+When [`ModelFallback`'s output policy](model-fallback.md#output-validation-retries) moves to a persistent candidate, that candidate takes precedence and the selector is no longer evaluated for later steps in that run.
+
 ## Route an output retry to another model
 
 The selector sees how many times the run's output has been rejected, as `ctx.retry`, and the run's output retry budget, as `ctx.max_retries`: the same values output validators see on [`RunContext`][pydantic_ai.tools.RunContext]. Steps in between, like function tool calls, don't reset the count. So a selector can send the request that follows a rejected output to a stronger model and keep using it for the rest of the run, while the run keeps its history and output retry budget:
