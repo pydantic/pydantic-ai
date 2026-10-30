@@ -438,12 +438,14 @@ limits.
   run ID, so a new worker continues in the same directory after a restart. The file is removed when
   the run completes. Commands in one run should execute in order; simultaneous commands that change
   directory can overwrite each other's state.
-- **Background jobs** and `shell` commands are keyed by the tool call: its ID within the model response
-  that made it, which is named by the response's run ID and timestamp. A retried `start_command` or
-  `shell` call reattaches to the job instead of starting a second process, and so does a conversation
-  continued from its saved history after a crash, though it is a new run. A history rebuilt without run
-  IDs, as UI adapters do, is matched by its conversation ID. Inside a Temporal activity, which carries
-  no history, the run ID and step stand in for the response. If a launch fails after claiming its job directory, the
+- **Background jobs** and `shell` commands are keyed by the tool call: its ID and command within the
+  model response that made it, which is named by the response's run ID and timestamp. A retried
+  `start_command` or `shell` call reattaches to the job instead of starting a second process, and so does
+  a conversation continued from its saved history after a crash, though it is a new run, as long as the
+  history keeps each response's run ID and exact timestamp, as `ModelMessagesTypeAdapter` does. A history
+  that a UI adapter rebuilds from its own messages doesn't, so continuing one runs the command again. A
+  Temporal activity carries no history, so there the run ID and step stand in for the response: a retry
+  reattaches, and a conversation continued in a new workflow runs the command again. If a launch fails after claiming its job directory, the
   retry reports a pending launch; once the process has stopped, remove the stale job files under
   `.pydantic-ai-harness/shell/`.
 
