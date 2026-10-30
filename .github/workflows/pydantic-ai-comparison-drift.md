@@ -71,7 +71,7 @@ safe-outputs:
     labels: [comparison-drift]
     close-older-key: "[comparison-drift]"
     close-older-issues: false
-    expires: 30d
+    expires: 27d # expires before the next monthly run, even after February
 timeout-minutes: 60
 env:
   # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
