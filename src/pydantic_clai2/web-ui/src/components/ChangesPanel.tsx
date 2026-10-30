@@ -28,8 +28,10 @@ const PREVIEW_LINES = 60
 export const CHANGES_KEY = 'E'
 
 /** The files `session` changed in `scope`, asked again whenever `active` turns on, such as when a turn ends, and when
- * `saved` changes, as it does once the session has saved the turn. An answer stays until the next arrives, but only for
- * the session `owner` it was asked for. Without `diffs`, files come with their counts alone, as for the header's count. */
+ * `saved` changes, as it does once the session has saved the turn. While `active` is off, it still asks once for a
+ * scope or session it has no answer for, so a panel opened during a turn shows what is on disk now. An answer stays until
+ * the next arrives, but only for the session `owner` it was asked for. Without `diffs`, files come with their counts
+ * alone, as for the header's count. */
 export function useChanges(
   session: SessionApi,
   scope: ChangeScope,
@@ -40,8 +42,10 @@ export function useChanges(
 ) {
   const [found, setFound] = useState<{ owner: string; scope: ChangeScope; changes: Changes | null; error: string | null }>()
   const [version, setVersion] = useState(0)
+  const mine = found?.owner === owner && found.scope === scope ? found : undefined
+  const ask = active || mine === undefined
   useEffect(() => {
-    if (!active) return
+    if (!ask) return
     let current = true
     const settle = (changes: Changes | null, error: string | null) => current && setFound({ owner, scope, changes, error })
     session.changes(scope, diffs).then(
@@ -51,9 +55,8 @@ export function useChanges(
     return () => {
       current = false
     }
-  }, [session, scope, owner, active, diffs, version, saved])
+  }, [session, scope, owner, active, ask, diffs, version, saved])
   const refresh = useCallback(() => setVersion((value) => value + 1), [])
-  const mine = found?.owner === owner && found.scope === scope ? found : undefined
   return { changes: mine?.changes ?? null, error: mine?.error ?? null, refresh }
 }
 
@@ -96,7 +99,8 @@ export function ChangesPanel({
   session: SessionApi
   /** The session shown, which the answers belong to. */
   owner: string
-  /** Whether to ask: off while a turn runs, so the panel asks again as it ends. */
+  /** Whether to ask again: off while a turn runs, so the panel asks again as it ends. A scope with no answer yet is asked
+   * for regardless. */
   active: boolean
   /** Changes whenever the session list does, including once the session has saved a turn; the panel then asks again. */
   saved: number

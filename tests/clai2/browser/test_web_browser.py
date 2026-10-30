@@ -25,8 +25,10 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.builtin_plugins.web.app import HEADER
+from pydantic_clai2.builtin_plugins.web.app import HEADER, ASGIApp, create_app
+from pydantic_clai2.builtin_plugins.web.server import WebServer
 from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
@@ -54,6 +56,9 @@ code a
 code b
 ```
 """
+
+MILLION_TOKEN_WINDOW = 1_000_000
+"""Beta's model's context window, as `claude-code:` models have."""
 
 LONG_LINES = 200
 PREVIEW_LINES = 8
@@ -166,7 +171,13 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterator[W
             portal=portal,
             agents={
                 'alpha': Agent(TestModel(call_tools=[], custom_output_text=HOSTILE)),
-                'beta': Agent(TestModel(call_tools=[], custom_output_text='Beta answer')),
+                'beta': Agent(
+                    TestModel(
+                        call_tools=[],
+                        custom_output_text='Beta answer',
+                        profile=ModelProfile(context_window=MILLION_TOKEN_WINDOW),
+                    )
+                ),
                 'lines': Agent(TestModel(call_tools=[], custom_output_text=LINES)),
                 'gamma': Agent(TestModel(call_tools=[])),
                 'delta': failing_agent(),
@@ -416,6 +427,13 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
     await expect(sidebar.get_by_role('button', name='Archive all sessions in this worktree')).to_be_disabled()
 
 
+async def test_a_million_token_window_reads_in_millions(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.topbar-status .context')).to_have_text(re.compile(r' / 1M$'))
+
+
 async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     # Capture real browser sockets while leaving their transport and handlers intact.
     await page.add_init_script("""
@@ -456,6 +474,32 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     await expect(page.locator('.markdown').filter(has_text='Beta answer', visible=True)).to_have_count(0)
 
 
+async def test_a_clai_restarted_as_a_new_version_reloads_the_page(page: Page, web_ui: WebUI) -> None:
+    """A page left open across `/update`'s restart loads the new CLAI's bundle rather than keep the old one."""
+    fleet = web_ui.fleet
+
+    def app(port: int) -> ASGIApp:
+        return create_app(service=fleet.service, token=TOKEN, hosts=frozenset({f'127.0.0.1:{port}'}))
+
+    server = fleet.portal.call(lambda: WebServer.serve(app, host='127.0.0.1', port=0))
+    port = server.port
+    version = fleet.service.version
+    try:
+        await page.goto(f'http://127.0.0.1:{port}/?token={TOKEN}')
+        await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
+        await page.evaluate('window.claiTestOldBundle = true')
+        fleet.portal.call(server.stop)
+        await expect(page.get_by_title('Reconnecting…', exact=True)).to_be_visible()
+        fleet.service.version = f'{version}+updated'
+        server = fleet.portal.call(lambda: WebServer.serve(app, host='127.0.0.1', port=port))
+        await expect(page.get_by_text(f'Updated CLAI to {version}+updated.')).to_be_visible()
+        await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
+        assert await page.evaluate('window.claiTestOldBundle ?? null') is None
+    finally:
+        fleet.service.version = version
+        fleet.portal.call(server.stop)
+
+
 async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
@@ -474,6 +518,50 @@ async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None
     await row.click()
     await expect(row).to_have_attribute('aria-expanded', 'true')
     await expect(diff).to_be_visible()
+
+
+async def test_side_panels_replace_each_other(page: Page, web_ui: WebUI) -> None:
+    """Changes, Monty, and a plugin's panel share the right-hand column: opening one closes the others."""
+    logfire = {
+        'plugin': 'observability',
+        'id': 'logfire',
+        'title': 'Logfire',
+        'icon': 'traces',
+        'url': None,
+        'note': 'Set up Logfire to see traces.',
+        'embed': False,
+    }
+    await page.route('**/api/panels', lambda route: route.fulfill(json=[logfire]))
+    await page.set_viewport_size({'width': 1280, 'height': 800})
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    changes = page.get_by_role('complementary', name='Changes')
+    plugin = page.get_by_role('complementary', name='Logfire')
+    monty = page.get_by_role('complementary', name='Monty, the run_code sandbox')
+    toggles = page.locator('header .monty-toggle')
+
+    async def only(panel: object) -> None:
+        for each in (changes, plugin, monty):
+            await expect(each).to_have_count(1 if each is panel else 0)
+        await expect(toggles.and_(page.locator('[aria-pressed="true"]'))).to_have_count(1)
+        chat = await page.locator('main').bounding_box()
+        assert chat is not None and chat['width'] >= 480, chat
+
+    await page.get_by_role('button', name=re.compile(r'^Changes')).click()
+    await only(changes)
+    await page.get_by_role('button', name=re.compile(r'^Show Logfire')).click()
+    await only(plugin)
+    await page.get_by_role('button', name=re.compile(r'^Show Monty')).click()
+    await only(monty)
+    await page.get_by_role('button', name=re.compile(r'^Changes')).click()
+    await only(changes)
+    await page.keyboard.press('ControlOrMeta+j')
+    await only(monty)
+    await page.keyboard.press('ControlOrMeta+Shift+L')
+    await only(plugin)
+    await page.get_by_role('button', name=re.compile(r'^Hide Logfire')).click()
+    await expect(toggles.and_(page.locator('[aria-pressed="true"]'))).to_have_count(0)
 
 
 async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
