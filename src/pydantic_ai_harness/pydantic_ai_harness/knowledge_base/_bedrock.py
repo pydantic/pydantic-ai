@@ -60,7 +60,7 @@ try:
         NoRegionError,
         ReadTimeoutError,
     )
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:  # pragma: lax no cover
     raise ImportError(
         'boto3 is required for BedrockKnowledgeBase. Install it with: pip install "pydantic-ai-slim[bedrock]"'
     ) from _import_error

@@ -29,7 +29,7 @@ from pydantic_ai_harness.knowledge_base._backend import Document, FilterNode, Pa
 
 try:
     from openai import APIConnectionError, AsyncOpenAI, InternalServerError, NotFoundError, RateLimitError
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:  # pragma: lax no cover
     raise ImportError(
         'openai is required for OpenAIVectorStore. Install it with: pip install "pydantic-ai-slim[openai]"'
     ) from _import_error

@@ -35,7 +35,7 @@ from pydantic_ai_harness.knowledge_base._backend import (
 try:
     from qdrant_client import AsyncQdrantClient, models
     from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:  # pragma: lax no cover
     raise ImportError(
         'qdrant-client is required for QdrantKnowledgeBase. Install it with: pip install qdrant-client'
     ) from _import_error
