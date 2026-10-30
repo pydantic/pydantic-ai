@@ -32,6 +32,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     delivered_steering,
     dump,
+    fork_entry,
+    fork_notice,
     history_images,
     history_items,
     queued_item,
@@ -42,7 +44,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
 from pydantic_clai2.commands import is_command_input
-from pydantic_clai2.plugins import CommandEnd, LiveSession, TurnOutcome
+from pydantic_clai2.plugins import CommandEnd, ForkEnd, LiveSession, TurnOutcome
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering.usage_report import session_usage
 
@@ -55,6 +57,8 @@ Switch = Literal['run.code_mode', 'run.speculative_code_mode']
 """The settings the browser's toggles change; nothing else is set from it but through the prompt."""
 USAGE_COMMANDS = frozenset({'/usage', '/cost'})
 """Commands whose notice carries the figures they report, for the page's usage card."""
+FORKS_COMMAND = '/forks'
+"""The command whose notice carries the forks its table lists, for the page's forks card."""
 STATUS_INTERVAL = 0.2
 """Seconds between status updates sent while a turn streams, so token counts tick; turn and command ends always send one."""
 
@@ -251,9 +255,16 @@ class SessionChannel:
         if event.error is not None:
             self.publish(Notice(text=str(event.error), level='error', command=event.text))
         elif event.output:
-            reports = event.text.split(maxsplit=1)[0] in USAGE_COMMANDS
-            usage = usage_report(session_usage(self.session.conversation.messages)) if reports else None
-            self.publish(Notice(text=event.output, command=event.text, usage=usage))
+            command = event.text.split(maxsplit=1)[0]
+            usage = (
+                usage_report(session_usage(self.session.conversation.messages)) if command in USAGE_COMMANDS else None
+            )
+            forks = [fork_entry(fork) for fork in self.session.forks] if command == FORKS_COMMAND else []
+            self.publish(Notice(text=event.output, command=event.text, usage=usage, forks=forks or None))
+
+    def fork_ended(self, event: ForkEnd) -> None:
+        """A background `/fork` ended: its answer or failure, which the terminal prints, reaches the page too."""
+        self.publish(fork_notice(event))
 
     # What the browser does.
 
@@ -316,6 +327,10 @@ class SessionChannel:
             )
             for completion in await self.session.complete(text)
         ]
+
+    async def files(self, query: str) -> list[CompletionInfo]:
+        """The files and folders in the session's folder that best match `query`, the text after an `@`."""
+        return await self.service.files.find(self.session.workspace, query)
 
     def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:
         """Answer one of the session's open questions, or decline it with `None`."""

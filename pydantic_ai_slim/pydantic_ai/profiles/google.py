@@ -302,6 +302,7 @@ _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (
     'gemini-3.1-flash-live',
     'gemini-3.8-live',  # and `gemini-3.8-live-extended-thinking`
     'gemini-live-2.5-flash',  # Vertex AI
+    'gemini-robotics-er',
 )
 """Live model families whose typed turns don't see an image sent just before them as a video frame."""
 
@@ -442,7 +443,9 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     )
     # Verified live 2026-09-25 by sending an image and then a typed question about it, 3/3 each: the 3.x
     # models answered that they couldn't see an image, and the 2.5 models misread it. A typed turn only
-    # sees images in its own content, so these get the recent image sent again there.
+    # sees images in its own content, so these get the recent image sent again there. Verified live
+    # 2026-10-27 the same way on `gemini-robotics-er-2-streaming-preview`: without the second send it
+    # described a different object 3/3, and with it the image it was sent 3/3.
     # Verified live 2026-09-28 by seeding a tool call and its result and asking about the result, before
     # and after a session-resumption re-dial: the 3.8 models, extended thinking included, recall it
     # both times. `gemini-3.1-flash-live-preview` recalls it until the re-dial and then has lost it (it
@@ -533,12 +536,18 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         return super()._walk_def(key, siblings)
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
-        # `transform` drops `additionalProperties` and `Schema` has no `patternProperties`, so neither
-        # subschema reaches Gemini. Walking them anyway would refuse a recursive `dict[str, Node]` over a
-        # `$ref` the declaration doesn't contain.
+        # `transform` drops `additionalProperties` and `Schema` has no `patternProperties` or `propertyNames`,
+        # so none of these subschemas reaches Gemini. Walking them anyway would refuse a recursive
+        # `dict[str, Node]` over a `$ref` the declaration doesn't contain.
         schema.pop('additionalProperties', None)
         schema.pop('patternProperties', None)
+        schema.pop('propertyNames', None)
         return super()._handle_object(schema)
+
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
+        # `Schema` has no `contains` either: same reason as `_handle_object`.
+        schema.pop('contains', None)
+        return super()._handle_array(schema)
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # `additionalProperties` is mishandled by Gemini, so a `dict[str, MyType]` field always arrives

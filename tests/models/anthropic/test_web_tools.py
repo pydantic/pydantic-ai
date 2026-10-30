@@ -2,7 +2,7 @@
 
 The wire tool version (`web_search_20260209` / `web_fetch_20260209` vs the earlier ones) and the
 beta headers are narrowed by the concrete Anthropic client the provider wraps — first-party,
-Bedrock(-Mantle), Vertex, and Foundry each support a different subset. These tests pin that matrix,
+both Bedrock APIs, Vertex, and Foundry each support a different subset. These tests pin that matrix,
 the dynamic-filtering `caller` round-trip on web-fetch history, and the live request shape via VCR.
 """
 
@@ -21,7 +21,7 @@ from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool,
 
 from ..._inline_snapshot import snapshot
 from ...cassette_utils import single_request_body
-from ...conftest import IsStr, TestEnv, try_import
+from ...conftest import IsStr, RequestCapture, TestEnv, try_import
 from ..test_anthropic import (
     MockAnthropic,
     completion_message,
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 with try_import() as imports_successful:
     from anthropic import (
+        APIStatusError,
         AsyncAnthropic,
         AsyncAnthropicBedrock,
         AsyncAnthropicBedrockMantle,
@@ -103,13 +104,6 @@ CLIENT_SUPPORT_CASES = [
         expected_tool_types=['web_search_20260209', 'web_fetch_20260209'],
     ),
     ClientSupportCase(
-        id='bedrock-mantle',
-        client_cls=AsyncAnthropicBedrockMantle,
-        base_url='https://bedrock-mantle.us-east-1.api.aws',
-        native_tools=[WebSearchTool(), WebFetchTool()],
-        expected_tool_types=['web_search_20260209', 'web_fetch_20260209'],
-    ),
-    ClientSupportCase(
         id='foundry',
         client_cls=AsyncAnthropicFoundry,
         base_url='https://example.services.ai.azure.com/anthropic',
@@ -134,6 +128,20 @@ CLIENT_SUPPORT_CASES = [
         id='bedrock-web-fetch-rejected',
         client_cls=AsyncAnthropicBedrock,
         base_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+        native_tools=[WebFetchTool()],
+        rejected_tool=WebFetchTool,
+    ),
+    ClientSupportCase(
+        id='bedrock-mantle-web-search-rejected',
+        client_cls=AsyncAnthropicBedrockMantle,
+        base_url='https://bedrock-mantle.us-east-1.api.aws',
+        native_tools=[WebSearchTool()],
+        rejected_tool=WebSearchTool,
+    ),
+    ClientSupportCase(
+        id='bedrock-mantle-web-fetch-rejected',
+        client_cls=AsyncAnthropicBedrockMantle,
+        base_url='https://bedrock-mantle.us-east-1.api.aws',
         native_tools=[WebFetchTool()],
         rejected_tool=WebFetchTool,
     ),
@@ -322,3 +330,43 @@ async def test_anthropic_unsupported_model_uses_previous_web_tools(
     assert result.output
     tool_types = [tool['type'] for tool in single_request_body(vcr)['tools']]
     assert tool_types == ['web_search_20250305', 'web_fetch_20250910']
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'tool',
+    [
+        pytest.param(WebSearchTool(), id='web-search'),
+        pytest.param(WebFetchTool(), id='web-fetch'),
+    ],
+)
+@pytest.mark.parametrize('dynamic_filtering', [pytest.param(False, id='basic'), pytest.param(True, id='20260209')])
+async def test_anthropic_web_tools_rejected_by_bedrock_messages_api(
+    allow_model_requests: None,
+    request_capture: RequestCapture,
+    request: pytest.FixtureRequest,
+    tool: AbstractNativeTool,
+    dynamic_filtering: bool,
+):
+    """The Bedrock Messages API rejects both versions of both web tools, which is why its client doesn't get them.
+
+    `AnthropicModel` no longer sends them there, so this sends the definitions and betas it builds through the SDK.
+    That pins the provider behavior the `bedrock-mantle` rows of the support matrix rest on.
+    https://github.com/pydantic/pydantic-ai/issues/11481
+    """
+    if isinstance(tool, WebSearchTool):
+        tool_param = AnthropicModel._map_web_search_tool(tool, dynamic_filtering)  # pyright: ignore[reportPrivateUsage]
+        beta = None
+    else:
+        assert isinstance(tool, WebFetchTool)
+        tool_param, beta = AnthropicModel._map_web_fetch_tool(tool, dynamic_filtering, False)  # pyright: ignore[reportPrivateUsage]
+    client = request.getfixturevalue('anthropic_bedrock_mantle_client')
+
+    with pytest.raises(APIStatusError, match=rf"tool type '{tool_param['type']}' is not supported for this model"):
+        await client.beta.messages.create(
+            model='anthropic.claude-opus-5-5',
+            max_tokens=256,
+            messages=[{'role': 'user', 'content': 'Look up https://example.com and give me its title.'}],
+            tools=[tool_param],
+            betas=[beta] if beta else [],
+        )

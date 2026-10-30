@@ -164,7 +164,7 @@ Only three things hand the whole project to `make typecheck-pyright`: `CI`, an i
 than Python 3.11, which is what it needs to read `pyproject.toml`, and a Pyright configuration it
 cannot reproduce.
 
-A full run is single-process unless `PYRIGHT_THREADS` says otherwise, and CI sets it to `auto`.
+A full run is single-process unless `PYRIGHT_THREADS` says otherwise, and CI sets it to `3`.
 The variable turns on Pyright's parallel check phase, which reaches the same diagnostics in less
 wall time: `auto` is up to one worker per logical core, and a positive integer caps them. Only
 `make typecheck-pyright` reads it, so `make typecheck-changed` picks it up only on a run that hands
@@ -180,6 +180,14 @@ a full Node process, so they pay for themselves only on a machine with the memor
 already near its limit swaps and comes out slower than the default. Unset the variable or set it to
 `1` to go back to a single process: anything Pyright cannot read as a positive integer, `0` and
 `off` included, means `auto`.
+
+A process whose heap nears Node's limit, which defaults to about 4 GB on CI's runners, empties its
+whole type cache and re-evaluates what it still needs, which `--verbose` reports as `Emptying type
+cache`. A full run now does that dozens of times in a single process, and each of four workers at
+the default limit still does. CI raises the limit with `NODE_OPTIONS=--max-old-space-size=6144`,
+which every worker inherits, so each of its three workers stays below it. On CI's runners, a single
+process with an 8 GB limit still emptied its cache 22 times, against 54 to 98 at the default, and
+took 239 to 314 s against 334 to 468 s.
 
 ## Documentation Changes
 

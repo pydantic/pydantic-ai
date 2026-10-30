@@ -35,6 +35,7 @@ from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import RequestUsage
+from tests.function_model_prefix import HOOK_REWRITES_REQUEST
 
 from .conftest import IsDatetime, IsStr, RequestCapture, try_import
 
@@ -205,6 +206,7 @@ async def test_newcomer_history_shape():
                 parts=[ToolCallPart(tool_name='unlock', args={}, tool_call_id='c1')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:_unlock_then_call_later:',
+                model_id='function:function:_unlock_then_call_later:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -222,6 +224,7 @@ async def test_newcomer_history_shape():
                 parts=[ToolCallPart(tool_name='later', args={}, tool_call_id='c2')],
                 usage=RequestUsage(input_tokens=59, output_tokens=4),
                 model_name='function:_unlock_then_call_later:',
+                model_id='function:function:_unlock_then_call_later:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -238,6 +241,7 @@ async def test_newcomer_history_shape():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=61, output_tokens=5),
                 model_name='function:_unlock_then_call_later:',
+                model_id='function:function:_unlock_then_call_later:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -326,6 +330,7 @@ def _with_copied_tail(messages: list[ModelMessage]) -> list[ModelMessage]:
         pytest.param(_with_copied_tail, id='request-only-copy-of-tail'),
     ],
 )
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_newcomer_is_persisted_when_a_hook_ends_the_request_in_a_request_only_message(
     rewrite: Callable[[list[ModelMessage]], list[ModelMessage]],
 ):
@@ -370,6 +375,7 @@ async def test_newcomer_is_persisted_when_a_hook_ends_the_request_in_a_request_o
     assert _deltas(result.all_messages()) == [['later']]
 
 
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_newcomer_is_recorded_inside_a_compaction_a_hook_adds_to_the_request():
     """A hook that compacts the request without persisting it leaves the persisted tail before the boundary.
 
@@ -462,6 +468,7 @@ def _strip_deltas_once(at_request: int) -> Callable[[list[ModelMessage]], list[M
         pytest.param(lambda: _strip_deltas_once(3), id='once-after-recording'),
     ],
 )
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_delta_removed_by_a_hook_is_recorded_again(
     make_processor: Callable[[], Callable[[list[ModelMessage]], list[ModelMessage]]],
 ):

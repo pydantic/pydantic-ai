@@ -38,7 +38,7 @@ from pydantic_clai2.mcp import OAuthSignIn, TokenStore, http_client
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.plugins.menus import Option, SettingsMenu
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus import dialogs
 from tests.clai2.conftest import stored_accounts
 from tests.clai2.dialog_script import Answer, Back, Confirm, Finish, Pick, ScriptedDialogs, Type

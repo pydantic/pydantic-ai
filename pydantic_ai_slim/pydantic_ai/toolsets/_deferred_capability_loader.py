@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 
@@ -22,6 +22,9 @@ from pydantic_ai.toolsets._instruction_collection import (
 )
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
+
+if TYPE_CHECKING:
+    from pydantic_ai.capabilities.abstract import AbstractCapability
 
 LOAD_CAPABILITY_TOOL_NAME = 'load_capability'
 LOAD_CAPABILITY_TOOL_DESCRIPTION = (
@@ -92,6 +95,19 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(f'No capability found with id {capability_id!r}.')
         if capability_id in ctx.active_capability_ids:
             raise ModelRetry(LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
+        if capability.defer_loading is not True:
+            # Inactive without being deferred itself, so it sits inside a deferred capability that isn't loaded yet.
+            groups = [
+                group_id
+                for group_id, group in ctx.capabilities.items()
+                if group.defer_loading is True
+                and group_id not in ctx.loaded_capability_ids
+                and any(inner is capability for inner in _beneath(group))
+            ]
+            names = ' or '.join(repr(group_id) for group_id in groups)
+            raise ModelRetry(
+                f'Capability {capability_id!r} is part of deferred capability {names} and loads with it. Load {names} instead.'
+            )
         if _is_duplicate_load_in_response(ctx, capability_id):
             raise ModelRetry(LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 
@@ -160,3 +176,10 @@ def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> 
         ctx.tool_call_id,
     )
     return owner_tool_call_id != ctx.tool_call_id
+
+
+def _beneath(capability: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
+    """What `capability` registers beneath itself: `apply` visits the capability first."""
+    visited: list[AbstractCapability[Any]] = []
+    capability.apply(visited.append)
+    return visited[1:]

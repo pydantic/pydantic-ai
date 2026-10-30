@@ -27,6 +27,7 @@ from pydantic_graph import End
 
 from .. import (
     _agent_graph,
+    _display,
     _instructions,
     _utils,
     exceptions,
@@ -285,6 +286,10 @@ class AgentRunEvents(
     async def _ensure_started(self) -> None:
         if self._task is not None:
             return
+
+        # Whoever is iterating is on the stack now, but not in the background task that runs the agent.
+        if _display.banner_pending():
+            self._binding.started_by_installed_package = _display.started_by_installed_package(inspect.currentframe())
 
         # Zero-buffer stream: the run blocks on `send` until this iterator pulls, giving natural backpressure
         # and keeping the run no more than one event ahead of the consumer.
@@ -1215,7 +1220,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 )
 
         if not yielded:
-            raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
+            # The loop above only ends without yielding by raising, so the run failed before it streamed a final
+            # result, and `wrap_run` or `on_run_error` recovered it with a result, which `iter()` sets on the run as
+            # it suppresses the error.
+            run_result = agent_run.result
+            assert run_result is not None
+            yield StreamedRunResult(
+                agent_run.ctx.state.message_history,
+                agent_run.ctx.deps.new_message_index,
+                run_result=run_result,
+            )
 
     @overload
     def run_stream_sync(
@@ -1743,6 +1757,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
                         ),
                         model_name='gpt-5.2',
+                        model_id='openai:gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
                         conversation_id='...',

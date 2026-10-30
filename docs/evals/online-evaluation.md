@@ -108,7 +108,7 @@ rare_check = OnlineEvaluator(
 )
 ```
 
-When you pass a bare [`Evaluator`][pydantic_evals.evaluators.Evaluator] to the [`evaluate()`][pydantic_evals.online.evaluate] decorator, it's automatically wrapped in an [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] with the config's default sample rate.
+When you pass a bare [`Evaluator`][pydantic_evals.evaluators.Evaluator] or [evaluator function](evaluators/custom.md#function-evaluators) to the [`evaluate()`][pydantic_evals.online.evaluate] decorator, it's automatically wrapped in an [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] with the config's default sample rate. To configure a function this way, wrap it in a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator] first: `OnlineEvaluator(evaluator=FunctionEvaluator(my_check), sample_rate=0.1)`.
 
 ### OnlineEvalConfig
 
@@ -208,10 +208,15 @@ Each event has `event.name = 'gen_ai.evaluation.result'` and a short human-reada
 - `gen_ai.evaluation.explanation` — `EvaluationResult.reason` on success or `EvaluatorFailure.error_message` on failure. Omitted when absent. Set via `reason=...` when constructing an `EvaluationResult` inside a custom evaluator.
 - `error.type` (failure events only) — the exception class name (e.g. `'ValueError'`) when the failure was built from a caught exception; falls back to `'pydantic_evals.EvaluatorFailure'` for `EvaluatorFailure` instances constructed without it. Absent on successful evaluations. Source: `EvaluatorFailure.error_type`.
 - `gen_ai.evaluation.target` — `@evaluate(target=...)` or agent `name`. See [Target](#target).
-- `gen_ai.evaluation.evaluator.version` — `Evaluator.evaluator_version` class attribute; omitted when the class doesn't set it. See [Evaluator Versioning](#evaluator-versioning).
+- `gen_ai.evaluation.evaluator.version` — the return value of [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version]; omitted when it returns `None`, which is the default. See [Evaluator Versioning](#evaluator-versioning).
 - `gen_ai.evaluation.evaluator.source` — JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] identifying the evaluator class and its constructor arguments, so downstream queries can group by evaluator identity without relying on `name` alone (two different `LLMJudge(rubric=...)` instances share a name but have different sources).
 
-[OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage.
+Two `logfire.scorer.*` attributes make the record lossless and groupable. They use the same names and values as the result events of Logfire's hosted scorers, so one query reads results from both:
+
+- `logfire.scorer.score_type` — the type of the evaluator's return value: `'pass_fail'` for `bool`, `'numeric'` for `int`/`float`, `'categorical'` for `str`. This tells a passed assertion apart from a `1.0` score or a `'pass'` label, which share `score.value`/`score.label`. Omitted on failure events, which have no value.
+- `logfire.scorer.run_id` — a UUID shared by every event (results and failures) from one function or agent call's evaluators, including evaluators routed to different sinks. Each call gets a new ID, so consumers can group the results of one scoring pass.
+
+[OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage, and baggage keys in the `logfire.scorer.*` namespace are dropped.
 
 For example, the `OutputNotEmpty` evaluator above, decorated as `@evaluate(OutputNotEmpty(), target='customer_support')` and returning `True` for a given call, emits one event with:
 
@@ -220,10 +225,12 @@ For example, the `OutputNotEmpty` evaluator above, decorated as `@evaluate(Outpu
 - `gen_ai.evaluation.score.label = 'pass'`
 - `gen_ai.evaluation.target = 'customer_support'`
 - `gen_ai.evaluation.evaluator.source = '{"name":"OutputNotEmpty","arguments":null}'`
+- `logfire.scorer.score_type = 'pass_fail'`
+- `logfire.scorer.run_id = '<uuid>'`
 
 An evaluator with constructor arguments gets those rendered into `source` — e.g. [`LLMJudge(rubric='Is the response helpful?')`][pydantic_evals.evaluators.LLMJudge] emits `gen_ai.evaluation.evaluator.source = '{"name":"LLMJudge","arguments":["Is the response helpful?"]}'`, so two `LLMJudge` instances with different rubrics remain distinguishable downstream.
 
-Attributes under `gen_ai.evaluation.evaluator.*` are pydantic-evals extensions — they aren't in the current OTel GenAI semconv, and their names may change to align with future semconv additions.
+`gen_ai.evaluation.target` and the attributes under `gen_ai.evaluation.evaluator.*` are pydantic-evals extensions — they aren't in the current OTel GenAI semconv, and their names may change to align with future semconv additions.
 
 To disable the default emission (e.g. in a test harness that only wants to assert on a custom sink), set `emit_otel_events=False` on the config:
 
@@ -254,12 +261,14 @@ class ToneCheck(Evaluator):
 
 The version applies to all results the evaluator produces (so one evaluator class maps to one version, even when the evaluator returns a mapping of named results).
 
+For an [evaluator function](evaluators/custom.md#function-evaluators), pass the version to a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator]: `FunctionEvaluator(tone_check, version='v2')`.
+
 ## Sampling
 
 Control evaluation frequency with per-evaluator sample rates to balance quality monitoring against cost.
 
 !!! note
-    Sampling is decided **before** the decorated function runs. When no evaluators are sampled for a given call, the function executes without any additional instrumentation overhead (no logfire span or span tree capture).
+    Sampling is decided **before** the decorated function runs. When no evaluators are sampled for a given call, the function executes without any additional instrumentation overhead (no logfire span or span tree capture). Under [durable execution](#durable-execution), `OnlineEvaluation` samples after the agent run instead, inside a durable operation that a run records whenever an evaluator may be sampled.
 
 ### Static Sample Rates
 
@@ -1016,8 +1025,62 @@ To attach additional sinks or override sampling defaults, pass an [`OnlineEvalCo
 
 The capability supports all the same features as the [`@evaluate()`][pydantic_evals.online.evaluate] decorator: sampling, per-evaluator sinks, concurrency control, and error handling. The `config` parameter is optional and defaults to the global [`DEFAULT_CONFIG`][pydantic_evals.online.DEFAULT_CONFIG].
 
+An agent can have several `OnlineEvaluation` capabilities, for example with different configs or sinks. Each samples and dispatches its own evaluators for every run, and they share the run's measured duration, span tree, attributes and metrics.
+
 !!! note
     [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] when the run reaches a final result. For streaming runs, evaluators are dispatched only after the final result is available and the surrounding context manager exits. The same delayed-dispatch behavior applies when driving an [`agent.iter()`][pydantic_ai.agent.Agent.iter] run to completion, which is generally the preferred streaming API.
+
+### Durable Execution
+
+Under [durable execution](../durable_execution/overview.md), the agent run is workflow code that the engine replays, so the capability doesn't sample or dispatch evaluators there. Instead it runs sampling and dispatch as one [durable operation](../capabilities/custom.md#durable-capability-operations) (a Temporal activity, DBOS step or Prefect task) after the run. The engine records that operation, so a replay returns the recorded result rather than evaluating the run again, and sampling callables and evaluators run outside workflow code.
+
+This once-per-run guarantee needs a durability capability, such as [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] or [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]. Under the deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers, the capability still samples and dispatches in workflow code, so a replay can evaluate a run again. Migrate to the durability capability as described for [Temporal](../durable_execution/temporal.md#wrapper-agent-path-deprecated), [DBOS](../durable_execution/dbos.md#wrapper-agent-path-deprecated) and [Prefect](../durable_execution/prefect.md#wrapper-agent-path-deprecated).
+
+Durable operations are identified by their capability's [`id`][pydantic_ai.capabilities.AbstractCapability.id], so give the capability one when the agent has a durability capability. Agent construction raises a [`UserError`][pydantic_ai.exceptions.UserError] without it:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online_capability import OnlineEvaluation
+
+
+@dataclass
+class OutputNotEmpty(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return bool(ctx.output)
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='assistant',
+    capabilities=[
+        TemporalDurability(),
+        OnlineEvaluation(id='online_evaluation', evaluators=[OutputNotEmpty()]),
+    ],
+)
+```
+
+Keep the `id` stable once workflows that use it are deployed, as it names the recorded operation.
+
+Each `OnlineEvaluation` capability adds one durable operation to each completed run unless every one of its evaluators' sample rates is `0`, including runs where none ends up sampled. A failed run gets one under the same condition, and only when one of its evaluators has `run_on_errors=True`.
+
+Sampling happens inside the operation, after the run. An exception from a `sample_rate` callable without an `on_sampling_error` handler fails the operation, and the engine retries it according to its retry policy. Once the operation has failed for good, so does the run, unless the run had already failed: then its own exception reaches the caller, with a warning that the evaluation wasn't dispatched. Temporal's default activity retry policy has no attempt limit, so set `on_sampling_error` to keep such a workflow from retrying indefinitely. A `retry_policy` with `maximum_attempts` in the `activity_config` of [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] also limits it, but that config applies to the agent's model and tool activities too; see [Activity Configuration](../durable_execution/temporal.md#activity-configuration).
+
+!!! warning "Upgrading with workflows in flight"
+    The operation adds a step to the workflow's history after each agent run. A workflow that started on an earlier version and recorded more steps after an agent run finds a different step there when it replays on this version, and fails with a nondeterminism error on Temporal or an unexpected step error on DBOS. Let such workflows finish before deploying, or keep them on workers running the earlier version.
+
+What the evaluators see depends on whether the engine serializes the operation's arguments:
+
+- DBOS and Prefect run the operation in the run's own process, so evaluators see the same [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] values as without durable execution.
+- Temporal, and any other engine that serializes the arguments, sends them to another process, so `inputs`, `output` and `metadata` arrive in their JSON form, such as a dict for a Pydantic model output, and sampling callables see `inputs` the same way. The span tree doesn't cross, so [`span_tree`][pydantic_evals.evaluators.EvaluatorContext.span_tree] raises a [`SpanTreeRecordingError`][pydantic_evals.otel.SpanTreeRecordingError]. An evaluator with `run_on_errors=True` receives an `Exception` whose message starts with the original exception's type name, such as `'UsageLimitExceeded: ...'`. Keep `inputs` and `metadata` JSON-serializable there (datetimes, UUIDs, enums and Pydantic models are fine): a value that can't be serialized raises an error in workflow code when the engine records the operation.
+
+The operation starts the evaluators in the background and completes without waiting for them, as evaluation without durable execution does. If the worker stops before the evaluators finish, their results are lost: the engine has already recorded the operation, so it doesn't run it again.
+
+!!! note "Prefect flow retries"
+    Prefect identifies a recorded task by its arguments, and the run's duration measured in flow code differs on a flow retry, so a retry evaluates the run again. [#11575](https://github.com/pydantic/pydantic-ai/issues/11575) tracks letting the operation choose what identifies it.
 
 ## API Reference
 

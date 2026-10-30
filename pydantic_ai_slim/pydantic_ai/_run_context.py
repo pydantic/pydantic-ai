@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import sys
 import warnings
+from collections import Counter
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -499,6 +500,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _capability: AbstractCapability[RunContextAgentDepsT] | None = field(default=None, repr=False)
     """The capability whose hook is currently being dispatched, if any."""
 
+    _dispatched_tool_name: str | None = field(default=None, repr=False, compare=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The name the executing `ToolManager` holds the current tool under, set when it builds the tool
+    call's context. `tool_name` can differ: `PrefixedToolset` and `RenamedToolset` hand the wrapped
+    tool its own name. `emit` resolves the tool's owning capability by this name.
+    """
+
     _tool_name_path: ToolNamePath = field(default=(), repr=False, compare=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
@@ -660,10 +669,28 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Because it grows step by step, where you read it in the
         [hook order](../hooks.md#hook-ordering) determines what you see — e.g. a capability
         loaded during one step is not reflected until the next step's hooks.
+
+        A capability inside a deferred group (a `CombinedCapability` with an `id` and
+        `defer_loading=True`) is active only once the group is loaded.
         """
+        # The registry first: a Temporal run context without it raises an error that names it.
+        registry = self.capabilities
+        loaded = self.loaded_capability_ids
+        # How often each object occurs beneath an unloaded deferred capability.
+        hidden: Counter[int] = Counter()
+        for capability_id, cap in registry.items():
+            if cap.defer_loading is True and capability_id not in loaded:
+                # `apply` visits the capability itself first, then what is registered beneath it.
+                beneath: list[AbstractCapability[RunContextAgentDepsT]] = []
+                cap.apply(beneath.append)
+                hidden.update(map(id, beneath[1:]))
+        # The registry holds one id per occurrence, so an object that also occurs elsewhere stays active.
+        occurrences = Counter(map(id, registry.values()))
         return {
-            id for id, cap in self.capabilities.items() if cap.defer_loading is not True
-        } | self.loaded_capability_ids
+            capability_id
+            for capability_id, cap in registry.items()
+            if cap.defer_loading is not True and hidden[id(cap)] < occurrences[id(cap)]
+        } | loaded
 
     @property
     def _dispatch_active_capability_ids(self) -> set[str]:
@@ -900,8 +927,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
             capability_id = next(
                 (run_id for run_id, cap in self.capabilities.items() if cap is capability), capability.id
             )
-        elif self.tool_name is not None and self.tool_manager is not None and self.tool_manager.tools is not None:
-            if (tool := self.tool_manager.tools.get(self.tool_name)) is not None:
+        elif (
+            (tool_name := self._dispatched_tool_name or self.tool_name) is not None
+            and self.tool_manager is not None
+            and self.tool_manager.tools is not None
+        ):
+            if (tool := self.tool_manager.tools.get(tool_name)) is not None:
                 # `CapabilityOwnedToolset` stamps the owning capability's run id on the tool definition,
                 # covering capabilities that rely on an implicit (derived) id as well as explicit ones.
                 tool_capability_id = tool.tool_def.capability_id
@@ -971,7 +1002,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end). From a `before_model_request`
+                    or a redirect if the agent would otherwise end; at a deferred-tool pause the
+                    content is added to the history instead, unless every call in the paused step
+                    was deferred). From a `before_model_request`
                     hook, that's the request being prepared. In a realtime session, an active
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.

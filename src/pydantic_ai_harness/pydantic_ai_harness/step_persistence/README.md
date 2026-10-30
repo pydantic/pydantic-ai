@@ -28,6 +28,8 @@ which `StepPersistence` works alongside.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/)
 
+![An agent run with StepPersistence writes to a step store as it goes: before_run writes a RunRecord, after_model_request appends a model_request_completed event, after_tool_execute marks a tool effect completed, and after_node_run saves a complete snapshot of the message history. When the worker crashes during a second tool call, that tool effect stays at started, so it reads as unknown after the crash. Later, in any process, your code finds the run with list_runs, loads the latest complete snapshot with continue_run, and passes its messages to a new Agent.run.](https://pydantic.dev/docs/ai/img/harness/step-persistence.svg)
+
 ## What it gives you
 
 1. **Append-only step events** -- every interesting boundary (run start/end,
@@ -895,6 +897,11 @@ keeps its messages, content revision, and activity timestamp. Saving new content
 unarchives it, since the conversation is in use again. Archiving deletes nothing.
 `listing(archived=False)` leaves archived conversations out, `archived=True` lists
 only those, and the default `None` lists both, as before archiving existed.
+
+An application that copies a conversation may set `ConversationSummary.forked_from`
+to the `id` of the conversation it copied; later saves keep it. It names the source
+conversation, not a message in it, and the application decides which copies record it.
+`listing(forked_from=...)` lists only the conversations recording that ID.
 
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.

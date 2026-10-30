@@ -130,6 +130,18 @@ export interface TurnUsage {
   cost: string | null
 }
 
+/** A background `/fork`, as a `/forks` row lists it. */
+export interface ForkEntry {
+  id: number
+  model: string
+  prompt: string
+  status: 'running' | 'done' | 'failed' | 'cancelled'
+  /** Seconds it has run so far, or ran in all once it ended. */
+  elapsed: number
+  /** The saved conversation `/resume` continues it in, once it has saved one. */
+  session_id: string | null
+}
+
 /** What `/usage` and `/cost` report about the retained history. */
 export interface UsageReport {
   turns: TurnUsage[]
@@ -252,7 +264,15 @@ export type SessionMessage = (
   | ChatMessage
   | { type: 'queue'; queue: QueuedItem[] }
   | { type: 'status'; status: StatusInfo }
-  | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null; usage: UsageReport | null }
+  | {
+      type: 'notice'
+      text: string
+      level: 'info' | 'error'
+      command: string | null
+      usage: UsageReport | null
+      forks: ForkEntry[] | null
+      fork: ForkEntry | null
+    }
   | { type: 'title'; title: string | null }
   | { type: 'task'; task: TaskEntry }
   | { type: 'task_items'; id: string; messages: ItemMessage[] }
@@ -273,6 +293,11 @@ export interface WatchMessage {
 /** What `POST /api/sessions/{id}/open` and `POST /api/sessions/new` answer: the live session's conversation ID. */
 export interface Opened {
   id: string
+}
+
+/** What `POST /api/worktrees` answers: the new worktree's folder. */
+export interface AddedWorktree {
+  root: string
 }
 
 export type ServerMessage =
@@ -324,6 +349,8 @@ export interface SessionEntry {
   current: boolean
   /** Hidden from the sidebar unless it lists archived sessions too. */
   archived: boolean
+  /** Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first. */
+  openable: boolean
 }
 
 export interface Worktree {
@@ -351,6 +378,8 @@ export interface Transcript {
   openable: boolean
   /** CLAI would move to its directory, but that directory is gone. */
   missing: boolean
+  /** The process ID of another CLAI running it; opening it then continues in a fork of it. */
+  owner_pid: number | null
 }
 
 export interface CompletionInfo {
@@ -470,4 +499,30 @@ export interface Schema {
   default?: JsonValue
   minimum?: number
   maximum?: number
+}
+
+export type ChangeScope = 'turn' | 'session' | 'uncommitted' | 'branch'
+
+/** One changed file in the Changes panel. */
+export interface FileChange {
+  path: string
+  /** Added, modified, or deleted. */
+  status: 'A' | 'M' | 'D'
+  added: number
+  removed: number
+  diff: Diff
+  /** Why the diff is empty, such as a binary file. */
+  note: string | null
+}
+
+/** What a session changed in one scope. */
+export interface Changes {
+  scope: ChangeScope
+  files: FileChange[]
+  /** The branch `branch` compares with. */
+  base: string | null
+  /** Why the scope cannot be shown, such as a workspace outside Git. */
+  note: string | null
+  /** Changed files left out, past the most one answer lists. */
+  omitted: number
 }

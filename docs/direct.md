@@ -156,4 +156,4 @@ print(model_response.text)
 #> The capital of France is Paris.
 ```
 
-See [Debugging and Monitoring](logfire.md) for more details, including how to instrument with plain OpenTelemetry without Logfire.
+See [Debugging and Monitoring](logfire.md#using-logfire) for Logfire setup and more details, including how to instrument with plain OpenTelemetry without Logfire.

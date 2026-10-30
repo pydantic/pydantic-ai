@@ -12,7 +12,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -64,6 +64,30 @@ _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE: dict[str, tuple[str, ...]] = {
     'integer': ('minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'),
     'array': ('maxItems',),
 }
+
+# Bedrock rejects a `pattern` using lookaround or backreferences with a 400. Source: AWS docs at
+# https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html, verified against
+# `us.anthropic.claude-opus-4-7` and `qwen.qwen3-32b-v1:0` on 2026-10-29. Every escaped digit counts as a
+# backreference, octal escapes and character classes included; `(?=` inside a character class is literal.
+_REGEX_UNSUPPORTED_TOKENS = ('(?=', '(?!', '(?<=', '(?<!', '(?P=')
+
+
+def _regex_contains_unsupported_syntax(pattern: str) -> bool:
+    escaped = in_class = False
+    for i, char in enumerate(pattern):
+        if escaped:
+            if char in '0123456789':
+                return True
+            escaped = False
+        elif char == '\\':
+            escaped = True
+        elif in_class:
+            in_class = char != ']'
+        elif char == '[':
+            in_class = True
+        elif pattern.startswith(_REGEX_UNSUPPORTED_TOKENS, i):
+            return True
+    return False
 
 
 @dataclass(init=False)
@@ -119,6 +143,9 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
                     incompatible[key] = schema[key]
             if schema_type == 'array' and schema.get('minItems', 0) > 1:
                 incompatible['minItems'] = schema['minItems']
+        pattern = schema.get('pattern')
+        if isinstance(pattern, str) and _regex_contains_unsupported_syntax(pattern):
+            incompatible['pattern'] = pattern
 
         if incompatible:
             notes: list[str] = []
@@ -372,6 +399,8 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
         ),
+        # Converse compiles Claude's strict schemas with Anthropic's limits, verified live.
+        AnthropicModelProfile(anthropic_enforces_strict_schema_limits=True),
     )
 
 
@@ -675,6 +704,12 @@ class BedrockProvider(Provider[BaseClient]):
         return 'bedrock'
 
     @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing signed reasoning. `BedrockConverseModel`
+        # reports `'anthropic'` for Claude models instead, whose thinking signatures the Anthropic API verifies.
+        return 'bedrock'
+
+    @property
     def base_url(self) -> str:
         return self._client.meta.endpoint_url
 
@@ -733,7 +768,18 @@ class BedrockProvider(Provider[BaseClient]):
         # cross-region inference geo prefix (e.g. `us.anthropic.claude-haiku-4-5-20251001-v1:0`).
         provider, model_name = split_bedrock_model_id(model_name)
         if provider in provider_to_profile:
-            return provider_to_profile[provider](model_name)
+            profile = provider_to_profile[provider](model_name)
+            if provider == 'amazon':
+                # `amazon_model_profile` reports video for the Nova models that take it.
+                return profile
+            # Converse takes the `video` content block only on Amazon Nova, whatever the family's own profile
+            # says, so a video becomes a note rather than being rejected. Verified live (2026-10, us-east-1 and
+            # us-west-2): Claude, Llama 4 Maverick, Pixtral Large and the natively video-capable Qwen3-VL
+            # (`qwen.qwen3-vl-235b-a22b`), Kimi K2.5 and K3 (`moonshotai.kimi-k2.5`, `us.moonshotai.kimi-k3`) and
+            # Nemotron Nano 12B v2 VL (`nvidia.nemotron-nano-12b-v2`) all answer "This model doesn't support the
+            # video content block", while Nova Lite describes the video. A family added to the table above gets
+            # this too.
+            return merge_profile(profile, ModelProfile(supports_video_input=False))
 
         return None
 

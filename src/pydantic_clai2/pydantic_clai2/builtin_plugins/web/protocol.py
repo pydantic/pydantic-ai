@@ -41,12 +41,13 @@ from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_ai_harness.subagents import DelegationOutcome
-from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus, QueuedInput
-from pydantic_clai2.runtime._session import STEERING
+from pydantic_clai2.plugins import ForkEnd, ForkInfo, ForkStatus, PanelIcon, PluginOrigin, PluginStatus, QueuedInput
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
+from pydantic_clai2.runtime.forks import failure_line
 from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.runtime.session import STEERING
 from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
 from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost
 
@@ -263,6 +264,32 @@ class TaskEntry:
     activity: str
     """Its last action, such as `thinking` or `running: shell`."""
     usage: Usage
+
+
+@dataclass(kw_only=True)
+class ForkEntry:
+    """A background `/fork`, like a `/forks` row."""
+
+    id: int
+    model: str
+    prompt: str
+    status: ForkStatus
+    elapsed: float
+    """Seconds it has run so far, or ran in all once it ended."""
+    session_id: str | None
+    """The saved conversation `/resume` continues it in, once it has saved one."""
+
+
+def fork_entry(fork: ForkInfo) -> ForkEntry:
+    """A fork's row, as browsers receive it."""
+    return ForkEntry(
+        id=fork.id,
+        model=fork.model,
+        prompt=fork.prompt,
+        status=fork.status,
+        elapsed=fork.elapsed,
+        session_id=fork.session_id,
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -569,6 +596,18 @@ class Notice:
     command: str | None = None
     usage: UsageReport | None = None
     """For `/usage` and `/cost`: the figures their text reports, which the page shows as a card."""
+    forks: list[ForkEntry] | None = None
+    """For `/forks`: the rows of the table its terminal prints, which the page shows as a card."""
+    fork: ForkEntry | None = None
+    """A background `/fork` that ended; `text` is its answer, why it failed, or empty when it was cancelled."""
+
+
+def fork_notice(event: ForkEnd) -> Notice:
+    """What the page shows of a fork that ended, as the terminal prints its response or its failure."""
+    fork = fork_entry(event.fork)
+    if event.error is not None:
+        return Notice(text=failure_line(event.error), level='error', fork=fork)
+    return Notice(text=event.output or '', fork=fork)
 
 
 @dataclass(kw_only=True)
@@ -819,6 +858,8 @@ class SessionEntry:
     current: bool
     archived: bool
     """Hidden from the sidebar unless it lists archived sessions too."""
+    openable: bool
+    """Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -853,9 +894,12 @@ class Transcript:
     workspace: str
     items: list[Item]
     openable: bool
-    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists."""
+    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists,
+    and no other CLAI runs it."""
     missing: bool = False
     """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
+    owner_pid: int | None = None
+    """The process ID of another CLAI running it now, when it could otherwise be opened; opening it continues in a fork."""
 
 
 @dataclass(kw_only=True)

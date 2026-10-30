@@ -23,7 +23,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2 import Session
-from pydantic_clai2._app import create_agent
+from pydantic_clai2.app import create_agent
 from pydantic_clai2.builtin_plugins.repo_context import RepoContextPlugin
 from pydantic_clai2.customization import CAPABILITY_ID, customization_guide
 from pydantic_clai2.plugins import PluginHost, load_plugin
@@ -31,7 +31,7 @@ from pydantic_clai2.plugins import PluginHost, load_plugin
 
 @pytest.mark.parametrize('supported', [True, False])
 async def test_workspace_defaults_follow_platform_support(supported: bool, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr('pydantic_clai2.runtime._session.sys.platform', 'linux' if supported else 'win32')
+    monkeypatch.setattr('pydantic_clai2.runtime.session.sys.platform', 'linux' if supported else 'win32')
     monkeypatch.setenv('OPENAI_API_KEY', 'held-back')
     monkeypatch.setenv('CLAI_USER_VARIABLE', 'forwarded')
     agent = Agent(TestModel(custom_output_text='hello'), deps_type=type(None))

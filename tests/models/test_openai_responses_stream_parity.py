@@ -71,7 +71,8 @@ def _request_body(interaction: dict[str, Any]) -> dict[str, Any]:
 def _model(interaction: dict[str, Any], client: AsyncOpenAI) -> OpenAIResponsesModel:
     # A resumed background stream is a `GET` without a body; its model comes from the stream itself.
     model_name: str = _request_body(interaction).get('model', 'gpt-5')
-    host = httpx2.URL(interaction['request']['uri']).host
+    url = httpx2.URL(interaction['request']['uri'])
+    host = url.host
     if host == 'chatgpt.com':
         return OpenAICodexModel(model_name, provider=OpenAICodexProvider(openai_client=client))
     if host.startswith('bedrock-mantle.'):
@@ -80,7 +81,7 @@ def _model(interaction: dict[str, Any], client: AsyncOpenAI) -> OpenAIResponsesM
         return OpenAIResponsesModel(model_name, provider=DeepSeekProvider(openai_client=client))
     if host == 'api.meta.ai':
         return OpenAIResponsesModel(model_name, provider=MetaProvider(openai_client=client))
-    if host.endswith('.openai.azure.com'):
+    if host.endswith('.openai.azure.com') or (host == 'gateway.pydantic.info' and url.path.startswith('/proxy/azure/')):
         # The replay client is a plain `AsyncOpenAI`; `AzureProvider` only reads its base URL and API key from it.
         return OpenAIResponsesModel(model_name, provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, client)))
     assert host == 'api.openai.com', host

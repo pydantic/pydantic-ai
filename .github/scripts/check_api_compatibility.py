@@ -59,11 +59,27 @@ class ModelNameLiteral(BaseModel):
     symbol: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
+class GrowingCollection(BaseModel):
+    """A public `dict` or `set` constant that registers entries, such as CLAI's settings, which can gain entries without a waiver.
+
+    The constant can also be a comprehension over a tuple or list of names, such as the capability types registry,
+    which then gains entries when a name is added to that sequence.
+
+    Removing an entry or changing an entry's value still needs a waiver.
+    """
+
+    model_config = ConfigDict(extra='forbid', frozen=True)
+
+    path: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    symbol: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class Allowlist(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     allowed_breakages: list[Waiver]
     model_name_literals: list[ModelNameLiteral] = []
+    growing_collections: list[GrowingCollection] = []
 
 
 @dataclass(frozen=True)
@@ -94,7 +110,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    waivers, model_name_literals = load_allowlist(args.allowlist)
+    waivers, model_name_literals, growing_collections = load_allowlist(args.allowlist)
     used_waivers: set[tuple[str, str]] = set()
     failed = False
     for package, search_path in PACKAGES.items():
@@ -116,6 +132,16 @@ def main() -> None:
                         'add the `compatibility impact` label and a release note.'
                     )
                 emit_annotation('warning' if removed else 'notice', finding, message)
+                continue
+            if (
+                (finding.path, finding.symbol) in growing_collections
+                and (changes := collection_entry_changes(finding.message)) is not None
+                and not changes[1]
+            ):
+                message = (
+                    f'{finding.symbol}: entries added: {changes[0]}. Additions to a growing collection need no waiver.'
+                )
+                emit_annotation('notice', finding, message)
                 continue
             waiver_key = (args.against, finding.fingerprint)
             waiver = waivers.get(waiver_key)
@@ -150,7 +176,9 @@ def is_excluded(finding: Finding, search_path: str) -> bool:
     return any(path.is_relative_to(Path(search_path, *package.split('.'))) for package in EXCLUDED_PACKAGES)
 
 
-def load_allowlist(path: Path) -> tuple[dict[tuple[str, str], Waiver], set[tuple[str, str]]]:
+def load_allowlist(
+    path: Path,
+) -> tuple[dict[tuple[str, str], Waiver], set[tuple[str, str]], set[tuple[str, str]]]:
     allowlist = Allowlist.model_validate_json(path.read_text(encoding='utf-8'))
     waivers: dict[tuple[str, str], Waiver] = {}
     for waiver in allowlist.allowed_breakages:
@@ -158,7 +186,11 @@ def load_allowlist(path: Path) -> tuple[dict[tuple[str, str], Waiver], set[tuple
         if key in waivers:
             raise ValueError(f'{path}: duplicate waiver for {waiver.against}: {waiver.fingerprint}')
         waivers[key] = waiver
-    return waivers, {(entry.path, entry.symbol) for entry in allowlist.model_name_literals}
+    return (
+        waivers,
+        {(entry.path, entry.symbol) for entry in allowlist.model_name_literals},
+        {(entry.path, entry.symbol) for entry in allowlist.growing_collections},
+    )
 
 
 def literal_member_changes(message: str) -> tuple[set[str], set[str]] | None:
@@ -174,6 +206,59 @@ def literal_member_changes(message: str) -> tuple[set[str], set[str]] | None:
         if old is None or new is None or old[0] != new[0]:
             return None
         return new[1] - old[1], old[1] - new[1]
+    return None
+
+
+def collection_entry_changes(message: str) -> tuple[list[str], list[str]] | None:
+    """Return the entries a value change adds and removes, if both sides are `dict` or `set` literals of one kind.
+
+    Both sides can also be the same comprehension over a tuple or list literal, whose items are then the entries.
+
+    An entry whose value changed counts as removed, with its new value added.
+    """
+    _, _, values = message.partition(_ATTRIBUTE_VALUE_CHANGED)
+    # Griffe prints `<old> -> <new>`. A split inside a string entry leaves a side that doesn't parse.
+    for separator in re.finditer(' -> ', values):
+        try:
+            old = _collection_entries(values[: separator.start()])
+            new = _collection_entries(values[separator.end() :])
+        except (SyntaxError, ValueError, TypeError):
+            continue
+        if old is None or new is None or old[0] != new[0]:
+            return None
+        return sorted(new[1] - old[1]), sorted(old[1] - new[1])
+    return None
+
+
+def _collection_entries(value: str) -> tuple[str, set[str]] | None:
+    """The kind of a `dict`, `set`, or `frozenset` literal, and its entries as source text.
+
+    For a comprehension over one tuple or list literal, the entries are the sequence's items, and the kind is the
+    rest of the comprehension, which has to be unchanged for a change to add or remove entries.
+    """
+    node = ast.parse(value, mode='eval').body
+    if (
+        isinstance(node, ast.DictComp | ast.SetComp)
+        and len(node.generators) == 1
+        and isinstance(sequence := node.generators[0].iter, ast.Tuple | ast.List)
+    ):
+        entries = {ast.unparse(item) for item in sequence.elts}
+        node.generators[0].iter = ast.Tuple(elts=[], ctx=ast.Load())
+        return ast.dump(node), entries
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in ('set', 'frozenset')
+        and len(node.args) == 1
+        and not node.keywords
+    ):
+        node = node.args[0]
+    if isinstance(node, ast.Dict):
+        items: dict[object, object] = ast.literal_eval(node)
+        return 'dict', {f'{key!r}: {item!r}' for key, item in items.items()}
+    if isinstance(node, ast.Set):
+        members: set[object] = ast.literal_eval(node)
+        return 'set', {repr(member) for member in members}
     return None
 
 
