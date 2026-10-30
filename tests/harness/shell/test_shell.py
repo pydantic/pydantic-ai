@@ -27,7 +27,14 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -601,12 +608,24 @@ class TestToolCallIdentity:
         first = await agent.run('go', workspace=workspace)
         # A process that died after launching the command left a history ending in the response that made the call.
         # Continuing it is a new run, which makes the call again.
-        interrupted = first.all_messages()[:2]
+        saved = ModelMessagesTypeAdapter.dump_json(first.all_messages()[:2])
+        interrupted = ModelMessagesTypeAdapter.validate_json(saved)
         assert isinstance(interrupted[-1], ModelResponse)
         continued = await agent.run(message_history=interrupted, workspace=workspace)
         assert _tool_returns(continued.new_messages()) == _tool_returns(first.new_messages())
 
-    @pytest.mark.parametrize('tool_call_id', ['call_0', ''])
+    @pytest.mark.parametrize(
+        'tool_call_id',
+        [
+            'call_0',
+            pytest.param(
+                '',
+                marks=pytest.mark.moves_cache_prefix(
+                    reason='an empty tool call ID is rendered as a new generated ID in each request'
+                ),
+            ),
+        ],
+    )
     @pytest.mark.parametrize(
         'commands',
         [('echo first >> log', 'echo second >> log'), ('echo again >> log', 'echo again >> log')],
@@ -618,7 +637,9 @@ class TestToolCallIdentity:
         await _calling_agent('shell', commands, tool_call_id).run('go', workspace=LocalWorkspaceBackend(shell_dir))
         assert (shell_dir / 'log').read_text().splitlines() == [command.split()[1] for command in commands]
 
-    async def test_an_id_repeated_within_one_response_is_another_call(self, shell_dir: Path) -> None:
+    async def test_an_id_repeated_within_one_response_for_another_command_is_another_call(
+        self, shell_dir: Path
+    ) -> None:
         # Core runs the calls on either side of an output call as separate batches, so an ID can repeat between them.
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(
