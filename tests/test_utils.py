@@ -55,6 +55,7 @@ READINESS_WAIT_TIMEOUT = 5
     [
         pytest.param('https://generativelanguage.googleapis.com/v1beta/files/abc123', True, id='file'),
         pytest.param('https://generativelanguage.googleapis.com/v1beta/files', True, id='bare-prefix'),
+        # Current prefix behavior, not a URL-validity requirement.
         pytest.param('https://generativelanguage.googleapis.com/v1beta/filesOther', True, id='prefix-only'),
         pytest.param(
             'https://generativelanguage.googleapis.com/v1beta/files/abc?alt=media#ref', True, id='query-fragment'
