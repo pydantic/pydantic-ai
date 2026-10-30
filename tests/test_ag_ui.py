@@ -11804,3 +11804,33 @@ async def test_rejected_response_is_named_by_a_custom_event_and_the_retry_gets_a
         ]
     )
     assert len({event['messageId'] for event in events if event['type'] == 'TEXT_MESSAGE_START'}) == 2
+
+
+async def test_rejected_response_without_a_message_is_not_named():
+    """A rejected response that streamed only thinking announced no assistant message, so the event names none.
+
+    Naming the current message ID would reference a message the stream never announced, or an earlier response's.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        if len(messages) > 1:
+            yield 'The store opens at 9 am.'
+        else:
+            yield {0: DeltaThinkingPart(content='Thinking it over')}
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    events = await run_and_collect_events(agent, create_input(UserMessage(id='msg-1', content='When?')))
+
+    rejected = [event for event in events if event['type'] == 'CUSTOM']
+    assert rejected == snapshot(
+        [
+            {
+                'type': 'CUSTOM',
+                'timestamp': IsInt(),
+                'name': 'pydantic_ai_model_response_rejected',
+                'value': {'run_step': 1, 'attempt': 1, 'outcome': 'retried', 'cause': 'no_output'},
+            }
+        ]
+    )

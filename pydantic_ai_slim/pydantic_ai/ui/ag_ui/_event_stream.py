@@ -486,11 +486,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield e
 
     async def handle_model_response_rejected(self, event: ModelResponseRejectedEvent) -> AsyncIterator[BaseEvent]:
-        # Names the assistant message that streamed the rejected response; the next response gets a new one.
-        yield AGUICustomEvent(
-            name=MODEL_RESPONSE_REJECTED_EVENT_NAME,
-            value={'message_id': self.message_id, **model_response_rejected_payload(event)},
-        )
+        value = model_response_rejected_payload(event)
+        # Names the assistant message that streamed the rejected response, when it streamed one: a response with no
+        # text or tool calls announced none, and `message_id` may still name an earlier response's message. Every ID
+        # the stream references has to have been announced, so it's left out rather than pointing at a message the
+        # rejected response doesn't own. The next response gets a message of its own either way.
+        if self._turn == 'response' and self._started_message_id == self.message_id:
+            value = {'message_id': self.message_id, **value}
+        yield AGUICustomEvent(name=MODEL_RESPONSE_REJECTED_EVENT_NAME, value=value)
 
     async def handle_model_settings_delta(self, event: ModelSettingsDeltaEvent) -> AsyncIterator[BaseEvent]:
         if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:

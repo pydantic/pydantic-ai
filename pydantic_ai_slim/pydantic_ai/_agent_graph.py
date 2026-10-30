@@ -2446,10 +2446,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # Shielded so a cancelled consumer leaves `wrap_task` to the stream teardown below.
                 await asyncio.shield(wrap_task)
             except exceptions.ModelRetry as e:
-                return self._report_retry(ctx, streamed, e)
+                return self._reject_with_retry(ctx, streamed, e)
             except Exception:
-                # A skip, which replaces a cut-short response as a returned response does, or another error,
-                # which the teardown raises.
+                # On a cut-short stream, only a skip gets here, which replaces the response as a returned response
+                # does: any other error was already raised to the consumer by the replacement. On a finished stream,
+                # it's an error `wrap_model_request` raised instead of the handler's retry, which the teardown raises.
                 pass
             if not cut_short:
                 # `wrap_model_request` recovered from the handler's retry.
@@ -2614,7 +2615,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                                 # Decided after the stream ended, by `wrap_model_request` or after the consumer left
                                 # the stream early, so the rejection reaches the consumer ahead of the retry's events.
                                 ctx.state.event_stream_buffer.append(
-                                    self._report_retry(ctx, agent_stream_holder[0].response, e)
+                                    self._reject_with_retry(ctx, agent_stream_holder[0].response, e)
                                 )
                         await self._build_retry_node(ctx, e)
                     except BaseException:
@@ -3701,13 +3702,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             for response in responses:
                 ctx.deps.usage_limits.check_per_request_input_tokens(context_input_tokens(response))
 
-    def _report_retry(
+    def _reject_with_retry(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
         error: exceptions.ModelRetry,
     ) -> _messages.ModelResponseRejectedEvent:
-        """Report that `error` rejected `response`, with the feedback the retry `_build_retry_node` builds then sends."""
+        """Reject `response` for `error`, returning the event that reports it.
+
+        Stamps the feedback the retry will send, and remembers it so `_build_retry_node` sends that same part.
+        """
         feedback = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
         ctx.state.stamp_output_retry(ctx.deps.max_output_retries, feedback)
         self._rejection_feedback = (error, feedback)

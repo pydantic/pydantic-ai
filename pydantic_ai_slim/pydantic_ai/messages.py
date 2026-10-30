@@ -6818,15 +6818,18 @@ class ModelResponseRejectedEvent:
     takes its place, so a consumer can set the rejected output apart from what follows. It fires on every
     rejection of a response, including one that uses up the output retry budget:
 
-    - an output validator raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or the response had
-      no usable output;
+    - an output validator raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] for text, image or `None`
+      output, or the response had no usable output;
     - an `after_model_request` hook or a `wrap_model_request` hook raised
       [`ModelRetry`][pydantic_ai.exceptions.ModelRetry];
     - a `wrap_model_request` hook replaced the response while it was being streamed, like a parallel
       input guardrail raising [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest].
 
     A response that was rejected but ended the run, like a skip after the whole response was streamed,
-    is not reported, since nothing takes its place.
+    is not reported, since nothing takes its place. Nor is a retry that answers a tool call, including an
+    [output tool](../output.md#tool-output) whose output a validator rejected: its
+    [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] or
+    [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] already carries it.
     """
 
     response: ModelResponse

@@ -1062,6 +1062,46 @@ async def test_prefect_agent_iter_in_flow_fires_event_stream_handler(
     assert exported_messages != []
 
 
+_rejection_events: list[AgentStreamEvent] = []
+
+
+async def _collect_rejection_events(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _rejection_events.append(event)
+
+
+async def _announce_then_answer(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+    yield 'The store opens at 9 am.' if len(messages) > 1 else "I'll look that up."
+
+
+async def test_prefect_reports_a_rejected_streamed_response_between_the_attempts(allow_model_requests: None) -> None:
+    """In a Prefect flow, the rejected response's events, then `ModelResponseRejectedEvent`, then the retry's events.
+
+    Each event reaches the handler in a task of its own, so the order is the order the flow dispatches them in.
+    """
+    _rejection_events.clear()
+    agent = Agent(
+        FunctionModel(stream_function=_announce_then_answer),
+        name='rejection_stream_agent',
+        capabilities=[PrefectDurability(event_stream_handler=_collect_rejection_events)],
+    )
+
+    @agent.output_validator
+    def reject_announcements(ctx: RunContext, output: str) -> str:
+        if output.startswith("I'll look"):
+            raise ModelRetry('Answer the question.')
+        return output
+
+    @flow(name='test_prefect_reports_a_rejected_streamed_response_between_the_attempts')
+    async def run_flow() -> str:
+        return (await agent.run('When does the store open?')).output
+
+    assert await run_flow() == 'The store opens at 9 am.'
+    assert [event.event_kind for event in _rejection_events] == snapshot(
+        ['part_start', 'final_result', 'part_end', 'model_response_rejected', 'part_start', 'final_result', 'part_end']
+    )
+
+
 async def test_event_stream_handler_property_outside_flow() -> None:
     # Outside a Prefect flow, the `event_stream_handler` property resolves to the effective handler
     # directly, rather than the in-flow per-event dispatcher.
