@@ -38,7 +38,7 @@ python coding_agent.py
 
 Give it a real task, such as "Find out why `tests/test_parser.py` fails, fix the cause without weakening the test, and rerun it." The agent explores the repository, reads and edits files, and runs the test to check its fix; review the diff before you keep it. To run one task from code instead, call `agent.run_sync('Fix the failing test in tests/test_parser.py.')` and print `result.output`.
 
-[`LocalWorkspace('.')`](workspace.md) is where the agent works: its file tools and commands run on your machine, in this directory, as you. It is not a sandbox; [Run it in a sandbox](#run-it-in-a-sandbox) shows how to isolate it.
+[`LocalWorkspace('.')`][pydantic_ai.capabilities.LocalWorkspace] is where the agent works ([workspaces](workspace.md)): its file tools and commands run on your machine, in this directory, as you. It is not a sandbox; [Run it in a sandbox](#run-it-in-a-sandbox) shows how to isolate it.
 
 `Coder` gives the model these tools:
 
@@ -164,14 +164,14 @@ agent = Agent('{{ anthropic:large }}', name='coder', capabilities=[ModalSandbox(
 The model is a string. Swap it for a model from [any provider](models/overview.md) Pydantic AI supports, install that provider's extra, and set its API key:
 
 ```python {test="skip" lint="skip"}
-agent = Agent('{{ openai:medium }}', name='coder', capabilities=[LocalWorkspace('.'), Coder()])
+agent = Agent('{{ openai:large }}', name='coder', capabilities=[LocalWorkspace('.'), Coder()])
 ```
 
 Models differ in how well they edit code and check their own work, so try a few on your own tasks. To pick the model per run, leave it off the agent and pass `model=` to `run()`, or let users choose one in the [CLI](cli.md) or [web UI](web.md). [Model Fallback](capabilities/model-fallback.md) moves to another model when a request fails.
 
 ### Add your own tool
 
-`Coder` can already run tests through `shell`, but a dedicated tool pins down your project's exact test command. A tool is a Python function, and it gets the run's workspace through `ctx.workspace`, so this one runs the tests on your machine or in the sandbox, whichever the agent has:
+`Coder` can already run tests through `shell`, but a dedicated tool pins down your project's exact test command. A tool is a Python function, and it gets the run's workspace through [`ctx.workspace`][pydantic_ai.tools.RunContext.workspace], so this one runs the tests on your machine or in the sandbox, whichever the agent has:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent, RunContext
@@ -192,7 +192,7 @@ async def run_tests(ctx: RunContext, path: str = 'tests') -> str:
 
 ### Package it as a capability
 
-When a tool comes with instructions, bundle them into a [capability](capabilities/custom.md) so any agent can reuse the pair:
+When a tool comes with instructions, bundle them into a [`Capability`][pydantic_ai.capabilities.Capability] ([custom capabilities](capabilities/custom.md)) so any agent can reuse the pair:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent, RunContext
@@ -229,7 +229,7 @@ The agent is one `Agent` object. The same module serves the terminal, an editor,
 
 ### In the terminal
 
-`agent.to_cli_sync()` above opens Pydantic AI's [CLI](cli.md): an interactive chat in your terminal, with commands such as `/multiline` and `/usage`. The [`clai`](cli.md#custom-agents) command runs the same agent with `clai --agent coding_agent:agent`.
+[`agent.to_cli_sync()`][pydantic_ai.agent.AbstractAgent.to_cli_sync] above opens Pydantic AI's [CLI](cli.md): an interactive chat in your terminal, with commands such as `/multiline` and `/usage`. The [`clai`](cli.md#custom-agents) command runs the same agent with `clai --agent coding_agent:agent`.
 
 ### In your editor
 
@@ -256,7 +256,7 @@ Install the `acp` extra and register `python /absolute/path/to/coding_agent_acp.
 
 ### In a browser or your own app
 
-`agent.to_web()` serves a chat UI for the agent as an ASGI app:
+[`agent.to_web()`][pydantic_ai.agent.Agent.to_web] serves a chat UI for the agent as an ASGI app:
 
 ```python {test="skip" lint="skip"}
 app = agent.to_web()
@@ -270,7 +270,7 @@ Install `pydantic-ai-slim[web]` and run it with `uvicorn coding_agent:app`. With
 
 ## Keep long runs going
 
-A coding run can take an hour. To survive a crashed worker or a deploy mid-run, run the agent under a [durable execution](durable_execution/overview.md) engine. With Temporal, add its capability next to the workspace:
+A coding run can take an hour. To survive a crashed worker or a deploy mid-run, run the agent under a [durable execution](durable_execution/overview.md) engine. With Temporal, add its [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability next to the workspace:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
