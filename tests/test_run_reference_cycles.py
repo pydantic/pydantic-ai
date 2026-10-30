@@ -12,7 +12,7 @@ import traceback
 import weakref
 from collections.abc import AsyncIterator, Generator
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import AsyncGeneratorType
 from typing import Literal, Never
 
@@ -20,6 +20,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, _utils
+from pydantic_ai.capabilities.abstract import AbstractCapability, AgentNode, NodeResult, WrapNodeRunHandler
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -31,7 +32,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.run import AgentRun
+from pydantic_ai.run import AgentRun, AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -383,24 +384,40 @@ def raise_failure(message: str, explicit_cause: bool) -> Never:
 @pytest.mark.usefixtures('no_gc')
 @pytest.mark.parametrize('explicit_cause', [False, True])
 @pytest.mark.parametrize(
-    ('failure', 'drive'),
+    ('failure', 'drive', 'node_hook'),
     [
-        ('sync_tool', 'iter'),
-        ('sync_tool', 'run'),
-        ('async_tool', 'iter'),
-        ('async_tool', 'run'),
-        ('sync_model', 'iter'),
-        ('sync_model', 'run'),
-        ('async_model', 'iter'),
-        ('async_model', 'run'),
-        ('consumer', 'iter'),
+        ('sync_tool', 'iter', 'none'),
+        ('sync_tool', 'run', 'none'),
+        ('async_tool', 'iter', 'none'),
+        ('async_tool', 'run', 'none'),
+        ('async_tool', 'iter', 'passthrough'),
+        ('async_tool', 'run', 'passthrough'),
+        ('async_tool', 'iter', 'replacement'),
+        ('async_tool', 'run', 'replacement'),
+        ('sync_model', 'iter', 'none'),
+        ('sync_model', 'run', 'none'),
+        ('async_model', 'iter', 'none'),
+        ('async_model', 'run', 'none'),
+        ('consumer', 'iter', 'none'),
     ],
 )
 async def test_failed_run_releases_dependencies(  # noqa: C901
     failure: Literal['sync_tool', 'async_tool', 'sync_model', 'async_model', 'consumer'],
     drive: Literal['iter', 'run'],
+    node_hook: Literal['none', 'passthrough', 'replacement'],
     explicit_cause: bool,
 ) -> None:
+    class NodeHook(AbstractCapability[Deps]):
+        async def before_node_run(self, ctx: RunContext[Deps], *, node: AgentNode[Deps]) -> AgentNode[Deps]:
+            if node_hook == 'replacement' and Agent.is_call_tools_node(node):
+                return replace(node)
+            return node
+
+        async def wrap_node_run(
+            self, ctx: RunContext[Deps], *, node: AgentNode[Deps], handler: WrapNodeRunHandler[Deps]
+        ) -> NodeResult[Deps]:
+            return await handler(node)
+
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if failure in ('sync_model', 'async_model'):
             raise_failure('model failed', explicit_cause)
@@ -409,7 +426,11 @@ async def test_failed_run_releases_dependencies(  # noqa: C901
     async def async_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return model(messages, info)
 
-    agent = Agent(FunctionModel(async_model if failure == 'async_model' else model), deps_type=Deps)
+    agent = Agent(
+        FunctionModel(async_model if failure == 'async_model' else model),
+        deps_type=Deps,
+        capabilities=[NodeHook()] if node_hook != 'none' else [],
+    )
 
     def lookup(ctx: RunContext[Deps]) -> str:
         raise_failure('tool failed', explicit_cause)
@@ -483,6 +504,104 @@ async def test_failed_run_releases_dependencies(  # noqa: C901
         await anyio.to_thread.run_sync(lambda: None)
     assert ref() is None
     assert original_context
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('stream_first', [False, True])
+async def test_failed_tool_node_replays_during_manual_iteration(stream_first: bool) -> None:
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('lookup', {})])
+
+    agent = Agent(FunctionModel(model), deps_type=Deps)
+    tool_calls = 0
+
+    @agent.tool
+    async def lookup(ctx: RunContext[Deps]) -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        raise_failure('tool failed', explicit_cause=True)
+
+    async def execute() -> weakref.ReferenceType[Deps]:
+        deps = Deps()
+        ref = weakref.ref(deps)
+        node = None
+        async with agent.iter('hi', deps=deps, infer_name=False) as run:
+            async for node in run:
+                if Agent.is_call_tools_node(node):
+                    original_error: RuntimeError | None = None
+                    if stream_first:
+                        stream = None
+                        with pytest.raises(RuntimeError, match=r'^tool failed$') as streamed:
+                            async with node.stream(run.ctx) as stream:
+                                async for _ in stream:
+                                    pass
+                        original_error = streamed.value
+                        del streamed, stream
+                    for _ in range(2):
+                        with pytest.raises(RuntimeError, match=r'^tool failed$') as raised:
+                            await run.next(node)
+                        if original_error is None:
+                            original_error = raised.value
+                        assert raised.value is original_error
+                        assert raised.value.__cause__ is raised.value.__context__
+                        assert str(raised.value.__cause__) == 'original cause'
+                        assert run.all_messages()
+                        assert run.result is None
+                        del raised
+                    assert tool_calls == 1
+                    del original_error
+                    break
+        del deps, run, node
+        return ref
+
+    ref = await execute()
+    await anyio.to_thread.run_sync(lambda: None)
+    assert tool_calls == 1
+    assert ref() is None
+
+
+async def test_failed_tool_node_replays_during_run_error_recovery() -> None:
+    original_error = RuntimeError('tool failed')
+    run: AgentRun[Deps, str] | None = None
+    failed_node: AgentNode[Deps] | None = None
+
+    class Recover(AbstractCapability[Deps]):
+        async def on_run_error(self, ctx: RunContext[Deps], *, error: BaseException) -> AgentRunResult[str]:
+            assert error is original_error
+            assert run is not None
+            assert failed_node is not None
+            assert ctx.deps is deps
+            with pytest.raises(RuntimeError, match=r'^tool failed$') as replayed:
+                await run.next(failed_node)
+            assert replayed.value is original_error
+            assert run.result is None
+            assert run.all_messages()
+            return AgentRunResult(output='recovered')
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('lookup', {})])
+
+    agent = Agent(FunctionModel(model), deps_type=Deps, capabilities=[Recover()])
+    tool_calls = 0
+
+    @agent.tool
+    async def lookup(ctx: RunContext[Deps]) -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        raise original_error
+
+    deps = Deps()
+    async with agent.iter('hi', deps=deps, infer_name=False) as active_run:
+        run = active_run
+        async for node in active_run:
+            if Agent.is_call_tools_node(node):
+                failed_node = node
+                await active_run.next(node)
+
+    assert active_run.result is not None
+    assert active_run.result.output == 'recovered'
+    assert active_run.all_messages()
+    assert tool_calls == 1
 
 
 @pytest.mark.usefixtures('no_gc')

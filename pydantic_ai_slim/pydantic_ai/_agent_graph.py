@@ -22,6 +22,7 @@ from dataclasses import field, replace
 from datetime import datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeGuard, assert_never, cast
+from weakref import WeakValueDictionary
 
 import anyio
 from opentelemetry.trace import Tracer
@@ -954,6 +955,17 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     Stamped onto `ModelRequestContext.model_id` so durable-execution capabilities can
     round-trip the original selection token across the activity/step/task boundary.
     """
+
+    failed_tool_nodes: WeakValueDictionary[int, CallToolsNode[DepsT, OutputDataT]] = dataclasses.field(
+        default_factory=WeakValueDictionary[int, 'CallToolsNode[DepsT, OutputDataT]'], init=False, repr=False
+    )
+    """Runtime-only replay nodes, held weakly so recovery does not extend their lifetime."""
+
+    def release_tool_error_caches(self) -> None:
+        """Break cached-error traceback cycles after run recovery and resource teardown finish."""
+        for node in self.failed_tool_nodes.values():
+            node._stream_error = None  # pyright: ignore[reportPrivateUsage]
+        self.failed_tool_nodes.clear()
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -3663,25 +3675,16 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        try:
-            async with self.stream(ctx):
-                pass
-            if self._next_node is not None:
-                return self._next_node
-            # If the stream raised an error that was caught by an external consumer
-            # (e.g. UIEventStream.transform_stream), _next_node will not have been set.
-            # Re-raise the original error instead of a confusing assertion.
-            if self._stream_error is not None:
-                raise self._stream_error.with_traceback(self._stream_error.__traceback__)
-            raise exceptions.AgentRunError('the stream should set `self._next_node` before it ends')  # pragma: no cover
-        finally:
-            # Node hooks can retry the failed node and need its original error for replay.
-            capability = ctx.deps.root_capability
-            if not (
-                capability._has_wrap_node_run  # pyright: ignore[reportPrivateUsage]
-                or capability._has_on_node_run_error  # pyright: ignore[reportPrivateUsage]
-            ):
-                self._stream_error = None
+        async with self.stream(ctx):
+            pass
+        if self._next_node is not None:
+            return self._next_node
+        # If the stream raised an error that was caught by an external consumer
+        # (e.g. UIEventStream.transform_stream), _next_node will not have been set.
+        # Re-raise the original error instead of a confusing assertion.
+        if self._stream_error is not None:
+            raise self._stream_error.with_traceback(self._stream_error.__traceback__)
+        raise exceptions.AgentRunError('the stream should set `self._next_node` before it ends')  # pragma: no cover
 
     @asynccontextmanager
     async def stream(
@@ -3930,6 +3933,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             raise
         except BaseException as e:
             self._stream_error = e
+            ctx.deps.failed_tool_nodes[id(self)] = self
             raise
 
     async def _handle_tool_calls(

@@ -1184,18 +1184,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             # for SetFinalResult, but not for this ModelRequestNode.
                             break
                 elif self.is_call_tools_node(node):
-                    try:
-                        async with node.stream(agent_run.ctx) as stream:
-                            if event_stream_handler is not None:
-                                await event_stream_handler(run_ctx, stream)
-                            # Drain after the handler, same as the `ModelRequestNode` branch above, so the
-                            # capability chain `node.stream()` wrapped around the node's events finalizes here.
-                            async for _ in stream:
-                                pass
-                    except BaseException:
-                        # An escaping failure will not advance through node.run(), which normally clears this cache.
-                        node._stream_error = None  # pyright: ignore[reportPrivateUsage]
-                        raise
+                    async with node.stream(agent_run.ctx) as stream:
+                        if event_stream_handler is not None:
+                            await event_stream_handler(run_ctx, stream)
+                        # Drain after the handler, same as the `ModelRequestNode` branch above, so the
+                        # capability chain `node.stream()` wrapped around the node's events finalizes here.
+                        async for _ in stream:
+                            pass
 
                 # Advance through the documented streaming exception: `before_node_run` already
                 # fired above, so `wrap_node_run` encloses graph advancement only, followed by the
