@@ -846,7 +846,11 @@ engine:
           'session.init', 'user.message', 'assistant.message', 'assistant.reasoning',
           'tool.execution_start', 'tool.execution_complete', 'session.result',
         ]);
-        const header = lines.find(line => /^\x1eGH-AW-SESSION-PUBKEY:[0-9a-f]{88}\x1e$/.test(line));
+        let header;
+        for (const line of lines) {
+          header = line.match(/^\x1eGH-AW-SESSION-PUBKEY:([0-9a-f]{88})\x1e$/);
+          if (header) break;
+        }
         const records = [];
         let complete = false;
         let invalid = false;
@@ -854,7 +858,7 @@ engine:
           let publicKey;
           try {
             publicKey = createPublicKey({
-              key: Buffer.from(header.slice(22, -1), 'hex'),
+              key: Buffer.from(header[1], 'hex'),
               format: 'der',
               type: 'spki',
             });
