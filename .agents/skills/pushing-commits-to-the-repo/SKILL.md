@@ -32,7 +32,7 @@ Set the light model's effort from the PR's complexity.
 
 ## Merge bar
 
-David merges at this bar. Never merge the PR yourself.
+A maintainer with merge rights (Douwe, Aditya or Mike) merges at this bar. Never merge the PR yourself.
 
 | Size label | Needs |
 |---|---|
@@ -156,7 +156,7 @@ Apply the merge bar, including its trivial-S exception, to required hosted revie
 
 Leave automatic configured CI and hosted review workflows unchanged; they may run independently.
 Do not edit workflows or triggers to implement this exception.
-Once the merge bar is met and posted comments are triaged, hand David the PR diff to inspect and merge.
+Once the merge bar is met and posted comments are triaged, hand the PR diff to the maintainer driving you, or another maintainer, to inspect and merge.
 Never merge the PR yourself.
 
 ## Mechanical text/data refreshes
@@ -543,7 +543,7 @@ maintainers run them, not something this repo can show you.
 ## Before handing the PR back
 
 For prose-only documentation, check the title, body, and labels directly against this skill, root `AGENTS.md`, and the PR template.
-Correct metadata directly, then hand David the PR diff after the merge bar and comment triage are complete.
+Correct metadata directly, then hand the PR diff to a maintainer after the merge bar and comment triage are complete.
 Skip the subagent steps below.
 
 For other diffs, run this final metadata check after CI, any required hosted review, and comments have settled.
