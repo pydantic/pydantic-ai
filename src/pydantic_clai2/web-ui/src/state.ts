@@ -1,3 +1,4 @@
+import { reloadedFor, reloadedFrom } from './api'
 import type {
   Dialog,
   ForkEntry,
@@ -325,9 +326,8 @@ function snapshotChat(message: Snapshot, previous: Chat | undefined, notice: Not
 /** Show a snapshot: its session's chat starts over from it, and it carries the page-wide state too. */
 function applySnapshot(state: State, message: Snapshot): State {
   const id = message.session.id
-  // A CLAI that `/update` restarted comes back as a new version, which the page says once it has reconnected.
-  const updated =
-    state.version !== null && message.version !== state.version ? { from: state.version, to: message.version } : null
+  // A CLAI that `/update` restarted comes back as a new version, whose bundle the page loaded again for: say so once.
+  const updated = state.version === null && message.version === reloadedFor
   const notice: NoticeEntry = {
     id: nextId('notice'),
     kind: 'notice',
@@ -356,7 +356,7 @@ function applySnapshot(state: State, message: Snapshot): State {
     followsWorkspace: message.follows_workspace,
     version: message.version,
     update: message.update,
-    updated: updated ?? state.updated,
+    updated: updated && reloadedFrom !== null ? { from: reloadedFrom, to: message.version } : state.updated,
   }
 }
 
