@@ -426,8 +426,11 @@ class TestOutputFallback:
         if selection == 'override':
             with agent.override(model=other):
                 result = await agent.run('Answer.', model=first)
+        elif selection == 'run':
+            with pytest.warns(UserWarning, match='output_retry_threshold=1'):
+                result = await agent.run('Answer.', model=other)
         else:
-            result = await agent.run('Answer.', model=other if selection == 'run' else None)
+            result = await agent.run('Answer.')
         assert result.output == 'other'
 
     async def test_request_and_output_failures_share_chain(self) -> None:

@@ -136,6 +136,8 @@ An integer applies the same threshold to every model. For independent thresholds
 - After switching, later steps use the chosen candidate with its settings and tools. Request failures can still use `fallback_on` to try later candidates, but the chain does not return to candidates retired by output failures. At the end of the chain, output retries stay on the last serving model until the applicable output retry limit ends the run.
 - Output-driven selection uses the agent's model, or the first candidate when the agent has no model. An explicit `run(model=...)`, `override(model=...)`, or another capability's selection such as `SelectModel` keeps control for the whole run and disables output-driven switching. Request-level fallback remains available. A suspended response continues on the model that started it before output-driven routing is considered.
 
+An explicit model passed through `run(model=...)` or `run(spec=...)` emits a warning naming the disabled threshold. Configure the starting model on the agent and let `ModelFallback` control selection to enable output switching.
+
 Configure `retries={'output': ...}` explicitly to allow the desired switches and any retries on the final model. `output_retry_threshold` does not replenish that allowance, change per-output-tool overrides, or bypass usage limits. Request-hook retries consume the same output retry allowance without advancing this policy, so no threshold guarantees that a later candidate is reached.
 
 The policy state is isolated per run. Passing saved message history into a new run starts the policy afresh. Under durable execution, the switch is preserved across recovery and replay.

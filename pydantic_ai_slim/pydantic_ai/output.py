@@ -33,6 +33,7 @@ __all__ = (
     # types
     'OutputDataT',
     'OutputMode',
+    'OutputRetrySource',
     'StructuredOutputMode',
     'OutputSpec',
     'OutputTypeOrFunction',
@@ -56,6 +57,9 @@ OutputMode = Literal['text', 'tool', 'native', 'prompted', 'tool_or_text', 'imag
 """
 StructuredOutputMode = Literal['tool', 'native', 'prompted']
 """Output modes that can be used for structured output. Used by ModelProfile.default_structured_output_mode"""
+
+OutputRetrySource = Literal['response_output', 'output_tool']
+"""Whether an output retry came from response-level output or an output tool."""
 
 
 OutputTypeOrFunction = TypeAliasType(
@@ -355,7 +359,7 @@ class OutputRetryContext:
     """The output tool call's ID, or `None` for response-level output failures."""
 
     @property
-    def source(self) -> Literal['response_output', 'output_tool']:
+    def source(self) -> OutputRetrySource:
         """Whether response-level output or an output tool caused the retry."""
         return 'response_output' if self.tool_name is None else 'output_tool'
 

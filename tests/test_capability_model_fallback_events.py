@@ -17,6 +17,7 @@ from pydantic_ai.capabilities import (
     ModelFallback,
     OutputFallbackEvent,
     OutputRetryContext,
+    OutputRetrySource,
     ResolveModelId,
     SelectModel,
 )
@@ -128,6 +129,7 @@ class TestOutputFallbackEvent:
         assert (await agent.run('Answer.')).output == 'ready'
         [event] = recorder.events
         assert_type(event.retry, RetryInfo[RetryFeedbackCause | ToolRetryCause])
+        assert_type(event.source, OutputRetrySource)
         assert event.source == 'response_output'
         assert (event.source_model_id, event.target_model_id) == ('test:primary', 'test:backup')
         assert (event.retry.cause, event.retry.attempt, event.retry.max_retries) == ('model_retry', 1, 1)

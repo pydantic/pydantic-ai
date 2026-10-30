@@ -13,7 +13,7 @@ from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UsageLimitE
 from pydantic_ai.messages import CapabilityEvent, ModelResponse, RetryFeedbackCause, RetryInfo, ToolRetryCause
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.output import OutputRetryContext
+from pydantic_ai.output import OutputRetryContext, OutputRetrySource
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability, AgentModel, CapabilityOrdering, ModelSelection
@@ -37,7 +37,7 @@ class OutputFallbackEvent(CapabilityEvent, namespace='model_fallback', name='out
     """The serving model's configured selection ID, including a resolver alias."""
     target_model_id: str
     """The configured selection ID of the model prepared for the next request."""
-    source: Literal['response_output', 'output_tool']
+    source: OutputRetrySource
     """Whether response-level output or an output tool triggered the switch."""
     retry: RetryInfo[RetryFeedbackCause | ToolRetryCause]
     """The triggering retry's cause, attempt, and effective budget."""

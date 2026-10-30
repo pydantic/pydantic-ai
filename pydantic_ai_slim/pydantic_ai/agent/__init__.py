@@ -89,6 +89,7 @@ from ..capabilities import (
     AgentCapability,
     AgentModel,
     CombinedCapability,
+    ModelFallback as ModelFallbackCap,
     ModelSelection,
     ModelSelector,
     ToolSearch as ToolSearchCap,
@@ -2034,6 +2035,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
+        if model_is_explicit and self._override_model.get() is None:
+            # Diagnose precedence here, where the run arguments are known, without querying
+            # model contributions that an explicit model must skip.
+            for capability in leaf_capabilities(run_capability):
+                while isinstance(capability, WrapperCapability):
+                    capability = capability.wrapped
+                if isinstance(capability, ModelFallbackCap) and capability.output_retry_threshold:
+                    warnings.warn(
+                        f'`ModelFallback` output switching (`output_retry_threshold='
+                        f'{capability.output_retry_threshold!r}`) is disabled by the explicit run '
+                        f'`model` {model_id or model_used.model_id!r}. Configure the starting model on '
+                        '`Agent(model=...)` and let `ModelFallback` control selection to enable output switching.',
+                        UserWarning,
+                        stacklevel=2,
+                    )
         # Read back off the resolved tree, which also sees an `Instrumentation` that only a `for_run`
         # contributed, so every later step's `RunContext` describes what the run's spans use.
         instrumentation_settings = _run_instrumentation_settings([run_capability])
@@ -2166,7 +2182,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history,
             # A run-bound fallback default can reconstruct its continuation from the static
             # bootstrap model and its configured candidates. Other selectors remain ambiguous.
-            run_default=run_capability if not callable(model_contribution) or _is_model(model_contribution) else None,
+            # Defer the query so ordinary runs do not repeat capability configuration.
+            selector_is_default=run_capability._model_is_default  # pyright: ignore[reportPrivateUsage]
+            if not callable(model_contribution) or _is_model(model_contribution)
+            else None,
         )
         model_selector: ModelSelector[AgentDepsT] | None
         model_selected_for_step: int | None
@@ -3616,7 +3635,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         contribution: AgentModel[AgentDepsT] | None,
         message_history: Sequence[_messages.ModelMessage] | None,
         *,
-        run_default: AbstractCapability[AgentDepsT] | None = None,
+        selector_is_default: Callable[[], bool] | None = None,
     ) -> None:
         """Reject cross-run continuation when a selector cannot reconstruct the pinned model."""
         if (
@@ -3626,7 +3645,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             and isinstance(message_history[-1], _messages.ModelResponse)
             and message_history[-1].state == 'suspended'
         ):
-            if run_default is not None and run_default._model_is_default():  # pyright: ignore[reportPrivateUsage]
+            if selector_is_default is not None and selector_is_default():
                 return
             raise exceptions.UserError(
                 'Cannot resume a suspended response with a dynamic capability model: the model '

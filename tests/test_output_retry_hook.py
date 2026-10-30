@@ -12,6 +12,7 @@ from pydantic_ai.capabilities import (
     Hooks,
     OutputContext,
     OutputRetryContext,
+    OutputRetrySource,
     RawOutput,
     WrapperCapability,
 )
@@ -37,6 +38,7 @@ async def test_hook_registration_and_context(
 
     async def record(ctx: RunContext[str], *, retry_context: OutputRetryContext) -> None:
         assert_type(retry_context.retry, RetryInfo[RetryFeedbackCause | ToolRetryCause])
+        assert_type(retry_context.source, OutputRetrySource)
         assert ctx.deps == 'dependency'
         assert (ctx.retry, ctx.max_retries) == (1, 1)
         received.append(retry_context)

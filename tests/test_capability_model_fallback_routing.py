@@ -122,7 +122,8 @@ async def test_output_switch_selects_before_step_hooks(
                 with agent.override(model=primary):
                     await agent.run('Answer.', model=other)
             elif source == 'run':
-                await agent.run('Answer.', model=primary)
+                with pytest.warns(UserWarning, match='output_retry_threshold=1'):
+                    await agent.run('Answer.', model=primary)
             else:
                 await agent.run('Answer.')
         assert attempts == [(1, 'primary', 1), (2, 'primary', 1), (3, 'primary', 1)]
