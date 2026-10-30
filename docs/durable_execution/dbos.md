@@ -4,7 +4,7 @@ description: "Make Pydantic AI agents durable with DBOS, checkpointing model req
 
 # Durable Execution with DBOS
 
-[DBOS](https://www.dbos.dev/) is a lightweight [durable execution](https://docs.dbos.dev/architecture) library natively integrated with Pydantic AI.
+[DBOS](https://www.dbos.dev/) is a lightweight [durable execution](https://docs.dbos.dev/architecture) library natively integrated with Pydantic AI. [Build Reliable and Observable AI Agents with Pydantic AI and DBOS](https://pydantic.dev/articles/pydantic-ai-dbos) on the Pydantic blog walks through an example.
 
 ## Durable Execution
 
@@ -178,6 +178,8 @@ Function tools and event stream handlers registered on the agent directly or thr
 * Skip the decorator if durability isn't needed, so you avoid the extra DB checkpoint write.
 * If the function needs to enqueue tasks or invoke other DBOS workflows, run it inside the agent's main workflow (not as a step).
 
+A function tool running in the workflow can load an [on-demand capability](../capabilities/on-demand.md) with [`ctx.load_capability()`][pydantic_ai.tools.RunContext.load_capability], but a tool running as a step can't; see [Loading a capability from code](../capabilities/on-demand.md#loading-from-code-durable).
+
 All other agents and toolsets are supported.
 
 ### Agent Run Context and Dependencies
@@ -284,7 +286,7 @@ For custom tools, you can annotate them directly with [`@DBOS.step`](https://doc
 
 On top of the automatic retries for request failures that DBOS will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, with improper `Retry-After` handling.
 
-When using DBOS, it's recommended to not use [transport retries](../retries.md#transport-retries) and to turn off your provider API client's own retry logic, for example by setting `max_retries=0` on a [custom `OpenAIProvider` API client](../models/openai.md#custom-openai-client).
+When using DBOS, it's recommended to not use [transport retries](../retries.md#transport-retries) and to turn off your provider API client's own retry logic, by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0`, so the engine is the [one retry owner](../retries.md#choosing-one-retry-owner).
 
 You can customize DBOS's retry policy using [step configuration](#step-configuration).
 

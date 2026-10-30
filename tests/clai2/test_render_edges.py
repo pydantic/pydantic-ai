@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.rendering import theme
 
 
 @dataclass(kw_only=True)
@@ -197,6 +198,23 @@ async def test_echo_prompt_idle_is_literal() -> None:
     await renderer.echo_prompt('[bold]first[/bold]\nsecond\tline\x07')
     await renderer.finish()
     assert output.getvalue() == '> [bold]first[/bold]\nsecond  line\\x07\n\n'
+
+
+async def test_echo_prompt_stands_apart_from_answers() -> None:
+    """The echoed prompt has an accent marker and bold text, unlike the plain answer around it."""
+    output = io.StringIO()
+    # Fixed colours: otherwise Rich reads `COLORTERM` and `NO_COLOR`, and may downsample or drop the accent.
+    console = Console(file=output, force_terminal=True, color_system='truecolor', no_color=False, width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    await renderer.echo_prompt('first\nsecond')
+    echoed = Text.from_ansi(output.getvalue())
+    assert echoed.plain.rstrip('\n') == '> first\nsecond'
+    assert output.getvalue().endswith('\n\n')
+    marker, first, second = (echoed.get_style_at_offset(Console(), offset) for offset in (0, 2, 8))
+    assert marker.bold and marker.color is not None and marker.color.triplet is not None
+    assert marker.color.triplet.hex == theme.LITHIUM.lower()
+    assert first.bold and first.color is None
+    assert second.bold
 
 
 @pytest.mark.parametrize('surface_output', [False, True])

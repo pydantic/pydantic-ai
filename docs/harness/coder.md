@@ -56,6 +56,8 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox
 agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder()])
 ```
 
+[Run Pydantic AI coding agents in E2B sandboxes](https://pydantic.dev/articles/pydantic-ai-e2b-sandboxes) runs a `Coder` agent in an [E2B sandbox](e2b-sandbox.md).
+
 With `LocalWorkspace`, [`agent.to_cli_sync()`](https://pydantic.dev/docs/ai/cli/) and [`agent.to_web()`](https://pydantic.dev/docs/ai/web/) work in the same directory. With a sandbox, the CLI keeps one sandbox for the session, but `to_web()` starts a new one for each message because the web protocol does not carry the workspace ref, so use `LocalWorkspace` when files must persist between web messages.
 
 The exported `pydantic_ai_harness.coder:coder_agent` is the same agent, model-less and named `coder`, working in the directory that is current when it is imported.

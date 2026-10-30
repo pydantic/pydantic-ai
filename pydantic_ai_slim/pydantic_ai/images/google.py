@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 
-from pydantic_ai._utils import is_str_dict
+from pydantic_ai._utils import is_google_files_api_url, is_str_dict
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
@@ -308,7 +308,7 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         """
         if self._is_google_cloud:
             return url.startswith('gs://')
-        return url.startswith('https://generativelanguage.googleapis.com/v1beta/files')
+        return is_google_files_api_url(url)
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` unless the file carries a provider name of the selected transport's family.
