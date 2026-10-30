@@ -17,8 +17,10 @@ ends every session. There, each session you open is live in its own directory, w
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
 there; CLAI's own working directory never changes. **New session** asks where the session runs: a
 project or worktree from the sidebar or any other worktree Git lists for its repository, by default
-the current one, or any directory by its absolute path, which it completes as you type, listing each
-repository's worktrees. The header shows where the session works.
+the current one, a new worktree of the highlighted one's repository (**New worktree of …**: a branch name,
+generated if empty, and a base, `HEAD` if empty; it goes in `.worktrees/` as `--worktree` puts it),
+or any directory by its absolute path, which it completes as you type, listing each repository's
+worktrees. The header shows where the session works.
 `/workspace DIRECTORY` or `/resume ID` typed in a session moves that session instead, never while a
 turn, a background `/fork`, or a delegated task runs in it. `clai2 --web --resume ID` starts in that
 session's directory. A session left idle for an hour, with nothing running or queued and no browser
@@ -141,7 +143,8 @@ description you can edit, pushes the branch, opens it with the GitHub CLI (`gh`)
 it is disabled, saying why, without a GitHub `origin` or a signed-in `gh`, or on the default branch.
 Everything runs in the session's own directory, never in one that no longer exists. The terminal
 has the same actions: `/commit [MESSAGE]` commits every change (the model drafts the message when
-you give none), `/push [confirm]`, and `/pr [TITLE]`.
+you give none), `/push [confirm]`, and `/pr`, which shows the drafted pull request until `/pr confirm` (or
+`/pr TITLE`) opens it.
 
 <!-- From #10461 -->
 **System prompt** in the Settings window (`#settings/system-prompt`, or `/system_prompt` in the

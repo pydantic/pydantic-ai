@@ -33,7 +33,7 @@ else:
 
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 try:
@@ -49,7 +49,7 @@ _DEFAULT_VOICE_LIVE_API_VERSION = '2026-07-15'
 """Default Azure AI Voice Live API version when neither `AZURE_VOICELIVE_API_VERSION` nor an argument is set."""
 
 
-class AzureProvider(_OpenAICompatibleProvider):
+class AzureProvider(_OpenAISDKProvider):
     """Provider for Azure OpenAI API.
 
     See <https://azure.microsoft.com/en-us/products/ai-foundry> for more information.
@@ -57,6 +57,12 @@ class AzureProvider(_OpenAICompatibleProvider):
 
     @property
     def name(self) -> str:
+        return 'azure'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing encrypted reasoning. Azure doesn't
+        # accept OpenAI's encrypted reasoning or compaction items, nor OpenAI Azure's.
         return 'azure'
 
     @property
@@ -163,6 +169,23 @@ class AzureProvider(_OpenAICompatibleProvider):
             base = merge_profile(base, OpenAIModelProfile(json_schema_transformer=_AzureGrokJsonSchemaTransformer))
 
         return base
+
+    def _configured_model_profile(self, model_name: str) -> ModelProfile | None:
+        """The model profile, with the unified `cache` setting turned on where this provider's API takes it.
+
+        The [Azure OpenAI v1 API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle)
+        honors the `prompt_cache_options` (whose only TTL is `'30m'`) and explicit breakpoints of GPT-5.6 and later,
+        which the unified `cache` setting maps onto, as on `OpenAIProvider`. Dated `api-version` deployments and
+        Azure AI Foundry serverless endpoints aren't verified to accept them, so `cache` stays off there.
+        """
+        profile = self.model_profile(model_name)
+        if (
+            profile is None
+            or not profile.get('openai_supports_prompt_cache_breakpoints')
+            or not _is_azure_openai_v1_api(self.base_url)
+        ):
+            return profile
+        return merge_profile(profile, OpenAIModelProfile(supports_cache=True, supported_cache_retentions=('30m',)))
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
@@ -415,6 +438,14 @@ class _AzureGrokJsonSchemaTransformer(
             result = transformer.walk()
             self.is_strict_compatible = transformer.is_strict_compatible
         return result
+
+
+def _is_azure_openai_v1_api(base_url: str) -> bool:
+    """Whether a client's base URL targets the Azure OpenAI v1 API (`/openai/v1/`), whatever its client class.
+
+    An `AsyncAzureOpenAI` client can reach it too, with `base_url` set and `api_version='preview'` or `'latest'`.
+    """
+    return urlparse(base_url).path.rstrip('/').endswith('/openai/v1')
 
 
 def _openai_compatible_v1_base_url(endpoint: str) -> str | None:

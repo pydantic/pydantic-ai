@@ -590,6 +590,7 @@ class ToolManager(Generic[AgentDepsT]):
             # `RunContext.emit` resolves a tool's owning capability through `tool_manager.tools`.
             tool_manager=self,
             tool_name=call.tool_name,
+            _dispatched_tool_name=call.tool_name,
             tool_call_id=call.tool_call_id,
             retry=self.ctx.retries.get(call.tool_name, 0),
             max_retries=tool.max_retries,

@@ -128,7 +128,7 @@ class ExamplesConfig(BaseExamplesConfig):
         return config
 
 
-RUNNABLE_HARNESS_PAGES = frozenset({'detect-loops.md', 'memory.md'})
+RUNNABLE_HARNESS_PAGES = frozenset({'artifact-scanning.md', 'detect-loops.md', 'memory.md'})
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
 
 
@@ -589,6 +589,11 @@ def test_docs_examples(
 
     # Reset global DEFAULT_CONFIG so configure() calls in doc examples don't leak between tests
     mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
+
+    # Doc examples register framing tags at module level, as on a fresh import: don't warn that registration came
+    # after other tests escaped text. Registrations are kept, as they are in a real process: one made by a module an
+    # example imports stays valid after the example, since the module stays imported.
+    mocker.patch('pydantic_ai._framing._data_tag_openers_used', False)
 
     _patch_optional_mcp_modules(mocker)
     _patch_realtime_models(mocker, answers_a_send='.send(' in example.source)
@@ -2118,8 +2123,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
                 mock_fallback_models.append(mock_infer_model(m))
         mocked = FallbackModel(*mock_fallback_models)
         # Keep the example's own `fallback_on`, so a response handler it passes still applies.
-        mocked._exception_handlers = model._exception_handlers  # pyright: ignore[reportPrivateUsage]
-        mocked._response_handlers = model._response_handlers  # pyright: ignore[reportPrivateUsage]
+        mocked._predicates = model._predicates  # pyright: ignore[reportPrivateUsage]
         return mocked
     if isinstance(model, FunctionModel | TestModel):
         return model
@@ -2128,13 +2132,14 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
             decision_model_logic, stream_function=stream_model_logic, model_name=model.model_name, profile=model.profile
         )
     else:
-        model_name = model if isinstance(model, str) else model.model_name
-        return FunctionModel(
-            model_logic,
-            stream_function=stream_model_logic,
-            model_name=model_name,
-            profile=model.profile if isinstance(model, Model) else None,
+        # A model name was inferred into a model above.
+        assert isinstance(model, Model)
+        mocked_model = FunctionModel(
+            model_logic, stream_function=stream_model_logic, model_name=model.model_name, profile=model.profile
         )
+        # Named after the provider it stands in for, so the `model_id` responses record is the one the user would see.
+        mocked_model._system = model.system  # pyright: ignore[reportPrivateUsage]
+        return mocked_model
 
 
 def fast_batching(self: BatchModelRequests) -> None:

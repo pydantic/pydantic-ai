@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="600" viewBox="0 0 880 600" role="img" aria-labelledby="t d">
+<title id="t">SSH Workspace: your agent&#x27;s commands run on another machine over SSH</title>
+<desc id="d">The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SSHWorkspace&#x27;s get_workspace hook gives the run a remote host as ctx.workspace, so each command and file operation opens an SSH connection with your own ssh client, logs in with a key in BatchMode, and runs on the host as the login user; output comes back to the tool. The WorkspaceRef names the host and directory. A ref from the message history for the same host and directory reattaches; a ref for any other host or directory raises ValueError.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="599" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">SSH Workspace: your agent&#x27;s commands run on another machine over SSH</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">SSHWorkspace gives the run a remote host as its workspace, through the ssh client and configuration already on your</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">machine. Commands have the full authority of the user you log in as.</text>
+<rect x="32" y="140" width="374" height="216" rx="14" fill="none" stroke="#8FA8A3" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="46" y="132" width="122.2" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="53" y="144" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">YOUR MACHINE</text>
+<rect x="516" y="140" width="332" height="216" rx="14" fill="none" stroke="#0E9C86" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="530" y="132" width="211.6" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="537" y="144" font-size="11" fill="#0E9C86" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">DEV@BUILD-BOX OVER SSH</text>
+<rect x="48" y="190" width="84" height="36" rx="18" fill="#092224"/>
+<text x="90" y="213" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<line x1="136" y1="208" x2="164" y2="208" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="168" y="160" width="228" height="96" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="180" y="180" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Coder, Shell or FileSystem tools</text>
+<rect x="180" y="190" width="91.8" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="225.9" y="206" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">run_command</text>
+<rect x="277.8" y="190" width="78.4" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="317" y="206" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">read_file</text>
+<rect x="180" y="220" width="85.1" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="222.6" y="236" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">write_file</text>
+<rect x="271.1" y="220" width="78.4" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="310.3" y="236" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">edit_file</text>
+<line x1="282" y1="258" x2="282" y2="280" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<text x="290" y="273" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ctx.workspace</text>
+<rect x="48" y="282" width="348" height="58" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="222" y="305.4" font-size="13.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">SSHWorkspace</text>
+<text x="222" y="324.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">get_workspace hands the run the host&#x27;s /srv/app</text>
+<line x1="398" y1="311" x2="514" y2="311" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<text x="456" y="303" font-size="12" fill="#092224" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ssh -T</text>
+<text x="456" y="330" font-size="11" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">BatchMode=yes</text>
+<line x1="514" y1="208" x2="398" y2="208" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text x="456" y="200" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">output</text>
+<text x="532" y="172" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">runs</text>
+<text x="606" y="172" font-size="12.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">sh as dev, with that user&#x27;s authority</text>
+<text x="532" y="194" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">starts in</text>
+<text x="606" y="194" font-size="12.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">working_dir, or the login dir</text>
+<text x="532" y="216" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">env</text>
+<text x="606" y="216" font-size="12.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">login environment, plus env=</text>
+<text x="532" y="238" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">login</text>
+<text x="606" y="238" font-size="12.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">a key only, never a password</text>
+<text x="532" y="260" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">each op</text>
+<text x="606" y="260" font-size="12.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">a new SSH connection</text>
+<rect x="532" y="306" width="300" height="34" rx="10" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.4"/>
+<text x="682" y="326.9" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the host&#x27;s own files</text>
+<text letter-spacing="1.3" x="32" y="390" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">A REF IN THE MESSAGE HISTORY CANNOT POINT IT AT ANOTHER MACHINE</text>
+<rect x="32" y="416" width="196" height="54" rx="10" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.4"/>
+<text x="130" y="428.8" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">WorkspaceRef</text>
+<text x="130" y="447.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">provider=&#x27;ssh&#x27;,</text>
+<text x="130" y="464.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">id=&#x27;dev@build-box:/srv/app&#x27;</text>
+<rect x="258" y="416" width="260" height="54" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="388" y="437.1" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">SSHWorkspace.backend(ref)</text>
+<text x="388" y="456" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">checks the host and directory</text>
+<rect x="594" y="404" width="254" height="34" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="721" y="415.1" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">same host and directory</text>
+<text x="721" y="434" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">reattaches, without connecting yet</text>
+<rect x="594" y="448" width="254" height="34" rx="10" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.4"/>
+<text x="721" y="459.1" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">any other host or directory</text>
+<text x="721" y="478" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">raises ValueError</text>
+<line x1="231" y1="443" x2="255" y2="443" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<path d="M 520 443 L 538 443 Q 546 443 546 435 L 546 429 Q 546 421 554 421 L 591 421" stroke="#092224" stroke-width="1.6" fill="none" marker-end="url(#ai)"/>
+<path d="M 520 443 L 538 443 Q 546 443 546 451 L 546 457 Q 546 465 554 465 L 591 465" stroke="#E5533D" stroke-width="1.6" fill="none" marker-end="url(#ac)"/>
+<text x="32" y="512" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Neither working_dir nor a FileSystem root jails shell commands. To confine them, wrap the capability in BubblewrapSandbox. Turn on</text>
+<text x="32" y="529.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ControlMaster in your SSH configuration to reuse connections.</text>
+<rect x="32" y="552.5" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="563.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="552.5" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="127.4" y="563.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your tools and runs</text>
+<rect x="258.1" y="552.5" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="278.1" y="563.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by SSHWorkspace</text>
+<rect x="437.8" y="552.5" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="457.8" y="563.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the remote host</text>
+<rect x="566.5" y="552.5" width="14" height="14" rx="4" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="586.5" y="563.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">kept across runs</text>
+<rect x="703.5" y="552.5" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="723.5" y="563.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">rejected</text>
+</svg>
