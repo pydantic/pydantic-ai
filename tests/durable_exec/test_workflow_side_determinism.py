@@ -210,7 +210,6 @@ _ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
         'the heartbeat loop of a running activity, which is not workflow code',
     ),
     (f'{CORE}/_agent_graph.py', '_serve_stream_offers', 'asyncio.wait'): (1, _WAIT_ORDER),
-    (f'{CORE}/_tool_execution.py', '_iter_completed_or_buffered', 'asyncio.wait'): (2, _WAIT_ORDER),
     (f'{CORE}/agent/__init__.py', '_run_lifecycle_hooks', 'asyncio.wait'): (1, _WAIT_ORDER),
     (f'{CORE}/durable_exec/temporal/_activity_execution.py', '_await_with_single_cancel', 'asyncio.wait'): (
         1,

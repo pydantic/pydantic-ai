@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal, TypeAlias, cast
@@ -13,6 +13,7 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._cancel import provide_run_deadline
+from pydantic_ai._tool_execution import set_tool_task_wait
 from pydantic_ai._utils import aclose_if_supported, await_maybe
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -77,6 +78,9 @@ from ._transports import (
 
 _STABLE_DEFAULT_RUN_ID_PATCH = 'pydantic_ai:stable_default_run_id'
 """`workflow.patched()` ID marking histories in which every agent run drew its default `run_id`."""
+
+_DETERMINISTIC_TOOL_COMPLETION_PATCH = 'pydantic_ai:deterministic_tool_completion'
+"""Keep pre-existing workflow histories on their original tool-completion waiting path."""
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 """Default `heartbeat_timeout` for the model-request activities.
@@ -548,7 +552,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if not self.in_durable_context:
             return await handler()
 
-        with disable_threads(), set_agent_graph_sleep(workflow.sleep):
+        wait_scope = (
+            set_tool_task_wait(workflow.wait)
+            if workflow.patched(_DETERMINISTIC_TOOL_COMPLETION_PATCH)
+            else nullcontext()
+        )
+        with disable_threads(), set_agent_graph_sleep(workflow.sleep), wait_scope:
             return await handler()
 
     def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:

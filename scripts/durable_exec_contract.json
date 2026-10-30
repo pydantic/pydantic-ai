@@ -1352,6 +1352,19 @@
       ]
     }
   },
+  "pydantic_ai_slim/pydantic_ai/_tool_execution.py": {
+    "set_tool_task_wait": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>"
+      ]
+    }
+  },
   "pydantic_ai_slim/pydantic_ai/_usage_attribution.py": {
     "record_usage": {
       "engines": [

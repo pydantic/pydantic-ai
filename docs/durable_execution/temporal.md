@@ -194,6 +194,16 @@ temporal_agent = TemporalAgent(agent)
 
 There are a few considerations specific to agents and toolsets when using Temporal for durable execution. These are important to understand to ensure that your agents and toolsets work correctly with Temporal's workflow and activity model.
 
+### Parallel Tool Results
+
+Tools can run concurrently. When several tool tasks have completed before the workflow resumes,
+their result events use the order of the model's tool calls. This keeps workflow commands driven
+by those events deterministic during replay. A tool that finishes while its siblings are still
+running can still deliver its result immediately.
+
+Temporal records the `pydantic_ai:deterministic_tool_completion` patch marker for this behavior.
+Histories recorded before the marker keep their original waiting behavior when replayed.
+
 ### Agent Names and Toolset IDs
 
 To ensure that Temporal knows what code to run when an activity fails or is interrupted and then restarted, even if your code is changed in between, each activity needs to have a name that's stable and unique.

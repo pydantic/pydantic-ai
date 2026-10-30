@@ -5,10 +5,22 @@ import dataclasses
 import inspect
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
-from contextlib import aclosing
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Coroutine,
+    Generator,
+    Iterable,
+    Iterator,
+    Sequence,
+)
+from contextlib import aclosing, contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Generic, Literal, assert_never, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, assert_never, cast
 
 from typing_extensions import TypeVar
 
@@ -30,8 +42,29 @@ DepsT = TypeVar('DepsT')
 TaskResultT = TypeVar('TaskResultT')
 
 
+class ToolTaskWait(Protocol):
+    """A completion waiter supplied by a durable engine."""
+
+    def __call__(
+        self, fs: Iterable[asyncio.Task[TaskResultT]], *, return_when: str
+    ) -> Awaitable[tuple[Collection[asyncio.Task[TaskResultT]], Collection[asyncio.Task[TaskResultT]]]]: ...
+
+
+_TOOL_TASK_WAIT: ContextVar[ToolTaskWait | None] = ContextVar('pydantic_ai.tool_task_wait', default=None)
+
+
+@contextmanager
+def set_tool_task_wait(wait: ToolTaskWait) -> Generator[None]:
+    """Let a durable engine preserve task order when several tool calls finish together."""
+    token = _TOOL_TASK_WAIT.set(wait)
+    try:
+        yield
+    finally:
+        _TOOL_TASK_WAIT.reset(token)
+
+
 async def _iter_completed_or_buffered(
-    pending: set[asyncio.Task[TaskResultT]],
+    tasks: Collection[asyncio.Task[TaskResultT]],
     event_stream_buffer: list[_messages.AgentStreamEvent],
 ) -> AsyncIterator[_messages.AgentStreamEvent | asyncio.Task[TaskResultT]]:
     """Yield tasks as they complete, interleaving run events buffered while waiting.
@@ -44,9 +77,17 @@ async def _iter_completed_or_buffered(
     A buffer that can't signal appends (a plain list revived from graph-state persistence) degrades
     to plain completion-order waiting, with buffered events surfacing at stream position instead.
     """
+    durable_wait = _TOOL_TASK_WAIT.get()
+    wait: ToolTaskWait = durable_wait or asyncio.wait
+    # Ordinary runs retain their completion-set behavior. Temporal's waiter needs the original
+    # emission order: constructing a set before calling it would already lose that order.
+    pending: list[asyncio.Task[TaskResultT]] = list(tasks)
     if not isinstance(event_stream_buffer, EventStreamBuffer):
         while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            done, remaining = await wait(
+                pending if durable_wait is not None else set(pending), return_when=asyncio.FIRST_COMPLETED
+            )
+            pending = list(remaining)
             for task in done:
                 yield task
         return
@@ -67,15 +108,16 @@ async def _iter_completed_or_buffered(
             # sentinel is discarded from both result sets before tasks are yielded.
             signal_wait: asyncio.Task[Any] = asyncio.ensure_future(signal.wait())
             try:
-                done, not_done = await asyncio.wait({*pending, signal_wait}, return_when=asyncio.FIRST_COMPLETED)
+                waiting = [*pending, signal_wait] if durable_wait is not None else {*pending, signal_wait}
+                done, not_done = await wait(waiting, return_when=asyncio.FIRST_COMPLETED)
             finally:
                 signal_wait.cancel()
-            done.discard(signal_wait)
-            pending = {task for task in not_done if task is not signal_wait}
+            pending = [task for task in not_done if task is not signal_wait]
             while event_stream_buffer:
                 yield event_stream_buffer.pop(0)
             for task in done:
-                yield task
+                if task is not signal_wait:
+                    yield task
     finally:
         waiters.remove(signal)
 
@@ -943,7 +985,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     # Even a barrier (or sole) call runs as a task, so events it emits
                     # surface to stream consumers while it is still executing.
                     async for item in _iter_completed_or_buffered(
-                        set(tasks_by_index.values()), self.ctx.state.event_stream_buffer
+                        list(tasks_by_index.values()), self.ctx.state.event_stream_buffer
                     ):
                         if not isinstance(item, asyncio.Task):
                             # A buffered run event; `parallel_ordered_events` only defers
@@ -1319,7 +1361,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             for segment in segments:
                 tasks = [asyncio.create_task(run_one(i), name=self.tool_calls[i].tool_name) for i in segment]
                 try:
-                    async for item in _iter_completed_or_buffered(set(tasks), self.ctx.state.event_stream_buffer):
+                    async for item in _iter_completed_or_buffered(tasks, self.ctx.state.event_stream_buffer):
                         if not isinstance(item, asyncio.Task):
                             # A buffered run event; `parallel_ordered_events` only defers
                             # function-tool result events, so this streams live in both modes.
