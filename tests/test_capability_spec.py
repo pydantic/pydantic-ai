@@ -2417,6 +2417,7 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Fallback On',
                         },
+                        'sticky': {'title': 'Sticky', 'type': 'boolean'},
                     },
                     'required': ['models'],
                     'title': 'spec_params_ModelFallback',

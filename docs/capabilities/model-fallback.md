@@ -122,6 +122,8 @@ capabilities:
       fallback_on: [ModelRateLimitError, ModelUnavailableError]
 ```
 
+A spec can also set [`sticky: true`](#staying-on-the-model-that-answered) the same way.
+
 Model names are resolved when they're attempted, like those passed to `ModelFallback(...)`, so a spec can also list model IDs of your own that a [`ResolveModelId`](resolve-model-id.md) capability resolves, passed to [`Agent.from_spec()`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file()`][pydantic_ai.agent.Agent.from_file] with `capabilities=`.
 
 ## How attempts work
@@ -145,6 +147,43 @@ When the agent is [instrumented](../logfire.md), the model request (`chat`) span
 A streamed request falls back if it fails before any output reaches you: `ModelFallback` waits for each candidate's stream to produce its first event before handing it over, so a connection error, an error status, or an error the provider reports right after accepting the request (like an overload) can still be handled. The first event is then replayed, so you see the same stream. Once output has been streamed, a failure is raised to you rather than retried. `FallbackModel` streams the same way.
 
 Response handlers aren't consulted for a streamed response, which is accepted as is with a `UserWarning`: it has already been streamed by the time it could be judged. A request is streamed whenever something consumes the run's events: [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] (which the [UI adapters](../ui/overview.md) use), [`agent.iter()`][pydantic_ai.agent.Agent.iter] with `node.stream()`, and [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] or [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] with an `event_stream_handler`, an [`agent.on_event`][pydantic_ai.agent.Agent.on_event] listener, or a capability that reacts to events. A capability of your own that raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] from `after_model_request` on a streamed request gets a [`UserError`][pydantic_ai.exceptions.UserError].
+
+## Staying on the model that answered
+
+By default, every request step starts the chain from the model selected for it, so a conversation that fell back goes back to the first model at its next step. With `sticky=True`, it keeps using the candidate that answered instead. That keeps hitting the same provider's prompt cache, and doesn't make every step wait on a model that's failing:
+
+```python {title="model_fallback_sticky.py"}
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai.capabilities import ModelFallback
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def primary_response(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    raise ModelAPIError(model_name='primary', message='Overloaded')
+
+
+def backup_response(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('Paris')])
+
+
+# These deterministic responses stand in for calls to a primary model that's down and a backup model.
+primary = FunctionModel(primary_response, model_name='primary')
+backup = FunctionModel(backup_response, model_name='backup')
+
+agent = Agent(primary, capabilities=[ModelFallback(backup, sticky=True)])
+
+result = agent.run_sync('What is the capital of France?')
+print([attempt.model_name for attempt in result.response.failed_attempts or []])
+#> ['primary']
+result = agent.run_sync('Are you sure?', message_history=result.all_messages())
+print(result.response.model_name, result.response.failed_attempts)
+#> backup None
+```
+
+The second run goes straight to the backup model. Every response records the model that served it as [`model_id`][pydantic_ai.messages.ModelResponse.model_id], and the attempts that failed before it as [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], so this holds for any later run that continues the conversation, in this process or another. Only a fallback makes a conversation sticky: an answer from a candidate you picked for one run, with `agent.run(model=...)`, doesn't change which model later runs start from. The conversation stays on the candidate it fell back to until it fails. The chain then moves on to the models after it, and comes back around to the step's own model and the models before it, so no model the chain would have attempted is left out. Once the step's own model answers, the conversation starts from it again.
+
+`sticky` only replaces the agent's default model: a model passed to `agent.run(model=...)` or [`Agent.override`][pydantic_ai.agent.Agent.override], or selected by a capability such as [`SelectModel`](select-model.md), is still attempted first. A recorded candidate that's no longer among `ModelFallback`'s models is ignored.
 
 ## Continuing suspended responses
 
