@@ -224,6 +224,9 @@ genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
+# Admit Pixeltable 0.7.21 for the Harness integration; later releases stay quarantined.
+# TODO: Remove after 2026-11-02 23:41 UTC.
+pixeltable = "2026-10-26T23:41:00Z"
 # certifi 2026.10.19 is the `certifi` floor above: it keeps out the compromised eMudhra
 # `emSign ECC Root CA - G3` and restores the unaffected emSign roots 2026.10.18 dropped.
 # TODO(dsfaccini): Remove after 2026-10-27 02:25 UTC, then run `uv lock` and

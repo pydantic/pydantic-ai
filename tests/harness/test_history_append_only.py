@@ -19,6 +19,7 @@ import anyio
 import pytest
 from mcp.server.fastmcp import FastMCP
 
+import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, ToolSearch, Toolset
 from pydantic_ai.capabilities.abstract import leaf_capabilities
@@ -277,6 +278,7 @@ FIXTURES: dict[str, Fixture] = {
     'ManagedPrompt': lambda _: ManagedPrompt('assistant', default='You answer questions about the news.'),
     'ModalSandbox': lambda _: _modal_sandbox(),
     'OutputGuardrail': lambda _: OutputGuardrail(guard=lambda output: True),
+    'Pixeltable': lambda _: pydantic_ai_harness.Pixeltable(tables=['*']),
     'RepoContext': _repo_context,
     'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
     'Researcher': _workspace(Researcher),
@@ -535,6 +537,7 @@ OPTIONAL_DEPENDENCIES: dict[str, str] = {
     'ExaSearch': 'exa_py',
     'IPythonCodeMode': 'jupyter_client',
     'ModalSandbox': 'modal',
+    'Pixeltable': 'pixeltable',
     'PlaywrightBrowser': 'playwright',
     'PromptInjectionDefender': 'stackone_defender',
     'SmolSandbox': 'smol',

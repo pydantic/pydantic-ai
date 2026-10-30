@@ -85,6 +85,11 @@ youdotcom = ["youdotcom>=3.1.2,<3.2"]
 mongodb = ["pymongo>=4.17.0"]
 skills = ["pyyaml>=6.0.2"]
 browser-use = ["browser-use>=0.13.6,<0.14 ; python_full_version >= '3.11'"]
+# pixeltable-pgserver ships wheels through Python 3.14.
+pixeltable = [
+    "pixeltable>=0.7.21 ; python_full_version >= '3.11' and python_version < '3.15'",
+    "sqlalchemy>=2.0.40 ; python_full_version >= '3.11' and python_version < '3.15'",
+]
 playwright = ["idna>=3.4", "playwright>=1.61.0"]
 # FastMCP 3 resolves `beartype` 0.22 (via `py-key-value-aio`), which imports `typing.no_type_check_decorator` (removed in 3.15).
 # The beartype line is removable once beartype 0.23.0 final is released (tracked in #9455):
