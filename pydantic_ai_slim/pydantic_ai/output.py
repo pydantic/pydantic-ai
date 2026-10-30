@@ -336,7 +336,7 @@ class OutputObjectDefinition:
 
 @dataclass(frozen=True, kw_only=True)
 class OutputRetryContext:
-    """An output failure that consumed an allowed retry, passed to `after_output_retry` hooks.
+    """An output failure that consumed an allowed retry, passed to `on_output_retry` hooks.
 
     The notification follows retry-limit checks, including when another output in the same response
     succeeds. It does not grant another attempt or change the configured retry limit.

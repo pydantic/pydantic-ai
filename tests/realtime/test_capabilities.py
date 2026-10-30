@@ -1285,7 +1285,7 @@ class _ModelRequestCap(AbstractCapability[None]):
 
 
 class _GraphCap(AbstractCapability[None]):
-    async def after_output_retry(self, ctx: RunContext[None], *, retry_context: OutputRetryContext) -> None:
+    async def on_output_retry(self, ctx: RunContext[None], *, retry_context: OutputRetryContext) -> None:
         raise AssertionError('Realtime sessions have no output retries.')  # pragma: no cover
 
     async def after_node_run(
@@ -1387,7 +1387,7 @@ async def test_one_uncalled_hooks_warning_per_capability() -> None:
             await _drain(agent, _RecordingModel())
         assert sorted(str(warning.message) for warning in record) == sorted(
             [
-                _uncalled_hooks_warning('`_GraphCap`', '`after_node_run`, `after_output_retry`, `wrap_output_process`'),
+                _uncalled_hooks_warning('`_GraphCap`', '`after_node_run`, `on_output_retry`, `wrap_output_process`'),
                 _uncalled_hooks_warning("`Hooks` (id='errors')", '`on_model_request_error`'),
                 _uncalled_hooks_warning('`_ModelRequestCap`', '`before_model_request`'),
                 _uncalled_hooks_warning('`_ModelRequestWrapper`', '`wrap_model_request`'),

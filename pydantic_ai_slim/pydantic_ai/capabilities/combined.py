@@ -1023,10 +1023,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     # --- Output retry notification ---
 
-    async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
+    async def on_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
         for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                await capability.after_output_retry(cap_ctx, retry_context=retry_context)
+                await capability.on_output_retry(cap_ctx, retry_context=retry_context)
 
     # --- Output process lifecycle hooks ---
 

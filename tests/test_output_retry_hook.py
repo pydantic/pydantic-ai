@@ -37,11 +37,11 @@ async def test_hook_registration_and_context(
 
     hooks = Hooks[str]()
     if registration == 'constructor':
-        hooks = Hooks(after_output_retry=record)
+        hooks = Hooks(output_retry=record)
     elif registration == 'timeout_decorator':
-        hooks.on.after_output_retry(timeout=10)(record)
+        hooks.on.output_retry(timeout=10)(record)
     else:
-        hooks.on.after_output_retry(record)
+        hooks.on.output_retry(record)
     capability = WrapperCapability(wrapped=hooks) if registration == 'wrapped' else hooks
     agent = Agent(TestModel(custom_output_text='draft'), deps_type=str, capabilities=[capability])
 
@@ -65,7 +65,7 @@ async def test_notifications_follow_reverse_capability_order() -> None:
     class Record(AbstractCapability[object]):
         label: str
 
-        async def after_output_retry(self, ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:
+        async def on_output_retry(self, ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:
             order.append(self.label)
 
     agent = Agent(TestModel(custom_output_text='draft'), capabilities=[Record('outer'), Record('inner')])
@@ -84,7 +84,7 @@ async def test_terminal_exhaustion_does_not_notify() -> None:
     received: list[OutputRetryContext] = []
     hooks = Hooks[object]()
 
-    @hooks.on.after_output_retry
+    @hooks.on.output_retry
     def record(ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:  # pragma: no cover
         received.append(retry_context)
 
@@ -122,7 +122,7 @@ async def test_accepted_sibling_notifies_before_later_exhaustion(end_strategy: E
             ToolOutput(int, name='also_retryable', max_retries=1),
             ToolOutput(int, name='exhausted', max_retries=0),
         ],
-        capabilities=[Hooks(after_output_retry=record)],
+        capabilities=[Hooks(output_retry=record)],
         end_strategy=end_strategy,
     )
     with pytest.raises(UnexpectedModelBehavior, match='output retries'):
@@ -139,7 +139,7 @@ async def test_none_output_validator_retry_notifies() -> None:
     def record(ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:
         received.append(retry_context)
 
-    agent = Agent(FunctionModel(empty), output_type=str | None, capabilities=[Hooks(after_output_retry=record)])
+    agent = Agent(FunctionModel(empty), output_type=str | None, capabilities=[Hooks(output_retry=record)])
 
     @agent.output_validator
     def validate(ctx: RunContext[object], output: str | None) -> str | None:
@@ -171,7 +171,7 @@ async def test_recovered_schema_error_does_not_notify() -> None:
     agent = Agent(
         TestModel(custom_output_text='invalid'),
         output_type=PromptedOutput(int),
-        capabilities=[Hooks(after_output_retry=record, output_validate_error=recover)],
+        capabilities=[Hooks(output_retry=record, output_validate_error=recover)],
     )
     assert (await agent.run('Answer.')).output == 42
     assert received == []
@@ -186,7 +186,7 @@ async def test_notification_exception_stops_run_and_preserves_tool_returns(error
     agent = Agent(
         TestModel(custom_output_args={'response': 'invalid'}),
         output_type=int,
-        capabilities=[Hooks(after_output_retry=fail)],
+        capabilities=[Hooks(output_retry=fail)],
     )
     with capture_run_messages() as messages, pytest.raises(error, match='notification failed'):
         await agent.run('Answer.')

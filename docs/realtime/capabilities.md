@@ -18,7 +18,7 @@ load exactly the same way as in a regular run; nothing realtime-specific is requ
 | `get_native_tools` | Contributes native tools before connecting; a dynamic native-tool function is resolved once against the connect-time context, like dynamic instructions. |
 | Tool validation/execution hooks | Runs around each local function-tool call. |
 | `handle_deferred_tool_calls` | Resolves deferred requests inline; see [deferred and approval-required tools](tools.md#deferred-and-approval-required-tools). |
-| Graph node, model-request, `get_wrapper_model`, output-processing, and `after_output_retry` hooks | Do not run; no agent graph, model request, or output-processing stage exists. |
+| Graph node, model-request, `get_wrapper_model`, output-processing, and `on_output_retry` hooks | Do not run; no agent graph, model request, or output-processing stage exists. |
 
 All regular [tool validation](../hooks.md#tool-validation-hooks) and
 [tool execution](../hooks.md#tool-execution-hooks) hooks — `before`, `after`, `wrap`, and `on_error`

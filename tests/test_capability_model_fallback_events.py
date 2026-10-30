@@ -311,7 +311,7 @@ class TestOutputFallbackEvent:
                     output_retry_threshold=1,
                 ),
                 recorder,
-                Hooks(after_output_retry=record_retry),
+                Hooks(output_retry=record_retry),
             ],
         )
         streamed_events: list[AgentStreamEvent] = []

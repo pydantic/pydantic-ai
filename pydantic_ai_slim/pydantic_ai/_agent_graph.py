@@ -4628,7 +4628,7 @@ async def notify_output_retry(
 ) -> None:
     """Notify after accepted response-output retries, before closing their event stream."""
     raise_if_cancelling()
-    await ctx.deps.root_capability.after_output_retry(_build_output_run_context(ctx), retry_context=retry_context)
+    await ctx.deps.root_capability.on_output_retry(_build_output_run_context(ctx), retry_context=retry_context)
 
 
 def _build_output_run_context(

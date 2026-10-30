@@ -146,7 +146,7 @@ _REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
     'on_output_validate_error',
     'before_output_process',
     'after_output_process',
-    'after_output_retry',
+    'on_output_retry',
     'wrap_output_process',
     'on_output_process_error',
 )
@@ -1515,7 +1515,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     # --- Output retry notification ---
 
-    async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
+    async def on_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
         """Observe an output failure that consumes an allowed retry, inside response processing.
 
         Covers schema validation, output functions/validators, and unusable responses. Output-tool

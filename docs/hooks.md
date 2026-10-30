@@ -253,9 +253,9 @@ See [Output hooks](capabilities/custom.md#output-hooks) for the full lifecycle, 
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
 |---|---|---|
-| `after_output_retry` | `after_output_retry=` | `after_output_retry` |
+| `output_retry` | `output_retry=` | `on_output_retry` |
 
-[`after_output_retry`][pydantic_ai.capabilities.AbstractCapability.after_output_retry] notifies when an output failure consumes an allowed retry. Its `retry_context` is an [`OutputRetryContext`][pydantic_ai.capabilities.OutputRetryContext] with the rejected response, retry cause, attempt and limit, and output-tool identity when relevant. It covers schema and output-validator/function failures and responses with no usable output.
+[`on_output_retry`][pydantic_ai.capabilities.AbstractCapability.on_output_retry] notifies when an output failure consumes an allowed retry. Its `retry_context` is an [`OutputRetryContext`][pydantic_ai.capabilities.OutputRetryContext] with the rejected response, retry cause, attempt and limit, and output-tool identity when relevant. It covers schema and output-validator/function failures and responses with no usable output.
 
 Request-hook and function-tool retries, recovered errors, partial validation, skipped calls, cancellation, and a failure that exhausts its retry budget do not notify. Several output failures within their retry limits produce several notifications, including a failed output beside a successful sibling or a sibling that exhausts its own budget. Hooks run in reverse capability order. Exceptions from this notification stop the run; they do not grant another retry.
 

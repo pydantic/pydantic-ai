@@ -30,7 +30,7 @@ class OutputFallbackEvent(CapabilityEvent, namespace='model_fallback', name='out
     """An output-driven switch applied before the next ordinary model request.
 
     Inherited `tool_name` and `tool_call_id` identify the output tool that triggered the switch
-    when `source` is `'output_tool'`. Individual output retries are exposed by `after_output_retry`.
+    when `source` is `'output_tool'`. Individual output retries are exposed by `on_output_retry`.
     """
 
     source_model_id: str
@@ -409,7 +409,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         # and records the attempt on the response that answers, as `FallbackModel` does.
         raise self._advance()
 
-    async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
+    async def on_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
         response = self._output_response
         if response is None or response.threshold is None:
             return

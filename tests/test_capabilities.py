@@ -505,7 +505,7 @@ async def test_stale_loaded_eager_capability_tool_stays_hidden() -> None:
 
 
 _DEFERRED_HOOK_NAMES = {
-    'after_output_retry',
+    'on_output_retry',
     'prepare_output_tools',
     'wrap_run_event_stream',
     'on_model_request_error',
@@ -750,7 +750,7 @@ async def test_combined_capability_skips_unloaded_deferred_reverse_hooks() -> No
 
     assert [event async for event in combined.wrap_run_event_stream(ctx, stream=_empty_event_stream())] == []
     assert await combined.after_output_validate(ctx, output_context=output_context, output='parsed') == 'parsed'
-    await combined.after_output_retry(
+    await combined.on_output_retry(
         ctx,
         retry_context=OutputRetryContext(
             response=ModelResponse(parts=[]), retry=RetryInfo(cause='no_output', attempt=1, max_retries=1)
