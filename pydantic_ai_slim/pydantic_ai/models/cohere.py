@@ -127,6 +127,7 @@ _FINISH_REASON_MAP: dict[ChatFinishReason, FinishReason] = {
     'MAX_TOKENS': 'length',
     'TOOL_CALL': 'tool_call',
     'ERROR': 'error',
+    'TIMEOUT': 'error',
 }
 
 
