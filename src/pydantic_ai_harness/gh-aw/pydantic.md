@@ -90,7 +90,6 @@ engine:
       import json
       import os
       import sys
-      from typing import TextIO
 
       from cryptography.hazmat.primitives import serialization
       from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -111,11 +110,11 @@ engine:
       sequence = 0
 
 
-      def write_event(event: dict[str, object], stream: TextIO | None = None) -> None:
+      def write_event(event: dict[str, object]) -> None:
           global sequence
           payload = json.dumps(event, separators=(',', ':'))
           signature = key.sign(f'{sequence}\\n{payload}'.encode()).hex()
-          print(f'\\x1eGH-AW-SESSION/{sequence}/{signature} {payload}', file=stream or output, flush=True)
+          print(f'\\x1eGH-AW-SESSION/{sequence}/{signature} {payload}', file=output, flush=True)
           sequence += 1
       `;
 
@@ -421,7 +420,6 @@ engine:
       os.set_inheritable(capture_fd, False)
       os.dup2(1, 2)
       os.environ['GH_AW_SESSION_CAPTURE_FD'] = str(capture_fd)
-      recorder_output = os.fdopen(capture_fd, 'w', encoding='utf-8', closefd=False)
       import gh_aw_recording
 
       target, prompt_file, *cli_args = sys.argv[1:]
@@ -495,7 +493,7 @@ engine:
                       'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
                   }
                   try:
-                      gh_aw_recording.write_event(event, recorder_output)
+                      gh_aw_recording.write_event(event)
                   except Exception as exc:
                       print(f'[pydantic-ai] Unable to emit the session result: {exc}', file=sys.stderr)
           finally:

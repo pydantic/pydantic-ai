@@ -1634,9 +1634,10 @@ agent = Agent(FunctionModel(stream_function=stream))
     [(False, 0, 'success'), (True, 2, 'failure')],
     ids=['successful-cli', 'argument-error'],
 )
+@pytest.mark.parametrize('fail_every_terminal', [False, True], ids=['status-only-recovery', 'capture-write-failure'])
 @requires_clai2
 def test_a_recorder_finish_write_failure_preserves_the_cli_result(
-    tmp_path: Path, cli_fails: bool, expected_exit_code: int, expected_status: str
+    tmp_path: Path, cli_fails: bool, expected_exit_code: int, expected_status: str, fail_every_terminal: bool
 ) -> None:
     invocation = launch(
         tmp_path,
@@ -1651,12 +1652,14 @@ def test_a_recorder_finish_write_failure_preserves_the_cli_result(
     (module_dir / 'sitecustomize.py').write_text(
         """import os
 
+_fail_every_terminal = FAIL_EVERY_TERMINAL
+
 class _FailTerminalWrites:
     def __init__(self, stream):
         self.stream = stream
 
     def write(self, value):
-        if 'session.result' in value:
+        if 'session.result' in value and (_fail_every_terminal or '"usage"' in value):
             raise OSError('injected terminal recorder write failure')
         return self.stream.write(value)
 
@@ -1668,21 +1671,18 @@ class _FailTerminalWrites:
 
 _real_fdopen = os.fdopen
 _capture_fd = None
-_capture_opens = 0
 
 def _fdopen(fd, *args, **kwargs):
-    global _capture_fd, _capture_opens
+    global _capture_fd
     stream = _real_fdopen(fd, *args, **kwargs)
     if _capture_fd is None:
         _capture_fd = fd
     if fd == _capture_fd:
-        _capture_opens += 1
-        if _capture_opens == 2:
-            return _FailTerminalWrites(stream)
+        return _FailTerminalWrites(stream)
     return stream
 
 os.fdopen = _fdopen
-""",
+""".replace('FAIL_EVERY_TERMINAL', repr(fail_every_terminal)),
         encoding='utf-8',
     )
     arguments = invocation.argv.copy()
@@ -1706,9 +1706,14 @@ os.fdopen = _fdopen
     (tmp_path / 'launcher.stdout.log').write_text(completed.stdout, encoding='utf-8')
     (tmp_path / 'session.log').write_text(transcript, encoding='utf-8')
     parsed = parse_log(tmp_path, transcript)
-    results = [event for event in parsed.log_entries if event.type == 'session.result']
-    assert len(results) == 1
-    assert results[0].data == {'status': expected_status, 'sourceType': 'pydantic-ai'}
+    if fail_every_terminal:
+        assert parsed.log_entries == []
+        assert bool(parsed.diagnostic_log_entries) == (not cli_fails)
+        assert 'Unable to emit the session result: injected terminal recorder write failure' in completed.stdout
+    else:
+        results = [event for event in parsed.log_entries if event.type == 'session.result']
+        assert len(results) == 1
+        assert results[0].data == {'status': expected_status, 'sourceType': 'pydantic-ai'}
 
 
 class TestLauncherProgram:
