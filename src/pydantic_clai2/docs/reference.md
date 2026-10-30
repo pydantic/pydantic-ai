@@ -1025,6 +1025,10 @@ for wrapped or pasted text, not to fill the terminal. Text pastes of five or mor
 lines, or at least 1,000 characters, display as `[paste N lines]`. The full text
 is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
+Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
+accent colour, with the prompt text in bold. This keeps your prompts apart from
+answers. Steering messages, commands entered during a turn, and prompts restored by
+`/resume` look the same.
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders and no prompt marker, so they cannot drift out of alignment.

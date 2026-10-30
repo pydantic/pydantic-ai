@@ -17,8 +17,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering.rendering import StreamRenderer
-from pydantic_clai2.ui.rendering.tool_output import terminal_text
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer, print_prompt
 
 RESUMED_TURNS = 10
 """How many of the latest prompts `/resume` shows; the model still receives the whole history."""
@@ -72,8 +71,7 @@ async def render_history(
             for part in message.parts:
                 if is_typed_prompt(part) and not steered:
                     await renderer.finish()
-                    console.print(f'> {terminal_text(prompt_text(part))}', markup=False, highlight=False)
-                    console.print()
+                    print_prompt(console, prompt_text(part))
                 elif isinstance(part, ToolReturnPart):
                     await renderer.on_stream_event(FunctionToolResultEvent(part))
             continue

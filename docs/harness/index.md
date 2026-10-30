@@ -295,7 +295,7 @@ New to Pydantic AI itself? Start with [its docs](../index.md): the agent you mou
 
 ## Observability
 
-Everything the harness does is observable: core's [Instrumentation](../capabilities/instrumentation.md) capability (or `logfire.instrument_pydantic_ai()`) emits a full trace of every run: every model call and tool call, with token and cost tracking. It's standard OpenTelemetry, so any OTLP backend works; [Logfire](https://pydantic.dev/logfire) is the easiest way to see it during development.
+Everything the harness does is observable: core's [Instrumentation](../capabilities/instrumentation.md) capability (or `logfire.instrument_pydantic_ai()`) emits a full trace of every run: every model call and tool call, with token and cost tracking. It's standard OpenTelemetry, so any OTLP backend works; run `uvx logfire-cli wizard --task pydantic-ai` once to [set up Logfire](../logfire.md#using-logfire), the easiest way to see it during development.
 
 ## Build your own
 

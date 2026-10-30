@@ -35,6 +35,7 @@ from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, TranscriptKey, question_input
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.rendering import prompt_line
 from pydantic_clai2.ui.rendering.tool_output import terminal_text, tool_header
 
 
@@ -223,7 +224,7 @@ class TerminalAnswerer:
         """Ask `approval_question` about a held call, first printing what it runs in full.
 
         The picker cuts its question to the rows the terminal leaves it, which a resize can shrink while
-        it is open, so a command or task is always printed in full, and a path when the question cuts it.
+        it is open, so a command is always printed in full, and a path when the question cuts it.
         """
         held = (
             None
@@ -306,8 +307,12 @@ def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
             text.append('\n')
         text.append('● ', style=theme.color(theme.MUTED))
         text.append(answer.header, style=theme.color(theme.ACCENT))
-        value = answer.custom_answer if answer.custom_answer is not None else ', '.join(answer.selected)
-        text.append(f': {value}', style=theme.color(theme.MUTED))
+        if answer.custom_answer is not None:
+            # A typed answer is the user's own words, so it reads like a prompt they typed, not muted output.
+            text.append(':\n', style=theme.color(theme.MUTED))
+            text.append_text(prompt_line(answer.custom_answer))
+        else:
+            text.append(f': {", ".join(answer.selected)}', style=theme.color(theme.MUTED))
     return text
 
 

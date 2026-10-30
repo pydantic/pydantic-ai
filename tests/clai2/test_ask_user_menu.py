@@ -12,6 +12,7 @@ import pytest
 from prompt_toolkit.input import PipeInput, create_pipe_input
 from rich.cells import cell_len
 from rich.console import Console
+from rich.style import Style
 from rich.text import Text
 from termflow.ansi import make_clipboard_copy
 from termflow.live.buffer import REVERSE
@@ -659,18 +660,19 @@ async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: 
     returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
     assert returns[0].content == {'Approach': ['Use another approach']}
     assert screen.events == ['taken', 'released']
-    console = Console(file=output)
-    console.print(
-        render_answer(
-            AskUserAnsweredEvent(
-                request_id='custom',
-                response=AskUserResponse(
-                    answers=(AskUserAnswer(header='Approach', custom_answer='[red]Custom answer'),)
-                ),
-            )
+    rendered = render_answer(
+        AskUserAnsweredEvent(
+            request_id='custom',
+            response=AskUserResponse(answers=(AskUserAnswer(header='Approach', custom_answer='[red]Custom answer'),)),
         )
     )
-    assert 'Approach: [red]Custom answer' in output.getvalue()
+    Console(file=output).print(rendered)
+    # A typed answer reads like a typed prompt: an accent marker and bold text, not muted tool output.
+    assert '● Approach:\n> [red]Custom answer\n' in output.getvalue()
+    assert isinstance(rendered, Text)
+    answer = rendered.plain.index('[red]')
+    assert rendered.get_style_at_offset(Console(), answer).bold
+    assert rendered.get_style_at_offset(Console(), answer - 2).color == Style.parse(theme.color(theme.ACCENT)).color
 
 
 async def test_bracketed_paste_is_atomic_and_does_not_answer_next_question(question_pipe: PipeInput) -> None:
