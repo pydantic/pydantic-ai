@@ -5464,10 +5464,11 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
 
 @pytest.mark.parametrize('previous_id', ['auto', 'resp_seed'])
 @pytest.mark.parametrize(
-    'compaction_provider,payload,marked,expected',
+    'compaction_provider,compaction_provider_url,payload,marked,expected',
     [
         pytest.param(
             'openai-codex',
+            None,
             'encrypted',
             False,
             {
@@ -5480,6 +5481,7 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
         ),
         pytest.param(
             'openai-codex',
+            None,
             'encrypted',
             True,
             {
@@ -5492,6 +5494,7 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
         ),
         pytest.param(
             'openai-codex',
+            None,
             'summary',
             True,
             {
@@ -5503,6 +5506,7 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
         ),
         pytest.param(
             'openai-codex',
+            None,
             'empty',
             True,
             {
@@ -5514,6 +5518,7 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
         ),
         pytest.param(
             'azure',
+            None,
             'encrypted',
             True,
             {
@@ -5525,6 +5530,7 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
         ),
         pytest.param(
             'openai',
+            'https://api.openai.com/v1/',
             'encrypted',
             False,
             {
@@ -5536,6 +5542,20 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
         ),
         pytest.param(
             'openai',
+            'https://gateway-a.example/v1',
+            'encrypted',
+            False,
+            {
+                'input': [
+                    {'id': 'cmp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'},
+                    {'role': 'user', 'content': 'after compaction'},
+                ]
+            },
+            id='same-provider-inline-other-endpoint',
+        ),
+        pytest.param(
+            'openai',
+            None,
             'encrypted',
             True,
             {
@@ -5552,6 +5572,7 @@ async def test_compatible_compaction_stops_previous_response_chaining(
     allow_model_requests: None,
     previous_id: Literal['auto', 'resp_seed'],
     compaction_provider: Literal['openai', 'openai-codex', 'azure'],
+    compaction_provider_url: str | None,
     payload: Literal['encrypted', 'summary', 'empty'],
     marked: bool,
     expected: dict[str, object],
@@ -5562,7 +5583,12 @@ async def test_compatible_compaction_stops_previous_response_chaining(
     """
     history: list[ModelRequest | ModelResponse] = [
         ModelRequest.user_text_prompt('before compaction'),
-        ModelResponse(parts=[TextPart('old answer')], provider_name='openai', provider_response_id='resp_old'),
+        ModelResponse(
+            parts=[TextPart('old answer')],
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1/',
+            provider_response_id='resp_old',
+        ),
         ModelResponse(
             parts=[
                 CompactionPart(
@@ -5573,6 +5599,7 @@ async def test_compatible_compaction_stops_previous_response_chaining(
                 )
             ],
             provider_name=compaction_provider,
+            provider_url=compaction_provider_url,
             provider_response_id='resp_inline' if compaction_provider == 'openai' else None,
             provider_details={'compaction': True} if marked else None,
             canonical_system='azure' if compaction_provider == 'azure' else 'openai',

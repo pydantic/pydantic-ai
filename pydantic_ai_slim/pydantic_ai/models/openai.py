@@ -4644,8 +4644,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return None
 
     def _is_compaction_boundary(self, response: ModelResponse) -> bool:
-        """Keep inline same-provider state chainable while honoring stateless and foreign compactions."""
-        if response.provider_name == self.system:
+        """Keep accepted inline server state chainable; otherwise use the portable compaction boundary."""
+        if self.accepts_server_state(response):
             return bool(response.provider_details and response.provider_details.get('compaction'))
         return any(
             isinstance(part, CompactionPart)
