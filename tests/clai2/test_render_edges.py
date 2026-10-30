@@ -203,7 +203,9 @@ async def test_echo_prompt_idle_is_literal() -> None:
 async def test_echo_prompt_stands_apart_from_answers() -> None:
     """The echoed prompt has an accent marker and bold text, unlike the plain answer around it."""
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output, force_terminal=True, width=80), stop_loading=lambda: None)
+    # Fixed colours: otherwise Rich reads `COLORTERM` and `NO_COLOR`, and may downsample or drop the accent.
+    console = Console(file=output, force_terminal=True, color_system='truecolor', no_color=False, width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
     await renderer.echo_prompt('first\nsecond')
     echoed = Text.from_ansi(output.getvalue())
     assert echoed.plain.rstrip('\n') == '> first\nsecond'
