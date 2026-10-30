@@ -83,9 +83,11 @@ export function App() {
   const [connection, setConnection] = useState<Connection>('connecting')
   const [theme, setTheme] = useState<Theme>(initialTheme)
   const [sidebar, setSidebar] = useState(true)
-  const [monty, setMonty] = useState(() => localStorage.getItem('clai-monty') === 'open')
-  // The Changes panel, which takes the side panel's column: opening one closes the other.
+  // Monty, the Changes panel, and a plugin's side panel share the right-hand column: opening one closes the others.
   const [changes, setChanges] = useState(() => localStorage.getItem('clai-changes') === 'open')
+  const [monty, setMonty] = useState(
+    () => localStorage.getItem('clai-monty') === 'open' && !changes && !localStorage.getItem('clai-side-panel'),
+  )
   const [preview, setPreview] = useState<Saved | null>(null)
   // The session the user picked, until it shows: CLAI makes it live, then its snapshot comes.
   const [opening, setOpening] = useState<Opening | null>(null)
@@ -276,12 +278,21 @@ export function App() {
       const next =
         key !== undefined ? (shownKey === key ? null : key) : shownKey || !firstPanel ? null : panelKey(firstPanel)
       setSidePanel(next)
-      if (next) setChanges(false)
+      if (next) {
+        setChanges(false)
+        setMonty(false)
+      }
     },
     [shownKey, firstPanel],
   )
   const toggleChanges = useCallback(() => {
     setChanges((open) => !open)
+    setSidePanel(null)
+    setMonty(false)
+  }, [])
+  const toggleMonty = useCallback(() => {
+    setMonty((open) => !open)
+    setChanges(false)
     setSidePanel(null)
   }, [])
   // The files may have changed when a turn ends, so the count and the panel ask again then; not while one runs.
@@ -541,7 +552,7 @@ export function App() {
         newSession()
       } else if (mod && event.key === 'j') {
         event.preventDefault()
-        setMonty((open) => !open)
+        toggleMonty()
       } else if (mod && event.shiftKey && event.key.toLowerCase() === 'l') {
         event.preventDefault()
         togglePanel()
@@ -572,7 +583,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, openSettings, newSession, focusSessions])
+  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, toggleMonty, openSettings, newSession, focusSessions])
 
   const status = chat.status
   // A session still opening is named from its sidebar row, never as a new session while its snapshot comes.
@@ -724,7 +735,7 @@ export function App() {
               </button>
               <button
                 className={`icon-button monty-toggle ${monty ? 'active' : ''}`}
-                onClick={() => setMonty(!monty)}
+                onClick={toggleMonty}
                 title={`${monty ? 'Hide' : 'Show'} Monty, the run_code sandbox (${MOD}J)`}
                 aria-pressed={monty}
               >

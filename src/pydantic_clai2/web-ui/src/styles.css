@@ -173,14 +173,6 @@ pre {
   .app.no-sidebar.with-side-panel {
     grid-template-columns: minmax(0, 1fr) var(--side-panel-width);
   }
-
-  .app.with-monty.with-side-panel {
-    grid-template-columns: 268px minmax(0, 1fr) minmax(320px, 34vw) var(--side-panel-width);
-  }
-
-  .app.no-sidebar.with-monty.with-side-panel {
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 34vw) var(--side-panel-width);
-  }
 }
 
 .icon-button {
