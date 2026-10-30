@@ -71,7 +71,7 @@ def open_tag(tag: DataTag | RegisteredTag, /, **attrs: str | None) -> str:
 
     Put the body between this and [`close_tag`][pydantic_ai.framing.close_tag] yourself; nothing in it is
     escaped, so a text body goes through [`wrap`][pydantic_ai.framing.wrap] instead. Attribute names
-    must be lowercase letters, digits and underscores, not starting with a digit; values are
+    must be lowercase snake_case, like `tool_name` (other names the looser earlier rule took are deprecated); values are
     HTML-escaped, attributes whose value is `None` are left off, and the rest keep the order they're
     given in, so the same call always renders the same bytes.
 

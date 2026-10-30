@@ -6,7 +6,6 @@ import difflib
 import hashlib
 import mimetypes
 import os
-import re
 import sys
 import warnings
 from abc import ABC, abstractmethod
@@ -68,6 +67,7 @@ from ._framing import (
     FramingTag,
     frame,
     frame_tags,
+    model_visible_name_error,
 )
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -651,7 +651,6 @@ class TextContent:
 StructuredContentFormat: TypeAlias = Literal['json', 'xml']
 """A built-in text format for [`StructuredContent`][pydantic_ai.messages.StructuredContent]."""
 
-_STRUCTURED_CONTENT_TAG_RE = re.compile(r'[a-z_][a-z0-9_]*')
 _FRAMING_TAG_NAMES = frozenset(get_args(FramingTag))
 
 
@@ -725,11 +724,8 @@ class StructuredContent(TextContent):
             # history fail to load once a later release adds its tag to the framework's own.
             return
         if self.tag is not None:
-            if not _STRUCTURED_CONTENT_TAG_RE.fullmatch(self.tag):
-                raise ValueError(
-                    '`StructuredContent.tag` must be lowercase letters, digits and `_`, '
-                    f'starting with a letter or `_`, got {self.tag!r}.'
-                )
+            if error := model_visible_name_error(self.tag, what='`StructuredContent.tag`', legacy=True):
+                raise ValueError(error)
             if self.tag in _FRAMING_TAG_NAMES:
                 raise ValueError(
                     f'`StructuredContent.tag` cannot be {self.tag!r}, a tag the framework frames its own text in.'

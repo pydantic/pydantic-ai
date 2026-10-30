@@ -34,6 +34,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Final, Literal, NewType, get_args
 
+from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 
 DataTag = Literal[
@@ -91,11 +92,35 @@ def _tag_openers(*tags: str) -> re.Pattern[str]:
 
 
 _BUILTIN_TAGS: Final[tuple[FramingTag, ...]] = get_args(FramingTag)
-_TAG_NAME: Final = re.compile(r'[a-z]+(?:_[a-z]+)*')
-"""The naming rule for every framing tag: lowercase snake_case."""
+MODEL_VISIBLE_NAME: Final = re.compile(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*')
+"""The naming rule for every tag and attribute name a model sees: lowercase snake_case.
 
-_ATTRIBUTE_NAME: Final = re.compile(r'[a-z_][a-z0-9_]*')
-"""The attribute names a tag may carry: names are written as is, so they're limited to characters that can't end the tag."""
+Letters and digits, starting with a letter, with single `_`s between words. Names are written into prompt text as
+they are, so the rule also keeps them to characters that can't end a tag.
+"""
+
+_LEGACY_NAME: Final = re.compile(r'[a-z_][a-z0-9_]*')
+"""The looser rule attribute names and `StructuredContent.tag` followed before `MODEL_VISIBLE_NAME`."""
+
+
+def model_visible_name_error(name: str, *, what: str, legacy: bool = False) -> str | None:
+    """Check `name` against `MODEL_VISIBLE_NAME`, the one naming rule for model-visible tags and attributes.
+
+    Returns `None` if it follows the rule, and otherwise the message for the error the caller raises. With
+    `legacy`, a name the looser rule accepted (`[a-z_][a-z0-9_]*`, such as `_private` or `a__b`) still passes,
+    with a deprecation warning: that's for names a released API already took.
+    """
+    if MODEL_VISIBLE_NAME.fullmatch(name):
+        return None
+    message = f'{what} must be lowercase snake_case, like `judge_feedback`; got {name!r}.'
+    if legacy and _LEGACY_NAME.fullmatch(name):
+        warnings.warn(f'{message} Other names are deprecated.', PydanticAIDeprecationWarning, stacklevel=3)
+        return None
+    return message
+
+
+_DIFF_SUFFIX: Final = '_diff'
+"""Reserved: `<{tag}_diff id>` holds a diff that replaces the earlier sealed `<{tag} id>` element with that id."""
 
 _registration_lock: Final = threading.Lock()
 _registered_tags: tuple[RegisteredTag, ...] = ()
@@ -135,8 +160,8 @@ def register_tag(name: str) -> RegisteredTag:
     """
     global _registered_tags, _data_tag_openers
 
-    if not _TAG_NAME.fullmatch(name):
-        raise UserError(f'Framing tag names must be lowercase snake_case, like `judge_feedback`; got {name!r}.')
+    if error := model_visible_name_error(name, what='Framing tag names'):
+        raise UserError(error)
     if name in _BUILTIN_TAGS:
         raise UserError(f'{name!r} is a built-in framing tag: pass it to `wrap` directly instead of registering it.')
     tag = RegisteredTag(name)
@@ -192,10 +217,9 @@ def _require_known(tag: str) -> None:
 def open_tag(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> str:
     """Core's [`open_tag`][pydantic_ai.framing.open_tag], which also takes the `'system'` voice tag."""
     _require_known(tag)
-    if invalid := [name for name in attrs if not _ATTRIBUTE_NAME.fullmatch(name)]:
-        raise UserError(
-            f'Framing tag attribute names must match `[a-z_][a-z0-9_]*`; got {", ".join(map(repr, invalid))}.'
-        )
+    for name in attrs:
+        if error := model_visible_name_error(name, what='Framing tag attribute names', legacy=True):
+            raise UserError(error)
     rendered = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items() if value is not None)
     return f'<{tag}{rendered}>'
 
@@ -339,23 +363,25 @@ _lookalike_frame: re.Pattern[str] = _lookalike_pattern(_system_voice_tags)
 
 
 def add_system_voice_tag(name: str) -> None:
-    """Have text that opens the tag `name` count as a lookalike frame, as a `<system>` opener does.
+    """Have text that opens the tag `name`, or its diff `<{name}_diff>`, count as a lookalike frame, as a `<system>` opener does.
 
     The single source of the tags the lookalike check looks for: core's `system`, `context` and `context_diff`,
     plus the tag of any instruction or system-voice capability part that declares its own. Adding a tag twice is a
     no-op. Private: capability parts are the supported way to declare one.
 
     Raises:
-        UserError: If `name` isn't lowercase letters with single underscores between words.
+        UserError: If `name` isn't lowercase snake_case, or ends in the reserved `_diff`.
     """
     global _system_voice_tags, _lookalike_frame
 
-    if not _TAG_NAME.fullmatch(name):
-        raise UserError(f'System-voice tag names must match {_TAG_NAME.pattern!r}, got {name!r}.')
+    if error := model_visible_name_error(name, what='System-voice tag names'):
+        raise UserError(error)
+    if name.endswith(_DIFF_SUFFIX):
+        raise UserError(f'System-voice tag names cannot end in {_DIFF_SUFFIX!r}, which marks a diff; got {name!r}.')
     with _registration_lock:
         if name in _system_voice_tags:
             return
-        tags = (*_system_voice_tags, name)
+        tags = (*_system_voice_tags, name, f'{name}{_DIFF_SUFFIX}')
         _lookalike_frame = _lookalike_pattern(tags)
         _system_voice_tags = tags
 

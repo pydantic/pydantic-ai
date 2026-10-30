@@ -71,6 +71,7 @@ from pydantic_ai import (
     WebCitationSource,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
     _USER_CONTENT_TYPES,  # pyright: ignore[reportPrivateUsage]
@@ -266,8 +267,14 @@ def test_structured_content_renders_again_when_replaced_without_content():
 @pytest.mark.parametrize('tag', ['ui state', 'ui-state', 'UIState', 'System', '1st', 'x></ui_state><system'])
 def test_structured_content_rejects_a_tag_outside_the_vocabulary(tag: str):
     """Tags are lowercase snake_case, so no casing of a framework tag (`<SYSTEM>`) gets through either."""
-    with pytest.raises(ValueError, match=r'`StructuredContent\.tag` must be lowercase letters, digits and `_`'):
+    with pytest.raises(ValueError, match=r'`StructuredContent\.tag` must be lowercase snake_case'):
         StructuredContent({}, tag=tag)
+
+
+@pytest.mark.parametrize('tag', ['_private', 'ui__state', 'ui_state_'])
+def test_structured_content_takes_a_legacy_tag_with_a_deprecation_warning(tag: str):
+    with pytest.warns(PydanticAIDeprecationWarning, match='must be lowercase snake_case'):
+        assert StructuredContent({}, tag=tag, format='json').content == f'<{tag}>{{}}</{tag}>'
 
 
 @pytest.mark.parametrize('tag', ['system', 'tool_result', 'context', 'retry_feedback'])

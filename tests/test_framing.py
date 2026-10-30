@@ -22,6 +22,7 @@ from pydantic_ai._framing import (
     _VOICE_TAG_OPENERS,  # pyright: ignore[reportPrivateUsage]
     ASSISTANT_THINKING_TAG,
     CONTEXT_TAG,
+    MODEL_VISIBLE_NAME,
     SYSTEM_TAG,
     TOOL_RESULT_TAG,
     FramingTag,
@@ -30,11 +31,12 @@ from pydantic_ai._framing import (
     frame,
     frame_tags,
     lookalike_frame_note,
+    model_visible_name_error,
     open_tag,
     resembles_frame,
     wrap,
 )
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning, UserError
 from pydantic_ai.framing import DataTag, RegisteredTag, neutralize_tags, register_tag
 from pydantic_ai.messages import (
     ModelMessage,
@@ -249,8 +251,11 @@ def test_an_added_system_voice_tag_is_detected(monkeypatch: pytest.MonkeyPatch) 
     assert resembles_frame('<system>')
     assert not resembles_frame('<house_rulesx>')
     assert _framing._system_voice_tags.count('house_rules') == 1  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(UserError, match='System-voice tag names must match'):
+    assert resembles_frame('<house_rules_diff id="a">')
+    with pytest.raises(UserError, match='System-voice tag names must be lowercase snake_case'):
         add_system_voice_tag('house-rules')
+    with pytest.raises(UserError, match="cannot end in '_diff'"):
+        add_system_voice_tag('house_diff')
 
 
 def test_the_frame_scan_is_linear() -> None:
@@ -270,11 +275,8 @@ def test_the_lookalike_note_names_who_wrote_the_text() -> None:
     assert 'written by the user,' in lookalike_frame_note('user', preceding=False)
 
 
-_TAG_NAME = re.compile(r'[a-z]+(_[a-z]+)*')
-
-
 def test_framing_tag_names_are_snake_case() -> None:
-    assert [tag for tag in get_args(FramingTag) if not _TAG_NAME.fullmatch(tag)] == []
+    assert [tag for tag in get_args(FramingTag) if not MODEL_VISIBLE_NAME.fullmatch(tag)] == []
 
 
 _INTERPOLATION = '\x00'
@@ -435,7 +437,7 @@ def test_registered_tags_keep_the_pattern_linear() -> None:
 
 @pytest.mark.parametrize(
     'name',
-    ['Memory', 'judge-feedback', 'context-file', 'h2', '_memory', 'memory_', 'judge__feedback', '', 'a b', '<memory>'],
+    ['Memory', 'judge-feedback', 'context-file', '2nd', '_memory', 'memory_', 'judge__feedback', '', 'a b', '<memory>'],
 )
 def test_register_tag_rejects_names_that_are_not_snake_case(name: str) -> None:
     with pytest.raises(UserError, match='lowercase snake_case'):
@@ -481,10 +483,25 @@ def test_rendering_refuses_an_unregistered_tag(render: Callable[[RegisteredTag],
 )
 def test_attribute_names_that_could_break_the_tag_are_refused(name: str) -> None:
     """Names are written as given, so one carrying `>` or a quote could close the tag and forge a `<system>` block."""
-    with pytest.raises(UserError, match='attribute names must match'):
+    with pytest.raises(UserError, match='attribute names must be lowercase snake_case'):
         framing.wrap(TOOL_RESULT_TAG, 'body', **{name: 'x'})
-    with pytest.raises(UserError, match='attribute names must match'):
+    with pytest.raises(UserError, match='attribute names must be lowercase snake_case'):
         framing.open_tag(TOOL_RESULT_TAG, **{name: None})
+
+
+def test_a_legacy_attribute_name_still_renders_with_a_deprecation_warning() -> None:
+    with pytest.warns(PydanticAIDeprecationWarning, match='attribute names must be lowercase snake_case'):
+        assert framing.open_tag(TOOL_RESULT_TAG, _ref='x') == '<tool_result _ref="x">'
+
+
+def test_one_naming_rule_for_model_visible_names() -> None:
+    assert [
+        n for n in ['judge_feedback', 'h1', 'tool_call_id', 'context_diff'] if model_visible_name_error(n, what='x')
+    ] == []
+    assert (
+        model_visible_name_error('Tool', what='Names')
+        == "Names must be lowercase snake_case, like `judge_feedback`; got 'Tool'."
+    )
 
 
 @pytest.mark.usefixtures('isolated_registry')
