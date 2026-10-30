@@ -684,7 +684,7 @@ def test_a_request_side_compaction_summary_counts_as_text() -> None:
         parts=[CompactionPart(content=None, provider_name='openai', provider_details={'encrypted_content': 'x'})]
     )
     # The model receives the summary framed, with its attribution line, so that is what's counted.
-    assert _estimate_usage([summary]) == RequestUsage(input_tokens=79, output_tokens=0)
+    assert _estimate_usage([summary]) == RequestUsage(input_tokens=82, output_tokens=0)
     assert _estimate_usage([native]) == RequestUsage(input_tokens=50, output_tokens=0)
 
 

@@ -6,5 +6,5 @@
 @@ -63,4 +62,0 @@
 -    },
 -    {
--     "text": "<system seal=\"779ce87a8537\"><context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context></system>",
+-     "text": "<system seal=\"pydantic-ai\"><context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context></system>",
 -     "type": "text"

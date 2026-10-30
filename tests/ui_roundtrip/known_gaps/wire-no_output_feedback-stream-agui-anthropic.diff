@@ -4,7 +4,7 @@
 -   "role": "user",
 -   "content": [
 -    {
--     "text": "<system seal=\"779ce87a8537\">Please return text.</system>",
+-     "text": "<system seal=\"pydantic-ai\">Please return text.</system>",
 -     "type": "text"
 -    }
 -   ]
@@ -19,4 +19,4 @@
 -   "role": "user",
 -   "content": [
 -    {
--     "text": "<system seal=\"779ce87a8537\">Please return text.</system>",
+-     "text": "<system seal=\"pydantic-ai\">Please return text.</system>",
