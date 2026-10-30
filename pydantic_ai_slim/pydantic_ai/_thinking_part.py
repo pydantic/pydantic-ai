@@ -52,7 +52,7 @@ def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, 
     would have written the reasoning itself. Reasoning carried into a user message can't: attributed to
     the user, it reads as something the user thought, so it gets an `assistant_thinking` wrapper instead.
 
-    The wrapper carries only the conversation's frame `seal` (see `pydantic_ai._frame_seal`), which says the
+    The wrapper carries only the frame `seal` (`FRAME_SEAL`), which says the
     framework wrote it. Naming the producing model would need `ModelResponse.model_name`,
     which UI adapters deliberately don't send to the client (it can hold an account id or org name, see
     https://github.com/pydantic/pydantic-ai/issues/5174), so a history that went through a UI would render

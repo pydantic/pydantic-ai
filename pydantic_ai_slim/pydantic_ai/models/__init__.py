@@ -1882,7 +1882,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         if not inline_system:
             # The announcement goes at the end of the instructions; see `_get_instruction_parts`.
-            messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
+            messages = _wrap_non_leading_system_prompts(
+                messages, standing_prompt_count=standing_prompt_count, sealed=True
+            )
 
         messages = _order_tool_results_by_call(messages)
 
@@ -3630,7 +3632,7 @@ _CONVERSATION_SUMMARY_PROVENANCE = (
 )
 
 
-def _conversation_summary_text(content: str | None, *, sealed: bool = True) -> str:
+def _conversation_summary_text(content: str | None, *, sealed: bool) -> str:
     """*content* framed as a summary of the conversation it replaced, with where it came from.
 
     A summarization model wrote it from a history that can include tool output; it goes in as written, and the
@@ -3946,7 +3948,7 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
 
 
 def _wrap_non_leading_system_prompts(
-    messages: list[ModelMessage], *, standing_prompt_count: int, sealed: bool = True
+    messages: list[ModelMessage], *, standing_prompt_count: int, sealed: bool
 ) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system seal="...">`-tagged `UserPromptPart`s.
 
@@ -4491,7 +4493,7 @@ def _sendable_request_parts(  # pyright: ignore[reportUnusedFunction]
         if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             yield _legacy_retry_as_sendable(part)
         elif isinstance(part, CompactionPart):
-            yield UserPromptPart(_conversation_summary_text(part.content))
+            yield UserPromptPart(_conversation_summary_text(part.content, sealed=True))
         else:
             yield part
 

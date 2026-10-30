@@ -10,8 +10,8 @@ model can treat it as data rather than as instructions. Tags registered with
 [`register_tag`][pydantic_ai.framing.register_tag] are always data tags.
 
 Core renders its own frames with [`frame`][pydantic_ai._framing.frame]: the body goes in exactly as
-written, and the opening tag carries the conversation's frame seal (`seal="..."`, see
-`pydantic_ai._frame_seal`). The model is told once which seal the application's frames carry
+written, and the opening tag carries the frame seal (`seal="pydantic-ai"`, `FRAME_SEAL`). The model is told
+once which seal the application's frames carry
 ([`frame_seal_announcement`][pydantic_ai._framing.frame_seal_announcement]), and text from a user, a
 tool or a file that resembles a framework frame gets a short note in the application's voice saying
 whose text it is ([`lookalike_frame_note`][pydantic_ai._framing.lookalike_frame_note]). Nothing the
