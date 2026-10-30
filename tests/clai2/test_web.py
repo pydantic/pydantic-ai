@@ -87,6 +87,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     image_id,
 )
+from pydantic_clai2.builtin_plugins.web.sidebar import project_names
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -94,7 +95,13 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
 from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.image_codec import decode_images
-from pydantic_clai2.runtime.project_identity import git_checkout, project_identity, worktree_roots
+from pydantic_clai2.runtime.project_identity import (
+    MISSING,
+    ProjectIdentity,
+    git_checkout,
+    project_identity,
+    worktree_roots,
+)
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 from pydantic_clai2.ui.menus.menu_worker import require_terminal
@@ -1000,6 +1007,53 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     # A search lists only matching sessions, in the same places.
     [found] = web_.get('/api/sessions?q=Before').json()
     assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
+
+
+def test_sidebar_tells_apart_projects_that_share_a_name(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Projects whose folders share a name each add the shortest end of their path that no other one shares.
+
+    A relative workspace an older CLAI saved has no more path to add, so it keeps its name.
+    """
+    web_ = make_web(Agent(TestModel()))
+    first, second, third = tmp_path / 'a' / 'scratch', tmp_path / 'b' / 'scratch', tmp_path / 'z' / 'a' / 'scratch'
+    git('init', '-b', 'main', str(first))
+    git('init', '-b', 'main', str(third))
+    second.mkdir(parents=True)
+    other = tmp_path / 'other'
+    other.mkdir()
+    workspaces = [('First', first.resolve()), ('Second', second.resolve()), ('Third', third.resolve())]
+    for title, workspace in [*workspaces, ('Other', other.resolve()), ('Relative', Path('scratch'))]:
+        summary = ConversationSummary(workspace=str(workspace), title=title)
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    web_.shell.session.workspace = str(first.resolve())
+
+    projects = web_.get('/api/sessions').json()
+    names = {project['worktrees'][0]['sessions'][0]['title']: project['name'] for project in projects}
+    assert names == {
+        'First': str(Path(tmp_path.resolve().name, 'a', 'scratch')),
+        'Second': str(Path('b', 'scratch')),
+        'Third': str(Path('z', 'a', 'scratch')),
+        'Other': 'other',
+        'Relative': 'scratch',
+    }
+
+
+def test_projects_of_one_folder_show_their_keys() -> None:
+    """Two projects of one folder, as when Git failed once while listing it, show their keys.
+
+    Removed folders keeps its name, which a real folder of that name adds its parent to.
+    """
+    repository = ProjectIdentity(key='/x/scratch/.git', name='scratch', root='/x/scratch', checkout='main')
+    fallback = ProjectIdentity(key='/x/scratch', name='scratch', root='/x/scratch')
+    removed = ProjectIdentity(key=MISSING, name='Removed folders', root='/gone', missing=True)
+    named = ProjectIdentity(key='/y/Removed folders', name='Removed folders', root='/y/Removed folders')
+    identities = {identity.key: identity for identity in (repository, fallback, removed, named)}
+    assert project_names(identities) == {
+        '/x/scratch/.git': '/x/scratch/.git',
+        '/x/scratch': '/x/scratch',
+        MISSING: 'Removed folders',
+        '/y/Removed folders': str(Path('y', 'Removed folders')),
+    }
 
 
 def test_sidebar_lists_removed_worktrees_after_live_ones(make_web: 'MakeWeb', tmp_path: Path) -> None:

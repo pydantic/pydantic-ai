@@ -61,6 +61,13 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   fragment to the status row with get_status_segments; you cannot redesign or
   replace the row itself.
 
+## User worktree removal commands
+
+Use the user-only `worktrees.remove_commands` setting to replace confirmed
+exit-time cleanup, not a plugin contribution. Automatic removal of unchanged
+worktrees and `/workspaces destroy` stay on Git. See the [worktree removal reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
+for repository-scoped argv configuration, placeholders, and shell functions.
+
 Pydantic AI core owns the agent loop, model/provider protocols, hooks and tools.
 Harness owns reusable, non-terminal capabilities. CLAI owns the prompt loop,
 commands, plugin loading and rendering. Do not implement a second agent loop in
@@ -711,8 +718,9 @@ control say so. Like `/fast`, `/effort` waits for the current turn to finish.
 `/commit [MESSAGE]` stages and commits every change in the session's directory;
 without MESSAGE the session's model drafts one from the changes. `/push` runs
 `git push -u origin BRANCH`; on the default branch it asks for `/push confirm`.
-`/pr [TITLE]` pushes the branch and opens a GitHub pull request with `gh`, the
-model drafting its description (and title, without TITLE). The web UI's git chip
+`/pr` shows a pull request title and description the model drafts from the
+branch; `/pr confirm` then pushes the branch and opens exactly that with `gh`,
+and `/pr TITLE` does so with your title instead. The web UI's git chip
 does the same, with a file list and the drafts to edit first. A plugin's own
 `/commit`, `/push`, or `/pr` replaces these; a skill of the same name is hidden
 by them, and CLAI says so.

@@ -173,14 +173,6 @@ pre {
   .app.no-sidebar.with-side-panel {
     grid-template-columns: minmax(0, 1fr) var(--side-panel-width);
   }
-
-  .app.with-monty.with-side-panel {
-    grid-template-columns: 268px minmax(0, 1fr) minmax(320px, 34vw) var(--side-panel-width);
-  }
-
-  .app.no-sidebar.with-monty.with-side-panel {
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 34vw) var(--side-panel-width);
-  }
 }
 
 .icon-button {
@@ -3317,6 +3309,55 @@ textarea.setting-input {
   color: var(--text);
 }
 
+.dialog-option-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+}
+
+/* The row, wider than its option by the New worktree… beside it, shows the cursor and the pointer. */
+.dialog-option-row.active {
+  background: var(--active);
+}
+
+.dialog-option-row:hover:not(.active) {
+  background: var(--hover);
+}
+
+.dialog-option-row .dialog-option {
+  flex: 1;
+  min-width: 0;
+}
+
+.dialog-option-row .dialog-option.active {
+  background: none;
+}
+
+.dialog-option-row .dialog-option-description {
+  overflow-wrap: anywhere;
+}
+
+/* A Git checkout's New worktree…, beside its option, so the option's text never runs under it; it shows while the
+   pointer is on the row. */
+.dialog-option-worktree {
+  flex: none;
+  margin-right: 8px;
+  border: 1px solid var(--border);
+  opacity: 0;
+}
+
+.dialog-option-row:hover .dialog-option-worktree {
+  opacity: 1;
+}
+
+/* Without hover, as on a touch screen, it always shows, as it takes taps either way. */
+@media (hover: none) {
+  .dialog-option-worktree {
+    opacity: 1;
+  }
+}
+
 .dialog-option-label {
   display: flex;
   align-items: center;
@@ -3617,6 +3658,23 @@ textarea.setting-input {
   font-size: 13.5px;
 }
 
+.settings-updated {
+  margin: 0 0 16px;
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+/* `/update` installing, over the shown section, leaving the navigation and its Back button usable. */
+.settings-window > .opening-overlay,
+.settings-window > .settings-pane {
+  grid-area: 1 / 2;
+}
+
+.settings-window > .opening-overlay {
+  position: relative;
+  inset: auto;
+}
+
 .settings-groups {
   display: flex;
   flex-direction: column;
@@ -3700,6 +3758,11 @@ textarea.setting-input {
   .settings-window {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .settings-window > .opening-overlay,
+  .settings-window > .settings-pane {
+    grid-area: 2 / 1;
   }
 
   .settings-nav {
