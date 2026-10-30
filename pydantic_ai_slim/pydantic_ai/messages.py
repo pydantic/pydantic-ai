@@ -4524,7 +4524,7 @@ _KIND_SEGMENT: Final = re.compile(r'[a-z][a-z0-9_]*')
 
 def _check_capability_render(owner: str, render: CapabilityPartRender) -> None:
     """Raise unless `render` describes a part that can be rendered."""
-    if render.voice not in ('framed', 'system'):
+    if render.voice not in get_args(CapabilityPartVoice):
         raise UserError(f"{owner} has `voice={render.voice!r}`; it must be `'framed'` or `'system'`.")
     if render.voice == 'system':
         if render.tag is not None or render.note is not None or render.attributes:
@@ -4756,8 +4756,8 @@ class CapabilityPart:
         cls._class_render = render
         # As `_inject_tag_field` does for `kind`, in one call: on Python 3.14+ a second one would drop the first's.
         _utils.prepend_class_annotations(cls, {'kind': str, 'render': CapabilityPartRender})
-        cls.kind = field(default=part_kind, kw_only=True)  # pyright: ignore[reportAttributeAccessIssue]
-        cls.render = field(default_factory=lambda: render, kw_only=True)  # pyright: ignore[reportAttributeAccessIssue]
+        setattr(cls, 'kind', field(default=part_kind, kw_only=True))
+        setattr(cls, 'render', field(default_factory=lambda: render, kw_only=True))
 
     def _attribute_value(self, name: str) -> object:
         """The value of the typed field `name`, which the part renders as an attribute."""

@@ -408,7 +408,7 @@ The accompanying <review_feedback> is feedback from an automated reviewer about 
 <review_feedback seal="pydantic-ai" reviewer="loop_check">The second search repeats the first one.</review_feedback>
 ```
 
-The note is a mid-conversation system message, or a `<system seal="pydantic-ai">` block on a model without one. The frame carries the [frame seal](../message-history.md#framework-frames-and-content-fidelity), and its content goes in exactly as written: nothing is escaped. Content that isn't a string, such as a file, goes between the opening and closing tags.
+The note is a mid-conversation system message, or a `<system seal="pydantic-ai">` block on a model without one. The frame's tags carry the [frame seal](../message-history.md#framework-frames-and-content-fidelity), and its content goes between them exactly as written: nothing is escaped, a file goes in as a file, and text in it that looks like a framework frame gets the same note as such text from a user.
 
 ### Where the content came from
 

@@ -24,7 +24,6 @@ from .messages import (
     ModelRequestPart,
     SystemPromptPart,
     TextContent,
-    UserContent,
     UserPromptPart,
 )
 
@@ -87,12 +86,10 @@ def _render(part: CapabilityPart) -> list[SystemPromptPart | UserPromptPart]:
     # framework-inserted read and its result, rebuilding #11837.
     sealed = part.source.trusted
     open_tag, close_tag = capability_frame_tags(render.tag, sealed=sealed, attrs=part.rendered_attributes())
-    content: str | list[UserContent]
-    if isinstance(part.content, str):
-        text = f'{open_tag}{part.content}{close_tag}'
-        content = [framework_frame_text(text)] if sealed else text
-    else:
-        content = [_frame_text(open_tag, sealed=sealed), *part.content, _frame_text(close_tag, sealed=sealed)]
+    # Only the tags are marked as the framework's: the body is the part's content, which `prepare_messages` checks
+    # for lookalike frames like any other text, so a body that closes the frame early is noted rather than trusted.
+    body = [part.content] if isinstance(part.content, str) else part.content
+    content = [_frame_text(open_tag, sealed=sealed), *body, _frame_text(close_tag, sealed=sealed)]
     framed = UserPromptPart(content, timestamp=part.timestamp)
     if render.note is None or not sealed:
         return [framed]
