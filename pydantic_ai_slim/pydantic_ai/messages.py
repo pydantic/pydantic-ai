@@ -6810,6 +6810,52 @@ class OutputToolResultEvent(ToolResultEvent):
     """Event type identifier, used as a discriminator."""
 
 
+@dataclass(repr=False, kw_only=True)
+class ModelResponseRejectedEvent:
+    """An event indicating that a streamed model response was rejected, so it is not the run's answer.
+
+    It comes right after the rejected response's own events, and before any event of the response that
+    takes its place, so a consumer can set the rejected output apart from what follows. It fires on every
+    rejection of a response, including one that uses up the output retry budget:
+
+    - an output validator raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or the response had
+      no usable output;
+    - an `after_model_request` hook or a `wrap_model_request` hook raised
+      [`ModelRetry`][pydantic_ai.exceptions.ModelRetry];
+    - a `wrap_model_request` hook replaced the response while it was being streamed, like a parallel
+      input guardrail raising [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest].
+
+    A response that was rejected but ended the run, like a skip after the whole response was streamed,
+    is not reported, since nothing takes its place.
+    """
+
+    response: ModelResponse
+    """The rejected response, as far as it was streamed."""
+
+    reason: RetryFeedbackPart | ModelRequestAttempt
+    """Why the response was rejected.
+
+    - A [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] when the model is asked again with
+      feedback: it's the part the next request sends.
+    - A [`ModelRequestAttempt`][pydantic_ai.messages.ModelRequestAttempt] with `outcome='rejected'` when a
+      capability replaced the response with one of its own.
+    """
+
+    run_step: int
+    """The run step that produced the rejected response."""
+
+    attempt: int
+    """Which attempt of its run step produced the rejected response, starting at 1.
+
+    An attempt is a request to a model; a step makes more than one when a fallback moves on to another model.
+    """
+
+    event_kind: Literal['model_response_rejected'] = 'model_response_rejected'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 # Deferred tool types live in `_deferred.py` to break the circular import
 # chain (tools → _function_schema → _run_context → messages).  Same late-import
 # pattern as `_tool_search` above.
@@ -7089,10 +7135,11 @@ HandleResponseEvent = Annotated[
     | OutputToolCallEvent
     | OutputToolResultEvent
     | DeferredToolRequestsEvent
-    | DeferredToolResultsEvent,
+    | DeferredToolResultsEvent
+    | ModelResponseRejectedEvent,
     pydantic.Discriminator('event_kind'),
 ]
-"""An event yielded when handling a model response, indicating tool calls and results."""
+"""An event yielded when handling a model response, indicating tool calls and results, or that it was rejected."""
 
 
 CUSTOM_EVENT_TYPES: dict[str, type[CustomEvent]] = _EventRegistry[type['CustomEvent']]()

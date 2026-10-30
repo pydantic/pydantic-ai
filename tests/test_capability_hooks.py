@@ -13,6 +13,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from types import NoneType
 from typing import Any, cast
 
@@ -48,7 +49,9 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     ModelMessage,
     ModelRequest,
+    ModelRequestAttempt,
     ModelResponse,
+    ModelResponseRejectedEvent,
     PartEndEvent,
     PartStartEvent,
     RetryInfo,
@@ -86,7 +89,7 @@ from .capability_models import (
     tool_calling_model,
     tool_calling_stream_function,
 )
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsInstance, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
@@ -1820,6 +1823,26 @@ class TestSkipModelRequestInteraction:
             [
                 PartStartEvent(index=0, part=TextPart(content='model ')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
+                ModelResponseRejectedEvent(
+                    response=ModelResponse(
+                        parts=[TextPart(content='model ')],
+                        usage=RequestUsage(input_tokens=50, output_tokens=1),
+                        model_name='function::stream_function',
+                        model_id='function:function::stream_function',
+                        timestamp=IsDatetime(),
+                        state='incomplete',
+                    ),
+                    reason=ModelRequestAttempt(
+                        model_name='function::stream_function',
+                        provider_name='function',
+                        outcome='rejected',
+                        timestamp=IsDatetime(),
+                        duration=IsInstance(timedelta),
+                        usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    ),
+                    run_step=1,
+                    attempt=1,
+                ),
                 PartStartEvent(index=0, part=TextPart(content='replaced')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartEndEvent(index=0, part=TextPart(content='replaced')),

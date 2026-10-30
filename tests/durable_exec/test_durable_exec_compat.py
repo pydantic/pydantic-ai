@@ -6,6 +6,7 @@ import sys
 import textwrap
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, fields
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
@@ -17,7 +18,9 @@ from pydantic_ai import (
     DeferredToolRequests,
     DeferredToolResults,
     FunctionToolset,
+    ModelRequestAttempt,
     ModelResponse,
+    ModelResponseRejectedEvent,
     RunContext,
     TextPart,
     Tool,
@@ -1050,6 +1053,23 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         OutputToolResultEvent(part=ToolReturnPart('final_result', 'done', tool_call_id='output')),
         DeferredToolRequestsEvent(requests=DeferredToolRequests(calls=[ToolCallPart('tool', tool_call_id='call')])),
         DeferredToolResultsEvent(results=DeferredToolResults(calls={'call': 'result'})),
+        ModelResponseRejectedEvent(
+            response=ModelResponse(parts=[TextPart('rejected')]),
+            reason=RetryFeedbackPart(content='try again', retry=RetryInfo(cause='model_retry')),
+            run_step=1,
+            attempt=1,
+        ),
+        ModelResponseRejectedEvent(
+            response=ModelResponse(parts=[TextPart('replaced')]),
+            reason=ModelRequestAttempt(
+                model_name='model',
+                outcome='rejected',
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                duration=timedelta(seconds=1),
+            ),
+            run_step=1,
+            attempt=2,
+        ),
         RealtimeTurnCompleteEvent(),
         RealtimeInputSpeechStartEvent(),
         RealtimeInputSpeechEndEvent(),
