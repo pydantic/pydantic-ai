@@ -14,6 +14,7 @@ from pydantic_ai import (
 from pydantic_ai._utils import fill_run_metadata
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models._request_timeout import RequestDeadline, open_durable_unit_stream
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
@@ -73,8 +74,8 @@ class PrefectModel(WrapperModel):
             ctx: RunContext[Any] | None,
         ) -> ModelResponse:
             event_stream_handler = self._get_event_stream_handler()
-            async with super(PrefectModel, self).request_stream(
-                messages, model_settings, model_request_parameters, ctx
+            async with open_durable_unit_stream(
+                self.wrapped, messages, model_settings, model_request_parameters, ctx
             ) as streamed_response:
                 if event_stream_handler is not None:
                     assert ctx is not None, (
@@ -97,6 +98,12 @@ class PrefectModel(WrapperModel):
             await super(PrefectModel, self).cancel_suspended_response(response)
 
         self._wrapped_cancel_suspended_response = cancel_suspended_response_task
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        # In a flow, the task consumes the stream before this side gets it, so the task enforces the
+        # `first_event_timeout` deadline, and this side just `request_timeout`'s.
+        in_flow = FlowRunContext.get() is not None
+        return super()._start_request_deadline(model_settings, stream=stream and not in_flow)
 
     def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
         return reject_serving_wrapper(self, wrap, 'PrefectAgent', 'PrefectDurability')

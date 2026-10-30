@@ -174,6 +174,8 @@ A failed run returns no result, so there is no ref to store, and `after_run` doe
 ```python
 from typing import Any
 
+import anyio
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.run import AgentRunResult
@@ -186,7 +188,10 @@ hooks = Hooks()
 @hooks.on.run_error
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await ModalSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the kill short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await ModalSandbox().destroy(ctx.workspace.ref)
     raise error
 
 
@@ -304,6 +309,10 @@ The previous `ModalSandbox` registered its own `run_command`, `read_file`, `writ
 | `ModalSandboxExecResult` | Removed. Use `pydantic_ai.workspaces.CommandResult`. |
 | `ModalSandboxError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceError`. It doesn't cover sandbox creation that doesn't finish within 10 minutes (`TimeoutError`), or transient Modal errors such as connection failures, which propagate unchanged so a durable engine can retry them. Without the `modal` package, importing `pydantic_ai_harness.modal_sandbox` raises `ImportError`. |
 | `ModalSandboxTerminalError`, `ModalSandboxUnavailableError`, `ModalSandboxAuthError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceUnavailableError`. |
+
+## Further reading
+
+- [The agent outgrew your laptop](https://pydantic.dev/articles/harness-modal) (Pydantic): from a shell agent on your laptop to parallel `ModalSandbox` containers
 
 ## API reference
 

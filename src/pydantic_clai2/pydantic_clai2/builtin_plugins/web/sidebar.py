@@ -7,7 +7,13 @@ from pathlib import Path, PurePath
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.protocol import Project, SessionEntry, SessionState, Worktree
 from pydantic_clai2.plugins import LiveSession
-from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity, worktree_roots
+from pydantic_clai2.runtime.project_identity import (
+    MISSING,
+    ProjectIdentity,
+    git_checkout,
+    project_identity,
+    worktree_roots,
+)
 
 COMPLETIONS = 12
 """How many directories New session completes a typed path to; each costs a few Git calls."""
@@ -56,6 +62,32 @@ def worktrees(
         for root, (identity, sessions) in found.items()
     ]
     return sorted(worktrees, key=lambda worktree: (not worktree.current, worktree.missing))
+
+
+def project_names(identities: Mapping[str, ProjectIdentity]) -> dict[str, str]:
+    """Each project's name by its key, as the sidebar heads it.
+
+    Projects that share a name each show the shortest end of their folder's path that no other of them shares,
+    as `a/scratch` and `b/scratch`, or else their key.
+    """
+    # A repository's key is its Git folder, as its name is: `.git` inside the main checkout, or the folder itself.
+    folders = {key: PurePath(key).parent if PurePath(key).name == '.git' else PurePath(key) for key in identities}
+    names = {key: identity.name for key, identity in identities.items()}
+    for key, folder in folders.items():
+        name = identities[key].name
+        others = [other for other in folders if other != key and identities[other].name == name]
+        if not others:
+            continue
+        for depth in range(2, len(folder.parts) + 1):
+            label = folder.parts[-depth:]
+            if all(folders[other].parts[-depth:] != label for other in others):
+                names[key] = str(PurePath(*label))
+                break
+        else:
+            # Equal folders, as after Git failed once while listing one, still differ by key; Removed folders has none.
+            if key != MISSING:
+                names[key] = key
+    return names
 
 
 def completions(typed: str) -> list[Project]:

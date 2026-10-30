@@ -11,6 +11,7 @@ from pydantic_core import to_json
 from ...exceptions import RunCancelled, RunTimedOut
 from ...messages import (
     ERROR_OUTCOMES,
+    CapabilityLoadDeltaEvent,
     CompactionPart,
     CustomEvent,
     EnqueuedMessagesEvent,
@@ -37,8 +38,15 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from .._adapter import compaction_payload, enqueued_messages_for_client, model_settings_delta_payload
+from .._adapter import (
+    capability_load_delta_payload,
+    compaction_payload,
+    enqueued_messages_for_client,
+    model_settings_delta_payload,
+    tool_availability_delta_payload,
+)
 from ._utils import (
+    CAPABILITY_LOAD_DELTA_DATA_TYPE,
     COMPACTION_DATA_TYPE,
     DATA_CHUNK_TYPES,
     ENQUEUED_MESSAGES_DATA_TYPE,
@@ -430,6 +438,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         async for chunk in self._handle_tool_result(event.part):
             yield chunk
 
+    async def handle_capability_load_delta(self, event: CapabilityLoadDeltaEvent) -> AsyncIterator[BaseChunk]:
+        yield DataChunk(type=CAPABILITY_LOAD_DELTA_DATA_TYPE, data=capability_load_delta_payload(event.part))
+
     async def handle_model_settings_delta(self, event: ModelSettingsDeltaEvent) -> AsyncIterator[BaseChunk]:
         yield DataChunk(type=MODEL_SETTINGS_DELTA_DATA_TYPE, data=model_settings_delta_payload(event.part))
 
@@ -437,7 +448,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         part = event.part
         yield DataChunk(
             type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
-            data={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+            data=tool_availability_delta_payload(part),
         )
 
     async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[BaseChunk]:
