@@ -37,11 +37,11 @@ def make_agent(
         return 'evidence'
 
     agent = Agent(
-        name='output_escalation',
+        name='output_fallback',
         deps_type=object,
         tools=[lookup_tool or lookup],
         capabilities=[
-            ModelFallback(models['primary'], models['backup'], output_retries=1),
+            ModelFallback(models['primary'], models['backup'], output_retry_threshold=1),
             durability,
         ],
     )

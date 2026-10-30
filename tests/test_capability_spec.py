@@ -2414,6 +2414,14 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Fallback On',
                         },
+                        'output_retry_threshold': {
+                            'anyOf': [
+                                {'type': 'integer'},
+                                {'additionalProperties': {'type': 'integer'}, 'type': 'object'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Output Retry Threshold',
+                        },
                     },
                     'required': ['models'],
                     'title': 'spec_params_ModelFallback',

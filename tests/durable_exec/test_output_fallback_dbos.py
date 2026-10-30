@@ -26,7 +26,7 @@ class Crash(BaseException):
 @pytest.fixture
 def dbos(tmp_path: Path) -> Generator[DBOS]:
     config: DBOSConfig = {
-        'name': 'output_escalation',
+        'name': 'output_fallback',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
         'run_admin_server': False,
     }
@@ -44,14 +44,14 @@ def test_recovery_reconstructs_selection(dbos: DBOS) -> None:
     models = make_models(executions)
     attempts: list[list[str | None]] = []
 
-    @DBOS.step(name='escalation_lookup')
+    @DBOS.step(name='fallback_lookup')
     def lookup() -> str:
         executions.append('lookup')
         return 'evidence'
 
     agent = make_agent(models, DBOSDurability(models=models), executions, lookup_tool=lookup)
 
-    @DBOS.workflow(name='output_escalation')
+    @DBOS.workflow(name='output_fallback')
     def workflow() -> None:
         result = agent.run_sync('Answer.')
         attempts.append([m.model_name for m in result.all_messages() if isinstance(m, ModelResponse)])

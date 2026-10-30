@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from pydantic_ai import exceptions
 from pydantic_ai._fallback import FallbackChain, FallbackOn, FallbackPredicates
@@ -20,22 +20,22 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import ModelRequestContext
 
-__all__ = ('ModelFallback', 'OutputRetryEvent')
-
-_OutputRetries: TypeAlias = int | Mapping[str, int] | None
+__all__ = ('ModelFallback', 'OutputFallbackEvent')
 
 
 @dataclass(kw_only=True)
-class OutputRetryEvent(CapabilityEvent, namespace='model_fallback', name='output_retry'):
-    """An output retry accepted by core while output-driven model fallback is enabled.
+class OutputFallbackEvent(CapabilityEvent, namespace='model_fallback', name='output_fallback'):
+    """An output-driven switch applied before the next ordinary model request.
 
-    The rejected response identifies the actual producer. Inherited `tool_name` and `tool_call_id`
-    identify an output tool when `source` is `'output_tool'`. A failure that exhausts its retry
-    budget does not emit; accepted retries from other output calls still do.
+    Inherited `tool_name` and `tool_call_id` identify the output tool that triggered the switch
+    when `source` is `'output_tool'`. Individual accepted retries are exposed by `after_output_retry`.
     """
 
+    source_model_id: str
+    """The serving model's configured selection ID, including a resolver alias."""
+    target_model_id: str
+    """The configured selection ID of the model prepared for the next request."""
     source: Literal['response_output', 'output_tool']
-    response: ModelResponse
     retry: RetryInfo[str]
 
 
@@ -84,7 +84,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     A model already attempted this step is skipped, so listing the agent's own model as the first
     candidate is harmless rather than a wasted duplicate attempt.
 
-    Set `output_retries` to move the next ordinary step to another model after accepted output
+    Set `output_retry_threshold` to move the next ordinary step to another model after accepted output
     validation failures. That model receives the validation feedback and remains the starting
     candidate for this run. Core's output/per-tool retry limits and usage limits still apply.
 
@@ -105,7 +105,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     models: list[Model | KnownModelName | str]
     """The models to attempt, in order, after the one selected for the step."""
 
-    output_retries: _OutputRetries
+    output_retry_threshold: int | Mapping[str, int] | None
     """Accepted output retries from a model before the next step moves to the next candidate.
 
     A positive integer applies to every model; a mapping configures thresholds by model ID and
@@ -117,6 +117,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     _output_cursor: int = field(repr=False)
     _output_failures: list[tuple[Model, int]] = field(repr=False)
     _output_producer: Model | None = field(repr=False)
+    _output_selection: Model | str | None = field(repr=False)
     _output_threshold: int | None = field(repr=False)
     _output_transition: OutputRetryContext | None = field(repr=False)
 
@@ -139,14 +140,14 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self,
         *models: Model | KnownModelName | str,
         fallback_on: FallbackOn = (ModelAPIError,),
-        output_retries: _OutputRetries = None,
+        output_retry_threshold: int | Mapping[str, int] | None = None,
     ):
         """Initialize the fallback capability.
 
         Args:
             models: The models to attempt after the one selected for the request step. When the
                 agent has no model of its own, the first of these is used for the first attempt.
-            output_retries: Move the next ordinary request step to the next candidate after this
+            output_retry_threshold: Move the next ordinary request step to the next candidate after this
                 many accepted output retries from the serving model. A positive integer applies
                 to every model. A mapping uses the selection ID, or `Model.model_id` for a model
                 instance, to configure each model independently; unlisted models do not trigger
@@ -172,27 +173,30 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         super().__init__()
         if not models:
             raise UserError('`ModelFallback` requires at least one model to fall back to.')
-        if isinstance(output_retries, Mapping):
+        if isinstance(output_retry_threshold, Mapping):
             if any(
                 not isinstance(model_id, str)
                 or not isinstance(threshold, int)
                 or isinstance(threshold, bool)
                 or threshold < 1
-                for model_id, threshold in output_retries.items()
+                for model_id, threshold in output_retry_threshold.items()
             ):
-                raise UserError('`ModelFallback` `output_retries` must map model IDs to positive integers.')
-            self.output_retries = dict(output_retries)
-        elif output_retries is None or (
-            isinstance(output_retries, int) and not isinstance(output_retries, bool) and output_retries > 0
+                raise UserError('`ModelFallback` `output_retry_threshold` must map model IDs to positive integers.')
+            self.output_retry_threshold = dict(output_retry_threshold)
+        elif output_retry_threshold is None or (
+            isinstance(output_retry_threshold, int)
+            and not isinstance(output_retry_threshold, bool)
+            and output_retry_threshold > 0
         ):
-            self.output_retries = output_retries
+            self.output_retry_threshold = output_retry_threshold
         else:
-            raise UserError('`ModelFallback` `output_retries` must be a positive integer or `None`.')
+            raise UserError('`ModelFallback` `output_retry_threshold` must be a positive integer or `None`.')
         self.models = list(models)
         self._output_model = None
         self._output_cursor = 0
         self._output_failures = []
         self._output_producer = None
+        self._output_selection = None
         self._output_threshold = None
         self._output_transition = None
         self._predicates = FallbackPredicates.parse(fallback_on, owner='ModelFallback')
@@ -243,6 +247,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             _output_cursor=0,
             _output_failures=[],
             _output_producer=None,
+            _output_selection=None,
             _output_threshold=None,
             _output_transition=None,
             _step=None,
@@ -304,12 +309,28 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 self._moved = True
                 raise RetryModelRequest(self._output_model)
         self._pin_checked = True
+        moved, self._moved = self._moved, False
+        if moved and self._already_attempted(request_context.model):
+            # A candidate given as a string, which the agent resolved only now, turned out to be a model already
+            # attempted this step, like the step's own model under an alias.
+            raise self._advance()
         if (
             self._output_transition is not None
             and self._output_model is not None
             and _matches_model(self._output_model, request_context.model, request_context.model_id)
         ):
             retry = self._output_transition
+            assert self._output_selection is not None
+            await ctx.emit(
+                OutputFallbackEvent(
+                    source_model_id=_pin_id(self._output_selection),
+                    target_model_id=request_context.model_id or request_context.model.model_id,
+                    source=retry.source,
+                    retry=retry.retry,
+                    tool_name=retry.tool_name,
+                    tool_call_id=retry.tool_call_id,
+                )
+            )
             with ctx.tracer.start_as_current_span('model_fallback.output_fallback') as span:
                 if span.is_recording():
                     span.set_attribute('model_fallback.model', request_context.model.model_name)
@@ -317,11 +338,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                     if retry.response.model_name is not None:
                         span.set_attribute('model_fallback.producer', retry.response.model_name)
             self._output_transition = None
-        moved, self._moved = self._moved, False
-        if moved and self._already_attempted(request_context.model):
-            # A candidate given as a string, which the agent resolved only now, turned out to be a model already
-            # attempted this step, like the step's own model under an alias.
-            raise self._advance()
         self._attempted_models.append(request_context.model)
         if request_context.model_id is not None:
             self._attempted_ids.add(request_context.model_id)
@@ -353,15 +369,16 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             # the response handlers, with a warning when there are any, as `FallbackModel` does.
             self._chain.warn_if_streamed_responses_unjudged()
         if request_context.streaming or not await self._chain.falls_back(response):
-            if self.output_retries is not None:
+            if self.output_retry_threshold is not None:
                 producer = request_context.model
                 while isinstance(producer, WrapperModel):
                     producer = producer.wrapped
                 self._output_producer = producer
+                self._output_selection = request_context.model_id or request_context.model
                 self._output_threshold = (
-                    self.output_retries.get(request_context.model_id or producer.model_id)
-                    if isinstance(self.output_retries, Mapping)
-                    else self.output_retries
+                    self.output_retry_threshold.get(request_context.model_id or producer.model_id)
+                    if isinstance(self.output_retry_threshold, Mapping)
+                    else self.output_retry_threshold
                 )
             # A suspended response's continuation, in this run or a later one that resumes it, goes back to the
             # model that started the provider-side job, which the agent records as the response's `model_id`.
@@ -375,6 +392,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         if self._output_threshold is None:
             return
         assert self._output_producer is not None
+        assert self._output_selection is not None
         for index, (producer, count) in enumerate(self._output_failures):
             if producer is self._output_producer:
                 failures = count + 1
@@ -383,15 +401,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         else:
             failures = 1
             self._output_failures.append((self._output_producer, failures))
-        await ctx.emit(
-            OutputRetryEvent(
-                source=retry_context.source,
-                response=retry_context.response,
-                retry=retry_context.retry,
-                tool_name=retry_context.tool_name,
-                tool_call_id=retry_context.tool_call_id,
-            )
-        )
         # Every charge belongs to the model that produced this response. Failed siblings must not
         # retire an untried candidate while the next step's switch is still pending.
         if failures >= self._output_threshold and self._output_transition is None:
@@ -403,7 +412,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                     self._output_transition = retry_context
                     break
             else:
-                self._output_model = self._output_producer
+                self._output_model = self._output_selection
                 self._output_cursor = len(self.models)
 
     def _new_chain(self) -> FallbackChain:
@@ -436,7 +445,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         models: KnownModelName | str | Sequence[KnownModelName | str],
         *,
         fallback_on: _SpecFallbackError | Sequence[_SpecFallbackError] = 'ModelAPIError',
-        output_retries: _OutputRetries = None,
+        output_retry_threshold: int | Mapping[str, int] | None = None,
     ) -> ModelFallback[Any]:
         """Build from an agent spec, which names the models and the exceptions to fall back on.
 
@@ -474,7 +483,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 f'`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, '
                 f'got {unknown!r}. Valid names: {", ".join(_SPEC_FALLBACK_ERRORS)}.'
             )
-        return cls(*model_names, fallback_on=tuple(error_types), output_retries=output_retries)
+        return cls(*model_names, fallback_on=tuple(error_types), output_retry_threshold=output_retry_threshold)
 
 
 def _spec_list(value: object, name: str) -> Sequence[object]:

@@ -12,7 +12,9 @@ from pydantic_ai.models.test import TestModel
 )
 def test_invalid_output_retry_threshold_in_spec(threshold: object) -> None:
     with pytest.raises(ValueError, match='positive integer'):
-        Agent.from_spec({'capabilities': [{'ModelFallback': {'models': ['test'], 'output_retries': threshold}}]})
+        Agent.from_spec(
+            {'capabilities': [{'ModelFallback': {'models': ['test'], 'output_retry_threshold': threshold}}]}
+        )
 
 
 @pytest.mark.parametrize('per_model', [False, True])
@@ -22,7 +24,7 @@ async def test_output_fallback_spec_roundtrip_and_custom_ids(per_model: bool) ->
         {
             'retries': {'output': 2},
             'capabilities': [
-                {'ModelFallback': {'models': ['app:first', 'app:next'], 'output_retries': policy}},
+                {'ModelFallback': {'models': ['app:first', 'app:next'], 'output_retry_threshold': policy}},
             ],
         }
     )
@@ -40,4 +42,4 @@ async def test_output_fallback_spec_roundtrip_and_custom_ids(per_model: bool) ->
         return value
 
     assert (await agent.run('Answer.')).output == 'app:next'
-    assert 'output_retries' in str(AgentSpec.model_json_schema_with_capabilities())
+    assert 'output_retry_threshold' in str(AgentSpec.model_json_schema_with_capabilities())

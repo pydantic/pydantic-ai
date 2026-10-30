@@ -259,7 +259,7 @@ See [Output hooks](capabilities/custom.md#output-hooks) for the full lifecycle, 
 
 Request-hook and function-tool retries, recovered errors, partial validation, skipped calls, cancellation, and a failure that exhausts its retry budget do not notify. Several accepted output failures in one response produce several notifications, including a failed output beside a successful sibling or a sibling that exhausts its own budget. Hooks run in reverse capability order. Exceptions from this notification stop the run; they do not grant another retry.
 
-Use this hook for output-retry events and policy state. [`ModelFallback(output_retries=...)`](capabilities/model-fallback.md#output-validation-retries) uses it to move the next ordinary request step to another model while preserving core's retry budgets.
+Use this hook for output-retry events and policy state. [`ModelFallback(output_retry_threshold=...)`](capabilities/model-fallback.md#output-validation-retries) uses it to move the next ordinary request step to another model while preserving core's retry budgets.
 
 ### Tool preparation
 

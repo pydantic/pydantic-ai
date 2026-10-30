@@ -50,7 +50,7 @@ from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
 from .local_workspace import LocalWorkspace
 from .mcp import MCP, MCPAuthorizationTokenFunc
-from .model_fallback import ModelFallback, OutputRetryEvent
+from .model_fallback import ModelFallback, OutputFallbackEvent
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
@@ -182,7 +182,7 @@ __all__ = [
     'Hooks',
     'OutputContext',
     'OutputRetryContext',
-    'OutputRetryEvent',
+    'OutputFallbackEvent',
 ]
 
 

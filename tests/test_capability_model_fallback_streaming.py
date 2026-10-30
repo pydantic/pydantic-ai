@@ -6,7 +6,7 @@ from typing import Literal
 import pytest
 
 from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent, ModelRetry, RunContext
-from pydantic_ai.capabilities import ModelFallback, OutputRetryEvent
+from pydantic_ai.capabilities import ModelFallback, OutputFallbackEvent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -28,7 +28,7 @@ def streaming_agent() -> tuple[Agent[object, str], list[str]]:
         deps_type=object,
         capabilities=[
             ModelFallback(
-                FunctionModel(stream_function=primary), FunctionModel(stream_function=backup), output_retries=1
+                FunctionModel(stream_function=primary), FunctionModel(stream_function=backup), output_retry_threshold=1
             )
         ],
     )
@@ -75,7 +75,7 @@ class TestStreaming:
                 assert run.result.output == 'ready'
         assert calls == ['primary', 'backup']
         if method != 'iter':
-            retries = [event for event in events if isinstance(event, OutputRetryEvent)]
+            retries = [event for event in events if isinstance(event, OutputFallbackEvent)]
             assert len(retries) == 1
 
     async def test_delivered_final_stream_is_not_replaced(

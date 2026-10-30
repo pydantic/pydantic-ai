@@ -7,7 +7,7 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelRetry, NativeOutput, PromptedOutput, RunContext, ToolOutput
+from pydantic_ai import Agent, ConcurrencyLimiter, ModelRetry, NativeOutput, PromptedOutput, RunContext, ToolOutput
 from pydantic_ai.capabilities import AbstractCapability, Hooks, ModelFallback, SelectModel
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -50,6 +51,31 @@ class RetryRequest(AbstractCapability[object]):
 
 
 class TestOutputFallback:
+    async def test_last_candidate_keeps_its_wrapper(self) -> None:
+        limiter = ConcurrencyLimiter(max_running=1)
+        running: list[int] = []
+
+        def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            running.append(limiter.running_count)
+            return ModelResponse(parts=[TextPart('draft' if len(running) == 1 else 'ready')])
+
+        agent = Agent(
+            TestModel(custom_output_text='draft'),
+            capabilities=[
+                ModelFallback(ConcurrencyLimitedModel(FunctionModel(backup), limiter), output_retry_threshold=1)
+            ],
+            retries={'output': 2},
+        )
+
+        @agent.output_validator
+        def validate(value: str) -> str:
+            if value == 'draft':
+                raise ModelRetry('Finish the draft.')
+            return value
+
+        assert (await agent.run('Answer.')).output == 'ready'
+        assert running == [1, 1]
+
     async def test_thresholds_can_be_configured_per_model(self) -> None:
         calls: list[str] = []
 
@@ -64,7 +90,7 @@ class TestOutputFallback:
         first = FunctionModel(primary, model_name='primary')
         second = FunctionModel(middle, model_name='middle')
         thresholds: dict[str, int] = {first.model_id: 2, second.model_id: 1}
-        fallback = ModelFallback(second, TestModel(custom_output_text='ready'), output_retries=thresholds)
+        fallback = ModelFallback(second, TestModel(custom_output_text='ready'), output_retry_threshold=thresholds)
         thresholds[first.model_id] = 1
         agent = Agent(first, capabilities=[fallback], retries={'output': 3})
 
@@ -81,7 +107,7 @@ class TestOutputFallback:
     async def test_mapping_leaves_unlisted_models_unchanged(self, thresholds: dict[str, int]) -> None:
         agent = Agent(
             TestModel(custom_output_text='draft'),
-            capabilities=[ModelFallback(TestModel(custom_output_text='ready'), output_retries=thresholds)],
+            capabilities=[ModelFallback(TestModel(custom_output_text='ready'), output_retry_threshold=thresholds)],
         )
 
         @agent.output_validator
@@ -125,7 +151,7 @@ class TestOutputFallback:
         ]
         agent = Agent(
             FunctionModel(primary),
-            capabilities=[ModelFallback(pinned, FunctionModel(backup), output_retries=1)],
+            capabilities=[ModelFallback(pinned, FunctionModel(backup), output_retry_threshold=1)],
         )
 
         @agent.output_validator
@@ -167,7 +193,7 @@ class TestOutputFallback:
         agent = Agent(
             FunctionModel(primary),
             capabilities=[
-                ModelFallback(FunctionModel(backup), output_retries=2),
+                ModelFallback(FunctionModel(backup), output_retry_threshold=2),
                 Hooks(after_model_request=after_request),
             ],
             retries={'output': 3},
@@ -195,7 +221,7 @@ class TestOutputFallback:
             return ModelResponse(parts=[TextPart('ready')])
 
         candidate = FunctionModel(backup)
-        fallback = ModelFallback(candidate, output_retries=1) if enabled else ModelFallback(candidate)
+        fallback = ModelFallback(candidate, output_retry_threshold=1) if enabled else ModelFallback(candidate)
         agent = Agent(FunctionModel(primary), capabilities=[fallback])
 
         @agent.output_validator
@@ -236,7 +262,7 @@ class TestOutputFallback:
 
         agent = Agent(
             FunctionModel(primary),
-            capabilities=[ModelFallback(FunctionModel(middle), FunctionModel(final), output_retries=1)],
+            capabilities=[ModelFallback(FunctionModel(middle), FunctionModel(final), output_retry_threshold=1)],
             tools=[lookup],
             retries={'output': 2},
         )
@@ -272,7 +298,9 @@ class TestOutputFallback:
             return ModelResponse(parts=[TextPart('ready')])
 
         capability = ModelFallback(
-            FunctionModel(primary, model_name='primary'), FunctionModel(backup, model_name='backup'), output_retries=1
+            FunctionModel(primary, model_name='primary'),
+            FunctionModel(backup, model_name='backup'),
+            output_retry_threshold=1,
         )
         capabilities: list[AbstractCapability[object]] = [capability]
         if source in ('before', 'after'):
@@ -319,9 +347,9 @@ class TestOutputFallback:
         profile = ModelProfile(supports_json_schema_output=True)
         first = FunctionModel(response, model_name='first', profile=profile)
         second = FunctionModel(response, model_name='second', profile=profile)
-        escalation = ModelFallback(first, second, output_retries=1)
+        fallback = ModelFallback(first, second, output_retry_threshold=1)
         output = NativeOutput(Answer) if mode == 'native' else PromptedOutput(Answer) if mode == 'prompted' else Answer
-        result = await Agent(output_type=output, capabilities=[escalation]).run('Answer.')
+        result = await Agent(output_type=output, capabilities=[fallback]).run('Answer.')
         assert result.output == Answer(number=42)
         assert [m.model_name for m in result.all_messages() if isinstance(m, ModelResponse)] == ['first', 'second']
 
@@ -343,8 +371,8 @@ class TestOutputFallback:
             tool_calls.append('lookup')
             return 'evidence'
 
-        escalation = ModelFallback(FunctionModel(primary), FunctionModel(backup), output_retries=2)
-        agent = Agent(capabilities=[escalation], retries={'output': 3}, tools=[lookup])
+        fallback = ModelFallback(FunctionModel(primary), FunctionModel(backup), output_retry_threshold=2)
+        agent = Agent(capabilities=[fallback], retries={'output': 3}, tools=[lookup])
 
         @agent.output_validator
         def validate(ctx: RunContext[object], value: str) -> str:
@@ -381,7 +409,7 @@ class TestOutputFallback:
         agent = Agent(
             output_type=ToolOutput(Answer, max_retries=tool_budget),
             retries={'output': 1},
-            capabilities=[ModelFallback(model, model, output_retries=1)],
+            capabilities=[ModelFallback(model, model, output_retry_threshold=1)],
         )
         with pytest.raises(UnexpectedModelBehavior, match=f'output retries \\({tool_budget}\\)'):
             await agent.run('Answer.')
@@ -391,8 +419,8 @@ class TestOutputFallback:
     async def test_selection_precedence(self, selection: Literal['ladder', 'last', 'run', 'override']) -> None:
         first = TestModel(custom_output_text='ladder')
         other = TestModel(custom_output_text='other')
-        escalation = ModelFallback(first, output_retries=1)
-        caps: list[AbstractCapability[object]] = [SelectModel(lambda ctx: other), escalation]
+        fallback = ModelFallback(first, output_retry_threshold=1)
+        caps: list[AbstractCapability[object]] = [SelectModel(lambda ctx: other), fallback]
         if selection == 'last':
             caps.reverse()
         agent = Agent(other, capabilities=caps)
@@ -420,7 +448,9 @@ class TestOutputFallback:
 
         agent = Agent(
             capabilities=[
-                ModelFallback(FunctionModel(failed), FunctionModel(rejected), FunctionModel(valid), output_retries=1),
+                ModelFallback(
+                    FunctionModel(failed), FunctionModel(rejected), FunctionModel(valid), output_retry_threshold=1
+                ),
             ]
         )
         assert (await agent.run('Answer.')).output == 'ready'
@@ -429,7 +459,7 @@ class TestOutputFallback:
     @pytest.mark.parametrize('threshold', [-1, 0, True])
     def test_invalid_threshold(self, threshold: int) -> None:
         with pytest.raises(UserError, match='positive'):
-            ModelFallback('test', output_retries=threshold)
+            ModelFallback('test', output_retry_threshold=threshold)
 
     async def test_tool_switch_does_not_reset_counters(self) -> None:
         calls: list[str] = []
@@ -448,7 +478,7 @@ class TestOutputFallback:
                 ToolOutput(Answer, name='second', max_retries=3),
             ],
             retries={'output': 1},
-            capabilities=[ModelFallback(FunctionModel(primary), FunctionModel(backup), output_retries=1)],
+            capabilities=[ModelFallback(FunctionModel(primary), FunctionModel(backup), output_retry_threshold=1)],
         )
         with pytest.raises(UnexpectedModelBehavior, match='output retries \\(1\\)'):
             await agent.run('Answer.')
@@ -479,7 +509,9 @@ class TestOutputFallback:
             retries={'output': 3},
             end_strategy='exhaustive',
             capabilities=[
-                ModelFallback(FunctionModel(primary), FunctionModel(middle), FunctionModel(backup), output_retries=1)
+                ModelFallback(
+                    FunctionModel(primary), FunctionModel(middle), FunctionModel(backup), output_retry_threshold=1
+                )
             ],
         )
         assert (await agent.run('Answer.')).output == Answer(number=42)
@@ -508,7 +540,7 @@ class TestOutputFallback:
             else PromptedOutput(output)
             if mode == 'prompted'
             else ToolOutput(output),
-            capabilities=[ModelFallback(model, model, output_retries=1)],
+            capabilities=[ModelFallback(model, model, output_retry_threshold=1)],
         )
         assert (await agent.run('Answer.')).output == 42
         assert calls == ['call', 'call']
@@ -532,7 +564,7 @@ class TestOutputFallback:
         )
         agent = Agent(
             output_type=Answer,
-            capabilities=[ModelFallback(first, second, output_retries=1)],
+            capabilities=[ModelFallback(first, second, output_retry_threshold=1)],
         )
         assert (await agent.run('Answer.')).output == Answer(number=42)
         assert seen == [('tool', 0.1), ('native', 0.9)]
