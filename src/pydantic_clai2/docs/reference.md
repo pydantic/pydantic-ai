@@ -105,6 +105,8 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `sessions.naming` | `true` | Name saved sessions in the background using a model. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
+| `repo_context.walk_up_root` | `~` | User-only inclusive stop for instruction autoload when the plugin's `walk_up` is on. |
+| `repo_context.autoload_symlink_roots` | `[]` | User-only JSON list of authorized external instruction-symlink target directories, for autoload only. |
 
 ### Environment variables at a glance
 
@@ -397,6 +399,10 @@ and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
 first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
+`repo_context_walk_up_root` and `repo_context_autoload_symlink_roots` are user-only fields.
+The project file rejects them; configure their `/set` keys instead (see [Repository instructions](#repository-instructions)).
+They are not `repo_context` plugin JSON options either.
+
 `plugins` takes the module declarations used by `/plugins add NAME module[:Class] [JSON]`: an `id`, a `factory`
 (`module` or `module:attr`), an optional `path`, and optional `settings`. A
 relative `path` is relative to the folder that holds `.clai`, whichever
@@ -435,6 +441,41 @@ built-in `repo_context` plugin (harness `RepoContext`), which is separate from
 the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
+
+### Repository instructions
+
+By default, `repo_context` reads only the workspace's `CLAUDE.md` and `AGENTS.md`.
+Enable its existing `walk_up` option to read ancestors too:
+
+```text
+/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
+/set repo_context.walk_up_root /srv/projects
+/set repo_context.autoload_symlink_roots '["~/agent-context"]'
+```
+
+`walk_up` defaults to `false`; setting a root does not turn it on.
+With `walk_up=true`, `repo_context.walk_up_root` is the inclusive stop, defaulting to `~` (your home).
+If the root is not an ancestor of the workspace, only the workspace is scanned.
+Files load broadest-first, workspace-last.
+
+`repo_context.autoload_symlink_roots` defaults to `[]`, so instruction symlinks resolving outside
+the scanned directory are skipped. Its JSON string list authorizes resolved target directories,
+not additional scan directories. Targets must stay inside a resolved authorized root, including
+through chained symlinks. This affects autoload only, independently of `walk_up`;
+nested traversal and asset inventory are unchanged. The workspace backend must resolve symlinks through `SupportsRealpath` or the `SupportsCommands` command fallback for this opt-in.
+
+Both settings are global user settings in SQLite, not project or plugin JSON options.
+Use absolute paths, `~`, or `~/...`; relative paths, `~other-user`, and environment-variable
+interpolation are not supported. Quote a path containing spaces, for example `/set repo_context.walk_up_root '/srv/My Projects'`.
+Paths are normalized when used, not when saved, and need not exist when saved.
+Changes apply on the next run, not during a running turn, with the usual cross-session `/set` adoption.
+Hosts without CLAI settings, including `open_stock_agent`, keep the home/empty defaults.
+
+External links are labeled by their scanned entry, such as `../AGENTS.md`, whose directory defines scope.
+Same-directory links keep the target name (`CLAUDE.md -> AGENTS.md` is labeled `AGENTS.md`).
+Files are deduplicated by resolved target and content hash.
+These files become agent instructions. Authorize only a narrow trusted CE tooling directory,
+not `/` or your whole home: a repository can select readable targets beneath every authorized root.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.

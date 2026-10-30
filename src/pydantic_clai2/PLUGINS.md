@@ -1319,10 +1319,37 @@ workspace and its default filenames. Its settings:
 
 | Key | Default | Does |
 |---|---|---|
-| `walk_up` | `false` | also load instruction files from every directory between the workspace and your home directory |
+| `walk_up` | `false` | also load instruction files from the workspace up to `repo_context.walk_up_root`, inclusive (home by default); a non-ancestor root scans only the workspace |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
 | `nested_traversal` | `false` | when the agent reads or lists a directory, tell it about that directory's instruction file |
 | `nested_inject` | `"pointer"` | what nested traversal adds: `"pointer"` (one line naming the file) or `"contents"` |
+
+Two global user-only `/set` keys control autoload boundaries, not plugin JSON fields:
+
+| `/set` key | Default | Does |
+|---|---|---|
+| `repo_context.walk_up_root` | `~` | inclusive stop used only when `walk_up` is `true` |
+| `repo_context.autoload_symlink_roots` | `[]` | JSON string list of authorized external instruction-symlink target directories |
+
+For example, `/set repo_context.walk_up_root /srv/projects` and
+`/set repo_context.autoload_symlink_roots '["~/agent-context"]'`.
+Use absolute paths, `~`, or `~/...`; relative paths, `~other-user`, and environment-variable
+interpolation are not supported. Quote paths containing spaces, for example `/set repo_context.walk_up_root '/srv/My Projects'`.
+Paths are normalized at use and need not exist when saved.
+The project fields `repo_context_walk_up_root` and `repo_context_autoload_symlink_roots` are rejected
+in `.clai/settings.json`. The plugin's settings model rejects these as plugin JSON options too.
+The plugin reads the user settings for each run, so changes apply next run, not mid-run.
+Hosts without CLAI settings, including `open_stock_agent`, keep the home/empty defaults.
+
+With an empty allowlist, instruction symlinks resolving outside the scanned directory are skipped.
+An authorized external target must stay inside a resolved authorized root, including through chained links.
+The workspace backend must resolve symlinks through `SupportsRealpath` or the `SupportsCommands` command fallback for this opt-in.
+The roots authorize targets for autoload only: they do not add scan directories, extend the walk,
+or change nested traversal or inventory. External links use the scanned entry's label, such as `../AGENTS.md`,
+whose directory defines scope. Same-directory links keep the target name; deduplication uses the resolved target and content hash.
+Authorize a narrow trusted CE tooling directory rather than `/` or all of home:
+a repository can select readable instruction targets beneath any authorized root.
+See [Repository instructions](docs/reference.md#repository-instructions) for the user-facing setup.
 
 A repository can declare plugins too, in `.clai/settings.json`; they show as
 `(project)` and rank just above the built-ins. They start off, because a

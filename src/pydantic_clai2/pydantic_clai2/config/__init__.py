@@ -1,8 +1,9 @@
 """Validated settings, independent of persistence and terminal code."""
 
-from typing import Literal, get_args
+from pathlib import Path
+from typing import Annotated, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from pydantic_clai2.config.theme_names import names
 
@@ -12,6 +13,15 @@ STORED_MAIN_CHANNEL = 'bleeding'
 """`main`'s former name, still what is saved for it: older builds accept only this name."""
 ToolCallDisplay = Literal['detailed', 'grouped']
 TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
+
+
+def _validate_user_path(value: str) -> str:
+    if '\0' in value or not value.strip() or (not Path(value).is_absolute() and Path(value).parts[0] != '~'):
+        raise ValueError('Use an absolute path or a path starting with `~/`.')
+    return value
+
+
+_UserPath = Annotated[str, AfterValidator(_validate_user_path)]
 
 
 class Settings(BaseModel):
@@ -56,6 +66,14 @@ class Settings(BaseModel):
             "Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. "
             '/system_prompt edits them.'
         ),
+    )
+    repo_context_walk_up_root: _UserPath = Field(
+        default='~',
+        description='User-only inclusive stop for repo_context walk_up. Defaults to home; requires walk_up enabled.',
+    )
+    repo_context_autoload_symlink_roots: list[_UserPath] = Field(
+        default=[],
+        description='User-only JSON list of trusted target directories for external instruction symlinks. Autoload only.',
     )
     session_namer: bool = Field(default=True, description='Name saved sessions in the background using a model.')
     session_namer_model: str | None = Field(
@@ -147,10 +165,20 @@ SETTING_FIELDS = {
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
     'updates.channel': 'update_channel',
+    'repo_context.walk_up_root': 'repo_context_walk_up_root',
+    'repo_context.autoload_symlink_roots': 'repo_context_autoload_symlink_roots',
 }
 
 STRING_SETTINGS = frozenset(
-    {'model', 'run.instructions', 'display.theme', 'display.spinner', 'display.tool_calls', 'updates.channel'}
+    {
+        'model',
+        'run.instructions',
+        'display.theme',
+        'display.spinner',
+        'display.tool_calls',
+        'updates.channel',
+        'repo_context.walk_up_root',
+    }
 )
 """Keys whose typed value is taken as text rather than parsed as JSON."""
 

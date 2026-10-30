@@ -54,12 +54,10 @@ def _walk_dirs(workspace_dir: Path, home_dir: Path | None) -> list[Path]:
     return list(reversed(chain))
 
 
-async def _real_file(workspace: Workspace, path: Path) -> Path | None:
-    """The file `path` names, after symlinks, when it is a regular file in `path`'s own directory, else `None`.
-
-    A link such as `CLAUDE.md -> AGENTS.md` returns `AGENTS.md` in the same directory, so the file is
-    labeled and deduplicated by the name it is kept under.
-    """
+async def _real_file(
+    workspace: Workspace, path: Path, *, autoload_symlink_roots: Sequence[Path] = ()
+) -> tuple[Path, Path] | None:
+    """Return the resolved read/dedup target and display path of an authorized instruction file."""
     text = str(path)
     try:
         entry = await workspace.stat(text)
@@ -68,11 +66,12 @@ async def _real_file(workspace: Workspace, path: Path) -> Path | None:
     if entry.is_dir:
         return None
     real = Path(await workspace.realpath(text))
-    # Autoloaded instructions belong to the directory being scanned, not a
-    # symlink target in another directory (even another ancestor in the walk).
-    if real.parent != Path(await workspace.realpath(str(path.parent))):
-        return None
-    return path.parent / real.name
+    if real.parent == Path(await workspace.realpath(str(path.parent))):
+        return real, path.parent / real.name
+    # External targets require explicit authorization; their entry directory still defines their scope.
+    if any(real.is_relative_to(root) for root in autoload_symlink_roots):
+        return real, path
+    return None
 
 
 async def discover_instruction_files(
@@ -80,6 +79,8 @@ async def discover_instruction_files(
     workspace_dir: Path,
     home_dir: Path | None,
     filenames: Sequence[str],
+    *,
+    autoload_symlink_roots: Sequence[Path] = (),
 ) -> list[ContextFile]:
     """Collect instruction files from `home_dir` down to `workspace_dir`.
 
@@ -87,25 +88,28 @@ async def discover_instruction_files(
     first and the most specific (closest to the model's recency window) comes
     last. Within a directory, `filenames` are tried in order.
 
-    Files are deduped by the path a symlink resolves to and by content hash, so
-    two names for the same content within one directory load once, under the
-    name of the file a symlink points to.
+    Files are deduped by resolved target and content hash. Same-directory links
+    use the target's name. External targets must be beneath a resolved
+    `autoload_symlink_roots` path and retain the scanned entry's name.
     """
     seen_paths: set[Path] = set()
     seen_hashes: set[str] = set()
     found: list[ContextFile] = []
     for directory in _walk_dirs(workspace_dir, home_dir):
         for filename in filenames:
-            candidate = await _real_file(workspace, directory / filename)
-            if candidate is None or candidate in seen_paths:
+            candidate = await _real_file(workspace, directory / filename, autoload_symlink_roots=autoload_symlink_roots)
+            if candidate is None:
                 continue
-            content = (await workspace.read_bytes(str(candidate))).decode('utf-8', errors='replace')
+            target, label_path = candidate
+            if target in seen_paths:
+                continue
+            content = (await workspace.read_bytes(str(target))).decode('utf-8', errors='replace')
             digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
             if digest in seen_hashes:
                 continue
-            seen_paths.add(candidate)
+            seen_paths.add(target)
             seen_hashes.add(digest)
-            found.append(ContextFile(directory=directory, path=candidate, content=content))
+            found.append(ContextFile(directory=directory, path=label_path, content=content))
     return found
 
 
@@ -114,10 +118,11 @@ async def find_dir_context_file(workspace: Workspace, directory: Path, filenames
     for filename in filenames:
         candidate = await _real_file(workspace, directory / filename)
         if candidate is not None:
+            target, label_path = candidate
             return ContextFile(
                 directory=directory,
-                path=candidate,
-                content=(await workspace.read_bytes(str(candidate))).decode('utf-8', errors='replace'),
+                path=label_path,
+                content=(await workspace.read_bytes(str(target))).decode('utf-8', errors='replace'),
             )
     return None
 

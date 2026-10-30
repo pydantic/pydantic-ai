@@ -528,6 +528,16 @@ RepoContext(home_dir='..', nested_traversal=True)  # walk up one level; follow t
 
 `home_dir=None` (default) scans only the working directory; set it to walk up to that ancestor. It is
 a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserError`.
+The keyword-only `autoload_symlink_roots=()` authorizes external instruction-symlink targets for autoload only.
+Pass workspace target directories, for example `autoload_symlink_roots=('/opt/agent-context',)`.
+With the empty default, links resolving outside the scanned directory are skipped.
+Targets must stay beneath resolved authorized roots. The roots do not add scanned directories or extend the walk.
+Use a backend implementing `SupportsRealpath` or `SupportsCommands` for actual symlink resolution, not lexical normalization.
+Choose a narrow trusted CE directory, not `/` or all of home; repository links can select readable targets beneath it.
+External links use their scanned entry's label, such as `../AGENTS.md`, whose directory defines scope.
+Same-directory links keep the target name. Deduplication uses resolved targets and content hashes.
+The option does not change nested traversal or inventory; nested traversal still skips external instruction links.
+
 `nested_traversal=True` surfaces a directory's instruction file when `FileSystem` reads or lists it
 (`nested_inject='pointer'` or `'contents'`), in the message tail so the cached prefix stays stable.
 With it on, the instructions also gain one static sentence: each instruction file applies to its
