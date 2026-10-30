@@ -988,13 +988,14 @@ async def test_sub_agents_hit_parent_usage_limits() -> None:
         await _run_script(ts, "await researcher(task='x')", ctx)
 
 
-async def test_sub_agent_usage_limits_take_precedence_over_parent_usage_limits() -> None:
-    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], sub_agent_usage_limits=UsageLimits(request_limit=3))
+async def test_sub_agent_usage_limits_replace_parent_usage_limits() -> None:
+    # An explicit `sub_agent_usage_limits` replaces the parent's limits rather than intersecting them:
+    # a shared counter that already spent the parent's limit doesn't trip a sub-agent under its own cap.
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], sub_agent_usage_limits=UsageLimits(request_limit=10_000))
     ctx = _ctx()
-    ctx.usage_limits = UsageLimits(request_limit=10_000)
-    ctx.usage.requests = 3
-    with pytest.raises(ModelRetry, match='The next request would exceed the request_limit of 3'):
-        await _run_script(ts, "await sub(task='x')", ctx)
+    ctx.usage_limits = UsageLimits(request_limit=2)
+    ctx.usage.requests = 2
+    assert await _run_script(ts, "await sub(task='x')", ctx) == 'ok'
 
 
 async def test_isolated_sub_agents_ignore_parent_usage_limits() -> None:
