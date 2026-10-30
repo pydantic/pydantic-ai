@@ -114,14 +114,14 @@ agent = Agent(
         LocalWorkspace('.'),
         Coder(),
         Planning(),  # a task plan the model keeps current
-        Skills('.agents/skills'),  # SKILL.md procedures, loaded when relevant
+        Skills('.agents/skills', missing_directories='skip'),  # SKILL.md procedures, loaded when relevant
         ToolGuardrail(guard=confirm_command, tools=['shell']),  # ask before every command
     ],
 )
 ```
 
 - [Planning](harness/planning.md) gives the model a plan it writes and updates as it works, and reminds it of the plan as the conversation grows.
-- [Skills](harness/skills.md) reads [Agent Skills](capabilities/on-demand.md) (`SKILL.md` files) from a directory in the workspace, here `.agents/skills`, and loads each one only when the model asks for it. Install the `skills` extra.
+- [Skills](harness/skills.md) reads [Agent Skills](capabilities/on-demand.md) (`SKILL.md` files) from a directory in the workspace, here `.agents/skills`, and loads each one only when the model asks for it; `missing_directories='skip'` lets the agent start before that directory exists. Install the `skills` extra.
 - [Guardrails](harness/guardrails.md) check tool calls before they run. This one asks you in the terminal before each call to the `shell` tool, including calls from the agent's delegates, which run with the same capabilities. File edits and other tools, like the `run_tests` tool below, need guardrails of their own if you want to approve them too. To decide on a server or in a queue instead, return `GuardrailResult.approve()` and the run ends with [deferred tool requests](deferred-tools.md#human-in-the-loop-tool-approval) you answer later. To let a second model approve the harmless calls first, add [Approval Reviewer](harness/approval-reviewer.md).
 
 Other capabilities slot in the same way: [Memory](harness/memory.md) across sessions, [Web Search](capabilities/web-search.md) and [Web Fetch](capabilities/web-fetch.md) for documentation, [summarizing compaction](harness/compaction.md) for very long conversations, [Detect Loops](harness/detect-loops.md), and [Spend Limits](harness/spend.md). The [capability index](harness/index.md#capabilities) lists all of them.
