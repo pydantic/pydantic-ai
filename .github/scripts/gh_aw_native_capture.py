@@ -214,14 +214,16 @@ def run_case(
     (case_evidence / 'command.json').write_text(json.dumps(command, indent=2) + '\n')
     try:
         awf = execute(command, cwd=workspace, env=case_env, log=case_evidence / 'awf.log', timeout=240, expected=None)
-        if awf.returncode != expected_exit:
-            raise RuntimeError(f'{case}: AWF exited {awf.returncode}, expected app exit {expected_exit}; see awf.log')
-        metadata = json.loads((work / f'capture-{case}' / 'metadata.json').read_text())
-        (case_evidence / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')
-        if metadata.get('command', {}).get('exitCode') != expected_exit:
-            raise RuntimeError(f'{case}: unexpected native command exit code; inspect metadata.json')
+        metadata_path = work / f'capture-{case}' / 'metadata.json'
+        if metadata_path.exists():
+            shutil.copyfile(metadata_path, case_evidence / 'metadata.json')
         for probe in workspace.glob('hostile-probe-*.json'):
             shutil.copyfile(probe, case_evidence / probe.name)
+        if awf.returncode != expected_exit:
+            raise RuntimeError(f'{case}: AWF exited {awf.returncode}, expected app exit {expected_exit}; see awf.log')
+        metadata = json.loads(metadata_path.read_text())
+        if metadata.get('command', {}).get('exitCode') != expected_exit:
+            raise RuntimeError(f'{case}: unexpected native command exit code; inspect metadata.json')
         post_env = {
             **env,
             'GH_AW_AGENT_OUTPUT': str(work / f'capture-{case}'),

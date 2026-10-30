@@ -36,6 +36,84 @@ def failure(exc):
     return {'errno': exc.errno, 'error': type(exc).__name__}
 
 
+# Keep the original access requirements below unchanged while diagnosing the
+# runtime's actual procfs PID view and access policy. ENOENT remains a failure.
+report['kernel_pid'] = os.getpid()
+report['kernel_parent_pid'] = os.getppid()
+report['parent_liveness'] = []
+for phase in ('before-proc-probes',):
+    try:
+        os.kill(parent_pid, 0)
+    except OSError as exc:
+        report['parent_liveness'].append({'phase': phase, **failure(exc)})
+        violations.append('direct parent could not be proved alive without procfs')
+    else:
+        report['parent_liveness'].append({'phase': phase, 'alive': True, 'current_parent_pid': os.getppid()})
+
+proc_parent_pid = parent_pid
+try:
+    self_status = Path('/proc/self/status').read_text(encoding='utf-8')
+    self_fields = dict(line.split(':', 1) for line in self_status.splitlines() if ':' in line)
+    report['proc_self_status'] = {
+        name: self_fields[name].strip() for name in ('Pid', 'PPid', 'NSpid', 'Uid', 'TracerPid') if name in self_fields
+    }
+    report['proc_self_link'] = os.readlink('/proc/self')
+    proc_parent_pid = int(self_fields['PPid'])
+    numeric_status = Path(f'/proc/{os.getpid()}/status').read_text(encoding='utf-8')
+    numeric_fields = dict(line.split(':', 1) for line in numeric_status.splitlines() if ':' in line)
+    report['proc_kernel_pid_status'] = {
+        name: numeric_fields[name].strip() for name in ('Pid', 'PPid', 'NSpid', 'Uid') if name in numeric_fields
+    }
+except OSError as exc:
+    report['proc_self_view_error'] = failure(exc)
+    violations.append('procfs self identity could not be checked')
+report['mapped_proc_parent_pid'] = proc_parent_pid
+try:
+    mount_rows = []
+    for row in Path('/proc/self/mountinfo').read_text(encoding='utf-8').splitlines():
+        fields, separator, filesystem = row.partition(' - ')
+        left = fields.split()
+        right = filesystem.split()
+        if separator and len(left) >= 6 and len(right) >= 3 and left[4] == '/proc':
+            mount_rows.append(
+                {'mountpoint': left[4], 'options': left[5], 'filesystem': right[0], 'super_options': right[2]}
+            )
+    report['proc_mounts'] = mount_rows
+except OSError as exc:
+    report['proc_mounts_error'] = failure(exc)
+    violations.append('procfs mount view could not be checked')
+
+# Probe the mapped parent descriptor independently of status enumeration: a
+# hidden /proc/<parent>/status must never skip the actual capture capability.
+report['mapped_parent_capture_access'] = []
+known_capture = Path(f'/proc/{proc_parent_pid}/fd/{capture_fd}')
+try:
+    report['mapped_parent_capture_target'] = os.readlink(known_capture)
+except OSError as exc:
+    report['mapped_parent_capture_target'] = failure(exc)
+else:
+    if report['mapped_parent_capture_target'] != capture_target:
+        violations.append('procfs parent mapping reached an unexpected capture target')
+for access, access_name in ((os.O_RDONLY, 'read'), (os.O_WRONLY, 'write')):
+    try:
+        reopened = os.open(known_capture, access | os.O_NONBLOCK)
+    except OSError as exc:
+        report['mapped_parent_capture_access'].append({'access': access_name, **failure(exc)})
+    else:
+        os.close(reopened)
+        report['mapped_parent_capture_access'].append({'access': access_name, 'opened': True})
+        violations.append(f'child reopened mapped parent capture descriptor for {access_name}')
+
+try:
+    control_fd = os.open('/proc/self/fd/1', os.O_WRONLY | os.O_NONBLOCK)
+except OSError as exc:
+    report['proc_self_fd_control'] = failure(exc)
+    violations.append('procfs descriptor reopening positive control failed')
+else:
+    os.close(control_fd)
+    report['proc_self_fd_control'] = {'opened': True}
+
+
 try:
     with open(f'/proc/{parent_pid}/mem', 'rb', buffering=0) as memory:
         report['parent_mem_open'] = True
@@ -141,6 +219,16 @@ while ancestor_pid > 0 and ancestor_pid not in seen:
             ancestor['writable_capture_fds'].append(int(descriptor.name))
             violations.append(f'child reopened ancestor {ancestor_pid} capture descriptor {descriptor.name}')
     ancestor_pid = next_pid
+
+try:
+    os.kill(parent_pid, 0)
+except OSError as exc:
+    report['parent_liveness'].append({'phase': 'after-proc-probes', **failure(exc)})
+    violations.append('direct parent stopped being independently observable during probes')
+else:
+    report['parent_liveness'].append({'phase': 'after-proc-probes', 'alive': True, 'current_parent_pid': os.getppid()})
+    if os.getppid() != parent_pid:
+        violations.append('direct parent changed during procfs probing')
 
 # Attempt independent identity and result forgery on ordinary inherited streams.
 forged_key = Ed25519PrivateKey.generate()
