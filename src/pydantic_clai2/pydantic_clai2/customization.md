@@ -64,8 +64,8 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
 ## User worktree removal commands
 
 Use the user-only `worktrees.remove_commands` setting to replace confirmed
-exit-time cleanup, not a plugin contribution. Automatic and forced removal stay
-on Git. See the [worktree removal reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
+exit-time cleanup, not a plugin contribution. Automatic removal of unchanged
+worktrees and `/workspaces destroy` stay on Git. See the [worktree removal reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
 for repository-scoped argv configuration, placeholders, and shell functions.
 
 Pydantic AI core owns the agent loop, model/provider protocols, hooks and tools.

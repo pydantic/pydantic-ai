@@ -2515,9 +2515,8 @@ does not fall back to Git. If the saved configuration cannot be read or validate
 on exit, CLAI warns and offers the existing Git cleanup prompt instead. If Git
 metadata cannot be read to prepare a registered command, CLAI keeps the checkout
 and reports the error. `.clai/settings.json` cannot set `worktree_remove_commands`;
-CLAI refuses to start if it does. Automatic removal
-of unchanged worktrees and forced `remove_worktree` or `workspaces` destruction
-continue to use Git.
+CLAI refuses to start if it does. Automatic removal of unchanged worktrees and
+`/workspaces destroy` continue to use Git.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
 original repository root. Without `--force`, Git refuses to remove a dirty worktree:
