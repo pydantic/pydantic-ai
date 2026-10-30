@@ -1530,6 +1530,12 @@ prompt tells the model what you ran. A saved session keeps no sandbox call log, 
 the calls found in their code. It uses the same column as the Changes panel and plugins' side
 panels, so opening one closes the others.
 
+Hover over a user message or finished assistant message to show **Copy** below it, or focus the
+button with the keyboard. On touchscreens it stays visible. It copies the text to the browser's
+device, including when viewing saved history. Assistant messages keep their original Markdown,
+including code fences and links. Thinking, tool output, images, and usage figures are excluded.
+The button briefly shows **Copied** or **Copy failed**; code blocks keep their own Copy buttons.
+
 The **Changes** panel (Cmd/Ctrl+Shift+E, or the diff button at the top right, which shows how
 many files the session has changed) lists what the session changed, one diff per file. **Last
 turn** and **This session** come from the session's own `write_file` and `edit_file` calls, so
