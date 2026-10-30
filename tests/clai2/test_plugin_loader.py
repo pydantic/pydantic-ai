@@ -877,6 +877,31 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
         )
 
 
+async def test_repo_context_builtin_reads_codex_global_file_from_codex_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    codex_home = tmp_path / 'codex-home'
+    codex_home.mkdir()
+    (codex_home / 'AGENTS.md').write_text('codex home rules\n')
+    default = Path.home() / '.codex' / 'AGENTS.md'
+    default.parent.mkdir(parents=True)
+    default.write_text('default codex rules\n')
+    monkeypatch.setenv('CODEX_HOME', str(codex_home))
+    monkeypatch.chdir(workspace)
+    repo_context = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'repo_context')
+    harness = Harness(tmp_path, builtin=(repo_context,))
+    await harness.loader.load_all()
+    model = TestModel(call_tools=[])
+    await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run(
+        'hi', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
+    assert model.last_model_request_parameters is not None
+    text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+    assert 'codex home rules' in text and 'default codex rules' not in text
+
+
 async def test_repo_context_builtin_walks_up_and_loads_global_files_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
