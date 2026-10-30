@@ -78,6 +78,31 @@ agent = Agent(model)
 ...
 ```
 
+## Streaming
+
+Use [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] to receive text as it is generated:
+
+```python {test="skip"}
+import asyncio
+
+from pydantic_ai import Agent
+
+agent = Agent('cohere:command-r7b-12-2024')
+
+
+async def main():
+    async with agent.run_stream('Explain how rainbows form.') as result:
+        async for text in result.stream_text(delta=True):
+            print(text, end='', flush=True)
+
+
+asyncio.run(main())
+```
+
+Cohere streaming also supports tool calls and thinking output on models that support reasoning.
+Leaving the context closes the Cohere SDK stream, including when you stop consuming it early.
+See [streaming responses](../output.md#streaming-text) for other ways to consume the stream.
+
 ## SDK retries {#sdk-retries}
 
 The Cohere client retries server errors, rate limits and status 408 and 409 twice by default, above whatever transport you pass here. It takes its retry count per request rather than per client, so set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change it, for example to `0` to keep the retry policy in your transport alone. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
