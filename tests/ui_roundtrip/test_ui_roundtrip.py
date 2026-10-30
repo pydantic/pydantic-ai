@@ -54,6 +54,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.messages import (
     BinaryContent,
+    CapabilityPart,
     CompactionPart,
     ModelMessage,
     ModelRequest,
@@ -61,6 +62,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     ModelResponsePart,
     ModelSettingsDeltaPart,
+    OperatorSource,
     StructuredContent,
     SystemPromptPart,
     TextPart,
@@ -570,11 +572,16 @@ def _progress_state(ctx: RunContext[None]) -> str:
     return f'The user has asked {_questions_asked(ctx)} question(s) so far.'
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(CapabilityPart, namespace='test_ui_roundtrip', name='reminder', voice='system'):
+    pass
+
+
 class _RequestScopedReminder(AbstractCapability[None]):
     async def before_model_request(
         self, ctx: RunContext[None], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        ctx.enqueue(_ReminderPart(content='Reminder: keep it short.', source=OperatorSource(), scope='request'))
         return request_context
 
 

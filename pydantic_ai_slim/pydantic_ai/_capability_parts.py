@@ -42,7 +42,9 @@ def render_capability_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
     if not has_capability_parts(messages):
         return messages
     return [
-        replace(message, parts=_render_parts(message.parts)) if _has_capability_parts(message) else message
+        replace(message, parts=_render_parts(message.parts))
+        if isinstance(message, ModelRequest) and _has_capability_parts(message)
+        else message
         for message in messages
     ]
 

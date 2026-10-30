@@ -16,6 +16,7 @@ from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
+    CapabilityPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -168,6 +169,10 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     elif isinstance(part, CompactionPart):
         # A summary the application wrote, sent as text.
         return [part.content or '']
+    elif isinstance(part, CapabilityPart):
+        # A capability's record, rendered on the way to the model: its content fills the window. The frame's tags and
+        # a kind's note aren't counted.
+        return [''.join(user_prompt_texts(UserPromptPart(part.content)))]
     elif isinstance(part, SpeechPart):
         # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
         # words the provider bills against the window -- not the binary audio, which has no

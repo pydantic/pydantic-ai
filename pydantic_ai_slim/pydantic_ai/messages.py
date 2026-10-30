@@ -4772,10 +4772,6 @@ class CapabilityPart:
         }
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
-        if isinstance(self.content, str):
-            return [
-                _otel_messages.TextPart(type='text', **({'content': self.content} if settings.include_content else {}))
-            ]
         return UserPromptPart(self.content).otel_message_parts(settings)
 
     @classmethod
@@ -4798,6 +4794,9 @@ class CapabilityPart:
             unknown_type=UnknownCapabilityPart,
             envelope_fields=_CAPABILITY_PART_ENVELOPE_FIELDS,
             family='capability part',
+            # A kind defined after a message schema was built still loads as itself, so code that finds its parts by
+            # type finds them whatever the import order. Dumped with `ModelMessagesTypeAdapter`'s config.
+            late_registration=pydantic.ConfigDict(ser_json_bytes='base64', val_json_bytes='base64'),
         )
 
 

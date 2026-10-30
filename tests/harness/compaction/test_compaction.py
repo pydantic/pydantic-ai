@@ -8,6 +8,7 @@ import re
 import time
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -31,6 +32,7 @@ from pydantic_ai.messages import (
     BinaryContent,
     CachePoint,
     CapabilityInstructionSource,
+    CapabilityPart,
     CompactionPart,
     FilePart,
     ImageUrl,
@@ -46,6 +48,7 @@ from pydantic_ai.messages import (
     ModelResponse as _MR,
     NativeToolCallPart,
     NativeToolReturnPart,
+    OperatorSource,
     PartDeltaEvent,
     PartStartEvent,
     RetryFeedbackPart,
@@ -1448,6 +1451,11 @@ class TestExports:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(kw_only=True)
+class _NotePart(CapabilityPart, namespace='test_compaction', name='note', tag='note'):
+    pass
+
+
 class TestUserPromptMultiModal:
     """Cover `_request_part_text` and `_user_prompt_text` for non-string UserContent."""
 
@@ -1457,6 +1465,13 @@ class TestUserPromptMultiModal:
         msgs: list[ModelMessage] = [ModelRequest(parts=[part])]
         # 5 chars / 4 = 1 token.
         assert estimate_token_count(msgs) == 1
+
+    def test_estimate_counts_capability_part_content(self):
+        """A capability's record fills the window with its content, as a user prompt would."""
+        part = _NotePart(content=['hello', 'world'], source=OperatorSource())
+        msgs: list[ModelMessage] = [ModelRequest(parts=[part])]
+        # 10 chars / 4 = 2 tokens.
+        assert estimate_token_count(msgs) == 2
 
     def test_estimate_with_str_content_parts(self):
         """UserContent can also be plain str items in a sequence."""

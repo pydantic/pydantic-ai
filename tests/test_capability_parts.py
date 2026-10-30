@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from pydantic import ConfigDict, TypeAdapter
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._capability_parts import render_capability_parts
@@ -19,6 +19,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CAPABILITY_PART_TYPES,
+    BinaryContent,
     CapabilityPart,
     CapabilityPartRender,
     ModelMessage,
@@ -38,7 +39,7 @@ from pydantic_ai.messages import (
     WorkspaceSource,
     sanitize_messages,
 )
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, _otel_message_role  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles import ModelProfile
@@ -147,7 +148,7 @@ def test_invalid_declarations_are_refused(kwargs: dict[str, Any], message: str) 
     with pytest.raises(UserError, match=re.escape(message)):
 
         @dataclass(kw_only=True)
-        class Bad(CapabilityPart, **kwargs):  # pyright: ignore[reportUnusedClass]
+        class Bad(CapabilityPart, **kwargs):
             pass
 
 
@@ -155,7 +156,7 @@ def test_seal_attribute_is_refused() -> None:
     with pytest.raises(UserError, match='`seal` is the frame seal attribute'):
 
         @dataclass(kw_only=True)
-        class Sealed(CapabilityPart, namespace='ok', tag='x', attributes=('seal',)):  # pyright: ignore[reportUnusedClass]
+        class Sealed(CapabilityPart, namespace='ok', tag='x', attributes=('seal',)):
             seal: str
 
 
@@ -163,7 +164,7 @@ def test_shadowing_a_base_field_is_refused() -> None:
     with pytest.raises(UserError, match='reserved for the part envelope: source'):
 
         @dataclass(kw_only=True)
-        class Shadow(CapabilityPart, namespace='ok', tag='x'):  # pyright: ignore[reportUnusedClass]
+        class Shadow(CapabilityPart, namespace='ok', tag='x'):
             source: str  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
@@ -171,7 +172,7 @@ def test_duplicate_kind_is_refused() -> None:
     with pytest.raises(UserError, match=re.escape("Duplicate capability part kind 'test_parts.task_report'")):
 
         @dataclass(kw_only=True)
-        class TaskReport(CapabilityPart, namespace='test_parts', tag='x'):  # pyright: ignore[reportUnusedClass]
+        class TaskReport(CapabilityPart, namespace='test_parts', tag='x'):
             pass
 
 
@@ -182,7 +183,7 @@ def test_undecorated_field_base_is_refused() -> None:
     with pytest.raises(UserError, match='is not a dataclass'):
 
         @dataclass(kw_only=True)
-        class Child(Fields, namespace='ok', tag='x'):  # pyright: ignore[reportUnusedClass]
+        class Child(Fields, namespace='ok', tag='x'):
             pass
 
 
@@ -333,6 +334,24 @@ def test_unknown_kind_round_trips_and_renders_the_same() -> None:
     assert unknown.data == {'task_id': 't1', 'attempt': 2, 'generation': 0}
     assert ModelMessagesTypeAdapter.dump_python(loaded, mode='json') == dumped
     assert without_timestamps(render_capability_parts(loaded)) == without_timestamps(render_capability_parts(messages))
+
+
+def test_kind_defined_after_the_schema_was_built_loads_as_itself() -> None:
+    """A message schema built before a kind was defined still validates and dumps that kind as its own class."""
+    adapter = TypeAdapter(list[ModelMessage], config=ConfigDict(ser_json_bytes='base64', val_json_bytes='base64'))
+    adapter.json_schema()  # builds the schema now
+
+    @dataclass(kw_only=True)
+    class LatePart(CapabilityPart, namespace='test_late', tag='late'):
+        image: BinaryContent | None = None
+
+    part = LatePart(content='Late.', source=OperatorSource(), image=BinaryContent(b'\x89PNG', media_type='image/png'))
+    messages: list[ModelMessage] = [ModelRequest(parts=[part])]
+    dumped = adapter.dump_json(messages)
+    assert adapter.validate_json(dumped) == messages
+    assert adapter.validate_python(adapter.dump_python(messages)) == messages
+    assert adapter.dump_python(messages, mode='json') == ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    assert adapter.validate_python(messages) == messages
 
 
 def test_unknown_kind_without_render_facts_fails_validation() -> None:
@@ -633,17 +652,6 @@ class TodaysPartsOnlyModel(Model):
                         raise NotImplementedError(f'Unknown request part {type(part).__name__}')
         return ModelResponse(parts=[TextPart('Done.')])
 
-    @asynccontextmanager
-    async def request_stream(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-        run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
-        raise NotImplementedError()
-        yield  # pragma: no cover
-
     @property
     def model_name(self) -> str:
         return 'todays-parts-only'
@@ -789,7 +797,7 @@ def test_enqueue_from_an_application_tool_neither_stamps_nor_warns() -> None:
     agent = Agent(FunctionModel(respond))
 
     @agent.tool
-    def note(ctx: RunContext[None]) -> str:
+    def note(ctx: RunContext[Any]) -> str:
         ctx.enqueue(report(), SystemPromptPart('The user is on the free plan.'))
         return 'noted'
 
