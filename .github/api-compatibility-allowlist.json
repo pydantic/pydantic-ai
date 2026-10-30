@@ -437,6 +437,12 @@
       "fingerprint": "ab788952b39a2021c1a9eb1c2009ddb950f83d8876f0e7624346c8dc3294ea8d",
       "reason": "harness 0.x: adds the 'flagged' value to `SkipReason` for skills an opt-in `Skills(scanner=...)` leaves out; it only appears with a scanner configured, and existing values are unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11470"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "b8401395e8664c36f1c849c8b7da9e05c0059859b032295d4287cd9df0fc17c0",
+      "reason": "Adds `CapabilityPart` to `ModelRequestPart`, for what a capability or the application tells the model mid-conversation; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11935"
     }
   ],
   "model_name_literals": [
