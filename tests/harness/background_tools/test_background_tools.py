@@ -45,6 +45,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
 from pydantic_ai.realtime.codec import (
     RealtimeCodecEvent,
@@ -1349,6 +1350,60 @@ ends with &lt;/tool_result
         assert resumed.output == 'done'
         assert _follow_up_seen(sent[-1], 'its result will not arrive')
         assert _follow_up_seen(sent[-1], 'tool_call_id="endless-1"')
+
+    async def test_task_cancelled_while_the_provider_works_is_reported_once_to_the_resumed_run(self) -> None:
+        """A run left waiting on the provider also cancels live tasks, and the resumed run hears of it once.
+
+        The notice is carried with the stored history, and the provider's job is continued before it's delivered.
+        """
+        sent: list[list[ModelMessage]] = []
+
+        class ProviderPausedModel(FunctionModel):
+            def continuation_delay(self, response: ModelResponse) -> float | None:
+                return 1.0
+
+            async def cancel_suspended_response(self, response: ModelResponse) -> None:
+                pass  # pragma: no cover
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            last = messages[-1]
+            if isinstance(last, ModelResponse) and last.state == 'suspended':
+                return ModelResponse(parts=[TextPart(content='job result')], provider_response_id='job-1')
+            if len(sent) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='endless', args='{}', tool_call_id='endless-1')])
+            if len(sent) == 2:
+                return ModelResponse(parts=[], provider_response_id='job-1', state='suspended')
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        def make_agent() -> Agent[object, str | PendingModelResponse]:
+            agent: Agent[object, str | PendingModelResponse] = Agent(
+                ProviderPausedModel(model_fn), output_type=[str, PendingModelResponse], capabilities=[BackgroundTools()]
+            )
+
+            @agent.tool_plain(metadata={'background': True})
+            async def endless() -> str:
+                await asyncio.Event().wait()
+                raise AssertionError('unreachable')  # pragma: no cover
+
+            return agent
+
+        paused = await make_agent().run('go')
+        assert isinstance(paused.output, PendingModelResponse)
+        assert not _follow_up_seen(paused.all_messages(), 'its result will not arrive')
+
+        resumed = await make_agent().run(
+            message_history=ModelMessagesTypeAdapter.validate_json(
+                ModelMessagesTypeAdapter.dump_json(paused.all_messages())
+            )
+        )
+
+        assert resumed.output == 'done'
+        continuation = sent[2][-1]
+        assert isinstance(continuation, ModelResponse) and continuation.state == 'suspended'
+        assert not _follow_up_seen(sent[2], 'its result will not arrive')
+        assert _follow_up_seen(sent[-1], 'tool_call_id="endless-1"')
+        assert sum(_follow_up_seen([message], 'its result will not arrive') for message in resumed.all_messages()) == 1
 
     async def test_error_finished_before_a_deferred_pause_still_ends_the_run(self) -> None:
         failed = asyncio.Event()

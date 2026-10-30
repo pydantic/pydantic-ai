@@ -6662,8 +6662,8 @@ class EnqueuedMessagesEvent:
     the order their content lands in history.
 
     Content still queued when a run pauses is announced at the pause, where it's committed to the history for the
-    resumed run to deliver. No node stream follows the pause, so it reaches capability `on_event` listeners, which
-    are dispatched it right away, but not event stream handlers. Its delivery in the resumed run emits no event.
+    resumed run to deliver. No node stream follows the pause, so capability `on_event` listeners receive it right
+    away, but event stream handlers don't. Its delivery in the resumed run emits no event.
     """
 
     enqueue_id: str

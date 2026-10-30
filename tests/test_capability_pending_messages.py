@@ -41,6 +41,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    BinaryContent,
     EnqueuedMessagesEvent,
     ImageUrl,
     InstructionPart,
@@ -2358,6 +2359,24 @@ async def test_enqueue_at_deferred_tool_pause_is_carried_to_the_resumed_run(case
         )
 
 
+async def test_enqueue_recorded_at_a_deferred_tool_pause_reaches_the_resumed_run_once():
+    """Content recorded after the paused step's own request is delivered once when the run resumes."""
+    sent: list[list[ModelMessage]] = []
+    paused = await _gated_agent(sent, _EnqueueAfterFirstResponse(('late content',)), lookup_too=True).run('Hello')
+
+    assert isinstance(paused.output, DeferredToolRequests)
+    assert _times_prompted(paused.all_messages(), 'late content') == 1
+
+    resumed = await _gated_agent(sent).run(
+        message_history=_round_trip(paused.all_messages()),
+        deferred_tool_results=DeferredToolResults(approvals={'gated-1': True}),
+    )
+
+    assert resumed.output == 'done'
+    assert _times_prompted(resumed.all_messages(), 'late content') == 1
+    assert _times_prompted(sent[-1], 'late content') == 1
+
+
 async def test_content_carried_from_a_pause_leaves_how_the_history_resumes_unchanged():
     """Resuming a pause that carries content behaves as if nothing had been queued, until the content is delivered."""
     sent: list[list[ModelMessage]] = []
@@ -2444,6 +2463,33 @@ async def test_carried_content_is_not_accepted_from_an_untrusted_history():
 
     assert resumed.output == 'done'
     assert _times_prompted(resumed.all_messages(), 'late content') == 0
+
+
+async def test_carried_binary_content_survives_storing_the_history():
+    """A background result's file carried over a pause reaches the resumed run with its bytes intact."""
+    data = b'\x89PNG\r\n\x1a\n\x00\xff'
+    sent: list[list[ModelMessage]] = []
+    paused = await _gated_agent(
+        sent, _EnqueueAfterFirstResponse(('file:', BinaryContent(data, media_type='image/png')))
+    ).run('Hello')
+    assert isinstance(paused.output, DeferredToolRequests)
+
+    resumed = await _gated_agent(sent).run(
+        message_history=_round_trip(paused.all_messages()),
+        deferred_tool_results=DeferredToolResults(approvals={'gated-1': True}),
+    )
+
+    assert resumed.output == 'done'
+    delivered = [
+        item.data
+        for message in sent[-1]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+        for item in part.content
+        if isinstance(item, BinaryContent)
+    ]
+    assert delivered == [data]
 
 
 class _PendingFunctionModel(FunctionModel):

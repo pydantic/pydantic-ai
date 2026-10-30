@@ -758,13 +758,15 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end).
+                    or a redirect if the agent would otherwise end; a run that pauses leaves the
+                    content to the run resuming from its history instead).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the
             [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when it's
-            delivered, or `None` when there was nothing to enqueue (an empty call).
+            delivered, or when the run pauses with it still queued, or `None` when there was nothing
+            to enqueue (an empty call).
 
         Raises:
             UserError: If the run has ended, since there'd be nowhere to deliver the message.

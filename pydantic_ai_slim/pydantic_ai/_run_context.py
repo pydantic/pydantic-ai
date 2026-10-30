@@ -1023,7 +1023,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Returns:
             The `enqueue_id` of the queued message, echoed on the
             [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when it's
-            delivered, or `None` when there was nothing to enqueue (an empty call).
+            delivered, or when the run pauses with it still queued, or `None` when there was nothing
+            to enqueue (an empty call).
 
         Raises:
             UserError: If the run or realtime session has ended, or this `RunContext` isn't backed

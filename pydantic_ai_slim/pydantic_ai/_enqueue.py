@@ -11,6 +11,9 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
 
+import pydantic
+from typing_extensions import TypedDict
+
 from ._utils import fill_run_metadata, is_str_dict
 from ._uuid import uuid7
 from .exceptions import UserError
@@ -21,7 +24,6 @@ from .messages import (
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
-    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
@@ -288,6 +290,20 @@ _CARRIED_OVER_KEY = 'pending_messages'
 was still queued when the run paused."""
 
 
+class _CarriedOver(TypedDict):
+    """One `PendingMessage` carried over from a paused run, as stored under `_CARRIED_OVER_KEY`."""
+
+    enqueue_id: str
+    priority: PendingMessagePriority
+    messages: list[ModelMessage]
+
+
+_carried_over_adapter = pydantic.TypeAdapter(
+    list[_CarriedOver],
+    config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64'),
+)
+
+
 def carry_over(message: ModelMessage, pending: Sequence[PendingMessage]) -> ModelMessage:
     """A copy of `message`, the last message of a run that pauses, holding `pending` for the next run to deliver.
 
@@ -297,16 +313,12 @@ def carry_over(message: ModelMessage, pending: Sequence[PendingMessage]) -> Mode
     metadata = dict(message.metadata or {})
     namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
     namespace = dict(namespace) if is_str_dict(namespace) else {}
+    carried = [
+        _CarriedOver(enqueue_id=item.enqueue_id, priority=item.priority, messages=item.messages) for item in pending
+    ]
     namespace[_CARRIED_OVER_KEY] = [
         *namespace.get(_CARRIED_OVER_KEY, ()),
-        *(
-            {
-                'enqueue_id': item.enqueue_id,
-                'priority': item.priority,
-                'messages': ModelMessagesTypeAdapter.dump_python(item.messages, mode='json'),
-            }
-            for item in pending
-        ),
+        *_carried_over_adapter.dump_python(carried, mode='json'),
     ]
     metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
     return replace(message, metadata=metadata)
@@ -324,7 +336,7 @@ def take_carried_over(history: Sequence[ModelMessage]) -> tuple[list[ModelMessag
     namespace = (last.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY) if last is not None else None
     if last is None or not is_str_dict(namespace) or _CARRIED_OVER_KEY not in namespace:
         return messages, []
-    carried = namespace[_CARRIED_OVER_KEY]
+    carried = _carried_over_adapter.validate_python(namespace[_CARRIED_OVER_KEY])
     namespace = {key: value for key, value in namespace.items() if key != _CARRIED_OVER_KEY}
     metadata = {key: value for key, value in (last.metadata or {}).items() if key != _PYDANTIC_AI_METADATA_KEY}
     if namespace:
@@ -332,7 +344,7 @@ def take_carried_over(history: Sequence[ModelMessage]) -> tuple[list[ModelMessag
     messages[-1] = replace(last, metadata=metadata or None)
     pending = [
         PendingMessage(
-            messages=ModelMessagesTypeAdapter.validate_python(item['messages']),
+            messages=item['messages'],
             priority=item['priority'],
             enqueue_id=item['enqueue_id'],
             _announced=True,
