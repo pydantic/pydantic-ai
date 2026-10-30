@@ -43,7 +43,7 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     import grpc
     import httpx
-    from anthropic import AsyncAnthropic
+    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock
     from botocore.exceptions import (
         BotoCoreError,
         ClientError,
@@ -152,6 +152,29 @@ def _zai(handler: Handler) -> Model:
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     return ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=client))
+
+
+def _anthropic_bedrock(handler: Handler) -> Model:
+    client = AsyncAnthropicBedrock(
+        aws_region='us-east-1',
+        aws_access_key='test',
+        aws_secret_key='test',
+        base_url='http://localhost',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return AnthropicModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=AnthropicProvider(anthropic_client=client)
+    )
+
+
+def _bedrock_invoke_error(status_code: int, code: str, message: str) -> Handler:
+    """A Bedrock InvokeModel error: the code is in the `x-amzn-errortype` header, the body has only a `message`."""
+    return _json(
+        status_code,
+        {'message': message},
+        headers={'X-Amzn-ErrorType': f'{code}:http://internal.amazon.com/coral/com.amazon.bedrock/'},
+    )
 
 
 def _groq(handler: Handler) -> Model:
@@ -530,6 +553,36 @@ CASES = [
         ),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
+    ),
+    Case(
+        id='anthropic-bedrock-context-window',
+        model=_anthropic_bedrock,
+        handler=_bedrock_invoke_error(400, 'ValidationException', 'prompt is too long: 210000 tokens > 200000 maximum'),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': 'ValidationException'},
+    ),
+    Case(
+        id='anthropic-bedrock-input-too-long',
+        model=_anthropic_bedrock,
+        handler=_bedrock_invoke_error(400, 'ValidationException', 'Input is too long for requested model.'),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': 'ValidationException'},
+    ),
+    Case(
+        id='anthropic-bedrock-quota',
+        model=_anthropic_bedrock,
+        handler=_bedrock_invoke_error(
+            400, 'ServiceQuotaExceededException', 'Your request exceeds the service quota for your account.'
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_code': 'ServiceQuotaExceededException'},
+    ),
+    Case(
+        id='anthropic-bedrock-validation',
+        model=_anthropic_bedrock,
+        handler=_bedrock_invoke_error(400, 'ValidationException', 'Malformed input request, please reformat.'),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'provider_error_code': 'ValidationException'},
     ),
     Case(
         id='anthropic-stream-overloaded',

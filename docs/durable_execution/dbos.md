@@ -178,6 +178,8 @@ Function tools and event stream handlers registered on the agent directly or thr
 * Skip the decorator if durability isn't needed, so you avoid the extra DB checkpoint write.
 * If the function needs to enqueue tasks or invoke other DBOS workflows, run it inside the agent's main workflow (not as a step).
 
+A function tool running in the workflow can load an [on-demand capability](../capabilities/on-demand.md) with [`ctx.load_capability()`][pydantic_ai.tools.RunContext.load_capability], but a tool running as a step can't; see [Loading a capability from code](../capabilities/on-demand.md#loading-from-code-durable).
+
 All other agents and toolsets are supported.
 
 ### Agent Run Context and Dependencies

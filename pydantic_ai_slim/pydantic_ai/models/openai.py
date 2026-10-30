@@ -1707,6 +1707,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         )
         model_settings_cast = cast(OpenAIChatModelSettings, model_settings or {})
         response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
+        if isinstance(response, ModelResponse):
+            # Azure rejected the prompt with its content filter before the stream opened.
+            yield _ModelResponseStreamedResponse(
+                model_request_parameters=model_request_parameters, _model_response=response
+            )
+            return
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
 
@@ -1717,7 +1723,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         stream: Literal[True],
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[ChatCompletionChunk]: ...
+    ) -> AsyncStream[ChatCompletionChunk] | ModelResponse: ...
 
     @overload
     async def _completions_create(
