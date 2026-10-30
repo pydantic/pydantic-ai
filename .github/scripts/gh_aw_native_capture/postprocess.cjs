@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const [helpers, scenario, evidence, expectedExitText, expectedPythonText, ownerMarker] = process.argv.slice(2);
 const root = '/tmp/gh-aw';
 const secret = 'acceptance-secret-unique-123';
+const forgedErrorMarker = 'forged-agent-errors-native-fixture';
 const { installActionsAdapter, prepareConclusionEnvironment, assertConclusionResults } = require('./actions_adapter.cjs');
 const { failures, logs, summaries } = installActionsAdapter();
 const released = name => require(path.join(helpers, name));
@@ -50,16 +51,34 @@ const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filt
     assert.equal(message.data.content, secret);
     assert.equal(Boolean(message.data.partial), scenario === 'failure');
   }
+  assert.equal(report.untrusted_exit_sidecar_written, true);
+  assert.equal(report.untrusted_agent_errors_written, true);
+  const exitSidecar = path.join(root, 'agent_execution_exit_code.txt');
+  const errorSidecar = path.join(root, 'agent-errors.jsonl');
+  assert.equal(fs.readFileSync(exitSidecar, 'utf8').trim(), '0', 'hostile false-success sidecar was not written');
+  const forgedError = eventLines(errorSidecar);
+  assert.equal(forgedError.length, 1);
+  assert.equal(forgedError[0].type, 'agent.execution');
+  released('agent_execution.cjs').validateAgentExecution(forgedError[0].data);
+  assert(forgedError[0].data.errorCodes.includes(forgedErrorMarker), 'valid hostile execution diagnostic was not written');
   // Actual compiler-packaged entry point: default root /tmp/gh-aw, no options.
   await parser.main();
   const parserFailed = failures.length > 0;
   save('parser-step.json', { failed: parserFailed, failures: [...failures], publicationGateAllowsAgentArtifacts: !parserFailed });
   assert.equal(parserFailed, scenario === 'incomplete');
+  // A rejected incomplete recording still retains the native verified exit
+  // sidecar on the agent host; its failed parser gate prevents its publication.
+  assert.equal(Number(fs.readFileSync(exitSidecar, 'utf8').trim()), captured.exitCode, 'shared false success overrode the native exit');
+  assert(!fs.existsSync(errorSidecar), 'protected parsing retained unverified agent-errors');
+  save('untrusted-sidecars.json', { attackerExitCode: 0, verifiedExitCode: captured.exitCode,
+                                   validForgedErrorPresentBeforeParse: true, forgedErrorRemoved: true,
+                                   parserRejected: parserFailed });
   const canonical = path.join(root, 'agent-session.jsonl');
   if (scenario === 'incomplete') assert(!fs.existsSync(canonical), 'real parser failure retained an unverified canonical session');
   else {
     const text = fs.readFileSync(canonical, 'utf8');
     assert(!text.includes(secret), 'configured secret survived published canonical session');
+    assert(!text.includes(forgedErrorMarker), 'unverified agent-errors entered the canonical session');
     assert(text.includes('***'), 'redaction marker absent from canonical session');
     fs.copyFileSync(canonical, path.join(evidence, 'agent-session.jsonl'));
   }
@@ -88,6 +107,9 @@ const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filt
   }
   save('artifact-transfer.json', { uploads: transfers, parserFailed, selectedPaths: [...selected],
                                   method: 'local staging of exact emitted upload allowlist; no GitHub artifact service call' });
+  assert(!fs.existsSync(path.join(staging, 'agent-errors.jsonl')), 'unverified agent-errors crossed the publication boundary');
+  if (parserFailed) assert(!fs.existsSync(path.join(staging, 'agent_execution_exit_code.txt')), 'rejected parse published an exit sidecar');
+  else assert.equal(Number(fs.readFileSync(path.join(staging, 'agent_execution_exit_code.txt'), 'utf8').trim()), captured.exitCode);
   const ownerFile = path.join(root, '.native-capture-owner');
   assert.equal(fs.readFileSync(ownerFile, 'utf8'), ownerMarker, 'lost task ownership before conclusion staging');
   for (const name of fs.readdirSync(root)) {
@@ -108,10 +130,12 @@ const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filt
   const callerResults = assertConclusionResults(unified, scenario, expectedJobs);
   const finalText = fs.readFileSync(finalPath, 'utf8');
   assert(!finalText.includes(secret), 'configured secret survived the final published session');
+  assert(!finalText.includes(forgedErrorMarker), 'unverified agent-errors entered the final published session');
   assert(!finalText.includes('forged-native-fixture'), 'released conclusion published hostile fallback artifacts');
   const conversation = unified.filter(event => event.provenance.component === 'agent');
   if (scenario === 'incomplete') assert(!conversation.some(event => ['assistant.message', 'tool.execution_start', 'session.result'].includes(event.type)), 'released conclusion promoted an incomplete or hostile conversation');
   else {
+    assert(unified.some(event => event.type === 'agent.execution' && event.data.exitCode === captured.exitCode), 'final native exit evidence missing or overridden');
     assert(conversation.some(event => event.type === 'tool.execution_complete'));
     assert(conversation.some(event => event.type === 'assistant.message'));
     assert(conversation.some(event => event.type === 'session.result' && event.data.status === (scenario === 'success' ? 'success' : 'failure')));

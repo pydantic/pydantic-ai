@@ -83,6 +83,16 @@ async function main() {
         requireRegularTree(staging);
         assert(fs.existsSync(path.join(staging, 'agent-session.jsonl')), 'verified canonical session missing after download');
       }
+      const sidecarReceipt = JSON.parse(fs.readFileSync(path.join(input, scenario, 'untrusted-sidecars.json'), 'utf8'));
+      const expectedNativeExit = cases.find(([name]) => name === scenario)[1];
+      assert.equal(sidecarReceipt.attackerExitCode, 0);
+      assert.equal(sidecarReceipt.verifiedExitCode, expectedNativeExit);
+      assert.equal(sidecarReceipt.validForgedErrorPresentBeforeParse, true);
+      assert.equal(sidecarReceipt.forgedErrorRemoved, true);
+      assert.equal(sidecarReceipt.parserRejected, scenario === 'incomplete');
+      assert(!fs.existsSync(path.join(staging, 'agent-errors.jsonl')), 'unverified agent-errors survived artifact download');
+      if (scenario === 'incomplete') assert(!fs.existsSync(path.join(staging, 'agent_execution_exit_code.txt')), 'rejected parser transferred an exit sidecar');
+      else assert.equal(Number(fs.readFileSync(path.join(staging, 'agent_execution_exit_code.txt'), 'utf8').trim()), expectedNativeExit);
       assert(!fs.existsSync(path.join(staging, '.native-capture-owner')), 'downloaded input carries an ownership marker');
       assert(!fs.existsSync(path.join(staging, 'sandbox/agent/logs/copilot-session-state')), 'hostile native fallback crossed the producer publication boundary');
       assert.equal(fs.readFileSync(owner, 'utf8'), marker, 'lost task ownership before copying downloaded inputs');
@@ -96,11 +106,13 @@ async function main() {
       const text = fs.readFileSync(finalPath, 'utf8');
       assert(!text.includes('acceptance-secret-unique-123'), 'configured secret survived the artifact round trip');
       assert(!text.includes('forged-native-fixture'), 'hostile fallback became authoritative after download');
+      assert(!text.includes('forged-agent-errors-native-fixture'), 'unverified agent-errors became authoritative after download');
       const events = text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
       const callerResults = assertConclusionResults(events, scenario, expectedJobs);
       const conversation = events.filter(event => event.provenance.component === 'agent');
       if (scenario === 'incomplete') assert.equal(conversation.length, 0, 'download promoted an incomplete conversation');
       else {
+        assert(events.some(event => event.type === 'agent.execution' && event.data.exitCode === expectedNativeExit), 'native exit changed after artifact download');
         const result = conversation.findLast(event => event.type === 'session.result');
         assert(result, 'terminal session result missing after download');
         assert.equal(result.data.status, scenario === 'success' ? 'success' : 'failure');
