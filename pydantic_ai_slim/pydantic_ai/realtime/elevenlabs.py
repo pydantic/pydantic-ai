@@ -17,7 +17,7 @@ does:
   [`elevenlabs_language`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings.elevenlabs_language]);
 - voices are ElevenLabs voices, set with
   [`elevenlabs_voice`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings.elevenlabs_voice];
-- `response.done` carries no usage, so sessions report no token counts;
+- `response.done` carries no usage, so sessions count these responses as unmeasured;
 - `conversation.item.delete` is not implemented, so `openai_prune_tool_items` is ignored;
 - images are dropped from user messages, and seeded history can only carry text;
 - text output (`output_modalities: ['text']`) ignores audio input altogether, so `output_modality='text'` is
@@ -71,6 +71,7 @@ from ..profiles.elevenlabs import elevenlabs_realtime_model_profile
 from ..providers import Provider, infer_provider
 from ..providers.elevenlabs import ElevenLabsProvider
 from ..tools import ToolDefinition
+from ..usage import RequestUsage
 from ._elevenlabs_audio_tags import AudioTagStripper, strip_audio_tags
 from ._lifecycle import (
     AnswersRevised,
@@ -84,14 +85,16 @@ from ._openai_lifecycle import OpenAILifecycle
 from ._openai_protocol import (
     CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
     CONVERSATION_ITEM_CREATE_EVENT,
+    RESPONSE_DONE_EVENT_ADAPTER,
     ProtocolResponse,
+    ProtocolResponseDoneEvent,
     config_has_manual_turns,
     config_interrupts_response_on_speech,
     loads_obj,
     turn_detection_config,
     with_realtime_query,
 )
-from .codec import OutputTranscript, RealtimeCodecEvent, ToolResult
+from .codec import OutputTranscript, RealtimeCodecEvent, SessionUsage, ToolResult
 from .model import RealtimeModel, WebRTCAnswer
 from .openai import (
     OpenAIRealtimeConnection,
@@ -364,6 +367,23 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
         if _RESPONSE_CREATED_EVENT in raw and loads_obj(raw).get('type') == _RESPONSE_CREATED_EVENT:
             abandoned = self._abandon_outstanding_tool_calls()
         decoded = await super()._decode_frame(raw)
+        if 'response.done' in raw and (data := loads_obj(raw)).get('type') == 'response.done':
+            done = RESPONSE_DONE_EVENT_ADAPTER.validate_python(data)
+            frame_usage = done.usage if isinstance(done, ProtocolResponseDoneEvent) else None
+            if done.response.usage is None and frame_usage is None:
+                # Preserve both usage locations and the parent's metadata for tool-only responses.
+                for event in decoded.codec:
+                    if isinstance(event, SessionUsage):
+                        event.usage.unmeasured_requests = 1
+                        break
+                else:
+                    decoded.codec.insert(
+                        0,
+                        SessionUsage(
+                            usage=RequestUsage(unmeasured_requests=1),
+                            provider_response_id=done.response.id or None,
+                        ),
+                    )
         if self._pending_response:
             self._answer_held_request(decoded)
         if _ITEM_ADDED_EVENT in raw and (data := loads_obj(raw)).get('type') == _ITEM_ADDED_EVENT:

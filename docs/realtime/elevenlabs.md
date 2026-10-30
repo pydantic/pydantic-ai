@@ -488,7 +488,7 @@ once the turn is committed, usually after the reply has started. It takes no mod
 | Input transcription | Limited parameter support | Always on, with whole-turn transcripts; no transcription model to choose |
 | Native tools | Unsupported | ElevenLabs offers MCP tools, which Pydantic AI does not expose yet |
 | Async tool calls | Unsupported | The model answers the user while a [tool runs](tools.md#concurrent-tool-execution), but then abandons the call, see [Provider-specific quirks](#eleven-realtime-quirks) |
-| Usage | Unsupported | ElevenLabs reports no usage, so token counts are zero and `usage.cost` is `None` |
+| Usage | Unsupported | ElevenLabs reports no usage, so token counts are zero, [`unmeasured_requests`][pydantic_ai.usage.RunUsage.unmeasured_requests] counts these responses, and `usage.cost` is `None` |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new session; in-flight media is lost |
 
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
