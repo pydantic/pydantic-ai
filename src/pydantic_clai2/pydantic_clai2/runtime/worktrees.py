@@ -221,23 +221,16 @@ def offer_worktree_cleanup(
             read_remove_commands() if read_remove_commands is not None else {}
         )
     except (OSError, ValueError) as exc:
-        print(f'Worktree kept at {root}: cannot read removal commands: {exc}', file=sys.stderr)
-        return
+        print(f'Cannot read removal commands for {root}; using Git cleanup: {exc}', file=sys.stderr)
+        remove_commands = {}
     custom: tuple[Path, list[str]] | None = None
     if remove_commands:
         try:
             common = (worktree.path / _git('-C', root, 'rev-parse', '--git-common-dir')).resolve()
             registered = remove_commands.get(str(common))
             if registered is not None:
-                listing = _git('-C', str(common), 'worktree', 'list', '--porcelain', '-z')
-                repo = Path(listing.split('\0', 1)[0].removeprefix('worktree '))
-                values = {
-                    '{path}': root,
-                    '{branch}': _git('-C', root, 'branch', '--show-current'),
-                    '{repo}': str(repo),
-                }
-                custom = repo, [values.get(arg, arg) for arg in registered]
-        except (OSError, subprocess.CalledProcessError) as exc:
+                custom = _prepare_removal_command(path=worktree.path, common=common, command=registered)
+        except (OSError, subprocess.CalledProcessError, UnicodeDecodeError) as exc:
             print(f'Worktree kept at {root}: cannot prepare removal command: {exc}', file=sys.stderr)
             return
     prompt = f'Remove worktree {root}? The branch will be kept. [y/N] '
@@ -304,6 +297,18 @@ def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
         except (OSError, subprocess.CalledProcessError):
             pass  # A kept branch loses nothing; it is `git branch -d` away.
     return True
+
+
+def _prepare_removal_command(*, path: Path, common: Path, command: Sequence[str]) -> tuple[Path, list[str]]:
+    """Resolve Git metadata and whole-token arguments without requiring a NUL-delimited worktree listing."""
+    bare = _git('-C', str(common), 'rev-parse', '--is-bare-repository') == 'true'
+    repo = common if bare or common.name != '.git' else common.parent
+    values = {
+        '{path}': str(path),
+        '{branch}': _git('-C', str(path), 'branch', '--show-current'),
+        '{repo}': str(repo),
+    }
+    return repo, [values.get(arg, arg) for arg in command]
 
 
 def _git(*args: str) -> str:

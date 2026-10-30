@@ -139,11 +139,23 @@ a relative `--database` path still refers to the directory you launched from.
 CLAI prints the path and branch. A directory at that path that is not a Git
 worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
-names the retained branch or checkout for recovery. The worktree and branch
-remain after exit, including startup
-errors after creation, so CLAI does not delete your work. Enter that directory
-and run `clai2 --continue` or `clai2 --resume` to continue a saved session. `--worktree`
-cannot be combined with `--resume`, `--continue`, `config`, or `plugins`.
+names the retained branch or checkout for recovery.
+
+On interactive exit, CLAI removes an unchanged worktree this launch created and
+tries to delete its newly created branch with `git branch -d`. Other unchanged
+worktrees are kept. If the checkout changed, CLAI asks whether to remove it.
+Default Git removal keeps the branch and refuses dirty or locked checkouts.
+
+You can register a user-only `worktrees.remove_commands` entry for a repository.
+After confirmation, that command runs instead of Git and may delete the branch
+and uncommitted files. Automatic and forced removal continue to use Git. See
+[the removal-command reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
+for configuration and shell-function examples.
+
+Headless runs, piped input, and startup errors keep the checkout without asking.
+Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to
+continue a saved session. `--worktree` cannot be combined with `--resume`,
+`--continue`, `config`, or `plugins`.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
 original repository root. Without `--force`, Git refuses to remove a dirty worktree:

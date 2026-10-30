@@ -224,13 +224,29 @@ def test_custom_removal_command_uses_safe_argv_and_repo_cwd(
     assert not output.err
 
 
-def test_custom_removal_from_bare_repository(
-    repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
+@pytest.mark.parametrize('layout', ['bare', 'bare-dotgit', 'separate-git-dir', 'core.worktree'])
+def test_custom_removal_from_repository_layout(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand, layout: str
 ) -> None:
-    bare = repo.parent / 'bare; repo\n.git'
-    git(repo, 'clone', '--bare', str(repo), str(bare))
-    path = repo.parent / 'bare checkout'
-    git(bare, 'worktree', 'add', '-b', 'task', str(path))
+    root = repo.parent / f'{layout}-main'
+    common = root / '.git'
+    if layout == 'bare':
+        common = repo.parent / 'bare; repo\n.git'
+        git(repo, 'clone', '--bare', str(repo), str(common))
+    elif layout == 'bare-dotgit':
+        git(repo, 'clone', '--bare', str(repo), str(common))
+    elif layout == 'separate-git-dir':
+        common = repo.parent / 'separate-metadata'
+        git(repo, 'clone', '--separate-git-dir', str(common), str(repo), str(root))
+    else:
+        git(repo, 'clone', str(repo), str(root))
+        working = repo.parent / 'explicit-working-directory'
+        working.mkdir()
+        (working / '.git').write_text(f'gitdir: {common}\n')
+        git(root, 'config', 'core.worktree', str(working))
+    expected_repo = root if layout == 'core.worktree' else common
+    path = repo.parent / 'linked checkout'
+    git(common, 'worktree', 'add', '-b', 'task', str(path))
     monkeypatch.chdir(path)
     worktree = Worktree(path=path, branch='task', head=git(path, 'rev-parse', 'HEAD'), created=False)
     (path / 'tracked.txt').write_text('changed')
@@ -239,9 +255,9 @@ def test_custom_removal_from_bare_repository(
         path.rename(path.with_name('removed'))
 
     removal_command.action = remove
-    offer_worktree_cleanup(worktree=worktree, read_remove_commands=lambda: {str(bare): ['remove', '{repo}']})
-    assert removal_command.calls == [(['remove', str(bare)], bare, terminal_stderr())]
-    assert Path.cwd() == bare
+    offer_worktree_cleanup(worktree=worktree, read_remove_commands=lambda: {str(common): ['remove', '{repo}']})
+    assert removal_command.calls == [(['remove', str(expected_repo)], expected_repo, terminal_stderr())]
+    assert Path.cwd() == expected_repo
 
 
 def test_custom_removal_command_decline_keeps_checkout(
@@ -300,6 +316,24 @@ def test_custom_command_preparation_failure(
     offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / '.git'): ['remove']})
     assert launched.path.exists()
     assert f'Worktree kept at {launched.path}: cannot prepare removal command' in capsys.readouterr().err
+
+
+def test_custom_command_undecodable_branch_is_reported(
+    launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def undecodable(*args: str) -> str:
+        if args[-2:] == ('branch', '--show-current'):
+            raise UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'invalid start byte')
+        return git(Path.cwd(), *args)
+
+    monkeypatch.setattr(worktrees, '_git', undecodable)
+    monkeypatch.setattr('builtins.input', no_prompt)
+    offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / '.git'): ['never-run']})
+    assert launched.path.exists()
+    assert Path.cwd() == launched.path
+    error = capsys.readouterr().err
+    assert f'Worktree kept at {launched.path}: cannot prepare removal command' in error
+    assert "can't decode byte" in error
 
 
 def test_custom_command_not_offered_without_tty(
@@ -466,8 +500,8 @@ def test_exit_ignores_unrelated_settings_changed_by_another_build(
     assert checkout.exists()
 
 
-@pytest.mark.parametrize('failure', ['invalid-setting', 'database'])
-def test_exit_keeps_worktree_when_removal_setting_cannot_be_read(
+@pytest.mark.parametrize('failure', ['invalid-setting', 'invalid-json', 'database'])
+def test_exit_uses_git_when_removal_setting_cannot_be_read(
     repo: Path,
     checkout: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -480,14 +514,25 @@ def test_exit_keeps_worktree_when_removal_setting_cannot_be_read(
                 connection.execute(
                     'INSERT INTO settings VALUES (?, ?)', ('worktrees.remove_commands', '{"relative": ["remove"]}')
                 )
+        elif failure == 'invalid-json':
+            with closing(sqlite3.connect(repo.parent / 'config.db')) as connection, connection:
+                connection.execute('INSERT INTO settings VALUES (?, ?)', ('worktrees.remove_commands', 'not JSON'))
         else:
             with closing(sqlite3.connect(repo.parent / 'config.db')) as connection, connection:
+                assert connection.execute(
+                    'SELECT COUNT(*) FROM settings WHERE key = ?', ('worktrees.remove_commands',)
+                ).fetchone() == (0,)
                 connection.execute('DROP TABLE settings')
         git(checkout, 'commit', '--allow-empty', '-m', 'Work')
 
-    assert run_cli(monkeypatch, repo=repo, session=break_setting) == []
-    assert checkout.exists()
-    assert 'cannot read removal commands' in capsys.readouterr().err
+    assert run_cli(monkeypatch, repo=repo, session=break_setting, answer='yes') == [
+        f'Remove worktree {checkout}? The branch will be kept. [y/N] '
+    ]
+    assert not checkout.exists()
+    assert git(repo, 'branch', '--list', 'feature')
+    output = capsys.readouterr()
+    assert output.err.lower().count('cannot read removal commands') == 1
+    assert f'Removed worktree {checkout}. Branch kept.' in output.out
 
 
 def test_unchanged_hand_made_checkout_is_kept_silently(

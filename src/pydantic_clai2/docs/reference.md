@@ -2491,8 +2491,9 @@ clai2 config set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["/a
 
 The executable is your own cleanup program. Only whole argv tokens are
 substituted: `{path}` is the absolute target checkout, `{branch}` is its current
-branch (empty when detached), and `{repo}` is the main checkout root or, for a
-bare repository, its common directory. Embedded placeholders such as
+branch (empty when detached), and `{repo}` is Git's main-worktree location: the
+parent of a non-bare `.git` directory, or the common directory for other layouts.
+Embedded placeholders such as
 `--worktree={path}` are rejected; pass `"--worktree", "{path}"` instead. CLAI does
 not invoke a shell or expand variables.
 
@@ -2510,9 +2511,11 @@ Neither the function nor the cleanup program above ships with CLAI.
 CLAI warns that the command may delete the branch and uncommitted files before
 asking for confirmation. The command inherits stdin, stdout, stderr, and the
 terminal, has no timeout, and can be interrupted with Ctrl-C. A command failure
-does not fall back to Git. If its saved configuration cannot be read or validated
-on exit, CLAI keeps the checkout and reports the error. `.clai/settings.json` cannot set
-`worktree_remove_commands`; CLAI refuses to start if it does. Automatic removal
+does not fall back to Git. If the saved configuration cannot be read or validated
+on exit, CLAI warns and offers the existing Git cleanup prompt instead. If Git
+metadata cannot be read to prepare a registered command, CLAI keeps the checkout
+and reports the error. `.clai/settings.json` cannot set `worktree_remove_commands`;
+CLAI refuses to start if it does. Automatic removal
 of unchanged worktrees and forced `remove_worktree` or `workspaces` destruction
 continue to use Git.
 
