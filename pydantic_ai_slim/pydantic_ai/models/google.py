@@ -92,6 +92,7 @@ from . import (
     get_user_agent,
 )
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
+from ._tool_call_ids import deduplicate_tool_call_ids
 from ._tool_choice import resolve_tool_choice
 from ._transport_errors import transport_error_message
 
@@ -1419,6 +1420,7 @@ class GoogleModel(Model[Client]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
+        messages = deduplicate_tool_call_ids(messages)
         # Google Cloud (Vertex) has no `tool_call`/`tool_response` parts (the SDK raises on them), so native tool
         # parts from Gemini API history are dropped there, like they are on models without tool combination.
         supports_tool_combination = self.profile.get('google_supports_tool_combination', False) and not (

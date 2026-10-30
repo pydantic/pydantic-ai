@@ -154,6 +154,7 @@ from . import (
 from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
 from ._prompt_cache import split_cache_setting
 from ._sdk_retries import with_max_retries
+from ._tool_call_ids import deduplicate_tool_call_ids
 from ._tool_choice import (
     ResolvedToolChoice,
     resolve_tool_choice,
@@ -2342,6 +2343,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
+        messages = deduplicate_tool_call_ids(messages)
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         profile = self.profile
         # DeepSeek-style APIs 400 on a tool-calling assistant turn that omits their thinking field while

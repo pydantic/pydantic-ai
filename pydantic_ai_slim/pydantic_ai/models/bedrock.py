@@ -121,6 +121,7 @@ from pydantic_ai.models._prompt_cache import (
     split_cache_setting,
     split_instruction_cache_points,
 )
+from pydantic_ai.models._tool_call_ids import deduplicate_tool_call_ids
 from pydantic_ai.models._tool_choice import (
     FORCING_UNSUPPORTED_REASON,
     resolve_tool_choice,
@@ -1765,6 +1766,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
         """
+        messages = deduplicate_tool_call_ids(messages)
         settings = model_settings or BedrockModelSettings()
         profile = self.profile
         system_prompt: list[SystemContentBlockTypeDef] = []

@@ -421,6 +421,8 @@ print(closed_out.content)
 
 This pipeline handles regular, locally-executed tool calls only. Provider-native tool parts — produced and resolved by the provider inline — are left untouched and repaired by each model's own serializer instead. Some other provider-invalid histories are also out of scope and may be rejected: duplicate tool results for one call, and provider-specific ordering rules beyond call/result pairing — where one of those rules is known and verified, the model's own serializer normalizes the request for it instead.
 
+When multiple tool calls in one response share an ID, the OpenAI Chat, Anthropic, Google, Bedrock, Mistral, and Cohere adapters give the repeated calls distinct IDs in the outgoing request and rewrite their results to match. Results answer calls with the same original ID in order. Cohere also requires distinct IDs across responses; the other adapters preserve reuse across responses. This normalization is deterministic and leaves the IDs in your stored history unchanged.
+
 ### Correlating runs with `run_id` and `conversation_id`
 
 Each `ModelRequest` and `ModelResponse` carries two identifiers:

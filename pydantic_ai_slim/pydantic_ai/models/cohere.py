@@ -53,6 +53,7 @@ from . import (
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
+from ._tool_call_ids import deduplicate_tool_call_ids
 from ._tool_choice import resolve_tool_choice
 from ._transport_errors import transport_error_message
 
@@ -359,6 +360,7 @@ class CohereModel(Model[AsyncClientV2]):
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
+        messages = deduplicate_tool_call_ids(messages, across_responses=True)
         cohere_messages: list[ChatMessageV2] = []
         for message in messages:
             if isinstance(message, ModelRequest):

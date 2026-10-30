@@ -117,6 +117,7 @@ from .._prompt_cache import (
     split_instruction_cache_points,
 )
 from .._sdk_retries import with_max_retries
+from .._tool_call_ids import deduplicate_tool_call_ids
 from .._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
 
@@ -2594,6 +2595,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         messages = self._trim_before_compaction(messages)
+        messages = deduplicate_tool_call_ids(messages)
         map_context = _MapMessagesContext(
             model_request_parameters=model_request_parameters,
             include_citations=citations_included(model_settings, model_request_parameters),
