@@ -1562,11 +1562,10 @@ async def test_http_provider_error_category(allow_model_requests: None, case: Ca
 
 
 def _retrying_client(handler: Handler) -> httpx2.AsyncClient:
-    """A client with the retrying transport from the retries guide: 3 attempts, rejecting 5xx statuses."""
+    """A client with a retrying transport like the retries guide's: 3 attempts, rejecting every error status."""
 
     def validate_response(response: httpx2.Response) -> None:
-        if response.status_code >= 500:
-            response.raise_for_status()
+        response.raise_for_status()
 
     transport = AsyncHTTPX2TenacityTransport(
         config=RetryConfig(
