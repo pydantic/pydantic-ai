@@ -1596,10 +1596,7 @@ class GoogleModel(Model[Client]):
         ):
             return ('file', file.url, file.media_type)
         elif isinstance(file, FileUrl):
-            if file.force_download or (
-                not self._is_google_cloud
-                and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
-            ):
+            if file.force_download or (not self._is_google_cloud and not _utils.is_google_files_api_url(file.url)):
                 downloaded_item = await download_item(file, data_format='bytes')
                 return ('inline', downloaded_item['data'], downloaded_item['data_type'])
             else:
