@@ -100,6 +100,63 @@ When every model has failed or been rejected, `ModelFallback` raises [`FallbackE
 
 A run that reaches its `timeout=` stops with [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] wherever it is, including in the middle of a candidate's request: the remaining candidates aren't attempted. Likewise, a request that exceeds the run's [usage limits](../agent.md#usage-limits) raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] whatever `fallback_on` says, as another model wouldn't change that.
 
+## Falling back when a model refuses {#refusals}
+
+A model sometimes refuses a request on safety grounds that another model would carry out, as a coding agent can find when a task touches on security. Pydantic AI reports a refusal as a successful response with a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'content_filter'`, and puts the provider's explanation, where it gives one, in [`provider_details['refusal']`][pydantic_ai.messages.ModelResponse.provider_details]: Anthropic's `stop_reason: 'refusal'` with its `stop_details`, and the `refusal` that OpenAI sends in place of content. Because the request succeeded, the default `fallback_on` doesn't move on from it. Reject it with a response handler instead, listed alongside `ModelAPIError` so failed requests still fall back:
+
+```python {title="model_fallback_on_refusal.py"}
+from pydantic_ai import Agent, ModelAPIError, ModelMessage, ModelResponse, TextPart
+from pydantic_ai.capabilities import ModelFallback
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def refuse(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[],
+        finish_reason='content_filter',
+        provider_details={'refusal': "I can't help with that request."},
+    )
+
+
+def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('Here is how the exploit works, and how to patch it.')])
+
+
+refusals: list[str] = []
+
+
+def refused(response: ModelResponse) -> bool:
+    if response.finish_reason != 'content_filter':
+        return False
+    refusals.append(f'{response.model_name}: {(response.provider_details or {}).get("refusal")}')
+    return True
+
+
+agent = Agent(
+    # These deterministic models stand in for two providers.
+    FunctionModel(refuse, model_name='primary'),
+    capabilities=[
+        ModelFallback(FunctionModel(answer, model_name='backup'), fallback_on=[ModelAPIError, refused])
+    ],
+)
+result = agent.run_sync('Explain the vulnerability in this code and how to fix it.')
+print(result.output)
+#> Here is how the exploit works, and how to patch it.
+print(result.response.model_name)
+#> backup
+print(refusals)
+#> ["primary: I can't help with that request."]
+```
+
+A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] takes the same `fallback_on`.
+
+A few things to know about falling back on refusals:
+
+- **It happens per request.** When a model refuses partway through a run, only that request moves to the next model, with the run's message history so far. The responses the first model gave earlier in the run stay in the history.
+- **The handler rejects every response with that finish reason.** A refusal usually comes with no output at all, but some come with text, like a model that starts answering and then stops. Without a fallback, an empty or thinking-only refusal raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError], while one with text becomes the run's output like any other. To raise on those too, rather than fall back, add the [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
+- **Listing `ContentFilterError` in `fallback_on` doesn't work.** It's raised by the agent after the model's response has been accepted, not by the request, so `fallback_on=(ContentFilterError,)` never matches. Use a response handler.
+- **Response handlers don't apply to a [streamed request](#streaming).** A streamed refusal is accepted with a `UserWarning`, and an empty one then raises `ContentFilterError`. To fall back there, catch it and run again with another model passed as `model=`.
+
 ## In agent specs {#agent-specs}
 
 `ModelFallback` can be declared in an [agent spec](../agent-spec.md), with its models as a list of model names:
