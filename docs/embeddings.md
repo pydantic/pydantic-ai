@@ -302,7 +302,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
 
-When the Gemini API omits token usage, [`result.usage.unmeasured_requests`][pydantic_ai.usage.RequestUsage.unmeasured_requests] is `1` and automatic cost estimates remain unknown.
+When the Gemini API omits token usage, [`result.usage.unmeasured_requests`][pydantic_ai.usage.UsageBase.unmeasured_requests] is `1` and automatic cost estimates remain unknown.
 
 ##### Google Cloud
 
