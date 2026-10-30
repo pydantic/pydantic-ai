@@ -39,6 +39,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelResponseRejectedEvent,
     ModelSettingsDeltaPart,
     RetryFeedbackPart,
     RetryInfo,
@@ -364,6 +365,23 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     if part.tool_call_id is not None and not part.tool_call_id.strip():
         part.tool_call_id = None
     return part
+
+
+def model_response_rejected_payload(event: ModelResponseRejectedEvent) -> dict[str, Any]:
+    """Serialize a [`ModelResponseRejectedEvent`][pydantic_ai.messages.ModelResponseRejectedEvent] for a UI data channel.
+
+    The payload says which response was rejected and how, so a frontend can set its output apart from what follows:
+    `'retried'` when the model was asked again, with the retry's `cause`, or `'replaced'` when a capability answered
+    instead. The feedback the model is asked again with is left out: it's addressed to the model, and can say what
+    an output validator checks for.
+    """
+    reason = event.reason
+    rejection: dict[str, Any] = (
+        {'outcome': 'retried', 'cause': reason.retry.cause}
+        if isinstance(reason, RetryFeedbackPart)
+        else {'outcome': 'replaced'}
+    )
+    return {'run_step': event.run_step, 'attempt': event.attempt, **rejection}
 
 
 def model_settings_delta_payload(part: ModelSettingsDeltaPart) -> dict[str, Any]:

@@ -25,6 +25,7 @@ from ...messages import (
     EnqueuedMessagesEvent,
     FilePart,
     FunctionToolResultEvent,
+    ModelResponseRejectedEvent,
     ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -41,7 +42,12 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
-from .._adapter import compaction_payload, enqueued_messages_for_client, model_settings_delta_payload
+from .._adapter import (
+    compaction_payload,
+    enqueued_messages_for_client,
+    model_response_rejected_payload,
+    model_settings_delta_payload,
+)
 from .._utils import MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
@@ -63,6 +69,7 @@ from ._utils import (
     ENQUEUED_MESSAGES_ACTIVITY_TYPE,
     INTERRUPTS_VERSION,
     LIFECYCLE_1_0_VERSION,
+    MODEL_RESPONSE_REJECTED_EVENT_NAME,
     MODEL_SETTINGS_DELTA_ACTIVITY_TYPE,
     REASONING_VERSION,
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
@@ -477,6 +484,13 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
             yield e
+
+    async def handle_model_response_rejected(self, event: ModelResponseRejectedEvent) -> AsyncIterator[BaseEvent]:
+        # Names the assistant message that streamed the rejected response; the next response gets a new one.
+        yield AGUICustomEvent(
+            name=MODEL_RESPONSE_REJECTED_EVENT_NAME,
+            value={'message_id': self.message_id, **model_response_rejected_payload(event)},
+        )
 
     async def handle_model_settings_delta(self, event: ModelSettingsDeltaEvent) -> AsyncIterator[BaseEvent]:
         if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:

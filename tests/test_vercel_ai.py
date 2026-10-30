@@ -13855,3 +13855,100 @@ async def test_dispatch_request_forwards_manage_message_history():
     await response.stream_response(send)
 
     assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+async def _announce_then_answer(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+    yield 'The store opens at 9 am.' if len(messages) > 1 else "I'll look that up."
+
+
+async def test_rejected_response_streams_in_a_step_of_its_own():
+    """A rejected response's step ends with a `data-model-response-rejected` part, and the retry gets a new step.
+
+    So a frontend can set the rejected text apart from the answer instead of showing both as one reply.
+    """
+    agent = Agent(FunctionModel(stream_function=_announce_then_answer))
+
+    @agent.output_validator
+    def reject_announcements(ctx: RunContext, output: str) -> str:
+        if output.startswith("I'll look"):
+            raise ModelRetry('Answer the question.')
+        return output
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    adapter = VercelAIAdapter(agent, request)
+    events: list[dict[str, Any]] = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in event
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (rejected_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': "I'll look that up.", 'id': rejected_id},
+            {'type': 'text-end', 'id': rejected_id},
+            {
+                'type': 'data-model-response-rejected',
+                'data': {'run_step': 1, 'attempt': 1, 'outcome': 'retried', 'cause': 'model_retry'},
+            },
+            {'type': 'finish-step'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (answer_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'The store opens at 9 am.', 'id': answer_id},
+            {'type': 'text-end', 'id': answer_id},
+            {'type': 'message-metadata', 'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    )
+
+
+async def test_response_replaced_mid_part_closes_the_part_before_the_rejection():
+    """A response a capability cuts short mid-part leaves the part open, so the stream ends it before the rejection."""
+    first_chunk_sent = asyncio.Event()
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'Leaked '
+        first_chunk_sent.set()
+        await asyncio.Event().wait()
+        yield 'never'  # pragma: no cover
+
+    @dataclass
+    class BlockMidStream(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+        ) -> ModelResponse:
+            handler_task = asyncio.create_task(handler(request_context))
+            await first_chunk_sent.wait()
+            handler_task.cancel()
+            await asyncio.gather(handler_task, return_exceptions=True)
+            return ModelResponse(parts=[TextPart('Blocked.')])
+
+    agent = Agent(FunctionModel(stream_function=stream_function), capabilities=[BlockMidStream()])
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    adapter = VercelAIAdapter(agent, request)
+    events: list[dict[str, Any]] = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in event
+    ]
+
+    assert [event for event in events if event['type'] not in ('message-metadata',)] == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (rejected_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'Leaked ', 'id': rejected_id},
+            {'type': 'text-end', 'id': rejected_id},
+            {'type': 'data-model-response-rejected', 'data': {'run_step': 1, 'attempt': 1, 'outcome': 'replaced'}},
+            {'type': 'finish-step'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (answer_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'Blocked.', 'id': answer_id},
+            {'type': 'text-end', 'id': answer_id},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    )

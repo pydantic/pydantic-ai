@@ -60,6 +60,9 @@ MODEL_SETTINGS_DELTA_DATA_TYPE = 'data-model-settings-delta'
 COMPACTION_DATA_TYPE = 'data-compaction'
 """Data chunk type for compaction parts."""
 
+MODEL_RESPONSE_REJECTED_DATA_TYPE = 'data-model-response-rejected'
+"""Data chunk type for a streamed response that was rejected, closing the step that streamed it."""
+
 ENQUEUED_MESSAGES_DATA_TYPE = 'data-enqueued-messages'
 """Data chunk type for messages delivered into the run by `RunContext.enqueue`, encoded as `UIMessage`s."""
 

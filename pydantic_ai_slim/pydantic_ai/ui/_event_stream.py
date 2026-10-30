@@ -23,6 +23,7 @@ from ..messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelResponseRejectedEvent,
     ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -277,6 +278,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     tool_call_id = event.part.tool_call_id
                     self._pending_tool_calls.pop(tool_call_id, None)
 
+                elif isinstance(event, ModelResponseRejectedEvent):
+                    # A response cut short mid-part leaves it open: close it, as the rejected response is over.
+                    async for e in self._close_open_part():
+                        yield e
+                    # Its final result is no longer the run's.
+                    self._final_result_event = None
+
                 delta_recorded = False
                 async for e in self.handle_event(event):
                     if isinstance(event, PartDeltaEvent) and not delta_recorded:
@@ -285,6 +293,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
                 if isinstance(event, PartDeltaEvent) and not delta_recorded:
                     self._record_part_delta(event)
+                if isinstance(event, ModelResponseRejectedEvent):
+                    # The response that takes the rejected one's place starts a turn of its own.
+                    async for e in self._turn_to(None):
+                        yield e
 
                 # Mark the part open only after its start event has been emitted, so a start hook that
                 # raises mid-emit doesn't leave the error path closing a part the client never saw.
@@ -299,25 +311,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
             # first: it's a response-side event, whereas the tool-call cleanup below turns to the
             # request side, and everything after the error chunk is dropped.
-            if (part := self._open_part) is not None:
-                for delta in self._open_part_deltas:
-                    # Synthetic cleanup must not replace the original stream error.
-                    try:
-                        match delta, part:
-                            case TextPartDelta() as text_delta, TextPart():
-                                part = text_delta.apply(part)
-                            case ThinkingPartDelta() as thinking_delta, ThinkingPart():
-                                part = thinking_delta.apply(part)
-                            case ToolCallPartDelta() as tool_delta, ToolCallPart() | NativeToolCallPart():
-                                part = tool_delta.apply(part)
-                            case _:
-                                pass
-                    except Exception:
-                        pass
-                self._open_part = None
-                self._open_part_deltas.clear()
-                async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
-                    yield e
+            async for e in self._close_open_part():
+                yield e
 
             # Close any pending tool calls before emitting the error,
             # so the UI doesn't show them as still running.
@@ -403,6 +398,29 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             elif inspect.isawaitable(result):
                 await result
 
+    async def _close_open_part(self) -> AsyncIterator[EventT]:
+        """End the part the stream left open, if any, with the deltas it received so far."""
+        if (part := self._open_part) is None:
+            return
+        for delta in self._open_part_deltas:
+            # Synthetic cleanup must not replace the original stream error.
+            try:
+                match delta, part:
+                    case TextPartDelta() as text_delta, TextPart():
+                        part = text_delta.apply(part)
+                    case ThinkingPartDelta() as thinking_delta, ThinkingPart():
+                        part = thinking_delta.apply(part)
+                    case ToolCallPartDelta() as tool_delta, ToolCallPart() | NativeToolCallPart():
+                        part = tool_delta.apply(part)
+                    case _:
+                        pass
+            except Exception:
+                pass
+        self._open_part = None
+        self._open_part_deltas.clear()
+        async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
+            yield e
+
     async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
         """Fire hooks when turning from request to response or vice versa."""
         if to_turn == self._turn:
@@ -442,6 +460,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] -> `handle_output_tool_result`
         - [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] -> `handle_deferred_tool_requests`
         - [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] -> `handle_deferred_tool_results`
+        - [`ModelResponseRejectedEvent`][pydantic_ai.messages.ModelResponseRejectedEvent] -> `handle_model_response_rejected`
         - [`CustomEvent`][pydantic_ai.messages.CustomEvent] -> `handle_custom_event`
         - [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] -> `handle_capability_event`
         - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] -> `handle_run_result`
@@ -488,6 +507,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case DeferredToolResultsEvent():
                 async for e in self.handle_deferred_tool_results(event):
+                    yield e
+            case ModelResponseRejectedEvent():
+                async for e in self.handle_model_response_rejected(event):
                     yield e
             case CustomEvent():
                 # Checked here rather than in each protocol's handler so that `ui=False` holds for
@@ -968,6 +990,19 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             event: The deferred tool results event.
         """
         return
+        yield  # Make this an async generator
+
+    async def handle_model_response_rejected(self, event: ModelResponseRejectedEvent) -> AsyncIterator[EventT]:
+        """Handle a `ModelResponseRejectedEvent`, sent when a streamed response was rejected and another takes its place.
+
+        It comes after the rejected response's events, while that response's turn is still open; the turn ends
+        right after, so the next response starts one of its own. By default no protocol events are emitted.
+        Override this to tell the frontend the output it just showed isn't the answer.
+
+        Args:
+            event: The model response rejected event.
+        """
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[EventT]:
