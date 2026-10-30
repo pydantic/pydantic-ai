@@ -11,6 +11,7 @@ from uuid import uuid4
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 from typing_extensions import TypedDict
 
+from pydantic_ai._utils import is_google_files_api_url
 from pydantic_ai.messages import (
     CachePoint,
     FileUrl,
@@ -222,7 +223,7 @@ def _check_note(note: tuple[UserContent, ...]) -> None:
             if item.force_download is not False:
                 raise ValueError('file URLs must use `force_download=False`')
             # Google treats these URLs as authenticated Files API references, not public downloads.
-            if item.url.startswith('https://generativelanguage.googleapis.com/v1beta/files'):
+            if is_google_files_api_url(item.url):
                 raise ValueError('must not contain provider-uploaded file references')
         elif isinstance(item, UploadedFile):
             raise ValueError('must not contain provider-uploaded file references')

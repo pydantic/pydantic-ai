@@ -9,8 +9,8 @@ or Snowflake reasoning details. The system that verifies it is the producing pro
 from `provider_name`, and always when the provider's canonical system depends on its client (Google
 providers and `OpenAIProvider`).
 
-Stateful data (response, item, file, container and conversation ids) keeps matching `provider_name`
-exactly, and doesn't go through this module.
+Server-side state (response, item, container and conversation ids) is judged by endpoint instead, with
+[`Model.accepts_server_state`][pydantic_ai.models.Model.accepts_server_state], and doesn't go through this module.
 """
 
 from __future__ import annotations as _annotations

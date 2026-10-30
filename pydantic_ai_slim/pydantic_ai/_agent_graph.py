@@ -44,6 +44,7 @@ from pydantic_ai._instrumentation import (
 from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import (
+    ScopedTask,
     aclose_if_supported,
     cancel_and_drain,
     dataclasses_no_defaults_repr,
@@ -898,8 +899,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
 
-    display_banner: _display.BannerDisplay
-    """Shows the first-run banner, once this run has resolved the model and tools it will use."""
+    display_banner: _display.BannerDisplay | None
+    """Shows the first-run banner, once this run has resolved the model and tools it will use.
+
+    `None` when an installed package started the run, which never gets a banner.
+    """
 
     agent: Agent[DepsT, Any] | None = None
 
@@ -2141,14 +2145,26 @@ def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDe
     isn't getting one counts nothing: this is on a path every run takes, and past the first one it
     comes down to reading a flag.
 
+    A run an installed package started has no `display_banner` at all: see
+    `_display.started_by_installed_package`. That doesn't spend the claim, so a process whose only
+    agents are a library's walks a few stack frames at the start of each uninstrumented run, and a
+    `run_stream_events()` stream does so when it starts whether instrumented or not, as long as no
+    banner has been shown.
+
     An instrumented run has what the banner would point it to, so it stays out of the way — without
     spending the claim, since another agent in this process may not be instrumented. `clai` differs:
     its banner is also its session header, so it shows one either way.
     """
-    if ctx.state.run_step != 1 or ctx.deps.instrumentation_settings is not None or not _display.banner_pending():
+    display_banner = ctx.deps.display_banner
+    if (
+        ctx.state.run_step != 1
+        or display_banner is None
+        or ctx.deps.instrumentation_settings is not None
+        or not _display.banner_pending()
+    ):
         return
 
-    ctx.deps.display_banner(
+    display_banner(
         model=ctx.deps.model_id or ctx.deps.model.model_id,
         tools=sum(tool_def.kind != 'output' for tool_def in ctx.deps.tool_manager.tool_defs),
     )
@@ -2184,6 +2200,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The native tool factories this request step resolved for its model, and what each resolved to."""
     _serving_model: models.Model | None = field(default=None, init=False, repr=False)
     """The model the latest attempt was sent to, with the capabilities' model wrappers."""
+    _serving_model_id: str | None = field(default=None, init=False, repr=False)
+    """The identifier of the model the latest attempt was sent to, which the response it produces records as `model_id`."""
     _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
         repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
@@ -2288,7 +2306,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         ctx, run_context, req_ctx, baseline=baseline, stream_stack=stream_stack, handoff=handoff
                     )
                     self._did_stream = True
-                    agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
+                    agent_stream = self._build_agent_stream(
+                        ctx, sr, req_ctx.model_request_parameters, model_id=self._serving_model_id
+                    )
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
                     try:
@@ -2300,7 +2320,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             # the stream closes; it continues with the response `wrap_model_request` returns instead.
                             _stream_cut_short = await agent_stream._abandon_model_stream(_wrap_response)  # pyright: ignore[reportPrivateUsage]
                         # Report TTFT in a `finally` so it also lands when the consumer raises
-                        # mid-iteration and graph teardown cancels `wrap_task` at the `wait()` above,
+                        # mid-iteration and graph teardown cancels `wrap.task` at the `wait()` above,
                         # mirroring `InstrumentedModel.request_stream`. On
                         # that cancelled path `finish` is never reached today (no metrics of any
                         # kind are recorded), so this is symmetry rather than an observable fix.
@@ -2340,7 +2360,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
         else:
             wrap_awaitable = _streaming_handler(wrap_request_context)
-        wrap_task = asyncio.create_task(_outside_attempts(wrap_awaitable))
+        # The stream teardown waits for the request through `ScopedTask`, so a cancelled `anyio` scope around the
+        # consumer can't cut the model stream's shielded close short.
+        wrap = ScopedTask(_outside_attempts(wrap_awaitable))
 
         async def _wrap_response() -> _messages.ModelResponse | None:
             """The response `wrap_model_request` finishes with after abandoning the stream.
@@ -2349,8 +2371,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             stream, except `ModelRetry`, which ends the stream for the retry below.
             """
             try:
-                # Shielded so a cancelled consumer leaves `wrap_task` to the stream teardown below.
-                return await asyncio.shield(wrap_task)
+                # Shielded so a cancelled consumer leaves `wrap.task` to the stream teardown below.
+                return await asyncio.shield(wrap.task)
             except exceptions.SkipModelRequest as e:
                 return e.response
             except exceptions.ModelRetry:
@@ -2361,18 +2383,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # so the user's `wrap_model_request` cleanup runs instead of orphaning.
         ready_waiter = asyncio.create_task(stream_ready.wait())
         try:
-            await _serve_stream_offers(handoff, ready_waiter, wrap_task)
+            await _serve_stream_offers(handoff, ready_waiter, wrap.task)
         except BaseException as exc:
             # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
             # so both tasks are still ours; drain them so cleanup runs before we re-raise.
             #
-            # Unblock `_streaming_handler` before draining: if wrap_task's model
+            # Unblock `_streaming_handler` before draining: if `wrap.task`'s model
             # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
             # the handler is parked on `stream_done.wait()`. Setting stream_done lets
             # it exit so cancel_and_drain's gather can complete. Harmless no-op when
             # the task was actually cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
             stream_done.set()
-            await cancel_and_drain(ready_waiter, wrap_task)
+            await cancel_and_drain(ready_waiter, wrap.task)
             if (primed := handoff.priming) is not None:
                 # The consumer stopped the run while a stream was being opened, before anything reached it. Record
                 # the step as one it stopped partway through, rather than leave its request unanswered.
@@ -2384,7 +2406,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 self._commit_interrupted_response(ctx, partial, recorded, request_messages)
             raise
         else:
-            # Handoff succeeded: `wrap_task` is owned by the rest of the streaming
+            # Handoff succeeded: `wrap.task` is owned by the rest of the streaming
             # lifecycle below. Only the throwaway readiness waiter is ours to clean up.
             await cancel_and_drain(ready_waiter)
 
@@ -2393,11 +2415,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # to the graph task, where later tool, output, and run hooks execute.
         _apply_context_changes(before_model_request_context)
 
-        if wrap_task.done() and not stream_ready.is_set():
+        if wrap.task.done() and not stream_ready.is_set():
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
             try:
                 try:
-                    model_response = wrap_task.result()
+                    model_response = wrap.task.result()
                 except exceptions.SkipModelRequest as e:
                     model_response = e.response
             except exceptions.ModelRetry as e:
@@ -2469,7 +2491,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 if stream_error is not None:
                     # Graph teardown may already be under cancellation. Drain the wrapper task so its model
                     # stream cleanup finishes before the event iterator is closed below.
-                    await cancel_and_drain(wrap_task)
+                    await cancel_and_drain(wrap.task)
                     # Capture the partial response so `capture_run_messages` and `all_messages()`
                     # include what was streamed before the interruption.
                     # We append directly rather than via `_append_response` to skip the usage-limit
@@ -2488,7 +2510,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 else:
                     try:
                         try:
-                            model_response = await wrap_task
+                            model_response = await wrap.result()
                         except exceptions.SkipModelRequest as e:
                             # `wrap_model_request` skipped the request after the stream opened, e.g. a parallel
                             # `InputGuardrail` that blocked the prompt. The consumer then streamed the skip's
@@ -2497,6 +2519,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             if not _stream_cut_short:
                                 raise
                             model_response = e.response
+                        except asyncio.CancelledError:
+                            # `wrap_model_request` returned a response, but `wrap.result()` raised the consumer's
+                            # cancellation instead, an `anyio` one or a native one that never reached the hook: record
+                            # the response before the cancellation propagates. Skip the usage-limit check; raising
+                            # `UsageLimitExceeded` here would mask the cancellation.
+                            if not wrap.task.cancelled():
+                                model_response = wrap.task.result()
+                                if not _handler_usage_recorded:
+                                    self._record_response_usage(ctx, model_response)
+                                self._append_response(ctx, model_response, record_usage=False)
+                            raise
                     except exceptions.ModelRetry as e:
                         await _settle_pending(_pending, None)
                         self._enforce_usage_limits(ctx, accounted_responses)
@@ -2525,8 +2558,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # leaves the capability chain suspended. Close it now that the node is done with it.
                 await agent_stream_holder[0].aclose_events()
 
-    @staticmethod
     def _commit_interrupted_response(
+        self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         streamed: _messages.ModelResponse,
         recorded: _messages.ModelResponse,
@@ -2540,6 +2573,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """
         recorded.run_id = ctx.state.run_id
         recorded.conversation_id = ctx.state.conversation_id
+        recorded.model_id = recorded.model_id or self._serving_model_id
         recorded.workspace_ref = ctx.deps.workspace_ref
         _record_billed_usage(ctx.state.usage, _billed_by_request(recorded, request_messages))
         if recorded.parts:
@@ -2553,8 +2587,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
         stream_response: models.StreamedResponse,
         model_request_parameters: models.ModelRequestParameters,
+        *,
+        model_id: str | None = None,
     ) -> result.AgentStream[DepsT, T]:
-        """Build an AgentStream from the given stream response and context."""
+        """Build an AgentStream from the given stream response and context, which came from the model `model_id` identifies."""
         return result.AgentStream[DepsT, T](
             _raw_stream_response=stream_response,
             _output_schema=ctx.deps.output_schema,
@@ -2562,6 +2598,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _output_validators=ctx.deps.output_validators,
             _run_ctx=build_run_context(ctx),
             _carried_workspace_ref=ctx.deps.carried_workspace_ref,
+            _model_id=model_id,
             _usage_limits=ctx.deps.usage_limits,
             _tool_manager=ctx.deps.tool_manager,
             _root_capability=ctx.deps.root_capability,
@@ -3147,6 +3184,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         request_context.model = attempt_model._with_serving_wrapper(wrap)  # pyright: ignore[reportPrivateUsage]
         self._serving_model = request_context.model
+        self._serving_model_id = processed_context.model_id or attempt_model.model_id
         # The wrapper is entered around each call it serves for this attempt, like a model passed to the agent is
         # around a run. One applied on this side of a durable unit only answers questions like `continuation_delay`,
         # and the unit enters the one that sends the request.
@@ -3515,8 +3553,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except exceptions.UsageLimitExceeded as limit_exceeded:
             raise limit_exceeded from unrecovered
 
-    @staticmethod
     def _append_response(
+        self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         response: _messages.ModelResponse,
         *,
@@ -3532,6 +3570,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         commits no response, so it doesn't count, though any usage it reported does.
         """
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        response.model_id = response.model_id or self._serving_model_id
         response.workspace_ref = ctx.deps.workspace_ref
         _usage_attribution.record_request(ctx.state.usage)
         if record_usage:
