@@ -1531,7 +1531,8 @@ the calls found in their code.
 The **Changes** panel (Cmd/Ctrl+Shift+E, or the diff button at the top right, which shows how
 many files the session has changed) lists what the session changed, one diff per file. **Last
 turn** and **This session** come from the session's own `write_file` and `edit_file` calls, so
-they also work outside Git. **Uncommitted** is `git diff HEAD` in the session's directory, and
+they also work outside Git. **Uncommitted** is `git diff HEAD` in the session's directory, plus
+untracked files that are not ignored, as added, and
 **Branch vs base** compares the files with where the branch left `origin/HEAD`, `main`, or
 `master`. It uses the same column as plugins' side panels, so opening one closes the other.
 
