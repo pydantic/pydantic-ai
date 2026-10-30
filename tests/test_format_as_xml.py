@@ -772,3 +772,44 @@ def test_computed_field_self_reference_reports_value_error():
 
     with pytest.raises(ValueError, match='Circular reference detected'):
         format_as_xml(Node(label='x'))
+
+
+def test_cyclic_dataclass_reports_value_error():
+    """A cyclic dataclass surfaces the same `ValueError` as a cyclic BaseModel, not `RecursionError`.
+
+    `_to_xml` used to build a dataclass body with `asdict`, which recurses to full depth in a single
+    call and raises a bare `RecursionError` on a cycle. Shallow conversion lets the value walk detect
+    the cycle and raise the `ValueError('Circular reference detected')` that `model_dump` produces.
+    """
+
+    @dataclass
+    class Node:
+        name: str
+        next: Node | None = None
+
+    a = Node('a')
+    b = Node('b', next=a)
+    a.next = b
+
+    with pytest.raises(ValueError, match='Circular reference detected'):
+        format_as_xml(a)
+
+
+def test_shared_dataclass_reference_not_treated_as_cycle():
+    """A dataclass reachable through two separate paths is emitted twice, not mistaken for a cycle."""
+
+    @dataclass
+    class Child:
+        val: str
+
+    @dataclass
+    class Parent:
+        left: Child
+        right: Child
+
+    child = Child('shared')
+    parent = Parent(left=child, right=child)
+
+    assert format_as_xml(parent) == (
+        '<left>\n  <val>shared</val>\n</left>\n<right>\n  <val>shared</val>\n</right>'
+    )
