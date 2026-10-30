@@ -127,7 +127,7 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
    Each file tool allows five consecutive retries (for a denied path or a stale edit) rather than the agent's default one,
    so a repeated correctable mistake does not end a long run.
 3. [`Shell`](shell.md)`(denied_commands=[], allow_interactive=True, default_timeout=270, tools=['shell'])`.
-4. [`RepoContext`](repo-context.md)`(expose_inventory_tool=False, root_markers=('.git',), nested_traversal=True, nested_inject='contents')`
+4. [`RepoContext`](repo-context.md)`(walk_up='repo_root')`
    for repository instructions: the `CLAUDE.md`/`AGENTS.md` files from the repository root down to the working directory
    at run start, and those in subdirectories when the agent first reads or lists something under them.
    Pass your own `RepoContext` as `repo_context=` to use it in this one's place, or `repo_context=False` to leave
@@ -292,7 +292,7 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 `json-repair` moved from the base install to the `coder` and `repair-tool-arguments` extras. If you install plain `pydantic-ai-harness`, importing `Coder` or `coder_agent` raises an `ImportError`: install `pydantic-ai-harness[coder]`, or add `coder` to the extras you already use. If you use `RepairToolArguments` on its own, install `pydantic-ai-harness[repair-tool-arguments]`.
 
-`Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, and inlines a subdirectory's `CLAUDE.md`/`AGENTS.md` the first time the agent reads or lists something under it. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To keep the old behavior, pass `Coder(repo_context=RepoContext(expose_inventory_tool=False))`.
+`Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, one per directory with `AGENTS.md` ahead of `CLAUDE.md`, and inlines a subdirectory's instruction file the first time the agent reads or lists something under it. Its bundled `RepoContext` is now `RepoContext(walk_up='repo_root')`. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To keep the old behavior, pass `Coder(repo_context=RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False))`.
 
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 

@@ -293,18 +293,11 @@ class TestCoder:
         if config == 'bundled':
             coder = Coder()
         elif config == 'walk_up_only':
-            coder = Coder(repo_context=RepoContext(expose_inventory_tool=False))
+            coder = Coder(repo_context=RepoContext(nested_traversal=False))
         elif config == 'nested_pointer':
-            coder = Coder(repo_context=RepoContext(expose_inventory_tool=False, nested_traversal=True))
+            coder = Coder(repo_context=RepoContext(nested_inject='pointer'))
         else:
-            coder = Coder(
-                repo_context=RepoContext(
-                    autoload_instructions=False,
-                    expose_inventory_tool=False,
-                    nested_traversal=True,
-                    nested_inject='contents',
-                )
-            )
+            coder = Coder(repo_context=RepoContext(autoload_instructions=False))
         model = TestModel(call_tools=[])
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None

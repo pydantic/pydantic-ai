@@ -877,6 +877,40 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
         )
 
 
+async def test_repo_context_builtin_walks_up_and_loads_global_files_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / 'workspace'
+    (workspace / '.git').mkdir(parents=True)
+    (workspace / 'AGENTS.md').write_text('project\n')
+    (tmp_path / 'AGENTS.md').write_text('above the repo\n')
+    codex = Path.home() / '.codex' / 'AGENTS.md'
+    codex.parent.mkdir(parents=True)
+    codex.write_text('global\n')
+    monkeypatch.chdir(workspace)
+    repo_context = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'repo_context')
+    harness = Harness(tmp_path, builtin=(repo_context,))
+    await harness.loader.load_all()
+
+    async def instructions() -> str:
+        model = TestModel(call_tools=[])
+        await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run(
+            'hi', workspace=LocalWorkspaceBackend(working_dir=workspace)
+        )
+        assert model.last_model_request_parameters is not None
+        return '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+
+    text = await instructions()
+    assert text.index('global') < text.index('above the repo') < text.index('project')
+
+    off = '{"walk_up": false, "global_files": false}'
+    assert await harness.loader.command(['add', 'repo_context', repo_context.factory, off]) == (
+        'Replaced built-in repo_context.'
+    )
+    text = await instructions()
+    assert 'project' in text and 'global' not in text and 'above the repo' not in text
+
+
 @pytest.mark.parametrize('error', ['RuntimeError', 'CancelledError'])
 async def test_failed_start_reports_cleanup_error_without_masking_start_failure(tmp_path: Path, error: str) -> None:
     harness = Harness(tmp_path)

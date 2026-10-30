@@ -440,9 +440,57 @@
     },
     {
       "against": "v2.63.0",
-      "fingerprint": "ba357493cc5988982484475597d4666626d566ac71a2317e5e91af3c243c196e",
-      "reason": "`RepoContextSettings.nested_traversal` keeps its type and default; only its `Field` description changed, to describe nested traversal surfacing every directory between the traversed one and the workspace.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11687"
+      "fingerprint": "c30adaa7085b188e8058ea5a23442a948a8c8c2aaf3d1f5dd1021793812c9c04",
+      "reason": "Harness 0.x: `RepoContext` now loads one instruction file per directory, `AGENTS.md` first and `CLAUDE.md` as the fallback, as Codex does. Pass `filenames=('CLAUDE.md', 'AGENTS.md')` to prefer `CLAUDE.md`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "176c17c559b3993cf5a80f6f38ffc58d9f5544c9b2ade45691e89e7fc8921391",
+      "reason": "Harness 0.x: `RepoContext` now loads one instruction file per directory, `AGENTS.md` first and `CLAUDE.md` as the fallback, as Codex does. Pass `filenames=('CLAUDE.md', 'AGENTS.md')` to prefer `CLAUDE.md`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "56f30575caac2e94173edb3507cf135b4e641a2162d8a0c5b9b7b3457d63385f",
+      "reason": "Harness 0.x: `RepoContext` now surfaces nested instruction files by default, which a 9-model benchmark on #11683 found followed in 99% of runs against 39% without. Pass `nested_traversal=False` to keep the old behavior.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "a8bbce76cda2670ffacd1e49cf96759a7efeeae09c0c89ce209d51d772086e2b",
+      "reason": "Harness 0.x: `RepoContext` now surfaces nested instruction files by default, which a 9-model benchmark on #11683 found followed in 99% of runs against 39% without. Pass `nested_traversal=False` to keep the old behavior.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "9c6a0cac241ab55ea9ad4f596c832d43f4a329e69feaf40ba5840f710b4b3b26",
+      "reason": "Harness 0.x: nested instruction files are now inlined by default instead of named by a pointer, which the same benchmark found more reliable (99% against 95%). Pass `nested_inject='pointer'` to keep the old behavior.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "1bacc72318ea6adfabdfbda222d5879a6532dc4f0a892eeeccf14a907c52d72c",
+      "reason": "Harness 0.x: nested instruction files are now inlined by default instead of named by a pointer, which the same benchmark found more reliable (99% against 95%). Pass `nested_inject='pointer'` to keep the old behavior.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "5beff937c3b0f468fc082bca823ec83d98e730439fd56edb58eb6946e87e7cc1",
+      "reason": "clai2's `repo_context` now walks every ancestor of the workspace by default, as Claude Code does; its type is unchanged. Set `walk_up` to `false` to scan only the workspace.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "887876316b3d17d72ccf25041cb2ef0ec10108c3d7d0fe3385fdbc0d23d1c767",
+      "reason": "clai2's `repo_context` now surfaces nested instruction files by default, matching `RepoContext`; its type is unchanged and the description also names intermediate directories. Set `nested_traversal` to `false` to turn it off.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "2be546620c0fc33a325cf601e0f0a109c4d7818bc47197d67b4e252d759a8c31",
+      "reason": "clai2's `repo_context` now inlines nested instruction files by default, matching `RepoContext`; its type is unchanged. Set `nested_inject` to `\"pointer\"` to keep the old behavior.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
     }
   ],
   "model_name_literals": [

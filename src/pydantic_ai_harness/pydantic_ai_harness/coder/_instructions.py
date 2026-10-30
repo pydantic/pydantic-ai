@@ -30,7 +30,7 @@ _NESTED_REPO_FILES = """\
 A subdirectory's instruction files are added to your context the first time you
 read or list something in it.
 """
-"""Only with `RepoContext(nested_traversal=True, nested_inject='contents')`, as `Coder` bundles it; a pointer note
+"""Only with `RepoContext`'s default `nested_traversal=True, nested_inject='contents'`; a pointer note
 already tells the model to read the file."""
 
 _READING = """\

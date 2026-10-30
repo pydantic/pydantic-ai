@@ -93,32 +93,38 @@ async def discover_instruction_files(
     workspace_dir: Path,
     home_dir: Path | None,
     filenames: Sequence[str],
+    *,
+    global_files: Sequence[Path] = (),
 ) -> list[ContextFile]:
-    """Collect instruction files from `home_dir` down to `workspace_dir`.
+    """Collect `global_files`, then one instruction file per directory from `home_dir` down to `workspace_dir`.
 
-    Precedence is ancestor-first, workspace-last: the broadest context comes
-    first and the most specific (closest to the model's recency window) comes
-    last. Within a directory, `filenames` are tried in order.
+    Precedence is global-first, then ancestor-first, workspace-last: the broadest context comes first and the
+    most specific (closest to the model's recency window) comes last. Each directory contributes the first of
+    `filenames` that exists there, as `dir_context_file_path` picks it.
 
-    Files are deduped by the path a symlink resolves to and by content hash, so
-    two names for the same content within one directory load once, under the
-    name of the file a symlink points to.
+    Files are deduped by content hash, so an ancestor or global file with the same content as an earlier one
+    loads once. A global file is the user's own and may be a symlink anywhere; a missing one is skipped.
     """
-    seen_paths: set[Path] = set()
     seen_hashes: set[str] = set()
     found: list[ContextFile] = []
-    for directory in directories_up_to(workspace_dir, home_dir):
-        for filename in filenames:
-            candidate = await _real_file(workspace, directory / filename)
-            if candidate is None or candidate in seen_paths:
-                continue
-            content = (await workspace.read_bytes(str(candidate))).decode('utf-8', errors='replace')
-            digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
-            if digest in seen_hashes:
-                continue
-            seen_paths.add(candidate)
+
+    def add(directory: Path, path: Path, content: str) -> None:
+        digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
+        if digest not in seen_hashes:
             seen_hashes.add(digest)
-            found.append(ContextFile(directory=directory, path=candidate, content=content))
+            found.append(ContextFile(directory=directory, path=path, content=content))
+
+    for path in global_files:
+        try:
+            entry = await workspace.stat(str(path))
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        if not entry.is_dir:
+            add(path.parent, path, (await workspace.read_bytes(str(path))).decode('utf-8', errors='replace'))
+    for directory in directories_up_to(workspace_dir, home_dir):
+        candidate = await dir_context_file_path(workspace, directory, filenames)
+        if candidate is not None:
+            add(directory, candidate, (await workspace.read_bytes(str(candidate))).decode('utf-8', errors='replace'))
     return found
 
 
