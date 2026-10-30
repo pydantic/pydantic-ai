@@ -441,7 +441,7 @@ A capability's model slots in below a call-site `run(model=...)` argument and a 
 
 `run()`/`iter()` argument › run `spec=` model › capability `get_model()` › agent constructor.
 
-An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins over all of these. An explicit model skips capability selection entirely.
+An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins over all of these. An explicit model skips `get_model()` contributions.
 
 Later model contributions override earlier ones. If [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] leaves the capability unchanged, its bootstrap selection is reused on step one; if it returns a replacement with a different selector, that selector makes a new step-one selection.
 

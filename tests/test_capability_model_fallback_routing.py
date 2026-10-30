@@ -127,7 +127,10 @@ async def test_output_switch_selects_before_step_hooks(
 
 
 @pytest.mark.parametrize('pin', ['known', 'outside', 'missing'])
-async def test_output_policy_preserves_suspended_selection(pin: Literal['known', 'outside', 'missing']) -> None:
+@pytest.mark.parametrize('mapped', [False, True])
+async def test_output_policy_preserves_suspended_selection(
+    pin: Literal['known', 'outside', 'missing'], mapped: bool
+) -> None:
     phases: list[tuple[str, int, str]] = []
     attempts: list[tuple[int, str, int]] = []
 
@@ -137,7 +140,8 @@ async def test_output_policy_preserves_suspended_selection(pin: Literal['known',
     primary = FunctionModel(draft, model_name='primary')
     pinned = FunctionModel(draft, model_name='pinned')
     backup = TestModel(custom_output_text='ready')
-    fallback = ModelFallback[object](pinned, backup, output_retry_threshold=1)
+    threshold: int | dict[str, int] = {primary.model_id: 1, pinned.model_id: 1} if mapped else 1
+    fallback = ModelFallback[object](pinned, backup, output_retry_threshold=threshold)
     agent = Agent(
         primary,
         deps_type=object,
