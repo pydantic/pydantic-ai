@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import type { MenuField } from '../protocol'
 import { McpSection } from './McpSection'
 import { MenuForm } from './MenuForm'
@@ -116,8 +116,10 @@ export function SettingsWindow({
   pluginsVersion,
   settingsVersion,
   pluginFocus,
+  updated,
   onError,
   onNotice,
+  overlay,
 }: {
   section: SettingsSection
   onSection: (section: SettingsSection) => void
@@ -127,8 +129,12 @@ export function SettingsWindow({
   settingsVersion: number
   /** The plugin the Plugins section opens on, such as the one a side panel asks to set up. */
   pluginFocus: string | null
+  /** The versions the last `/update` went from and to, which About says once the new build is back. */
+  updated: { from: string; to: string } | null
   onError: (message: string) => void
   onNotice: (message: string) => void
+  /** An `.opening-overlay` over the shown section, such as `/update` installing: About's Update… leaves it open. */
+  overlay: ReactNode
 }) {
   const window_ = useRef<HTMLDivElement>(null)
   useEscape(onClose)
@@ -217,6 +223,11 @@ export function SettingsWindow({
               />
             </div>
           )}
+          {section === 'about' && updated && (
+            <p className="settings-updated">
+              Updated CLAI from {updated.from} to {updated.to}.
+            </p>
+          )}
           {section === 'about' && (
             <div className="settings-card">
               <MenuForm
@@ -229,6 +240,7 @@ export function SettingsWindow({
           )}
         </div>
       </main>
+      {overlay}
     </div>
   )
 }

@@ -54,7 +54,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump,
     history_items,
 )
-from pydantic_clai2.builtin_plugins.web.sidebar import session_entry, worktrees
+from pydantic_clai2.builtin_plugins.web.sidebar import project_names, session_entry, worktrees
 from pydantic_clai2.builtin_plugins.web.workers import task_entry
 from pydantic_clai2.builtin_plugins.web.workspaces import checkouts
 from pydantic_clai2.cli.self_update import installed
@@ -720,10 +720,11 @@ class WebService:
         for folder in empty:
             if not (identity := places[folder]).missing:
                 grouped.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
+        names = project_names({key: next(iter(found.values()))[0] for key, found in grouped.items()})
         projects = [
             Project(
                 key=key,
-                name=next(iter(found.values()))[0].name,
+                name=names[key],
                 current=key == here.key,
                 worktrees=worktrees(found, here=here),
             )

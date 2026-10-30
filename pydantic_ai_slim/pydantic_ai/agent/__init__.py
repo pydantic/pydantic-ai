@@ -182,7 +182,6 @@ if TYPE_CHECKING:
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
-        RealtimeEvent as RealtimeEvent,
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeProviderSession,
@@ -213,7 +212,6 @@ __all__ = (
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
     'ToolDenied',
-    'RealtimeEvent',
 )
 
 _ACTIVE_AGENT_LIMITERS: ContextVar[tuple[tuple[int, _concurrency.ConcurrencyLimiter], ...]] = ContextVar(
@@ -262,7 +260,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
     #
     # 1. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
     # 2. wrap_run wraps _do_run via the capability middleware chain.
-    # 3. We await either _run_ready (handler started) or _wrap_task completion
+    # 3. We await either _run_ready (handler started) or _wrap.task completion
     #    (short-circuit: wrap_run returned without calling handler).
     # 4. We yield to the caller to execute the run body.
     # 5. When the caller finishes (or an error occurs), we set _run_done.
@@ -344,11 +342,14 @@ async def _run_lifecycle_hooks(  # noqa: C901
     run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
 
     outer_context = contextvars.copy_context()
-    _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
+    # Teardown after the run body returns, raises, or exits early waits for `wrap_run` through `ScopedTask`, so a
+    # cancellation of the caller reaches it in the form it arrived: shielded cleanup in `wrap_run` finishes under a
+    # cancelled `anyio` scope, and `on_run_error` is still reached. `_SHUTDOWN_EXCEPTIONS` cancel and drain it instead.
+    _wrap = _utils.ScopedTask(run_capability.wrap_run(run_ctx, handler=_do_run))
     # Wait for handler to start or wrap_run to complete (short-circuit).
     _ready_waiter = asyncio.create_task(_run_ready.wait())
     try:
-        await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+        await asyncio.wait({_ready_waiter, _wrap.task}, return_when=asyncio.FIRST_COMPLETED)
     except BaseException as exc:
         # Unblock `_do_run` before draining, mirroring the streaming handoff: if
         # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
@@ -356,11 +357,11 @@ async def _run_lifecycle_hooks(  # noqa: C901
         # `_run_done.wait()`. Set `_run_error` so the survivor re-raises this error
         # instead of asserting on a not-yet-produced result, then set `_run_done` so
         # it can exit and `cancel_and_drain`'s gather can complete (it discards the
-        # survivor's exception). Harmless no-op when `_wrap_task` really died
+        # survivor's exception). Harmless no-op when `_wrap.task` really died
         # cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
         _run_error = exc
         _run_done.set()
-        await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
+        await _utils.cancel_and_drain(_ready_waiter, _wrap.task)
         raise
     else:
         await _utils.cancel_and_drain(_ready_waiter)
@@ -389,9 +390,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
         await finalize(result)
         _run_error = None
 
-    short_circuited = _wrap_task.done() and not _run_ready.is_set()
+    short_circuited = _wrap.task.done() and not _run_ready.is_set()
     if short_circuited:
-        await _finalize_result(_wrap_task.result())
+        await _finalize_result(_wrap.task.result())
 
     try:
         try:
@@ -410,33 +411,39 @@ async def _run_lifecycle_hooks(  # noqa: C901
                 _run_done.set()
                 if isinstance(_run_error, _SHUTDOWN_EXCEPTIONS):
                     # Cancel `wrap_run` like a `break` instead of letting `_do_run` re-raise the exception in
-                    # `_wrap_task`: asyncio resumes a coroutine awaiting a task that failed with `GeneratorExit`
+                    # `_wrap.task`: asyncio resumes a coroutine awaiting a task that failed with `GeneratorExit`
                     # through `throw()`, which closes its whole await chain (`coroutine ignored GeneratorExit`),
                     # and a task that fails with `KeyboardInterrupt` re-raises it out of the event loop.
-                    await _utils.cancel_and_drain(_wrap_task)
+                    await _utils.cancel_and_drain(_wrap.task)
                 elif _run_error is None and (result_ready is None or result_ready()):
-                    await _finalize_result(await _wrap_task)
+                    await _finalize_result(await _wrap.result())
                 elif _run_error is not None:
                     # Error path: await wrap_run to see if it recovers. `_do_run()` re-raises
                     # `_run_error`; if wrap_run catches it and returns a result, recovery succeeds.
                     try:
-                        await _finalize_result(await _wrap_task)
+                        await _finalize_result(await _wrap.result())
                     except BaseException as wrap_exc:
                         if _handler_errors and wrap_exc is _handler_errors[-1]:
                             _run_error = wrap_exc
-                        # Attach wrap_run's own errors as context so they're visible in tracebacks
-                        # (but don't mask the original). Skip CancelledError: it's expected cancellation propagation.
+                        # Set any other error wrap_run raised as the run error's context, and raise the run error.
+                        # Skip CancelledError: it's expected cancellation propagation.
                         elif not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
-                            # Only fires for bugs in `wrap_run` implementations.
+                            # Reached when `wrap_run` raises its own error, e.g. one that translates the handler's.
                             _run_error.__context__ = wrap_exc  # pragma: lax no cover
-                # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is
-                # always still pending here.
-                elif not _wrap_task.done():  # pragma: no branch
-                    _wrap_task.cancel()
+                else:
+                    _wrap.task.cancel()
+                    # `wait()` discards how `wrap_run` ended: with no result to return, a failure in its cleanup has
+                    # nowhere else to go.
                     try:
-                        await _wrap_task
-                    except (asyncio.CancelledError, BaseException):
-                        pass
+                        await _wrap.wait()
+                    except asyncio.CancelledError:
+                        # There's no result to wait for, so leave an `anyio` cancellation to raise again at the
+                        # caller's next checkpoint, and re-raise a native one, which is delivered only once. A native
+                        # cancellation that lands while the caller is also in a cancelled `anyio` scope isn't re-raised
+                        # here either: the scope's cancellation raises again at the next checkpoint, and the scope
+                        # doesn't catch it, since the native cancel is still pending.
+                        if not _utils.in_cancelled_anyio_scope():
+                            raise
 
         # If neither on_run_error nor wrap_run recovered, re-raise. In an
         # @asynccontextmanager, not re-raising suppresses the exception.
@@ -1548,6 +1555,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
                         ),
                         model_name='gpt-5.2',
+                        model_id='openai:gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
                         conversation_id='...',
@@ -2213,7 +2221,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
 
-        def display_banner(*, model: str, tools: int) -> None:
+        def display_agent_banner(*, model: str, tools: int) -> None:
             # Called by the graph once the run's first step has resolved the model it will actually
             # use and the tools it will actually offer, and only when there is a banner to show;
             # everything else is settled here and now.
@@ -2225,6 +2233,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 tools=tools,
                 capabilities=_registered_capability_count(bootstrap_capability),
             )
+
+        # A run a library or platform started on its users' behalf gets no banner, and leaves the claim
+        # for the user's own agents. Decided here, while the frames of whoever called `run()` are still
+        # on the stack, and only when the run could show one: an instrumented run never does, and a
+        # process that has shown one has nothing left to decide. (`run_stream_events()` runs the agent in
+        # a task of its own, so it decides in its caller's stack before instrumentation is known; see
+        # `AgentRunEvents._ensure_started`.)
+        started_by_installed_package = (
+            instrumentation_settings is None
+            and _display.banner_pending()
+            and (
+                binding.started_by_installed_package
+                if binding is not None
+                else _display.started_by_installed_package(inspect.currentframe())
+            )
+        )
+        display_banner = None if started_by_installed_package else display_agent_banner
 
         model_resources = _RunModelResources(
             self._entered_model_ids.copy(),

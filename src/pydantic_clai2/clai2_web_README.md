@@ -17,7 +17,8 @@ ends every session. There, each session you open is live in its own directory, w
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
 there; CLAI's own working directory never changes. **New session** asks where the session runs: a
 project or worktree from the sidebar or any other worktree Git lists for its repository, by default
-the current one, a new worktree of the highlighted one's repository (**New worktree of …**: a branch name,
+the current one, a new worktree of a listed checkout's repository (**New worktree…** on its row, or
+**New worktree of …** for the row the arrow keys select: a branch name,
 generated if empty, and a base, `HEAD` if empty; it goes in `.worktrees/` as `--worktree` puts it),
 or any directory by its absolute path, which it completes as you type, listing each repository's
 worktrees. The header shows where the session works.
@@ -28,36 +29,36 @@ watching it (a page watches the last five sessions it showed), closes, except th
 with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
 
 The sidebar lists the sessions `/resume` shows. **Projects** groups them by project (the Git
-repository, named after its main checkout's folder), each row showing its branch when the project
-has sessions on more than one; **Recent** lists every project's sessions in one list. A folder
-outside Git is a project of its own. Projects are listed by name and sessions newest created first,
-so a row never moves when you select it, a turn ends, a session is renamed, or the list refreshes; a
-new session appears at the top. A session remembers its checkout when it is saved, so one from a
-worktree you have since removed stays with its project; sessions whose folder is gone fold into
-**Removed worktrees** at the bottom, closed until you open it. When two rows of one project or list
-share a title, each shows a short ID. Click one to switch to it, even while other sessions run
-turns: the row is selected at once, and each session you open stays live and keeps working while you
-look at another.
-
-Each row has one status mark. A spinner, with how long the turn has run, means a turn runs here
-(ringed when input waits behind it); a hollow ring means another CLAI runs it, named with its
-process ID in the tooltip; **Needs input** means it waits for your answer; a bold title with a dot
-means it changed since you last looked (open it, or use **Mark as read**); a red or amber dot means
-its last turn failed or was interrupted. **Attention** (Cmd/Ctrl+Alt+U) lists only the sessions
-running, waiting for you, or unread. Use a session's menu to rename, fork, archive, or delete it, or
-to archive every session of its branch, and a project's menu to archive all its chats; these skip
-the open and running sessions, and are off during a search, which lists only some of them. Archiving
-hides a session from the sidebar and `/resume` without deleting anything; **Archived** lists
-archived sessions, each with **Unarchive** in its menu. The shown session and running ones cannot be
-archived, and resuming an archived one, or a new turn in it, unarchives it. A session open in CLAI
-cannot be deleted. A session whose directory is gone, such as a removed worktree, opens read-only;
-so does, with `/web` from a terminal, a session saved in another directory, since the terminal works
-where it started. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's
-turn and no other, Cmd/Ctrl+K searches sessions (Down moves to the results, Enter opens the first),
-Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar. In the session list, Up and Down
-move between rows, Enter opens one, and Left and Right fold and open a project. As in the terminal,
-Up on the composer's first line recalls the session's sent prompts, newest first, and Down on its
-last line steps back toward your unsent draft.
+repository, named after its main checkout's folder, with as much of its path as tells apart projects
+of one name, as `a/scratch` and `b/scratch`), each row showing its branch when the project has
+sessions on more than one; **Recent** lists every project's sessions in one list. A folder outside
+Git is a project of its own. Projects are listed by name and sessions newest created first, so a row
+never moves when you select it, a turn ends, a session is renamed, or the list refreshes; a new
+session appears at the top. A session remembers its checkout when it is saved, so one from a
+worktree you have since removed stays with its project; sessions whose folder is gone, including an
+older session from a removed folder, fold into **Removed worktrees** at the bottom, closed until you
+open it. When two rows of one project or list share a title, each shows a short ID. Click one to
+switch to it, even while other sessions run turns: the row is selected at once, and each session you
+open stays live and keeps working while you look at another. Each row has one status mark. A
+spinner, with how long the turn has run, means a turn runs here (ringed when input waits behind it);
+a hollow ring means another CLAI runs it, named with its process ID in the tooltip; **Needs input**
+means it waits for your answer; a bold title with a dot means it changed since you last looked (open
+it, or use **Mark as read**); a red or amber dot means its last turn failed or was interrupted.
+**Attention** (Cmd/Ctrl+Alt+U) lists only the sessions running, waiting for you, or unread. Use a
+session's menu to rename, fork, archive, or delete it, or to archive every session of its branch,
+and a project's menu to archive all its chats; these skip the open and running sessions, and are off
+during a search, which lists only some of them. Archiving hides a session from the sidebar and
+`/resume` without deleting anything; **Archived** lists archived sessions, each with **Unarchive**
+in its menu. The shown session and running ones cannot be archived, and resuming an archived one, or
+a new turn in it, unarchives it. A session open in CLAI cannot be deleted. A session whose directory
+is gone, such as a removed worktree, opens read-only; so does, with `/web` from a terminal, a
+session saved in another directory, since the terminal works where it started. Keyboard: Enter
+sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no other, Cmd/Ctrl+K
+searches sessions (Down moves to the results, Enter opens the first), Cmd/Ctrl+Shift+O starts a new
+one, Cmd/Ctrl+B hides the sidebar. In the session list, Up and Down move between rows, Enter opens
+one, and Left and Right fold and open a project. As in the terminal, Up on the composer's first line
+recalls the session's sent prompts, newest first, and Down on its last line steps back toward your
+unsent draft.
 
 While a turn runs, the composer works as the terminal's prompt does. Enter queues your message for
 after the turn. Alt+Enter (Option+Enter on a Mac), or the bolt button beside Send, steers the running
@@ -91,12 +92,13 @@ outside Git too, and show each file once, as one diff from before the first chan
 disk now. A file the session wrote whole counts as created, unless the last commit has it with
 content the session did not write, which it is then compared with. These scopes read the
 conversation, so after `/compact` they start from the compacted summary. **Uncommitted** is
-`git diff HEAD` in the session's directory (untracked files are left out, as there), and **Branch
+`git diff HEAD` in the session's directory, with untracked files that are not ignored listed as
+added, as `git status` and the git chip count them, and **Branch
 vs base** compares the files, uncommitted changes included, with where the branch left its base:
 `origin/HEAD`, else `main` or `master`. Each file shows its status (A, M, or D) and added and
 removed lines; click it to jump to its diff. Files with many changed lines start collapsed. The
-panel asks again when a turn ends, and **Refresh** asks at once. It takes the plugin side panels'
-place, so opening one closes the other.
+panel asks again when a turn ends, and **Refresh** asks at once. It shares one column with Monty
+and the plugin side panels, so opening one closes the others.
 
 <!-- From #10442 -->
 The **Settings** window (the gear in the sidebar's footer, or Cmd/Ctrl+,) has a section per area
@@ -153,7 +155,8 @@ description you can edit, pushes the branch, opens it with the GitHub CLI (`gh`)
 it is disabled, saying why, without a GitHub `origin` or a signed-in `gh`, or on the default branch.
 Everything runs in the session's own directory, never in one that no longer exists. The terminal
 has the same actions: `/commit [MESSAGE]` commits every change (the model drafts the message when
-you give none), `/push [confirm]`, and `/pr [TITLE]`.
+you give none), `/push [confirm]`, and `/pr`, which shows the drafted pull request until `/pr confirm` (or
+`/pr TITLE`) opens it.
 
 <!-- From #10461 -->
 **System prompt** in the Settings window (`#settings/system-prompt`, or `/system_prompt` in the
@@ -300,10 +303,11 @@ starts CLAI and keeps the token itself: CLAI then listens on 127.0.0.1 only, the
 leaves the token out, and no browser opens.
 
 `/update` works from the page too (typed in the composer, it opens Settings › About, whose
-**Update…** asks first): the page shows uv's progress, then
+**Update…** asks first): the page shows uv's progress, over Settings while it is open, then
 "Restarting CLAI…" while the new build starts on the same address, reconnects by itself to the
-same session, and says which version it updated to. A failed install, or nothing to install,
-says so and nothing restarts. A terminal session with `/web` running comes back with it running.
+same session, and says which version it updated to; About says which versions it updated from
+and to. A failed install, or nothing to install, says so and nothing restarts. A terminal session
+with `/web` running comes back with it running.
 
 ## Workspaces
 
