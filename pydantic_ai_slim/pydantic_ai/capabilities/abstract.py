@@ -683,9 +683,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         A selector receives
         [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] and may be
         synchronous or asynchronous. Static selections are resolved once per run; selectors
-        are evaluated before each new logical model request step while they control selection.
-        An active [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] output policy supersedes
-        the selector for later steps. When several capabilities
+        are evaluated before each new logical model request step. When several capabilities
         contribute a model, the last non-`None` selection wins. This differs from
         [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id],
         where the first resolver to return a model wins.
@@ -702,14 +700,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         stand-in for a missing agent model, not a selection that should outrank `SelectModel`.
         """
         return False
-
-    def _get_step_model(self, ctx: ModelSelectionContext[AgentDepsT]) -> ModelSelection | None:
-        """Apply run-local model retirement without replacing the run's initial model contribution."""
-        return None
-
-    @property
-    def _has_step_model(self) -> bool:
-        return type(self)._get_step_model is not AbstractCapability._get_step_model
 
     @property
     def has_resolve_model_id(self) -> bool:

@@ -53,7 +53,7 @@ class RecordFallbacks(AbstractCapability[object]):
 
 class TestOutputFallbackEvent:
     @pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed')
-    async def test_output_policy_starts_from_selected_model(self) -> None:
+    async def test_output_policy_yields_to_selected_model(self) -> None:
         exporter = InMemorySpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -72,14 +72,14 @@ class TestOutputFallbackEvent:
                 raise ModelRetry('Finish the draft.')
             return value
 
-        assert (await agent.run('Answer.')).output == 'ready'
+        assert (await agent.run('Answer.')).output == 'draft'
         assert (
             sum(
                 event.name == 'model_fallback.output_fallback'
                 for span in exporter.get_finished_spans()
                 for event in span.events
             )
-            == 1
+            == 0
         )
 
     @pytest.mark.parametrize('include_content', [False, True])

@@ -2161,7 +2161,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
 
         run_model_contribution = None if model_is_explicit else run_capability.get_model()
-        self._check_dynamic_model_resume(run_model_contribution, message_history)
+        self._check_dynamic_model_resume(
+            run_model_contribution,
+            message_history,
+            # A run-bound fallback default can reconstruct its continuation from the static
+            # bootstrap model and its configured candidates. Other selectors remain ambiguous.
+            run_default=run_capability if not callable(model_contribution) or _is_model(model_contribution) else None,
+        )
         model_selector: ModelSelector[AgentDepsT] | None
         model_selected_for_step: int | None
         capability_owns_current_model: bool
@@ -3609,6 +3615,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _check_dynamic_model_resume(
         contribution: AgentModel[AgentDepsT] | None,
         message_history: Sequence[_messages.ModelMessage] | None,
+        *,
+        run_default: AbstractCapability[AgentDepsT] | None = None,
     ) -> None:
         """Reject cross-run continuation when a selector cannot reconstruct the pinned model."""
         if (
@@ -3618,6 +3626,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             and isinstance(message_history[-1], _messages.ModelResponse)
             and message_history[-1].state == 'suspended'
         ):
+            if run_default is not None and run_default._model_is_default():  # pyright: ignore[reportPrivateUsage]
+                return
             raise exceptions.UserError(
                 'Cannot resume a suspended response with a dynamic capability model: the model '
                 'that created the provider-side job cannot be reconstructed unambiguously. Pass '

@@ -435,17 +435,17 @@ agent = Agent(deps_type=Deps, capabilities=[AdaptiveModel()])
 
 [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] is a synchronous configuration method, but the [`ModelSelector`][pydantic_ai.capabilities.ModelSelector] it returns may be synchronous or asynchronous. [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, the run's prompt, the messages the selected model will be sent (ending with the request being routed), usage, the run's output retry count and budget, and its usage limits, deadline, `run_id` and `conversation_id`. Keep `get_model()` itself cheap; perform I/O in an async selector.
 
-A model or model ID returned directly from `get_model()` is resolved once per run. A selector returned from `get_model()` is evaluated before every logical model request step while it controls selection. If [`ModelFallback`'s output policy](model-fallback.md#output-validation-retries) takes over, its persistent candidate replaces the selector for later steps in that run.
+A model or model ID returned directly from `get_model()` is resolved once per run. A selector returned from `get_model()` is evaluated before every logical model request step.
 
 A capability's model slots in below a call-site `run(model=...)` argument and a run-level `spec=` model, and above the agent constructor's model. From highest to lowest priority:
 
 `run()`/`iter()` argument › run `spec=` model › capability `get_model()` › agent constructor.
 
-An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins over all of these. An explicit model skips `get_model()` contributions.
+An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins over all of these. An explicit model skips capability selection entirely.
 
 Later model contributions override earlier ones. If [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] leaves the capability unchanged, its bootstrap selection is reused on step one; if it returns a replacement with a different selector, that selector makes a new step-one selection.
 
-Fallback is complementary to selection: add [`ModelFallback`](model-fallback.md) to the agent when request failures should be retried on another model, and it falls back from whichever model was selected. Its opt-in [`output_retry_threshold`](model-fallback.md#output-validation-retries) policy can also move later request steps to another model after output validation failures.
+Fallback is complementary to selection: add [`ModelFallback`](model-fallback.md) to the agent when request failures should be retried on another model, and it falls back from whichever model was selected. Its opt-in [`output_retry_threshold`](model-fallback.md#output-validation-retries) policy can also move later request steps to another model after output validation failures. Output-driven selection offers a default: an explicit run model or another capability's selection, such as `SelectModel`, keeps control for the whole run.
 
 ## Resolving model IDs
 
@@ -561,7 +561,7 @@ Bootstrap resolution uses the capability tree after `for_agent()` binding but be
 
 Model selection and resolution are eager hooks, so deferred capabilities do not contribute them, even after they are loaded. Run-spec capabilities are known during bootstrap and can supply the first model. A [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc], or another capability whose model is only introduced by `for_run()`, requires an existing bootstrap model because `for_run()` receives a full `RunContext`; it may replace that model starting with step one, but cannot bootstrap a model-less agent. If selecting a new model after loading a deferred capability would be useful for your application, please open an issue describing the desired step and continuation semantics.
 
-Dynamic selection is not currently supported by durable execution capabilities. Durable runs need model IDs registered before execution and must recreate the same selected model during replay or cross-run resumption. Pass an explicit registered model for durable execution. Resuming a suspended provider request in a separate ordinary run likewise requires an explicit model when the previous model came from a selector.
+Custom dynamic selection is not currently supported by durable execution capabilities. Durable runs need model IDs registered before execution and must recreate the same selected model during replay or cross-run resumption. Pass an explicit registered model for durable execution. Resuming a suspended provider request in a separate ordinary run likewise requires an explicit model when the previous model came from a custom selector. The built-in [`ModelFallback` output policy](model-fallback.md#output-validation-retries) supports recovery and suspended continuation using its configured candidates and static initial model.
 
 ## Configuration methods reference
 

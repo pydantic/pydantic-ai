@@ -101,7 +101,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     validation failures consume allowed retries. That model receives the validation feedback and
     remains the starting candidate for this run. Selection happens before step settings, tool
     preparation, and request hooks, without using a request attempt to redirect the step. The agent's
-    output/per-tool retry limits and usage limits still apply.
+    output/per-tool retry limits and usage limits still apply. An explicit run model, an active
+    model override, or another capability's model selection keeps control for the whole run,
+    disabling output-driven switching while leaving request-level fallback available.
 
     Each attempt re-runs
     [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
@@ -129,6 +131,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     """
 
     _output_model: Model | str | None = field(repr=False)
+    _output_initial_model: Model | str | None = field(repr=False)
+    _output_selected_step: int | None = field(repr=False)
     _output_cursor: int = field(repr=False)
     # Retain producers so a later model cannot reuse an earlier producer's object ID.
     _output_failures: dict[int, tuple[Model, int]] = field(repr=False)
@@ -182,7 +186,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 instance, to configure each model independently; unlisted models do not trigger
                 output-driven switching. Stay at the chosen candidate, or
                 later ones, for the rest of this run. `None` keeps request-only fallback. The agent's
-                output and per-tool retry limits still apply; configure them explicitly.
+                output and per-tool retry limits still apply; configure them explicitly. Explicit
+                run models, model overrides, and other capability model selections take precedence
+                for the whole run and disable output-driven switching.
         """
         super().__init__()
         if not models:
@@ -207,6 +213,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             raise UserError('`ModelFallback` `output_retry_threshold` must be a positive integer or `None`.')
         self.models = list(models)
         self._output_model = None
+        self._output_initial_model = None
+        self._output_selected_step = None
         self._output_cursor = 0
         self._output_failures = {}
         self._output_response = None
@@ -240,6 +248,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         return replace_no_init(self, _supplies_model=agent.model is None)
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
+        if self._output_initial_model is not None and self.output_retry_threshold:
+            return self._select_output_model
         if not self._supplies_model:
             return None
         # Returned unresolved so `resolve_model_id` capabilities get their say, exactly as they
@@ -251,26 +261,26 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         # `SelectModel`'s, outranks it rather than being overridden by it.
         return True
 
-    def _get_step_model(self, ctx: ModelSelectionContext[AgentDepsT]) -> ModelSelection | None:
-        if self.output_retry_threshold is None:
-            return None
+    def _select_output_model(self, ctx: ModelSelectionContext[AgentDepsT]) -> ModelSelection:
+        self._output_selected_step = ctx.run_step
+        assert self._output_initial_model is not None
         if ctx.messages and isinstance(last := ctx.messages[-1], ModelResponse) and last.state == 'suspended':
             if isinstance(self.output_retry_threshold, Mapping) and last.model_id not in self.output_retry_threshold:
-                return None
+                return self._output_initial_model
             # A provider-side continuation takes precedence over output retirement, including when
             # its model cannot be recovered from this chain and the step's current model must continue it.
-            return next((model for model in self.models if _pin_id(model) == last.model_id), None)
-        return self._output_model
-
-    @property
-    def _has_step_model(self) -> bool:
-        return bool(self.output_retry_threshold)
+            return next((model for model in self.models if _pin_id(model) == last.model_id), self._output_initial_model)
+        return self._output_model or self._output_initial_model
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> ModelFallback[AgentDepsT]:
         """Return a fresh copy so each run tracks its own chain position."""
         return replace_no_init(
             self,
             _output_model=None,
+            _output_initial_model=ctx.model_id
+            or (ctx.agent.model if ctx.agent is not None else None)
+            or self.models[0],
+            _output_selected_step=None,
             _output_cursor=0,
             _output_failures={},
             _output_response=None,
@@ -411,7 +421,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
 
     async def on_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
         response = self._output_response
-        if response is None or response.threshold is None:
+        if self._output_selected_step != ctx.run_step or response is None or response.threshold is None:
             return
         producer_id = id(response.producer)
         previous = self._output_failures.get(producer_id)

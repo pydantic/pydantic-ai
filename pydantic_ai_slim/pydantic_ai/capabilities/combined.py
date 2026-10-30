@@ -20,6 +20,7 @@ from pydantic_ai._instructions import (
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -39,7 +40,6 @@ from ._ordering import collect_leaves, is_innermost, sort_capabilities
 from .abstract import (
     AbstractCapability,
     AgentModel,
-    ModelSelection,
     RawOutput,
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
@@ -52,10 +52,8 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import (
         KnownModelName,
-        Model,
         ModelRequestContext,
         ModelResolutionContext,
-        ModelSelectionContext,
     )
     from pydantic_ai.output import OutputContext, OutputRetryContext
     from pydantic_ai.result import FinalResult
@@ -439,16 +437,19 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     model = capability_model
         return model if model is not None else default
 
-    def _get_step_model(self, ctx: ModelSelectionContext[AgentDepsT]) -> ModelSelection | None:
-        model: ModelSelection | None = None
-        for capability in self._dispatch:
-            if capability.defer_loading is not True and (selection := capability._get_step_model(ctx)) is not None:
-                model = selection
-        return model
-
-    @property
-    def _has_step_model(self) -> bool:
-        return any(capability.defer_loading is not True and capability._has_step_model for capability in self._dispatch)
+    def _model_is_default(self) -> bool:
+        # Preserve a run-bound default selector through containers without changing the
+        # precedence of existing static container contributions or subclass selections.
+        model = self.get_model()
+        return (
+            type(self).get_model is CombinedCapability.get_model
+            and callable(model)
+            and not isinstance(model, Model)
+            and all(
+                capability.defer_loading is True or capability.get_model() is None or capability._model_is_default()
+                for capability in self._dispatch
+            )
+        )
 
     @property
     def has_resolve_model_id(self) -> bool:

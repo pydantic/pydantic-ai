@@ -33,7 +33,7 @@ agent = Agent(deps_type=Deps, capabilities=[SelectModel(select_model)])
 
 See [Selecting the model](custom.md#selecting-the-model) to implement the hook in a custom capability and for precedence and lifecycle details.
 
-When [`ModelFallback`'s output policy](model-fallback.md#output-validation-retries) moves to a persistent candidate, that candidate takes precedence and the selector is no longer evaluated for later steps in that run.
+When combined with [`ModelFallback`](model-fallback.md), `SelectModel` keeps control of selection throughout the run. `ModelFallback` still handles request-level failures; its [`output_retry_threshold`](model-fallback.md#output-validation-retries) policy yields to the selector.
 
 ## Route an output retry to another model
 

@@ -8,11 +8,13 @@ import pytest
 from pydantic_ai import Agent, ModelRetry, RunContext, ToolDefinition
 from pydantic_ai.capabilities import (
     AbstractCapability,
+    CombinedCapability,
     ModelFallback,
     SelectModel,
     WrapModelRequestHandler,
     WrapperCapability,
 )
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -50,9 +52,11 @@ class ObserveStepModel(AbstractCapability[object]):
         return tool_defs
 
 
-@pytest.mark.parametrize('source', ['agent', 'run', 'override', 'selector_before', 'selector_after', 'wrapped'])
+@pytest.mark.parametrize(
+    'source', ['agent', 'fallback_default', 'run', 'override', 'selector_before', 'selector_after', 'wrapped']
+)
 async def test_output_switch_selects_before_step_hooks(
-    source: Literal['agent', 'run', 'override', 'selector_before', 'selector_after', 'wrapped'],
+    source: Literal['agent', 'fallback_default', 'run', 'override', 'selector_before', 'selector_after', 'wrapped'],
 ) -> None:
     phases: list[tuple[str, int, str]] = []
     attempts: list[tuple[int, str, int]] = []
@@ -71,13 +75,14 @@ async def test_output_switch_selects_before_step_hooks(
 
     primary = FunctionModel(primary_response, model_name='primary')
     backup = FunctionModel(backup_response, model_name='backup')
-    fallback = ModelFallback[object](backup, output_retry_threshold=1)
+    fallback = ModelFallback[object](
+        *([primary, backup] if source == 'fallback_default' else [backup]), output_retry_threshold=1
+    )
     policy = WrapperCapability(fallback) if source == 'wrapped' else fallback
     capabilities: list[AbstractCapability[object]] = [ObserveStepModel(phases, attempts), policy]
 
     def select(ctx: ModelSelectionContext[object]) -> Model:
         selected_steps.append(ctx.run_step)
-        assert ctx.run_step == 1, 'The persistent candidate supersedes the ordinary selector.'
         return primary
 
     if source == 'selector_before':
@@ -95,7 +100,7 @@ async def test_output_switch_selects_before_step_hooks(
 
     other = TestModel(custom_output_text='wrong')
     agent = Agent(
-        primary if source in {'agent', 'wrapped'} else other,
+        primary if source in {'agent', 'wrapped'} else None if source == 'fallback_default' else other,
         deps_type=object,
         capabilities=capabilities,
         tools=[lookup],
@@ -109,21 +114,44 @@ async def test_output_switch_selects_before_step_hooks(
             raise ModelRetry('Finish the draft.')
         return value
 
-    if source == 'override':
-        with agent.override(model=primary):
-            result = await agent.run('Answer.', model=other)
-    elif source == 'run':
-        result = await agent.run('Answer.', model=primary)
+    if source in {'run', 'override', 'selector_before', 'selector_after'}:
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+            if source == 'override':
+                with agent.override(model=primary):
+                    await agent.run('Answer.', model=other)
+            elif source == 'run':
+                await agent.run('Answer.', model=primary)
+            else:
+                await agent.run('Answer.')
+        assert attempts == [(1, 'primary', 1), (2, 'primary', 1), (3, 'primary', 1)]
+        assert all(model == 'primary' for _, _, model in phases)
+        assert backup_calls == 0
     else:
         result = await agent.run('Answer.')
-
-    assert result.output == 'ready'
-    assert attempts == [(1, 'primary', 1), (2, 'backup', 1), (3, 'backup', 1)]
-    assert all(model == ('primary' if step == 1 else 'backup') for _, step, model in phases)
+        assert result.output == 'ready'
+        assert attempts == [(1, 'primary', 1), (2, 'backup', 1), (3, 'backup', 1)]
+        assert all(model == ('primary' if step == 1 else 'backup') for _, step, model in phases)
+        assert ('tool', 2, 'backup') in phases
     for step in (1, 2, 3):
         assert {'before', 'wrap', 'settings', 'tools'} <= {phase for phase, number, _ in phases if number == step}
-    assert ('tool', 2, 'backup') in phases
-    assert bool(selected_steps) == source.startswith('selector_')
+    # Resolving the run-bound fallback copy re-evaluates the bootstrap selector on step one.
+    assert selected_steps == ([1, 1, 2, 3] if source.startswith('selector_') else [])
+
+
+@pytest.mark.parametrize('threshold', [None, 1])
+async def test_wrapped_container_keeps_output_selection_a_default(threshold: int | None) -> None:
+    primary = TestModel(custom_output_text='primary')
+    selected = TestModel(custom_output_text='selected')
+    agent = Agent(
+        capabilities=[
+            SelectModel(lambda ctx: selected),
+            WrapperCapability(CombinedCapability([ModelFallback(primary, output_retry_threshold=threshold)])),
+        ]
+    )
+
+    # Static container contributions retain their existing precedence. The opt-in run-bound
+    # output selector stays a default even through a wrapped container.
+    assert (await agent.run('Answer.')).output == ('primary' if threshold is None else 'selected')
 
 
 @pytest.mark.parametrize('pin', ['known', 'outside', 'missing'])
