@@ -76,6 +76,9 @@ gh aw compile
 ```
 
 For an existing installation, use `gh extension upgrade gh-aw` before compiling.
+For a fresh installation of the exact tested compiler, use
+`gh extension install github/gh-aw --pin v1.0.1`. To upgrade an explicitly pinned
+installation, use `gh extension upgrade gh-aw --force`.
 The version requirements are minimums; they do not prevent adopting newer compatible
 releases. Generated workflow locks retain explicit runtime versions and integrity hashes.
 
