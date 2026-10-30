@@ -413,7 +413,6 @@ engine:
       import json
       import os
       import runpy
-      import signal
       import sys
       from datetime import datetime, timezone
       from pathlib import Path
@@ -432,7 +431,6 @@ engine:
       sys.stdout = stdout_sink
       exit_code = 0
       agent_module = None
-      signal.signal(signal.SIGTERM, lambda signum, _frame: sys.exit(128 + signum))
       try:
           importlib.import_module('pydantic_clai2')
           if os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'):

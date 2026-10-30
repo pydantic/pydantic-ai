@@ -1571,7 +1571,7 @@ def test_the_generated_recorder_uses_the_dedicated_capture_descriptor(tmp_path: 
 
 @pytest.mark.subprocess(reason='verifies SIGTERM handling in the generated launcher process')
 @requires_clai2
-def test_sigterm_preserves_partial_stream_and_emits_a_failure_result(tmp_path: Path) -> None:
+def test_sigterm_keeps_an_unterminated_recording_diagnostic(tmp_path: Path) -> None:
     invocation = launch(
         tmp_path,
         {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'interrupted_agent:agent'},
@@ -1586,7 +1586,7 @@ from pydantic_ai.models.function import FunctionModel
 
 async def stream(messages, info):
     yield 'before interruption'
-    # The model iterator resumes after the yielded text event has been observed.
+    # Signal readiness after the stream has produced text.
     os.write(int(os.environ['GH_AW_TEST_READY_FD']), b'1')
     await asyncio.Event().wait()
 
@@ -1621,17 +1621,12 @@ agent = Agent(FunctionModel(stream_function=stream))
                     process.kill()
                     process.communicate(timeout=10)
 
-    assert process.returncode == 128 + signal.SIGTERM, f'{stdout}\n{stderr}'
+    assert process.returncode == -signal.SIGTERM, f'{stdout}\n{stderr}'
     assert '\x1eGH-AW-SESSION/' not in stdout
     parsed = parse_log(tmp_path, stderr)
-    assert [event.data for event in parsed.log_entries if event.type == 'assistant.message'] == [
-        {'content': 'before interruption', 'partial': True}
-    ]
-    results = [event for event in parsed.log_entries if event.type == 'session.result']
-    assert len(results) == 1
-    assert parsed.log_entries[-1] == results[0]
-    assert results[0].data['status'] == 'failure'
-    assert parsed.diagnostic_log_entries == []
+    assert parsed.log_entries == []
+    assert parsed.diagnostic_log_entries
+    assert all(event.type != 'session.result' for event in parsed.diagnostic_log_entries)
 
 
 @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')

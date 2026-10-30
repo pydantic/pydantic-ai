@@ -105,8 +105,8 @@ The parser also verifies Ed25519 signatures, contiguous frame numbers, and a ter
 after the terminal prevents canonical publication. Authenticated prefixes remain separate
 parser diagnostics, without authoritative status or usage. A complete failure recording,
 including partial content observed before interruption, retains its failure result. When
-`SIGTERM` reaches the recorder, the launcher attempts to finalize a failure before exiting.
-`SIGKILL` and other abrupt termination can still leave only diagnostic prefixes. Repository
+an abrupt `SIGTERM` or `SIGKILL` prevents the launcher from writing its terminal result,
+the recording remains diagnostic-only, even when AWF reports a timeout or cancellation. Repository
 `PAI_AGENT` and any caller-supplied `PYTHONPATH` are trusted engine configuration.
 Python can import from `PYTHONPATH` before the recorder starts, and `PAI_AGENT` runs in
 the recorder interpreter. Point either setting only at code you trust.

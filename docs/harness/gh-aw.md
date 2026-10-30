@@ -609,8 +609,8 @@ canonical stream to `agent-session.jsonl` only after signature, sequence, and te
 A missing `session.result`, authenticated sequence gap, or authenticated event after the
 terminal leaves the authenticated prefix in separate parser diagnostics, without canonical
 status or usage. Complete failure recordings retain partial content and their failure result.
-When `SIGTERM` reaches the recorder, the launcher attempts to finalize a failure before exiting.
-`SIGKILL` and other abrupt termination can still leave only diagnostic prefixes.
+An abrupt `SIGTERM` or `SIGKILL` can prevent the launcher from writing its terminal result;
+such recordings remain diagnostic-only, even when AWF reports a timeout or cancellation.
 Errors and calls still pending at interruption remain accurately represented; no tool IDs,
 completions or turns are inferred. A compatible gh-aw
 conclusion collects usage and `aw_session.jsonl`, including gateway and safe-output
