@@ -277,6 +277,11 @@ navigation:
           - "guides/production"
           - "deployment"
           - "deploy"
+      - page: "Enterprise"
+        path: "enterprise.md"
+        slug: "production/enterprise"
+        aliases:
+          - "enterprise"
       - page: "Observability"
         path: "logfire.md"
         slug: "integrations/logfire"
