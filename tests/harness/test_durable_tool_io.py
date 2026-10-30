@@ -41,6 +41,7 @@ from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, Validat
 from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.capability_creation import CapabilityCreation, CapabilityStore
+from pydantic_ai_harness.knowledge_base import Document, FilterNode, KnowledgeBase, Passage, SearchMode
 from pydantic_ai_harness.localstack import LocalStack
 from pydantic_ai_harness.memory import InMemoryStore, Memory
 from pydantic_ai_harness.planning import (
@@ -152,6 +153,24 @@ class _ExaAgentRuns:
         return AgentRun(id=run_id, status='completed', output=AgentOutput(text='Done.'))
 
 
+class _KnowledgeBackend:
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        filter: FilterNode | None,
+        mode: SearchMode | None = None,
+        score_threshold: float | None = None,
+    ) -> list[Passage]:
+        _requests['knowledge_base.search'] += 1
+        return [Passage('passage', document_id='doc')]
+
+    async def read(self, document_id: str, *, max_chars: int, filter: FilterNode | None) -> Document | None:
+        _requests['knowledge_base.read'] += 1
+        return Document(document_id, 'document text')
+
+
 class _YouClient:
     async def search_async(
         self,
@@ -261,6 +280,12 @@ _AGENTS: dict[str, Agent[None, str]] = {
         ('deep_search', {'question': 'q'}),
     ),
     'exa_agent': _agent('exa_agent_agent', ExaAgent[None](runs=_ExaAgentRuns()), ('exa_agent', {'query': 'q'})),
+    'knowledge_base': _agent(
+        'knowledge_base_agent',
+        KnowledgeBase[None](_KnowledgeBackend()),
+        ('search_knowledge_base', {'query': 'q'}),
+        ('read_document', {'document_id': 'doc'}),
+    ),
     'you_search': _agent(
         'you_search_agent',
         YouSearch[None](client=_YouClient()),
@@ -364,6 +389,7 @@ def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[
 _EXPECTED_STEPS: dict[str, Collection[str]] = {
     'exa_search': ['exa_search.web_search', 'exa_search.get_page', 'exa_search.deep_search'],
     'exa_agent': ['exa_agent.create_run', 'exa_agent.resolve_run'],
+    'knowledge_base': ['knowledge_base.search_knowledge_base', 'knowledge_base.read_document'],
     'you_search': ['you_search.web_search', 'you_search.get_page'],
     'you_research': ['you_research.answer', 'you_research.research', 'you_research.finance_research'],
     'localstack': ['localstack.aws_cli'],
@@ -599,6 +625,7 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
     [
         pytest.param(lambda: ExaSearch[None](client=_ExaClient()), id='exa_search'),
         pytest.param(lambda: ExaAgent[None](runs=_ExaAgentRuns()), id='exa_agent'),
+        pytest.param(lambda: KnowledgeBase[None](_KnowledgeBackend()), id='knowledge_base'),
         pytest.param(lambda: YouSearch[None](client=_YouClient()), id='you_search'),
         pytest.param(lambda: YouResearch[None](client=_YouClient()), id='you_research'),
         pytest.param(lambda: LocalStack[None](), id='localstack'),

@@ -1022,6 +1022,8 @@ _(This example is complete, it can be run "as is")_
 
 The [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool] enables your agent to search through uploaded files using vector search, providing a fully managed Retrieval-Augmented Generation (RAG) system. This tool handles file storage, chunking, embedding generation, and context injection into prompts.
 
+To search a knowledge base from any model, including one held outside the model provider (such as an Amazon Bedrock Knowledge Base), use the Harness [`KnowledgeBase`](https://pydantic.dev/docs/ai/harness/knowledge-base/) capability. With `native=True` it sends `FileSearchTool` where the model supports it and falls back to its own search tool elsewhere.
+
 ### Provider Support
 
 | Provider | Supported | Notes |
