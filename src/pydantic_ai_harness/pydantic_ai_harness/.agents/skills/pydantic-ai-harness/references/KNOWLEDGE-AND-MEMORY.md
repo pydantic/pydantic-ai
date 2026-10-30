@@ -350,6 +350,8 @@ documents. Backends live in `pydantic_ai_harness.knowledge_base`:
 | `InMemoryKnowledgeBase(documents)` | nothing | yes | no |
 | `BedrockKnowledgeBase(knowledge_base_id, region_name=...)` | `pydantic-ai-slim[bedrock]` | opt-in (`read_source_documents=True`, S3 sources) | no |
 | `OpenAIVectorStore(vector_store_id)` | `pydantic-ai-slim[openai]` | yes | OpenAI Responses |
+| `QdrantKnowledgeBase(client, collection_name, embedder)` | `qdrant-client` | yes, stitches chunks by `document_field` / `chunk_field` | no |
+| `PgVectorKnowledgeBase(pool, embedder, table=...)` | an asyncpg pool | yes, stitches rows by `document_column` / `chunk_column` | no |
 
 ```python
 from pydantic_ai import Agent
@@ -393,6 +395,9 @@ Gotchas:
   `filter`, since the native tool can't scope a search, and native results don't land in
   `metadata['results']`.
 - `InMemoryKnowledgeBase` is keyword BM25 without stemming or embeddings: tests and small corpora.
+- Qdrant and pgvector run the whole filter tree including `NOT`; both are semantic only and embed the query
+  with the `Embedder` you pass (it must match the model the data was embedded with). pgvector expects your own
+  table with a `jsonb` metadata column; filters compile to parameterised SQL.
 - Bedrock has no document read API: `read_source_documents=True` reads the S3 source object instead (needs
   `s3:GetObject`; checks the `.metadata.json` sidecar against the filter first; non-text such as PDFs needs
   `convert=(data, content_type, uri) -> str | None`; document ids are opaque and process-local). Bedrock has no keyword mode; Bedrock and OpenAI have no `NOT` (negate

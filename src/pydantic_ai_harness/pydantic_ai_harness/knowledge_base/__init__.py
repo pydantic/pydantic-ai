@@ -39,6 +39,8 @@ if TYPE_CHECKING:
         SourceConverter,
     )
     from pydantic_ai_harness.knowledge_base._openai import OpenAIVectorStore
+    from pydantic_ai_harness.knowledge_base._pgvector import PgVectorKnowledgeBase
+    from pydantic_ai_harness.knowledge_base._qdrant import QdrantKnowledgeBase
 
 __all__ = [
     'BedrockAgentRuntimeClient',
@@ -63,6 +65,8 @@ __all__ = [
     'S3Client',
     'SourceConverter',
     'Passage',
+    'PgVectorKnowledgeBase',
+    'QdrantKnowledgeBase',
     'ReadableKnowledgeBase',
     'SearchMode',
     'allows_read',
@@ -77,6 +81,8 @@ _BACKENDS = {
     'S3Client': '_bedrock',
     'SourceConverter': '_bedrock',
     'OpenAIVectorStore': '_openai',
+    'QdrantKnowledgeBase': '_qdrant',
+    'PgVectorKnowledgeBase': '_pgvector',
 }
 
 

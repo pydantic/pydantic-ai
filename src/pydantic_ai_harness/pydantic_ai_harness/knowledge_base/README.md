@@ -53,6 +53,34 @@ pip:
 pip install "pydantic-ai-slim[openai]"
 ```
 
+For `QdrantKnowledgeBase`:
+
+uv:
+
+```bash
+uv add qdrant-client
+```
+
+pip:
+
+```bash
+pip install qdrant-client
+```
+
+For `PgVectorKnowledgeBase`, an asyncpg-compatible driver:
+
+uv:
+
+```bash
+uv add asyncpg
+```
+
+pip:
+
+```bash
+pip install asyncpg
+```
+
 ## The problem
 
 Retrieval-augmented generation splits into two jobs. Building the index (chunking, embedding,
@@ -101,6 +129,8 @@ Swapping the backend changes where the documents live, not how the agent uses th
 | `InMemoryKnowledgeBase(documents)` | Documents held in process, BM25 keyword ranking over paragraph chunks | Yes | No |
 | `BedrockKnowledgeBase(knowledge_base_id)` | An [Amazon Bedrock Knowledge Base](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base.html), with hybrid search and reranking | Opt-in, from the S3 data source | No |
 | `OpenAIVectorStore(vector_store_id)` | An [OpenAI vector store](https://platform.openai.com/docs/guides/retrieval) | Yes | On OpenAI Responses models |
+| `QdrantKnowledgeBase(client, collection, embedder)` | A [Qdrant](https://qdrant.tech) collection of embedded chunks | Yes, by stitching a document's chunks | No |
+| `PgVectorKnowledgeBase(pool, embedder)` | A PostgreSQL table of embedded chunks, with [pgvector](https://github.com/pgvector/pgvector) | Yes, by stitching a document's chunks | No |
 
 `InMemoryKnowledgeBase` keeps nothing on disk and has no embeddings, so it matches words, not
 meaning. Use it for tests, examples, and small corpora that ship with the application.
@@ -198,6 +228,72 @@ API maximum. The search is semantic, and `score_threshold` (0 to 1) is applied b
 reranked scores, which vary slightly between identical calls, so leave some margin. The
 default client reads `OPENAI_API_KEY`; pass `client=AsyncOpenAI(...)` to configure it. Rate limits,
 server errors and connection failures become retry prompts.
+
+### Qdrant
+
+```python
+from qdrant_client import AsyncQdrantClient
+
+from pydantic_ai.embeddings import Embedder
+from pydantic_ai_harness import KnowledgeBase
+from pydantic_ai_harness.knowledge_base import QdrantKnowledgeBase
+
+backend = QdrantKnowledgeBase(
+    AsyncQdrantClient(url='http://localhost:6333'),
+    'manuals',
+    Embedder('openai:text-embedding-3-small'),
+)
+capability = KnowledgeBase(backend)
+```
+
+Each point is one embedded chunk. Its payload holds the chunk's text (`text_field`), and optionally
+its source (`source_field`), document id (`document_field`) and position in the document
+(`chunk_field`); every other payload field is metadata a filter can match. The query is embedded
+with `embedder`, which must be the model the collection was embedded with. Install the client with
+`qdrant-client`.
+
+The whole filter tree runs natively, `NOT` included: `AND`, `OR` and `NOT` become Qdrant's `must`,
+`should` and `must_not`. Ranges compare numbers. Search is semantic, and `score_threshold` is applied
+by Qdrant on the collection's distance metric. When points carry a document id, `read_document`
+collects every chunk of the document with `scroll`, orders them by position and joins them; set
+`document_field=None` to turn reading off. Throttling, server and connection errors become retry
+prompts.
+
+### PostgreSQL with pgvector
+
+```python
+import asyncpg
+
+from pydantic_ai.embeddings import Embedder
+from pydantic_ai_harness import KnowledgeBase
+from pydantic_ai_harness.knowledge_base import PgVectorKnowledgeBase
+
+
+async def build() -> KnowledgeBase[None]:
+    pool = await asyncpg.create_pool('postgresql://localhost/app')
+    return KnowledgeBase(PgVectorKnowledgeBase(pool, Embedder('openai:text-embedding-3-small'), table='chunks'))
+```
+
+Bring your own table, one row per chunk:
+
+```sql
+CREATE TABLE chunks (
+    id bigserial PRIMARY KEY,
+    document_id text,
+    chunk_index int,
+    text text NOT NULL,
+    source text,
+    metadata jsonb NOT NULL DEFAULT '{}',
+    embedding vector(1536) NOT NULL
+);
+```
+
+The column names are configurable (`text_column`, `embedding_column`, `metadata_column`,
+`source_column`, `document_column`, `chunk_column`), and the pool is any asyncpg-compatible pool you
+own. Filters compile to parameterised SQL over the `jsonb` metadata column, the whole tree including
+`NOT`; field names and values are always parameters. Search ranks by cosine similarity (`<=>`), so
+`score_threshold` is a cosine similarity. `read_document` collects a document's rows in order and
+joins them. The pool's driver owns retries: database errors propagate.
 
 ## Native file search
 
@@ -375,9 +471,10 @@ KnowledgeBase(
 An out-of-range `number_of_results`, a non-positive `max_document_chars`, a malformed static
 `filter`, and `native=True` with a backend that has no native search or together with `filter`,
 `search_mode` or `score_threshold` raise at construction. Backends support a subset of search modes
-(in-memory keyword, Bedrock semantic and hybrid, OpenAI semantic) and raise on the first search with
+(in-memory keyword, Bedrock semantic and hybrid, OpenAI, Qdrant and pgvector semantic) and raise on the first search with
 one they can't run. Scores, and so thresholds, are on each backend's own scale: Bedrock and OpenAI
-from 0 to 1, in-memory BM25 unbounded.
+from 0 to 1, Qdrant the collection's distance metric, pgvector a cosine similarity, in-memory BM25
+unbounded.
 
 ## Your own backend
 

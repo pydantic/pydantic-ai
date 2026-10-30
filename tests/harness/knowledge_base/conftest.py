@@ -10,4 +10,5 @@ import importlib.util
 collect_ignore = [
     *(['test_bedrock.py'] if importlib.util.find_spec('boto3') is None else []),
     *(['test_openai.py'] if importlib.util.find_spec('openai') is None else []),
+    *(['test_qdrant.py'] if importlib.util.find_spec('qdrant_client') is None else []),
 ]
