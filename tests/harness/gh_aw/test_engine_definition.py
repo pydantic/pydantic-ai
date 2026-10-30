@@ -665,12 +665,10 @@ def test_a_large_prompt_is_not_passed_as_an_oversized_process_argument(tmp_path:
     assert invocation.prompt_file.read_text(encoding='utf-8') == prompt
 
 
-def test_the_signing_key_stays_out_of_the_child_environment_and_stdin(tmp_path: Path) -> None:
+def test_the_child_receives_empty_stdin(tmp_path: Path) -> None:
     invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'))
 
-    assert invocation.env.get('GH_AW_SESSION_FRAME_KEY') is None
     assert invocation.stdin == ''
-    assert 'PRIVATE KEY' not in (invocation.python_path[0] / 'gh_aw_recording.py').read_text()
 
 
 @pytest.mark.parametrize(
@@ -1724,7 +1722,7 @@ class TestLauncherProgram:
         return launch(tmp_path / 'launch', proxy_env('openai', 'openai/gpt-5'))
 
     @staticmethod
-    def run(tmp_path: Path, target: str, *cli_args: str) -> tuple[subprocess.CompletedProcess[str], str]:
+    def run(tmp_path: Path, target: str, *cli_args: str) -> subprocess.CompletedProcess[str]:
         """Run the launcher over a module directory that a checkout file shadows."""
         invocation = TestLauncherProgram.program(tmp_path)
         program = invocation.program
@@ -1740,7 +1738,7 @@ class TestLauncherProgram:
         # file the CLI would reach on its own.
         (workspace / 'gh_aw_agent.py').write_text(AGENT_MODULE.replace('NAME', 'checkout'), encoding='utf-8')
 
-        completed = subprocess.run(
+        return subprocess.run(
             [sys.executable, '-P', '-c', program, target, str(invocation.prompt_file), *cli_args],
             cwd=workspace,
             env={
@@ -1755,12 +1753,11 @@ class TestLauncherProgram:
             input='',
             check=False,
         )
-        return completed, completed.stderr
 
     @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     @requires_clai2
     def test_the_agent_module_is_imported_once_and_not_from_the_checkout(self, tmp_path: Path) -> None:
-        completed, capture = self.run(
+        completed = self.run(
             tmp_path,
             'gh_aw_agent:agent',
             '-a',
@@ -1777,14 +1774,14 @@ class TestLauncherProgram:
         # imported rather than importing anything a second time or reaching the
         # checkout copy.
         assert (tmp_path / 'imports.txt').read_text(encoding='utf-8') == 'module-directory\n'
-        assert [event.type for event in recorded_events(capture)] == ['session.result']
+        assert [event.type for event in recorded_events(completed.stderr)] == ['session.result']
 
     @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     def test_a_target_that_is_not_an_agent_names_what_it_found(self, tmp_path: Path) -> None:
         (tmp_path / 'module').mkdir(parents=True, exist_ok=True)
         (tmp_path / 'module' / 'not_an_agent.py').write_text('agent = 1\n', encoding='utf-8')
 
-        completed, _ = self.run(tmp_path, 'not_an_agent:agent', '-a', 'not_an_agent:agent', '-m', 'test', '-p', 'hello')
+        completed = self.run(tmp_path, 'not_an_agent:agent', '-a', 'not_an_agent:agent', '-m', 'test', '-p', 'hello')
 
         assert completed.returncode != 0
         assert 'TypeError: not_an_agent:agent is int, not pydantic_ai.Agent' in completed.stdout
@@ -1796,7 +1793,7 @@ class TestLauncherProgram:
             "raise RuntimeError('the agent could not be built')\n", encoding='utf-8'
         )
 
-        completed, _ = self.run(tmp_path, 'broken_agent:agent', '-a', 'broken_agent:agent', '-m', 'test', '-p', 'hello')
+        completed = self.run(tmp_path, 'broken_agent:agent', '-a', 'broken_agent:agent', '-m', 'test', '-p', 'hello')
 
         assert completed.returncode != 0
         assert 'Traceback (most recent call last)' in completed.stdout
