@@ -11834,3 +11834,48 @@ async def test_rejected_response_without_a_message_is_not_named():
             }
         ]
     )
+
+
+async def test_second_rejected_response_without_a_message_does_not_name_the_first():
+    """After a rejection the response turn ends, so a later rejected response that announced no message names none.
+
+    The first rejected response's message is still the current `message_id` then; naming it would point the second
+    rejection at a message it doesn't own.
+    """
+    calls = 0
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            yield "I'll look that up."
+        elif calls == 2:
+            yield {0: DeltaThinkingPart(content='Thinking it over')}
+        else:
+            yield 'The store opens at 9 am.'
+
+    agent = Agent(FunctionModel(stream_function=stream_function), retries={'output': 2})
+
+    @agent.output_validator
+    def reject_announcements(ctx: RunContext, output: str) -> str:
+        if output.startswith("I'll look"):
+            raise ModelRetry('Answer the question.')
+        return output
+
+    events = await run_and_collect_events(agent, create_input(UserMessage(id='msg-1', content='When?')))
+
+    first_message_id = next(event['messageId'] for event in events if event['type'] == 'TEXT_MESSAGE_START')
+    assert [event['value'] for event in events if event['type'] == 'CUSTOM'] == snapshot(
+        [
+            {
+                'message_id': first_message_id,
+                'run_step': 1,
+                'attempt': 1,
+                'outcome': 'retried',
+                'cause': 'model_retry',
+            },
+            {'run_step': 2, 'attempt': 1, 'outcome': 'retried', 'cause': 'no_output'},
+        ]
+    )
