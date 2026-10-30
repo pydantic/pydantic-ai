@@ -270,9 +270,10 @@ an interactive session, which installs after CLAI exits. The flag cannot be comb
 `--fork-session`.
 
 `/update now` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
-typed in the page or in the terminal: the page shows uv's progress and the result. After
-an install, CLAI restarts with the web UI on the same port and token, so the page
-reconnects by itself and names the new version. `clai2 --web` keeps `--web`, `--port`,
+typed in the page or in the terminal: the page shows uv's progress, over Settings too while
+it is open, and the result. After an install, CLAI restarts with the web UI on the same port
+and token, so the page reconnects by itself and names the new version, and Settings › About
+names the versions it updated from and to. `clai2 --web` keeps `--web`, `--port`,
 and `--token-file`; a terminal session that ran `/web` comes back with the web UI running.
 Like any command, `/update now` entered while a turn runs waits for the turn to end.
 

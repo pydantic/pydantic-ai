@@ -133,7 +133,7 @@ export function SettingsWindow({
   updated: { from: string; to: string } | null
   onError: (message: string) => void
   onNotice: (message: string) => void
-  /** What covers the window, such as `/update` installing: About's Update… leaves the window open. */
+  /** What covers the shown section, such as `/update` installing: About's Update… leaves the window open. */
   children?: ReactNode
 }) {
   const window_ = useRef<HTMLDivElement>(null)

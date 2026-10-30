@@ -769,8 +769,10 @@ async def test_settings_about_follows_an_update(page: Page, web_ui: WebUI) -> No
         portal.call(service.install_progress, InstallProgress(stage='installing', target='0.99.0'))
         progress = settings.get_by_role('status')
         await expect(progress).to_contain_text('Updating CLAI to 0.99.0…')
-        # A trial click checks nothing covers it, as the window once covered the session's progress.
+        # A trial click checks nothing covers it, as the window once covered the session's progress, and that the
+        # navigation stays usable beside it.
         await progress.click(trial=True)
+        await settings.get_by_role('button', name='Back to app').click(trial=True)
         portal.call(service.install_progress, InstallProgress(stage='output', target='0.99.0', text='Resolved 3'))
         await expect(progress).to_contain_text('Resolved 3')
         portal.call(service.install_progress, InstallProgress(stage='restarting', target='0.99.0'))

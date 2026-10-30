@@ -3609,9 +3609,15 @@ textarea.setting-input {
   font-size: 13.5px;
 }
 
-/* `/update` installing, over the whole window rather than below the session header. */
+/* `/update` installing, over the shown section, leaving the navigation and its Back button usable. */
+.settings-window > .opening-overlay,
+.settings-window > .settings-pane {
+  grid-area: 1 / 2;
+}
+
 .settings-window > .opening-overlay {
-  inset: 0;
+  position: relative;
+  inset: auto;
 }
 
 .settings-groups {
@@ -3697,6 +3703,11 @@ textarea.setting-input {
   .settings-window {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .settings-window > .opening-overlay,
+  .settings-window > .settings-pane {
+    grid-area: 2 / 1;
   }
 
   .settings-nav {
