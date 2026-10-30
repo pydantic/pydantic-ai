@@ -395,7 +395,7 @@ async def test_consumer_leaving_the_stream_early_still_gets_the_rejection_before
                 if Agent.is_model_request_node(node):
                     async with node.stream(run.ctx) as stream:
                         events: list[AgentStreamEvent] = []
-                        async for event in stream:
+                        async for event in stream:  # pragma: no branch
                             events.append(event)
                             if isinstance(event, FinalResultEvent):
                                 break
