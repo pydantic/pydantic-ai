@@ -148,7 +148,8 @@ Default Git removal keeps the branch and refuses dirty or locked checkouts.
 
 You can register a user-only `worktrees.remove_commands` entry for a repository.
 After confirmation, that command runs instead of Git and may delete the branch
-and uncommitted files. Automatic and forced removal continue to use Git. See
+and uncommitted files. Automatic removal of unchanged worktrees and `workspaces`
+destruction continue to use Git. See
 [the removal-command reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
 for configuration and shell-function examples.
 

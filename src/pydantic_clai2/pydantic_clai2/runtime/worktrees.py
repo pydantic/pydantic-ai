@@ -141,7 +141,7 @@ def commit_of(*, repo: Path, ref: str, remote: bool) -> str:
 def remove_worktree(*, path: Path) -> None:
     """Remove the linked worktree at `path` and its uncommitted changes, keeping its branch; `ValueError` if Git refuses."""
     try:
-        common = (path / _git('-C', str(path), 'rev-parse', '--git-common-dir')).resolve()
+        common = _common_directory(path=path)
         _git('-C', str(common), 'worktree', 'remove', '--force', '--', str(path))
     except subprocess.CalledProcessError as exc:
         raise ValueError(f'Cannot remove worktree {path}: {exc.stderr.strip()}') from exc
@@ -226,7 +226,7 @@ def offer_worktree_cleanup(
     custom: tuple[Path, list[str]] | None = None
     if remove_commands:
         try:
-            common = (worktree.path / _git('-C', root, 'rev-parse', '--git-common-dir')).resolve()
+            common = _common_directory(path=worktree.path)
             registered = remove_commands.get(str(common))
             if registered is not None:
                 custom = _prepare_removal_command(path=worktree.path, common=common, command=registered)
@@ -281,7 +281,7 @@ def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
     root = str(worktree.path)
     original = Path.cwd()
     try:
-        common = (worktree.path / _git('-C', root, 'rev-parse', '--git-common-dir')).resolve()
+        common = _common_directory(path=worktree.path)
         # Run outside the checkout so successful removal leaves a valid working directory.
         os.chdir(common.parent)
         _git('-C', str(common), 'worktree', 'remove', '--', root)
@@ -299,8 +299,14 @@ def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
     return True
 
 
+def _common_directory(*, path: Path) -> Path:
+    """Anchor Git's potentially relative common directory to the checkout that reported it."""
+    return (path / _git('-C', str(path), 'rev-parse', '--git-common-dir')).resolve()
+
+
 def _prepare_removal_command(*, path: Path, common: Path, command: Sequence[str]) -> tuple[Path, list[str]]:
-    """Resolve Git metadata and whole-token arguments without requiring a NUL-delimited worktree listing."""
+    """Derive the main Git location and substitute whole-token command arguments."""
+    # A NUL-delimited worktree listing would require Git 2.36 or newer.
     bare = _git('-C', str(common), 'rev-parse', '--is-bare-repository') == 'true'
     repo = common if bare or common.name != '.git' else common.parent
     values = {
