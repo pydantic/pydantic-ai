@@ -98,8 +98,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
 
     Set `output_retry_threshold` to move the next ordinary step to another model after output
     validation failures consume allowed retries. That model receives the validation feedback and
-    remains the starting candidate for this run. Selection happens before step settings, tool
-    preparation, and request hooks, without using a request attempt to redirect the step. The agent's
+    remains the starting candidate for this run. The next step's settings, tools, and request
+    hooks see the new model. The agent's
     output/per-tool retry limits and usage limits still apply. An explicit run model, an active
     model override, or another capability's model selection keeps control for the whole run,
     disabling output-driven switching while leaving request-level fallback available.
@@ -346,10 +346,12 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         ):
             retry = self._output_transition
             assert self._output_response is not None
+            source_model_id = _pin_id(self._output_response.selection)
+            target_model_id = request_context.model_id or request_context.model.model_id
             await ctx.emit(
                 OutputFallbackEvent(
-                    source_model_id=_pin_id(self._output_response.selection),
-                    target_model_id=request_context.model_id or request_context.model.model_id,
+                    source_model_id=source_model_id,
+                    target_model_id=target_model_id,
                     source=retry.source,
                     retry=retry.retry,
                     tool_name=retry.tool_name,
@@ -361,8 +363,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 span.add_event(
                     'model_fallback.output_fallback',
                     attributes={
-                        'model_fallback.source_model_id': _pin_id(self._output_response.selection),
-                        'model_fallback.target_model_id': request_context.model_id or request_context.model.model_id,
+                        'model_fallback.source_model_id': source_model_id,
+                        'model_fallback.target_model_id': target_model_id,
                         'model_fallback.source': retry.source,
                     },
                 )

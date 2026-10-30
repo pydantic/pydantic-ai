@@ -7,7 +7,7 @@ from typing import Literal, assert_type
 import anyio
 import pytest
 from inline_snapshot import snapshot
-from pydantic import TypeAdapter
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent, ModelRetry, RunContext, ToolOutput
 from pydantic_ai.capabilities import (
@@ -34,12 +34,15 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from tests.conftest import try_import
-from tests.test_capability_model_fallback_output import Answer
 
 with try_import() as otel_sdk_installed:
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+
+class Answer(BaseModel):
+    number: int
 
 
 @dataclass

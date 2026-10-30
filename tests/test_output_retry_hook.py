@@ -7,8 +7,14 @@ import pytest
 from pydantic import ValidationError
 
 from pydantic_ai import Agent, EndStrategy, ModelRetry, PromptedOutput, RunContext, ToolOutput, capture_run_messages
-from pydantic_ai.capabilities import AbstractCapability, Hooks, OutputContext, OutputRetryContext, WrapperCapability
-from pydantic_ai.capabilities.abstract import RawOutput
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Hooks,
+    OutputContext,
+    OutputRetryContext,
+    RawOutput,
+    WrapperCapability,
+)
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
