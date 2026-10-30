@@ -518,28 +518,31 @@ every activity reattaches to that environment.
 
 ## RepoContext
 
-Loads `CLAUDE.md`/`AGENTS.md` into instructions at run start (stable within a run; a change between
-runs of a conversation is appended rather than rewritten). With `expose_inventory_tool=True` it
-exposes `inventory_agent_context()` (locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents,
-hooks), which is left out when `FileSystem` is on the agent and its asset roots are inside the working
-directory (the defaults are; `unless_tool_kind=READ_FILE_KIND`).
+Loads one instruction file per directory (the first of `filenames`, `AGENTS.md` then `CLAUDE.md`) into
+instructions at run start (stable within a run; a change between runs of a conversation is appended
+rather than rewritten). With `expose_inventory_tool=True` it exposes `inventory_agent_context()`
+(locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents, hooks), which is left out when
+`FileSystem` is on the agent and its asset roots are inside the working directory (the defaults are;
+`unless_tool_kind=READ_FILE_KIND`).
 
 ```python
 from pydantic_ai_harness import RepoContext
 
-RepoContext(home_dir='..', nested_traversal=True)  # walk up one level; follow traversal
+RepoContext(walk_up='repo_root')  # also load the ancestors up to the nearest `.git`
 ```
 
-`root_markers=('.git',)` walks up to the repository root (`Coder` uses this); it cannot be combined with
-`home_dir`. With neither set (the default), only the working directory is scanned. Set `home_dir` to walk up
-to that ancestor. It is a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserError`.
-`nested_traversal=True` surfaces the instruction files between the working directory and whatever
-`FileSystem` reads or lists, shallowest first and each directory once per run (`nested_inject='pointer'`
-or `'contents'`), in the message tail so the cached prefix stays stable.
-With it on, the instructions also gain one static sentence: each instruction file applies to its
-subtree, the deeper file wins, and the user's direct instructions win over all of them.
-`nested_max_chars` caps the `'contents'` inlined per run: a file that would go past it becomes a pointer
-(`Coder` sets 32,000). It requires `nested_inject='contents'`.
+`walk_up=None` (the default) scans only the working directory; `'repo_root'` walks up to the nearest
+directory holding one of `root_markers` (`('.git',)`; `Coder` uses this); `'all'` walks every ancestor.
+`home_dir` walks up to that ancestor (and stops `'all'` there); it cannot be combined with
+`walk_up='repo_root'`. It is a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises
+`UserError`. `global_files` lists user-global instruction files, loaded first with the lowest precedence.
+`nested_traversal=True` (the default) surfaces the instruction files between the working directory and
+whatever `FileSystem` reads or lists, shallowest first and each directory once per run
+(`nested_inject='contents'` by default, or `'pointer'`), in the message tail so the cached prefix stays
+stable. With it on, the instructions also gain one static sentence: each instruction file applies to
+its subtree, the deeper file wins, and the user's direct instructions win over all of them.
+`nested_max_chars` (32,000 by default) caps the `'contents'` inlined per run: a file that would go past it
+becomes a pointer; `None` removes the cap. It doesn't apply with `nested_inject='pointer'`.
 
 ## Macroscope
 
