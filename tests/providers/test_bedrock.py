@@ -17,7 +17,12 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
-from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
+from pydantic_ai.providers._bedrock_model_names import (
+    _AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
+    bedrock_claude_cache_retentions,
+    bedrock_claude_supports_automatic_caching,
+    split_bedrock_model_id,
+)
 
 from .._inline_snapshot import snapshot
 from ..conftest import TestEnv, try_import
@@ -454,6 +459,33 @@ def test_bedrock_provider_model_profile_with_unknown_geo_prefix(env: TestEnv):
     model_name = 'narnia.anthropic.claude-sonnet-4-5-20250929-v1:0'
     profile = provider.model_profile(model_name)
     assert profile is None, f'model_profile returned {profile} for {model_name}'
+
+
+# Claude models that take automatic caching on Bedrock but not the 1-hour cache TTL, each with the reason.
+_AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE: dict[str, str] = {}
+
+
+def test_bedrock_automatic_caching_claude_models_take_one_hour_cache():
+    """Every Claude model that takes automatic caching on Bedrock also takes the 1-hour cache TTL.
+
+    Automatic caching is the newer feature, so a model added to its list and not to the 1-hour list most likely
+    belongs on both: otherwise `cache='1h'` silently snaps down to `'5m'` for it, as it did for Claude Haiku 5.5.
+    Add a model to `_AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE` with the reason if Bedrock rejects the 1-hour TTL.
+    """
+    claude_model_names = [
+        name for name in get_args(LatestBedrockModelNames) if split_bedrock_model_id(name)[0] == 'anthropic'
+    ]
+    automatic_caching_models = [
+        *_AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES,
+        *(name for name in claude_model_names if bedrock_claude_supports_automatic_caching(name)),
+    ]
+    missing_one_hour = [
+        name
+        for name in automatic_caching_models
+        if split_bedrock_model_id(name)[1] not in _AUTOMATIC_CACHING_WITHOUT_ONE_HOUR_CACHE
+        and '1h' not in bedrock_claude_cache_retentions(name)
+    ]
+    assert missing_one_hour == []
 
 
 def test_latest_bedrock_model_names_geo_prefixes_are_supported():
