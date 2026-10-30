@@ -133,13 +133,12 @@ class FallbackPredicates:
 
     The agent only raises `ContentFilterError` once a response is accepted, too late to fall back from the error, so the
     exception type stands for any response with `finish_reason='content_filter'`, with or without partial output,
-    which the provider says to discard. Unlike a response handler, it's not one that streamed responses skip with a
-    warning: a streamed response's finish reason is only known once it has been streamed, so a streamed refusal is
-    accepted.
+    which the provider says to discard. Streamed responses skip it without a warning, unlike response handlers: a
+    stream's finish reason is only known once it has been streamed, so a streamed refusal is accepted.
     """
 
     @classmethod
-    def parse(cls, fallback_on: FallbackOn, *, owner: str, default: str = '(ModelAPIError,)') -> FallbackPredicates:
+    def parse(cls, fallback_on: FallbackOn, *, owner: str, default: str) -> FallbackPredicates:
         """Parse the `fallback_on` argument into exception and response handlers.
 
         `owner` names the class in the error raised for an empty `fallback_on`, so the message
