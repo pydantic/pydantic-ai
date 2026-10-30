@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from importlib.util import find_spec
 from pathlib import Path
+from ssl import SSLCertVerificationError
 from typing import Literal, get_type_hints
 from unittest.mock import AsyncMock, Mock
 
@@ -104,7 +105,7 @@ with try_import() as imports_successful:
     from websockets.asyncio.client import connect as websocket_connect
     from websockets.asyncio.server import ServerConnection, serve
     from websockets.datastructures import Headers
-    from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK, InvalidStatus
+    from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK, InvalidHandshake, InvalidStatus
     from websockets.http11 import Response as HandshakeResponse
 
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -801,9 +802,10 @@ async def test_request_waiting_for_another_to_open_the_socket(
     if lease_ends:
         sockets.connect_error = OSError('unreachable')
         gate.set()
-        with pytest.raises(ModelConnectionError, match='WebSocket connection failed: unreachable'):
-            await opening
+        with pytest.warns(UnsupportedSettingWarning, match='WebSocket connection failed: unreachable'):
+            assert (await opening).text == 'from HTTP'
         assert (await waiting).text == 'from HTTP'
+        assert len(http.requests) == 2
     assert sockets.connect_count == 1
     assert [frame.get('stream_id') for frame in socket.sent] == ([] if lease_ends else [None, 'lane-1'])
 
@@ -1895,31 +1897,47 @@ async def test_model_fallback_reuses_second_websocket_after_transport_failure(
 
 @pytest.mark.parametrize('retry_closed', [False, True])
 async def test_socket_closed_while_idle_is_replaced_before_the_send(
-    allow_model_requests: None, sockets: SocketHarness, retry_closed: bool
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, retry_closed: bool
 ):
     """A socket the server closed while idle sent nothing, so the request is rebuilt for a new socket once.
 
-    The new socket can't continue from the closed one's cache, so the history is replayed.
+    The new socket can't continue from the closed one's cache, so the history is replayed. If the replacement also
+    closes before sending, HTTP handles the request without another socket retry.
     """
     socket = sockets.pending[0]
     next_socket = ScriptedSocket()
     sockets.pending.append(next_socket)
-    agent = Agent(websocket_model())
+    agent = Agent(websocket_model(http.provider()))
     async with agent:
         first = await agent.run('first')
         socket.send_error = ConnectionClosedOK(None, None)
         if retry_closed:
             next_socket.send_error = ConnectionClosedOK(None, None)
-            with pytest.raises(ModelConnectionError, match='closed before the request was sent') as raised:
-                await agent.run('second', message_history=first.all_messages())
-            assert raised.value.phase == 'connect'
+            events = text_events('from HTTP', 'resp_http')
+            body = ''.join(
+                f'event: {event["type"]}\ndata: {FRAME_ADAPTER.dump_json(event).decode()}\n\n' for event in events
+            )
+            http.replies.append(
+                httpx2.Response(200, content=body.encode(), headers={'content-type': 'text/event-stream'})
+            )
+            assert (await agent.run('second', message_history=first.all_messages())).output == 'from HTTP'
         else:
             assert (await agent.run('second', message_history=first.all_messages())).output == 'ready'
 
     assert len(socket.sent) == 1
     assert socket.close_count == 1
     assert sockets.opened == [socket, next_socket]
-    if not retry_closed:
+    if retry_closed:
+        assert next_socket.sent == []
+        assert len(http.requests) == 1
+        assert 'previous_response_id' not in http.bodies[0]
+        assert http.bodies[0]['input'] == [
+            {'role': 'user', 'content': 'first'},
+            {'role': 'assistant', 'content': 'ready'},
+            {'role': 'user', 'content': 'second'},
+        ]
+    else:
+        assert http.requests == []
         assert 'previous_response_id' not in next_socket.sent[0]
         assert next_socket.sent[0]['input'] == [
             {'role': 'user', 'content': 'first'},
@@ -2172,21 +2190,27 @@ async def test_message_limits_default_to_unlimited(
 
 
 @pytest.mark.parametrize('timeout_source', ['model', 'client'])
-async def test_handshake_timeout(allow_model_requests: None, sockets: SocketHarness, timeout_source: str):
+async def test_handshake_timeout(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, timeout_source: str
+):
     """A stalled handshake honors the request's connect timeout without leaking a connection."""
     before = asyncio.all_tasks()
     sockets.connect_gate = anyio.Event()
     settings: OpenAIResponsesModelSettings = {'timeout': Timeout(10, connect=0.01)} if timeout_source == 'model' else {}
-    client = AsyncOpenAI(api_key='test', timeout=httpx2.Timeout(10, connect=0.01) if timeout_source == 'client' else 30)
+    client = AsyncOpenAI(
+        api_key='test',
+        http_client=http.client,
+        timeout=httpx2.Timeout(10, connect=0.01) if timeout_source == 'client' else 30,
+    )
     model = OpenAIResponsesModel(
         'gpt-4o', provider=OpenAIProvider(openai_client=client), settings={**WEBSOCKET, **settings}
     )
     async with client, model:
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            with pytest.raises(ModelTimeoutError, match='WebSocket connection timed out') as raised:
-                await model.request(user_prompt('hello'), None, ModelRequestParameters())
-        assert raised.value.phase == 'connect'
-        assert isinstance(raised.value.__cause__, TimeoutError)
+            with pytest.warns(UnsupportedSettingWarning, match='WebSocket connection timed out'):
+                response = await model.request(user_prompt('hello'), None, ModelRequestParameters())
+        assert response.text == 'from HTTP'
+        assert len(http.requests) == 1
         assert sockets.connect_count == 1
         assert sockets.opened == []
         assert not model.client.is_closed()
@@ -2214,35 +2238,97 @@ async def test_send_timeout(allow_model_requests: None, sockets: SocketHarness):
     assert asyncio.all_tasks() == before
 
 
-@pytest.mark.parametrize('status_code', [200, 302, 401, None])
-async def test_handshake_errors(allow_model_requests: None, sockets: SocketHarness, status_code: int | None):
-    """A rejected handshake keeps its status, body and headers; an unreachable host is a connection error."""
-    if status_code is not None:
-        sockets.connect_error = InvalidStatus(
-            HandshakeResponse(
-                status_code,
-                'Rejected',
-                Headers([('X-Request-Id', 'first'), ('x-request-id', 'second')]),
-                b'handshake rejected',
+@pytest.mark.parametrize(
+    ('connect_error', 'stream'),
+    [
+        pytest.param(SSLCertVerificationError(1, 'certificate verify failed'), False, id='tls'),
+        pytest.param(InvalidHandshake('proxy connection failed'), True, id='proxy'),
+    ],
+)
+@pytest.mark.parametrize('reconnect', [False, True])
+async def test_handshake_transport_failure_uses_http(
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    http: HTTPResponses,
+    connect_error: Exception,
+    stream: bool,
+    reconnect: bool,
+):
+    """A failed initial or replacement handshake sends the unwritten request over HTTP."""
+    before = asyncio.all_tasks()
+    socket = sockets.pending[0]
+    unopened = ScriptedSocket()
+    model = websocket_model(http.provider())
+    messages: list[ModelMessage] = user_prompt('hello')
+    async with model:
+        if reconnect:
+            first = await model.request(user_prompt('first'), None, ModelRequestParameters())
+            messages = [*user_prompt('first'), first, *messages]
+            socket.send_error = ConnectionClosedOK(None, None)
+            sockets.pending.append(unopened)
+        sockets.connect_error = connect_error
+        if stream or reconnect:
+            events = text_events('from HTTP', 'resp_http')
+            body = ''.join(
+                f'event: {event["type"]}\ndata: {FRAME_ADAPTER.dump_json(event).decode()}\n\n' for event in events
             )
+            http.replies.append(
+                httpx2.Response(200, content=body.encode(), headers={'content-type': 'text/event-stream'})
+            )
+        with pytest.warns(UnsupportedSettingWarning, match='using HTTP'):
+            if stream:
+                async with model.request_stream(messages, None, ModelRequestParameters()) as streamed:
+                    async for _ in streamed:
+                        pass
+                response = streamed.get()
+            else:
+                response = await model.request(messages, None, ModelRequestParameters())
+    assert response.text == 'from HTTP'
+    assert response.history_digest is not None
+    assert 'transport' not in (response.provider_details or {})
+    assert sockets.connect_count == (2 if reconnect else 1)
+    assert sockets.opened == ([socket] if reconnect else [])
+    assert len(socket.sent) == (1 if reconnect else 0)
+    assert unopened.sent == []
+    assert len(http.requests) == 1
+    assert http.requests[0].method == 'POST'
+    assert http.requests[0].url.path == '/v1/responses'
+    assert http.bodies[0]['stream'] is (stream or reconnect)
+    if reconnect:
+        assert 'previous_response_id' not in http.bodies[0]
+        assert http.bodies[0]['input'] == [
+            {'role': 'user', 'content': 'first'},
+            {'role': 'assistant', 'content': 'ready'},
+            {'role': 'user', 'content': 'hello'},
+        ]
+    assert asyncio.all_tasks() == before
+
+
+@pytest.mark.parametrize('status_code', [200, 302, 401])
+async def test_handshake_errors(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, status_code: int
+):
+    """A rejected handshake keeps its status, body and headers without sending an HTTP request."""
+    sockets.connect_error = InvalidStatus(
+        HandshakeResponse(
+            status_code,
+            'Rejected',
+            Headers([('X-Request-Id', 'first'), ('x-request-id', 'second')]),
+            b'handshake rejected',
         )
-    else:
-        sockets.connect_error = OSError('unreachable')
-    model = websocket_model()
-    expected_error = (
-        ModelConnectionError if status_code is None else ModelHTTPError if status_code >= 400 else ModelAPIError
     )
+    model = websocket_model(http.provider())
+    expected_error = ModelHTTPError if status_code >= 400 else ModelAPIError
     async with model:
         with pytest.raises(expected_error) as raised:
             await model.request(user_prompt('hello'), None, ModelRequestParameters())
         assert sockets.connect_count == 1
-        if isinstance(raised.value, ModelConnectionError):
-            assert raised.value.phase == 'connect'
         if isinstance(raised.value, ModelHTTPError):
             assert raised.value.status_code == status_code
             assert raised.value.body == 'handshake rejected'
             assert raised.value.headers == {'x-request-id': 'first, second'}
         assert not model.client.is_closed()
+    assert http.requests == []
 
 
 @pytest.mark.parametrize(

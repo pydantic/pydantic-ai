@@ -620,7 +620,7 @@ pip/uv-add "pydantic-ai-slim[openai-realtime]"
 
 Then set [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport] on the model, the agent or a run. Other models ignore the setting, so code that takes a model string from configuration doesn't change:
 
-```python {test="skip" gateway_toggle="skip"}
+```python {gateway_toggle="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
@@ -636,7 +636,7 @@ Each run opens a socket on its first request that can use one and closes it when
 
 To keep one socket for back-to-back runs, or for the lifetime of an app, enter the agent or the model. The socket closes once the last run or context using it ends:
 
-```python {test="skip" gateway_toggle="skip"}
+```python {gateway_toggle="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
@@ -655,42 +655,40 @@ The socket belongs to the [`OpenAIResponsesModel`][pydantic_ai.models.openai.Ope
 - A request that finds no free lane, or the 16 responses already running, goes over HTTP instead of waiting.
 - Lanes run by default only when the SDK client's WebSocket host is `api.openai.com`. On any other host, including xAI or Azure's `/openai/v1` endpoint reached through [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], and a proxy in front of OpenAI, the socket runs one request at a time and sends the others over HTTP. For a host that supports lanes, set [`openai_responses_supports_websocket_stream_id`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_websocket_stream_id] to `True` with `profile=OpenAIModelProfile(openai_responses_supports_websocket_stream_id=True)` on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]; `False` turns lanes off on OpenAI's host.
 - A provider error, a failed or incomplete response, or a stream closed early ends only that request; the socket stays open. A transport failure during a request closes the socket and raises [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError], as over HTTP, so [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] can take over (see [Model Fallback](../capabilities/model-fallback.md)). The request after it opens a new socket. Pydantic AI doesn't resend a request after a disconnect, since the provider may have acted on it.
-- OpenAI closes a socket after 60 minutes. Ten minutes before that, new requests open a new socket, and the old one closes once its responses finish. If the server closed the socket while it was idle, the request hadn't been sent, so it moves to a new socket once.
+- OpenAI closes a socket after 60 minutes. Ten minutes before that, new requests open a new socket, and the old one closes once its responses finish. If the server closed the socket while it was idle, the request hadn't been sent, so it moves to a new socket once. If that replacement also closes before sending, the request uses HTTP without another socket retry.
 
-These requests use HTTP instead, without a warning:
+In WebSocket mode, these requests use HTTP instead. The warning column refers to [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]:
 
-- a request outside an agent run, `async with agent:` or `async with model:`, such as a direct [`model.request()`][pydantic_ai.models.Model.request], which has nothing to keep a socket open for
-- a request in a [durable execution](../durable_execution/overview.md) activity, step or task without an explicit model or agent context that outlives the unit on its event loop; see [worker-owned Temporal connections](../durable_execution/temporal.md#responses-websocket-connections)
-- a [background](#background-mode) request, or one that resumes a suspended response
-- a request when no lane is free, as described above
-- a request whose headers differ from those the socket opened with, from model settings' [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] and the SDK client's default headers
+| When a request uses HTTP | Warns? |
+| --- | --- |
+| No agent run, `async with agent:` or `async with model:` keeps a socket open, as with a direct [`model.request()`][pydantic_ai.models.Model.request]. | No |
+| A [durable execution](../durable_execution/overview.md) activity, step or task has no explicit model or agent context that outlives the unit on its event loop. See [worker-owned Temporal connections](../durable_execution/temporal.md#responses-websocket-connections). | No |
+| The request uses [background mode](#background-mode) or resumes a suspended response. | No |
+| No lane is free, or 16 responses are already running on the socket. | No |
+| The model settings' [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] or SDK client's default headers differ from the socket's handshake headers. | No |
+| The SDK client uses an API key callback, workload identity, Azure AD token provider or HTTP client authentication. HTTP resolves these credentials for each request. | Yes |
+| The profile sets [`openai_responses_supports_websocket`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_websocket] to `False`. | Yes |
+| The OpenAI SDK cannot configure authentication for its socket client, as with Bedrock Mantle's native authentication. | Yes |
+| The WebSocket extra is missing, or the async backend is not asyncio, such as Trio. | Yes |
+| A transport failure prevents the socket connection from opening, such as a TLS, proxy or DNS error, or a connect timeout. No `response.create` has been sent. | Yes |
+
+An HTTP-level handshake rejection remains an error. Transport failures after a request is sent propagate as described above.
 
 With instrumentation enabled, WebSocket mode records `pydantic_ai.transport` on each request's `chat` span, or under Temporal, on the model activity span within that trace. Its value is `'websocket'` for a socket request or `'http'` for one sent over HTTP. HTTP-only mode leaves the attribute unset.
 
-If the SDK client uses an API key callback, workload identity, Azure AD token provider or HTTP client authentication, each request uses HTTP so its credentials can be resolved. Selecting [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport] emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] for these requests, even when the profile permits WebSockets. This check also applies when HTTP authentication is added after the socket opens.
+Per-request credential checks apply even when the profile permits WebSockets, including when HTTP authentication is added after the socket opens.
 
-A model that can never open a socket sends every request over HTTP and warns with an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] when:
-
-- its profile sets [`openai_responses_supports_websocket`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_websocket] to `False`
-- the OpenAI SDK can't authenticate its socket client, as with Bedrock Mantle's native authentication
-- the WebSocket extra is missing
-- the async backend is not asyncio, such as Trio
-
-The profile flag is `False` by default for:
-
-- [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] or an `AsyncAzureOpenAI` client
-- the [Pydantic AI Gateway](../gateway.md)
-- the [`openai-chatgpt`](openai-chatgpt.md) and [`openai-codex`](openai-codex.md) providers, which add their OAuth credentials to HTTP requests only
-- [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel], which resolves session headers per request
+The profile flag defaults to `False` for [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] or an `AsyncAzureOpenAI` client, the [Pydantic AI Gateway](../gateway.md), the [`openai-chatgpt`](openai-chatgpt.md) and [`openai-codex`](openai-codex.md) OAuth providers, and [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel]. The OAuth providers add their credentials to HTTP requests only; `OpenAICodexModel` resolves session headers per request.
 
 To try a socket on Azure or the gateway with static credentials, pass `profile=OpenAIModelProfile(openai_responses_supports_websocket=True)` to the model. The OAuth providers and [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] always use HTTP because their authentication or session headers do not configure the SDK socket client.
 
 !!! note "Continuing from a socket's responses"
-    Whether a response can be continued from depends on where OpenAI keeps it. Responses in WebSocket mode, including HTTP fallback, echo [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], which defaults to `True` on OpenAI's side, and the model records boolean echoes in the response's [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] as `store`. Socket responses also record `transport='websocket'`. A stored response automatically continues from another socket or over HTTP when the target endpoint shares the original endpoint's server state, like one created over HTTP. Different base URLs replay history unless the provider overrides [`shares_server_state_with()`][pydantic_ai.providers.Provider.shares_server_state_with] for an alias. One created with `openai_store=False` or Zero Data Retention lives only in the socket's cache, so it continues only on the same socket while it's the latest response on its lane; anywhere else, the history is replayed instead. A socket request with `openai_store=False` likewise continues only from the response cached on its lane, and replays any other history, including HTTP responses, since OpenAI may never have stored them. Keep the full message history when you use `openai_store=False`: a new socket or HTTP request needs it. With Zero Data Retention, also set `openai_store=False`, so a socket request replays earlier HTTP history instead of continuing from a response OpenAI didn't store.
+    Responses in WebSocket mode, including HTTP fallback, echo [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], which defaults to `True` on OpenAI's side. The model records boolean echoes in [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] as `store`; socket responses also record `transport='websocket'`.
 
-    As over HTTP, a concrete [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] is sent as given when no automatic continuation or history boundary supersedes it. Choose an ID stored at the receiving endpoint.
-
-    The [history validation rules](#referencing-earlier-responses) also apply on the socket: editing earlier messages or expiring a request-scoped prompt replays the history.
+    - **Stored responses:** automatic continuation works on another socket or over HTTP when the target endpoint shares the original endpoint's server state. Different base URLs replay history unless the provider overrides [`shares_server_state_with()`][pydantic_ai.providers.Provider.shares_server_state_with] for an alias.
+    - **`openai_store=False` or Zero Data Retention:** a response lives only in its socket's cache and continues only while it is the latest response on its lane. Elsewhere, history is replayed. A socket request with `openai_store=False` likewise replays any history outside its lane, including HTTP responses that OpenAI may never have stored. Keep the full message history so a new socket or HTTP request can replay it. With Zero Data Retention, also set `openai_store=False` to replay earlier HTTP history instead of continuing from an unstored response.
+    - **A concrete [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]:** as over HTTP, the ID is sent as given when no automatic continuation or history boundary supersedes it. Choose an ID stored at the receiving endpoint.
+    - **Edited history or expired request-scoped prompts:** the [history validation rules](#referencing-earlier-responses) apply on the socket and replay the history.
 
 Request settings map to `response.create`. The socket has these limits:
 

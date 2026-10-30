@@ -665,12 +665,6 @@ def _is_azure(client: AsyncOpenAI, system: str) -> bool:
     return system == 'azure' or isinstance(client, AsyncAzureOpenAI)
 
 
-def _has_per_request_api_key(client: AsyncOpenAI) -> bool:
-    return (
-        getattr(client, '_api_key_provider', None) is not None or getattr(client, 'workload_identity', None) is not None
-    )
-
-
 def _echoed_store(response: responses.Response, model_settings: OpenAIResponsesModelSettings) -> bool | None:
     # Socket responses echo storage, which determines whether their IDs can be used outside that socket.
     if model_settings.get('openai_transport') == 'websocket' and isinstance(
@@ -3415,7 +3409,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Azure clients and lightweight SDK wrappers do not initialize every optional attribute.
         client = self._provider.client
         if (
-            _has_per_request_api_key(client)
+            getattr(client, '_api_key_provider', None) is not None
+            or getattr(client, 'workload_identity', None) is not None
             or callable(getattr(client, '_azure_ad_token_provider', None))
             or getattr(getattr(client, '_client', None), 'auth', None) is not None
         ):
@@ -3537,6 +3532,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # The SDK raises this before connecting when it can't authenticate a socket for the client, like Bedrock
             # Mantle's SigV4 and native API key clients.
             self._warn_websocket_unsupported(f'the OpenAI SDK could not configure the WebSocket connection: {exc}')
+            return None
+        except ModelConnectionError as exc:
+            # Reservation only opens a connection and selects a lane; it has not sent `response.create`.
+            self._warn_websocket_unsupported(f'the WebSocket connection could not be established: {exc}')
             return None
 
     @property
@@ -4616,10 +4615,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 else await self._reserve_websocket_lane(asyncio.get_running_loop(), messages, given_settings)
             )
             if retry is None:
-                raise ModelConnectionError(
-                    model_name=self.model_name,
-                    message='The Responses WebSocket closed before the request was sent.',
-                    phase='connect',
+                return await _utils.replace_no_init(self, _websocket_stream=None)._responses_create(
+                    messages, stream, given_settings, model_request_parameters
                 )
             retry.retried = True
             return await self._create_on_websocket_lane(
