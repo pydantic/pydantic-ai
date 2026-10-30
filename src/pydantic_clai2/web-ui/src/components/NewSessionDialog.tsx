@@ -141,6 +141,11 @@ export function NewSessionDialog({
     }
   }
 
+  const chooseWorktree = (place: Place) => {
+    setWorktreeOf(place)
+    setProblem(null)
+  }
+
   const keys = (event: React.KeyboardEvent) => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
@@ -170,28 +175,45 @@ export function NewSessionDialog({
           onKeyDown={keys}
         >
           {shown.map((place, index) => (
-            <button
-              key={place.path}
-              id={`place-${index}`}
-              role="option"
-              aria-selected={index === cursor}
-              className={`dialog-option ${index === cursor ? 'active' : ''}`}
-              disabled={sending}
-              onMouseEnter={() => setCursor(index)}
-              onClick={() => void start(place.path)}
-              title={place.path}
-            >
-              <span className="dialog-option-label">
-                <FolderIcon size={13} />
-                {place.label}
-                {place.path === current && (
-                  <span className="dialog-current">
-                    <CheckIcon size={12} /> current
-                  </span>
-                )}
-              </span>
-              <span className="dialog-option-description">{place.detail}</span>
-            </button>
+            // The pointer crosses other rows on its way to the buttons below, so hovering one does not move the
+            // keyboard's cursor, which those buttons act on; a row of a Git checkout has its own New worktree… instead:
+            // a button in the listbox beside the row's option, out of the Tab order but named for voice control.
+            <div key={place.path} className={`dialog-option-row ${index === cursor ? 'active' : ''}`} role="none">
+              <button
+                id={`place-${index}`}
+                role="option"
+                aria-selected={index === cursor}
+                className={`dialog-option ${index === cursor ? 'active' : ''}`}
+                disabled={sending}
+                onClick={() => void start(place.path)}
+                title={place.path}
+              >
+                <span className="dialog-option-label">
+                  <FolderIcon size={13} />
+                  {place.label}
+                  {place.path === current && (
+                    <span className="dialog-current">
+                      <CheckIcon size={12} /> current
+                    </span>
+                  )}
+                </span>
+                <span className="dialog-option-description">{place.detail}</span>
+              </button>
+              {place.repo && !worktreeOf && (
+                <button
+                  className="ghost small dialog-option-worktree"
+                  type="button"
+                  disabled={sending}
+                  aria-label={`New worktree of ${place.label}…`}
+                  title={`Check out a new branch of ${place.label} in a worktree, and start there`}
+                  // For the pointer: the keyboard reaches the one below, for the cursor's row.
+                  tabIndex={-1}
+                  onClick={() => chooseWorktree(place)}
+                >
+                  New worktree…
+                </button>
+              )}
+            </div>
           ))}
         </div>
         {worktreeOf ? (
@@ -295,10 +317,7 @@ export function NewSessionDialog({
                   type="button"
                   disabled={sending}
                   title={`Check out a new branch of ${highlighted.label} in a worktree, and start there`}
-                  onClick={() => {
-                    setWorktreeOf(highlighted)
-                    setProblem(null)
-                  }}
+                  onClick={() => chooseWorktree(highlighted)}
                 >
                   New worktree of {highlighted.label}…
                 </button>
@@ -313,8 +332,7 @@ export function NewSessionDialog({
           </form>
         )}
         <p className="dialog-hint">
-          Click a directory, make a new worktree of the highlighted one, or type an absolute path to find others. Esc goes
-          back.
+          Click a directory or its New worktree…, or type an absolute path to find others. Esc goes back.
         </p>
       </div>
     </div>

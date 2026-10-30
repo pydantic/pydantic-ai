@@ -270,9 +270,10 @@ an interactive session, which installs after CLAI exits. The flag cannot be comb
 `--fork-session`.
 
 `/update now` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
-typed in the page or in the terminal: the page shows uv's progress and the result. After
-an install, CLAI restarts with the web UI on the same port and token, so the page
-reconnects by itself and names the new version. `clai2 --web` keeps `--web`, `--port`,
+typed in the page or in the terminal: the page shows uv's progress, over Settings too while
+it is open, and the result. After an install, CLAI restarts with the web UI on the same port
+and token, so the page reconnects by itself and names the new version, and Settings › About
+names the versions it updated from and to. `clai2 --web` keeps `--web`, `--port`,
 and `--token-file`; a terminal session that ran `/web` comes back with the web UI running.
 Like any command, `/update now` entered while a turn runs waits for the turn to end.
 
@@ -2328,7 +2329,10 @@ The worker uses up to 2,400 characters of recent user/assistant text, plus the
 previous summary once a model has generated one. Until then, the fallback title
 is not offered as a name to keep. When the conversation is longer than that
 text, its first 400 characters are sent as well, so sessions begun from one
-template are told apart. It refreshes generated names after 16 content
+template are told apart. The worker is also given the titles of the other
+sessions in the same workspace, and asked for a sentence-case title that differs
+from them; a title one of them already has, in any letter case, is numbered, as
+in `Fix renderer (2)`. It refreshes generated names after 16 content
 revisions; revisions, unlike message offsets, survive compaction. This is a
 bounded current summary, not a lossless incremental transcript archive. Opening
 the browser backfills up to ten eligible sessions. Queue length, request count,
@@ -2551,7 +2555,8 @@ It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
 asks which folder, offering every worktree of the repositories it has sessions in,
 and completing a typed path to any directory, with every worktree of each repository it finds.
-**New worktree of …** checks out a new branch of the highlighted folder's repository
+**New worktree…**, on a folder's row or below the list for the row the arrow keys
+select, checks out a new branch of that folder's repository
 first, from the base you name (by default its `HEAD`), in `.worktrees/` as
 [`--worktree`](#git-worktrees) does, and starts the session there; without a branch
 name, it makes `clai-NAME` with a generated NAME. The worktree stays when the

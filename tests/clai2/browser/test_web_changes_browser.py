@@ -1,11 +1,13 @@
-"""The Changes panel in the shipped UI: a session's changed files after two turns, by scope."""
+"""The Changes panel in the shipped UI: a session's changed files after two turns, by scope, and during a turn."""
 
 import json
 import re
+import threading
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import anyio
 import pytest
 from anyio.from_thread import start_blocking_portal
 from playwright.async_api import Page, expect
@@ -32,6 +34,8 @@ TURNS: dict[str, list[tuple[str, dict[str, str]]]] = {
     ],
 }
 """The issue's repro: each prompt, and the file tool calls its model makes."""
+HOLD = 'run a long shell command'
+"""A prompt whose turn runs until the test releases it, as a long shell command's does."""
 
 
 async def file_turns(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -46,9 +50,21 @@ async def file_turns(messages: list[ModelMessage], info: AgentInfo) -> AsyncIter
         yield 'Done'
 
 
-def file_writer(workspace: Path) -> Agent[None, str]:
-    """An agent whose `write_file` and `edit_file` change `workspace` as the file system's tools do, of their kinds."""
-    agent = Agent(FunctionModel(stream_function=file_turns))
+def file_writer(workspace: Path, released: threading.Event) -> Agent[None, str]:
+    """An agent whose `write_file` and `edit_file` change `workspace` as the file system's tools do, of their kinds,
+    and whose model answers `HOLD` only once `released` is set."""
+
+    async def turns(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        last = messages[-1].parts[-1]
+        if isinstance(last, UserPromptPart) and last.content == HOLD:
+            while not released.is_set():
+                await anyio.sleep(0.01)
+            yield 'Done'
+        else:
+            async for chunk in file_turns(messages, info):
+                yield chunk
+
+    agent = Agent(FunctionModel(stream_function=turns))
 
     @agent.tool_plain(tool_kind=WRITE_FILE_KIND)
     def write_file(path: str, content: str) -> str:
@@ -68,6 +84,7 @@ def file_writer(workspace: Path) -> Agent[None, str]:
 class ChangesUI:
     url: str
     session: str
+    released: threading.Event
 
 
 @pytest.fixture(scope='module')
@@ -78,7 +95,8 @@ def changes_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterat
         patch.setenv('XDG_CONFIG_HOME', str(root / 'config'))
         patch.setenv('XDG_STATE_HOME', str(root / 'state'))
         patch.setattr(models, 'ALLOW_MODEL_REQUESTS', False)
-        fleet = Fleet(root=root, portal=portal, agents={'work': file_writer(root / 'work')})
+        released = threading.Event()
+        fleet = Fleet(root=root, portal=portal, agents={'work': file_writer(root / 'work', released)})
         try:
             session = fleet.new('work')
             # Saved, so it can be renamed.
@@ -86,8 +104,9 @@ def changes_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterat
             portal.call(fleet.runtimes['work'].session.commit_messages, saved)
             assert fleet.post(f'/api/sessions/{session}/rename', {'title': 'Browser Changes'}).status_code == 204
             with serve(fleet) as url:
-                yield ChangesUI(url=url, session=session)
+                yield ChangesUI(url=url, session=session, released=released)
         finally:
+            released.set()
             fleet.exit()
 
 
@@ -137,3 +156,30 @@ async def test_changes_panel_lists_the_files_of_two_turns(page: Page, changes_ui
     await page.keyboard.press('ControlOrMeta+Shift+E')
     await expect(panel).to_have_count(0)
     await expect(toggle).to_have_attribute('aria-pressed', 'false')
+
+
+async def test_changes_panel_opened_during_a_turn_loads_at_once(page: Page, changes_ui: ChangesUI) -> None:
+    await page.goto(f'{changes_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Changes', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Changes')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    await composer.fill(HOLD)
+    await composer.press('Enter')
+    activity = page.locator('.topbar-status .activity')
+    await expect(activity).not_to_have_text('ready')
+    try:
+        # Opened while the turn runs, the panel shows what is on disk now rather than waiting for the turn to end.
+        await page.get_by_role('button', name=re.compile(r'^Changes')).click()
+        panel = page.get_by_role('complementary', name='Changes')
+        await panel.get_by_role('tab', name='Uncommitted').click()
+        await expect(panel.locator('.changes-empty')).to_have_text(
+            'This workspace is not in a Git repository.', timeout=2_000
+        )
+        await panel.get_by_role('tab', name='This session').click()
+        await expect(panel.locator('.changes-body')).not_to_have_text('Loading…', timeout=2_000)
+        await expect(activity).not_to_have_text('ready')
+    finally:
+        changes_ui.released.set()
+    await expect(activity).to_have_text('ready')
