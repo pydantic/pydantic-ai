@@ -1981,8 +1981,8 @@ class TestLostJob:
         await _wait_for_exit(command_pid)
 
     async def test_a_live_job_launched_with_another_time_zone_is_running(self, shell_dir: Path) -> None:
-        # The job is launched with the command's `env` and checked without it. Where its start time comes from `ps`,
-        # which writes it in local time, the two must still agree.
+        # The job is launched with the command's `env` and checked without it. Where its start time comes from `ps`
+        # (macOS), which writes it in local time, the two must still agree; `/proc` doesn't depend on `env`.
         ts = _env_toolset(shell_dir, env={'TZ': 'Asia/Tokyo'})
         ctx = _ctx(shell_dir)
         command_id = _parse_command_id(await ts.start_command(ctx, 'exec sleep 300'))

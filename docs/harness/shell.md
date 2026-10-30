@@ -233,7 +233,9 @@ were killed with `SIGKILL` or the workspace restarted, is reported as
 `[status: lost; ...]`, and `stop_command` signals nothing for it. Before
 signalling a command, Shell checks that its PID still names the process it
 started, by start time (from `/proc`, or `ps` where there is no `/proc`), so a
-process that took over the ID after a workspace restart is never signalled.
+process that took over the ID after a workspace restart is not signalled. A
+job started by an earlier version of Shell has no start time recorded, so it is
+only checked for having a process left.
 
 ```python
 from pydantic_ai import Agent
