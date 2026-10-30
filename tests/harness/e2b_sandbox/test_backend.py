@@ -615,7 +615,10 @@ class TestRun:
         fake_e2b.run_error = TimeoutException('unavailable')
         fake_e2b.sandbox_is_running = False
         backend = await started()
-        with pytest.raises(WorkspaceUnavailableError, match=r"'sbx-1' is no longer running: .*`sandbox_timeout`"):
+        with pytest.raises(WorkspaceUnavailableError, match=r"'sbx-1' is no longer running: .*`sandbox_timeout` ran"):
+            await backend.run(['x'])
+        backend = await started(idle_timeout=600)
+        with pytest.raises(WorkspaceUnavailableError, match=r'`sandbox_timeout` or `idle_timeout` ran out'):
             await backend.run(['x'])
 
     async def test_an_attached_sandbox_names_itself_when_gone(self, fake_e2b: FakeE2B) -> None:

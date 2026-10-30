@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 import anyio
 import anyio.lowlevel
 
+from pydantic_ai._utils import cancel_and_drain
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -163,11 +164,11 @@ def _not_found(path: str | None) -> FileNotFoundError:
     return FileNotFoundError(f'No such file or directory in the E2B sandbox: {path!r}')
 
 
-def _unavailable_message(sandbox_id: str, *, found: bool) -> str:
+def _unavailable_message(sandbox_id: str, *, found: bool, idle: bool = False) -> str:
     """Say the sandbox is gone; only one E2B still knows about (`found`) may merely be paused."""
+    timeouts = '`sandbox_timeout` or `idle_timeout`' if idle else '`sandbox_timeout`'
     reason = (
-        'it was killed, or it was paused when its `sandbox_timeout` ran out '
-        '(a later run that attaches to it resumes it)'
+        f'it was killed, or it was paused when its {timeouts} ran out (a later run that attaches to it resumes it)'
         if found
         else 'it was killed'
     )
@@ -239,9 +240,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             killing it, and attaching resumes it. The default, 3600, is the most E2B's Hobby plan
             allows; Pro plans allow up to 86400. With `idle_timeout`, it is instead the most the backend
             extends the lifetime to, from its first use.
-        idle_timeout: Seconds without use after which E2B pauses the sandbox. While the backend is in
-            use, including during a long command, it extends the sandbox's lifetime with E2B's
-            `set_timeout`, but never past `sandbox_timeout` from when the backend first used it.
+        idle_timeout: Seconds without a command or file operation after which E2B pauses the sandbox.
+            Each operation, and a long command while it runs, extends the sandbox's lifetime with
+            E2B's `set_timeout`, but never past `sandbox_timeout` from when the backend first used
+            it. Time between operations, such as model turns, counts as idle.
             `None` keeps the fixed `sandbox_timeout` lifetime.
         working_dir: Absolute directory commands start in and relative paths resolve against.
             E2B has no create-time working directory, so this is applied per command, including
@@ -454,7 +456,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         if isinstance(error, e2b.TimeoutException):
             sandbox = self._sandbox
             if sandbox is not None and not await _is_running(sandbox):
-                return WorkspaceUnavailableError(_unavailable_message(sandbox.sandbox_id, found=True))
+                return WorkspaceUnavailableError(
+                    _unavailable_message(sandbox.sandbox_id, found=True, idle=self._idle_timeout is not None)
+                )
             return error
         if isinstance(error, e2b.SandboxException) and not isinstance(error, e2b.RateLimitException):
             return WorkspaceError(f'{context}: {error}')
@@ -745,10 +749,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     result = exited
                 finally:
                     if keep_alive is not None:
-                        keep_alive.cancel()
-                        # Wait for its `set_timeout` request to unwind, so `run` leaves no request behind.
-                        with anyio.CancelScope(shield=True):
-                            await asyncio.wait([keep_alive])
+                        # Waits for its `set_timeout` request to unwind, so `run` leaves no request behind.
+                        await cancel_and_drain(keep_alive)
             if output_bytes > _MAX_OUTPUT_BYTES:
                 # The SDK builds the handle before its pump delivers any output, so one exists here.
                 assert handle is not None
