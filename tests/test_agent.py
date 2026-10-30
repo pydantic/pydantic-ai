@@ -13200,6 +13200,7 @@ async def test_raise_content_filter_error_capability_streaming():
             {'finish_reason': 'refusal', 'refusal': 'I cannot comply.'},
             "Content filter triggered. Finish reason: 'refusal'. Refusal: 'I cannot comply.'",
         ),
+        ({}, 'Content filter triggered.'),
     ],
 )
 async def test_raise_content_filter_error_capability_message_from_provider_details(

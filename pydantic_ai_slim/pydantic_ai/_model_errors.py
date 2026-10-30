@@ -354,4 +354,7 @@ def content_filter_message(provider_details: Mapping[str, Any] | None) -> str:
         reasons.append(f"Block reason: '{reason}'")
     if refusal := details.get('refusal'):
         reasons.append(f'Refusal: {refusal!r}')
-    return ' '.join(['Content filter triggered.', '. '.join(reasons)]) if reasons else 'Content filter triggered.'
+    message = 'Content filter triggered.'
+    if reasons:
+        message += ' ' + '. '.join(reasons)
+    return message
