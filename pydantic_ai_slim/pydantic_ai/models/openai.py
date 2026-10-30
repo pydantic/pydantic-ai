@@ -1860,8 +1860,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if choice.finish_reason is None:
                 choice.finish_reason = self._missing_finish_reason(choice)
 
-        # Read before validation, which joins a list `content` into its text.
-        _, content_parts = _split_content_parts(response.choices[0].message.content) if response.choices else (None, [])
+        # Read before validation, which joins a list `content` into its text. The SDK doesn't validate the response, so a
+        # choice can lack a `message` here; validation below reports that.
+        raw_message = getattr(response.choices[0], 'message', None) if response.choices else None
+        _, content_parts = _split_content_parts(getattr(raw_message, 'content', None))
 
         try:
             response = self._validate_completion(response)

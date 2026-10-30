@@ -105,7 +105,7 @@ from .mock_openai import (
 with try_import() as imports_successful:
     from openai import APIConnectionError, APIError, APIStatusError, AsyncAzureOpenAI, AsyncOpenAI
     from openai.types import chat
-    from openai.types.chat.chat_completion import ChoiceLogprobs
+    from openai.types.chat.chat_completion import Choice, ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
         Choice as ChunkChoice,
         ChoiceDelta,
@@ -716,6 +716,22 @@ async def test_request_list_content(allow_model_requests: None):
             'timestamp': IsDatetime(),
         }
     )
+
+
+async def test_request_choice_without_message_is_invalid_response(allow_model_requests: None):
+    """Reading list content before validation doesn't preempt the error for a choice with no message."""
+    completion = chat.ChatCompletion.model_construct(
+        id='123',
+        choices=[Choice.model_construct(index=0, message=None, finish_reason='stop')],
+        created=1704067200,
+        model='gpt-4o-123',
+        object='chat.completion',
+    )
+    mock_client = MockOpenAI.create_mock(completion)
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from openai chat completions endpoint'):
+        await agent.run('hello')
 
 
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:
