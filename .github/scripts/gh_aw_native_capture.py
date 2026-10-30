@@ -395,7 +395,9 @@ def main() -> None:
             (f'https://github.com/github/{project}/releases/download/v{version}/{asset}', work / 'bin' / name, digest)
         )
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        list(executor.map(lambda job: download(*job), download_jobs))
+        downloads: list[concurrent.futures.Future[None]] = [executor.submit(download, *job) for job in download_jobs]
+        for future in downloads:
+            future.result()
     for name in ('gh-aw', 'awf'):
         (work / 'bin' / name).chmod(0o755)
     execute([str(work / 'bin/gh-aw'), 'version'], env=env, log=evidence / 'gh-aw-version.log', timeout=20)
