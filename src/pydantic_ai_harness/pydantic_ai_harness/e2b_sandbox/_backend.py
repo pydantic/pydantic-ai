@@ -237,7 +237,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         sandbox_timeout: Total lifetime of the sandbox in seconds, applied when it is created and
             again when attaching to it. When it runs out, E2B pauses the sandbox rather than
             killing it, and attaching resumes it. The default, 3600, is the most E2B's Hobby plan
-            allows; Pro plans allow up to 86400.
+            allows; Pro plans allow up to 86400. With `idle_timeout`, it is instead the most the backend
+            extends the lifetime to, from its first use.
         idle_timeout: Seconds without use after which E2B pauses the sandbox. While the backend is in
             use, including during a long command, it extends the sandbox's lifetime with E2B's
             `set_timeout`, but never past `sandbox_timeout` from when the backend first used it.

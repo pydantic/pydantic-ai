@@ -39,7 +39,8 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     """Total lifetime of the sandbox in seconds, applied on create and on attach.
 
     When it runs out, E2B pauses the sandbox and attaching resumes it. The default, 1 hour, is
-    the most E2B's Hobby plan allows; Pro plans allow up to 86400.
+    the most E2B's Hobby plan allows; Pro plans allow up to 86400. With `idle_timeout`, it is instead
+    the most a run extends the lifetime to, from its first use.
     """
 
     idle_timeout: int | None = None
