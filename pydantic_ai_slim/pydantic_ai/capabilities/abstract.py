@@ -9,7 +9,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
-from typing_extensions import deprecated
+from typing_extensions import TypedDict, deprecated
 
 from pydantic_ai import _utils
 from pydantic_ai._instructions import (
@@ -24,8 +24,10 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityInstructionSource,
+    ModelMessage,
     ModelResponse,
     ToolCallPart,
+    UserContent,
 )
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -60,6 +62,18 @@ if TYPE_CHECKING:
 
 # --- Handler type aliases for use in hook method signatures ---
 # These make it easier to write correct type annotations when subclassing AbstractCapability.
+
+
+class _RunIdInputs(TypedDict):
+    prompt: str | Sequence[UserContent] | None
+    messages: list[ModelMessage]
+    message_history_ids: list[tuple[str | None, str | None]]
+    conversation_id: str | None
+    deps: object
+    metadata: dict[str, object] | None
+
+
+_RunIdInputsFactory: TypeAlias = Callable[[], _RunIdInputs]
 
 AgentNode: TypeAlias = '_agent_graph.AgentNode[AgentDepsT, Any]'
 """Type alias for an agent graph node (`UserPromptNode`, `ModelRequestNode`, `CallToolsNode`)."""
@@ -655,7 +669,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    async def _get_default_run_id_for_inputs(self, inputs: dict[str, object]) -> str | None:
+    async def _get_default_run_id_for_inputs(self, get_inputs: _RunIdInputsFactory) -> str | None:
         """Resolve a bootstrap identity without changing the public no-argument extension point."""
         return self.get_default_run_id()
 

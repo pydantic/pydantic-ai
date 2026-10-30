@@ -2785,6 +2785,17 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/pgtask/_capability.py::<module>"
       ]
     },
+    "_RunIdInputsFactory": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "annotation_only"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_durability.py::<module>"
+      ]
+    },
     "leaf_capabilities": {
       "engines": [
         "durable_exec",
