@@ -7,6 +7,7 @@ OpenRouter API).
 
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import Mapping
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -35,7 +36,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..._inline_snapshot import snapshot
-from ...cassette_utils import single_request_body
+from ...cassette_utils import request_json, single_request_body
 from ...conftest import IsDatetime, IsStr, try_import
 from ..mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
@@ -537,7 +538,7 @@ If you meant to share a document, data, or details, please paste it again and I'
 async def test_openrouter_cache_point_gemini_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
-    """Test CachePoint with Gemini model via OpenRouter using real API."""
+    """A `CachePoint` in a user message is ignored on a Gemini route, where only the system message is cached."""
     model = openrouter_model('google/gemini-2.5-flash')
     agent = Agent(model)
 
@@ -565,13 +566,17 @@ async def test_openrouter_cache_point_gemini_e2e(
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The provided text repeatedly emphasizes the importance of caching context.')],
+                parts=[
+                    TextPart(
+                        content='The repeated phrase "Here is some important context to cache" emphasizes the need to store this information for future reference.'
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=168,
-                    output_tokens=11,
+                    input_tokens=169,
+                    output_tokens=23,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.0000779'),
+                    cost=Decimal('0.0001082'),
                 ),
                 model_name='google/gemini-2.5-flash',
                 model_id='openrouter:google/gemini-2.5-flash',
@@ -580,15 +585,16 @@ async def test_openrouter_cache_point_gemini_e2e(
                 provider_url='https://openrouter.ai/api/v1',
                 provider_details={
                     'finish_reason': 'STOP',
-                    'downstream_provider': 'Google',
-                    'cost': 7.79e-05,
-                    'upstream_inference_cost': 7.79e-05,
-                    'upstream_inference_prompt_cost': 5.04e-05,
-                    'upstream_inference_completions_cost': 2.75e-05,
+                    'downstream_provider': 'Google AI Studio',
+                    'cost': 0.0001082,
+                    'upstream_inference_cost': 0.0001082,
+                    'upstream_inference_prompt_cost': 5.07e-05,
+                    'upstream_inference_completions_cost': 5.75e-05,
                     'is_byok': False,
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1773009367-3zFFs0yQRvCe01Kda6ID',
+                provider_response_id='gen-1793404234-NvYnwKtteaW9Xk9t0ivo',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -596,12 +602,7 @@ async def test_openrouter_cache_point_gemini_e2e(
         ]
     )
 
-    # Verify cache_control was in the request (without TTL for Gemini)
-    assert vcr is not None
-    request_body = single_request_body(vcr)
-    user_content = request_body['messages'][0]['content']
-    assert 'cache_control' in user_content[0]
-    assert user_content[0]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in json.dumps(single_request_body(vcr))
 
 
 async def test_openrouter_cache_instructions_e2e(
@@ -904,6 +905,45 @@ async def test_openrouter_cache_instructions_gemini_real_api(
     assert usage2.requests == 1
     assert usage2.cache_read_tokens > 0
     assert usage2.output_tokens > 0
+
+
+async def test_openrouter_cache_gemini_does_not_double_prompt_tokens(
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
+) -> None:
+    """Unified `cache=True` on a Gemini route caches the instructions without billing the prompt twice.
+
+    With a `cache_control` on any message other than the system message, OpenRouter's Google Vertex endpoint
+    bills the cached prefix and then the same prefix again inline, doubling `prompt_tokens`. So only the system
+    message gets one.
+    """
+    model = openrouter_model('google/gemini-3.5-flash-lite')
+    instructions = (
+        'You are a specialized assistant that helps with distributed systems design. '
+        'You have deep expertise in consensus protocols, CAP theorem, and eventual consistency. '
+    ) * 250  # Above Gemini's minimum cacheable prompt size.
+    agent = Agent(
+        model,
+        instructions=instructions,
+        model_settings=OpenRouterModelSettings(
+            cache=True,
+            openrouter_provider={'order': ['google-vertex'], 'allow_fallbacks': False},
+            max_tokens=20,
+        ),
+    )
+
+    result1 = await agent.run('Name one consensus protocol. Answer with the name only.')
+    result2 = await agent.run('Name another one. Answer with the name only.', message_history=result1.all_messages())
+
+    usage1, usage2 = result1.usage, result2.usage
+    assert (usage1.input_tokens, usage1.cache_write_tokens, usage1.cache_read_tokens) == snapshot((6827, 6817, 6817))
+    assert (usage2.input_tokens, usage2.cache_write_tokens, usage2.cache_read_tokens) == snapshot((6838, 0, 6817))
+
+    # The role of each message carrying a breakpoint, per request.
+    breakpoint_roles = [
+        [message['role'] for message in request_json(request)['messages'] if 'cache_control' in json.dumps(message)]
+        for request in vcr.requests
+    ]
+    assert breakpoint_roles == snapshot([['system'], ['system']])
 
 
 async def test_openrouter_cache_streaming_e2e(

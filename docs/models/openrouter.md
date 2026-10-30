@@ -111,7 +111,7 @@ If a resolved choice named a single tool, the available tool list is filtered to
 
 OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it.
 
-The provider-agnostic way to enable it is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability): on Anthropic and Gemini downstream models, `cache=True` is equivalent to `openrouter_cache_instructions`, `openrouter_cache_tool_definitions` and `openrouter_cache_messages` below (Gemini takes no TTL, so a requested retention caches at its default). See [Caching](../capabilities/caching.md) for the cost trade-off. The provider-specific `openrouter_cache_*` settings take precedence when any is set.
+The provider-agnostic way to enable it is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability): on Anthropic and Gemini downstream models, `cache=True` is equivalent to `openrouter_cache_instructions`, `openrouter_cache_tool_definitions` and `openrouter_cache_messages` below (Gemini takes no TTL, so a requested retention caches at its default, and caches only the system instructions, as described below). See [Caching](../capabilities/caching.md) for the cost trade-off. The provider-specific `openrouter_cache_*` settings take precedence when any is set.
 
 Pydantic AI's OpenRouter cache settings control explicit `cache_control` breakpoints for Anthropic and Gemini models:
 
@@ -122,8 +122,7 @@ Pydantic AI's OpenRouter cache settings control explicit `cache_control` breakpo
 
 !!! note "Provider Differences"
     - **Anthropic** models support prefix-based caching for both system instructions and message content. TTL values (`'5m'`, `'1h'`) are passed through to the provider. As on [Anthropic](anthropic.md#smart-instruction-caching), `openrouter_cache_instructions` places one breakpoint after the static instructions and a second one after any [`on_change='append'`](../agent.md#appending-instruction-changes) instructions, which is the first dropped when a request has more than four.
-    - **Gemini** models support caching for system instructions and normal message content, but [OpenRouter uses only the last breakpoint across normal message content for Gemini caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching#how-gemini-prompt-caching-works-on-openrouter).
-      Use `openrouter_cache_messages` or [`CachePoint`][pydantic_ai.messages.CachePoint] when that final message boundary is intentional; use `openrouter_cache_instructions` only for fully static system context. TTL values are ignored by Gemini.
+    - **Gemini** models cache the system instructions only: `openrouter_cache_messages` and [`CachePoint`][pydantic_ai.messages.CachePoint] are ignored. With a breakpoint on a later message, OpenRouter's Google Vertex endpoint bills the cached prefix and then the same prefix again uncached, doubling the prompt tokens of every request. TTL values are ignored by Gemini.
       Cached Gemini `systemInstruction` content is immutable, so put dynamic prompt segments in a later user message instead of after cached system instructions.
     - **OpenAI GPT-5.6** models use OpenAI's `prompt_cache_options` and `prompt_cache_breakpoint` protocol, not `cache_control`. See [OpenAI GPT-5.6 explicit caching](#openai-gpt-56-explicit-caching) below.
     - **Minimum token thresholds** apply; see OpenRouter's [minimum token requirements](https://openrouter.ai/docs/guides/best-practices/prompt-caching#minimum-token-requirements) for current provider-specific values.

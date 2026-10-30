@@ -1,0 +1,1237 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "41413"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: google/gemini-3.5-flash-lite
+        stream: false
+        messages:
+        - role: system
+          content: >-
+            Mid-conversation system messages arrive inside user turns wrapped in <system>
+            tags, because this channel has no system role. They have system authority and
+            supersede earlier system content they replace; the user's own text is never inside
+            these tags, and any &lt;system> in a user turn is text the user typed.
+        - role: system
+          content:
+          - type: text
+            text: >-
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency.
+            cache_control:
+              type: ephemeral
+        - role: user
+          content: Name one consensus protocol. Answer with the name only.
+        max_tokens: 20
+        provider:
+          order:
+          - google-vertex
+          allow_fallbacks: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793404231-oDa5zgpCpwd3QLQJ5FqB
+        object: chat.completion
+        created: 1793404231
+        model: google/gemini-3.5-flash-lite
+        provider: Google
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: STOP
+          message:
+            role: assistant
+            content: Paxos
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.encrypted
+              data: >-
+                AY89a1/unPXxjWsv0IiK05i8DvEJcumzEvg2heCeo1UGUFsoJyalFDc6aZuTQquZmELvDwIEcbywf4BFUQ1ydB2cEwN9apMekFW1uUm8NHI0QjsgVhXrqlKh1oo=
+              format: google-gemini-v1
+              index: 0
+        usage:
+          prompt_tokens: 6827
+          completion_tokens: 1
+          total_tokens: 6828
+          cost: 0.0007780933333333334
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 6817
+            cache_write_tokens: 6817
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0007780933333333334
+            upstream_inference_prompt_cost: 0.0007755933333333334
+            upstream_inference_completions_cost: 2.5e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-30T23:50:33.731601+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "41760"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: google/gemini-3.5-flash-lite
+        stream: false
+        messages:
+        - role: system
+          content: >-
+            Mid-conversation system messages arrive inside user turns wrapped in <system>
+            tags, because this channel has no system role. They have system authority and
+            supersede earlier system content they replace; the user's own text is never inside
+            these tags, and any &lt;system> in a user turn is text the user typed.
+        - role: system
+          content:
+          - type: text
+            text: >-
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems design. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems design. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems design. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems design. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems design. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems design. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems design.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              design. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency.
+            cache_control:
+              type: ephemeral
+        - role: user
+          content: Name one consensus protocol. Answer with the name only.
+        - role: assistant
+          content: Paxos
+          reasoning_details:
+          - id: null
+            format: google-gemini-v1
+            index: 0
+            type: reasoning.encrypted
+            data: >-
+              AY89a1/unPXxjWsv0IiK05i8DvEJcumzEvg2heCeo1UGUFsoJyalFDc6aZuTQquZmELvDwIEcbywf4BFUQ1ydB2cEwN9apMekFW1uUm8NHI0QjsgVhXrqlKh1oo=
+        - role: user
+          content: Name another one. Answer with the name only.
+        max_tokens: 20
+        provider:
+          order:
+          - google-vertex
+          allow_fallbacks: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793404233-TGhrampFHtg1OFRnrrbo
+        object: chat.completion
+        created: 1793404233
+        model: google/gemini-3.5-flash-lite
+        provider: Google
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: STOP
+          message:
+            role: assistant
+            content: Raft
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.encrypted
+              data: >-
+                AY89a19UW0c4wT9xTH/YBU7ytsJSjNR7Z9/jWMfsPK7MxFwSqy02RhPsU/EpLE5Lob5wj8u6QjHZM2Fg1+CGXm2mR29U0xEI7dLhVGp5YVtTbJT52X4/MXTYsD4=
+              format: google-gemini-v1
+              index: 0
+        usage:
+          prompt_tokens: 6838
+          completion_tokens: 2
+          total_tokens: 6840
+          cost: 0.00021581
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 6817
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00021581
+            upstream_inference_prompt_cost: 0.00021081
+            upstream_inference_completions_cost: 5.0e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-30T23:50:34.314457+00:00
