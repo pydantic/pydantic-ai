@@ -1798,7 +1798,7 @@ class OutputSubmissionTarget:
             ValidationError: If a `'text'` target's arguments aren't a single string `response`.
         """
         if self.route == 'text':
-            return _TEXT_SUBMISSION_TA.validate_python(args)['response']
+            return _TEXT_SUBMISSION_TA.validate_python(args)[_TEXT_SUBMISSION_KEY]
         data: dict[str, Any] = args if self.union_kind is None else {'result': {'kind': self.union_kind, 'data': args}}
         return to_json(data).decode()
 
