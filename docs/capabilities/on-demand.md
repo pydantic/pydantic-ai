@@ -579,3 +579,77 @@ for request, tools in enumerate(tools_per_request, start=1):
 On request 1 the model sees only `load_capability`, with `release` in the catalog. Once it loads the skill, the skill's instructions follow the tool result and `stage_release` is in its tool list from request 2 on. Pass functions or [`Tool`][pydantic_ai.tools.Tool] instances via `tools=` the same way.
 
 This gates the skill's tools as a bundle. To let the model find individual tools in a large flat catalog by keyword instead, use [tool search](../tools-advanced.md#tool-search); a capability's tools are never searchable before it loads. If you load Agent Skills with the [Pydantic AI Harness `Skills` capability](../harness/skills.md), which delivers instructions only, define a skill that needs tools this way instead. Both share one catalog and the `load_capability` tool.
+
+## Loading runbooks from a database
+
+If your team keeps runbooks in a database rather than in files, make each runbook a deferred [`Capability`][pydantic_ai.capabilities.Capability] and read its body in an instructions function registered with [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions]. The function receives the [`RunContext`][pydantic_ai.tools.RunContext], so it can query the database connection you pass as `deps`.
+
+The example below builds the catalog from the `runbooks` table when the agent is created, so every run sends the same catalog and it stays in the cached prefix; a runbook added to the table appears once the agent is rebuilt. The body of a runbook is read only after the model loads it, and again on each later request of the run, so an edited runbook reaches the next run without a redeploy. An edit made after the model loaded the runbook is [appended](../agent.md#appending-instruction-changes) to the conversation as an update. Like any loaded capability's instructions, a runbook's body is stated in the system voice, so anyone who can write to the table can instruct the model with your authority: limit write access to people you would let edit your agent's instructions.
+
+An in-memory SQLite database stands in for yours, the instructions function prints each runbook it reads, and a [`FunctionModel`][pydantic_ai.models.function.FunctionModel] stands in for a real model that loads the `db-failover` runbook:
+
+```python {title="runbooks_from_database.py"}
+import sqlite3
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+@dataclass
+class Deps:
+    db: sqlite3.Connection
+
+
+def runbook(runbook_id: str, description: str) -> Capability[Deps]:
+    capability = Capability[Deps](id=runbook_id, description=description, defer_loading=True)
+
+    @capability.instructions
+    def body(ctx: RunContext[Deps]) -> str | None:
+        print(f'Reading runbook {runbook_id!r}')
+        #> Reading runbook 'db-failover'
+        row = ctx.deps.db.execute('SELECT body FROM runbooks WHERE id = ?', (runbook_id,)).fetchone()
+        return row[0] if row else None  # a deleted runbook withdraws its instructions
+
+    return capability
+
+
+# A sync instructions function runs in a worker thread, so share the connection across threads.
+db = sqlite3.connect(':memory:', check_same_thread=False)
+db.execute('CREATE TABLE runbooks (id TEXT PRIMARY KEY, description TEXT, body TEXT)')
+db.executemany(
+    'INSERT INTO runbooks VALUES (?, ?, ?)',
+    [
+        (
+            'db-failover',
+            'Use when the primary database is down or unreachable.',
+            'Page the on-call DBA, then promote the replica with the lowest replication lag.',
+        ),
+        (
+            'cert-renewal',
+            'Use when a TLS certificate is about to expire.',
+            'Renew the certificate through the internal CA and roll the load balancers.',
+        ),
+    ],
+)
+runbooks = [
+    runbook(runbook_id, description)
+    for runbook_id, description in db.execute('SELECT id, description FROM runbooks')
+]
+
+
+def scripted_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'db-failover'})])
+    return ModelResponse(parts=[TextPart('Paging the on-call DBA.')])
+
+
+agent = Agent(FunctionModel(scripted_model), deps_type=Deps, capabilities=runbooks)
+result = agent.run_sync('The primary database is down.', deps=Deps(db))
+print(result.output)
+#> Paging the on-call DBA.
+```
+
+The first request sends only the catalog, so no runbook body is read. After the model loads `db-failover`, the second request reads that runbook's body and sends it to the model; `cert-renewal` is never read. With an async database driver, make the instructions function `async def` and `await` the query.
