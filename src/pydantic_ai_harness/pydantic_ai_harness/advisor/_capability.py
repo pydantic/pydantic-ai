@@ -41,8 +41,8 @@ def _caller_stacklevel() -> int:
     return stacklevel
 
 
-def _executor_api(model: AbstractModel) -> str:
-    """The API the executor reaches, which decides the native advisor's model-ID namespace.
+def _executor_service(model: AbstractModel) -> str:
+    """The service the executor reaches, which decides the native advisor's model-ID namespace.
 
     The provider's canonical system rather than its name, so a provider subclass that only renames
     itself, such as a `claude-code` `AnthropicProvider`, still gets the Anthropic advisor. Not the
@@ -326,7 +326,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     def _native_advisor(self, ctx: RunContext[AgentDepsT]) -> AdvisorTool | None:
         """Build a native tool only when an explicit advisor model name is lossless."""
         native_provider, native_model_name = self._parse_native_model(self.model)
-        provider = _executor_api(ctx.model)
+        provider = _executor_service(ctx.model)
         if provider != native_provider or native_model_name is None:
             return None
         if provider == 'openrouter' and self.max_uses is not None:
@@ -336,7 +336,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     def _required_native_advisor(self, ctx: RunContext[AgentDepsT]) -> AdvisorTool:
         """Build a required native tool or reject a cross-provider executor."""
         native_provider, native_model_name = self._parse_native_model(self.model)
-        if _executor_api(ctx.model) != native_provider:
+        if _executor_service(ctx.model) != native_provider:
             raise UserError(f"Advisor(mode='native') requires a {native_provider} executor, not {ctx.model.system}")
         assert native_model_name is not None
         return self._advisor_tool(native_model_name)

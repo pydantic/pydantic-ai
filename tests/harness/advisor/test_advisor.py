@@ -98,10 +98,10 @@ class TestAdvisor:
 
     @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
     @pytest.mark.parametrize('mode', ['auto', 'native'])
-    async def test_uses_native_advisor_for_a_renamed_provider_of_the_same_api(
+    async def test_uses_native_advisor_for_a_renamed_provider_of_the_same_service(
         self, mode: Literal['auto', 'native']
     ) -> None:
-        """An `AnthropicProvider` subclass named `claude-code` still reaches the Anthropic API and its model IDs."""
+        """An `AnthropicProvider` subclass named `claude-code` still reaches the Anthropic service and its model IDs."""
 
         class ClaudeCodeProvider(AnthropicProvider):
             @property

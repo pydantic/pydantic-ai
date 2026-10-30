@@ -350,7 +350,7 @@ The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.
     The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](toolsets.md) registered on the agent, but not [output tools](output.md#tool-output).
 To modify output tools, you can set a `prepare_output_tools` function instead.
 
-Here's an example that makes all tools strict if the model's [profile](models/overview.md#inspecting-a-models-profile) says it supports JSON schema output, with [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output]:
+Here's an example that makes all tools strict if the model's [profile](models/overview.md#inspecting-a-models-profile) says it supports JSON schema output, with [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output]. That flag describes native structured output, not strict tool definitions; it stands in here because there's no provider-agnostic strict-tools flag:
 
 ```python {title="agent_prepare_tools_customize.py" noqa="I001"}
 from dataclasses import replace

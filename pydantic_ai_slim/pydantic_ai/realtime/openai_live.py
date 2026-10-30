@@ -2426,6 +2426,8 @@ class OpenAILiveModel(RealtimeModel):
         agent_model = run_context.agent.model if run_context is not None and run_context.agent is not None else None
         if isinstance(agent_model, str):
             agent_model = _resolve_openai_model(agent_model)
+        # The provider as well as the URL: an `OpenAIProvider` subclass with its own name is taken to be another
+        # service, as its `canonical_system` says, so its models aren't reused at the same URL either.
         if (
             isinstance(agent_model, Model)
             and agent_model.system == self.system

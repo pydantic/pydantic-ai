@@ -160,7 +160,8 @@ ToolsPrepareFunc: TypeAlias = Callable[
 This is useful if you want to customize the definition of multiple tools or you want to register
 a subset of tools for a given step. Both sync and async functions are accepted.
 
-Example — here `turn_on_strict_if_supported` is valid as a `ToolsPrepareFunc`:
+Example — here `turn_on_strict_if_supported` is valid as a `ToolsPrepareFunc`. It reads the profile's
+`supports_json_schema_output` as a stand-in, since there's no provider-agnostic strict-tools flag:
 
 ```python {noqa="I001"}
 from dataclasses import replace
