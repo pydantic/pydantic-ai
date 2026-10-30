@@ -1011,7 +1011,7 @@ The toolset emits Pydantic AI `instructions` that nudge the agent to call the ma
 
 ### VideoGen
 
-[`pydantic-ai-videogen`](https://pypi.org/project/pydantic-ai-videogen/) provides [VideoGen](https://videogen.io/videogen-mcp) API tools for generating videos and media, editing projects, and exporting MP4 files. Its `create_videogen_tools` factory returns native Pydantic AI `Tool` objects that can be passed to an agent or wrapped in a `FunctionToolset`.
+[`pydantic-ai-videogen`](https://pypi.org/project/pydantic-ai-videogen/) provides [VideoGen](https://videogen.io/videogen-mcp) API tools for generating videos and media, editing projects, and exporting MP4 files. Its `create_videogen_tools` factory returns native Pydantic AI [`Tool`][pydantic_ai.tools.Tool] objects that can be passed to an agent or wrapped in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset].
 
 Install `pydantic-ai-videogen` and set `VIDEOGEN_API_KEY` in your environment. Use the `include` argument to expose selected tools, such as the `get_me` account read and `list_files` file read. Generation and editing use VideoGen account credits, so applications should obtain user approval before invoking those tools.
 
