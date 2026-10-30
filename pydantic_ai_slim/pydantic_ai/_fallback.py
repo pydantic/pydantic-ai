@@ -139,11 +139,11 @@ class FallbackPredicates:
     """
 
     @classmethod
-    def parse(cls, fallback_on: FallbackOn, *, owner: str) -> FallbackPredicates:
+    def parse(cls, fallback_on: FallbackOn, *, owner: str, default: str = '(ModelAPIError,)') -> FallbackPredicates:
         """Parse the `fallback_on` argument into exception and response handlers.
 
         `owner` names the class in the error raised for an empty `fallback_on`, so the message
-        points at whichever entry point the user actually called.
+        points at whichever entry point the user actually called, and `default` is that class's default it suggests.
         """
         predicates = cls(exception_handlers=[], response_handlers=[])
         if _is_exception_type(fallback_on):
@@ -168,7 +168,7 @@ class FallbackPredicates:
         if not predicates.exception_handlers and not predicates.response_handlers:
             raise UserError(
                 f'`{owner}` created with an empty `fallback_on`: all exceptions will propagate and all responses '
-                'will be accepted. Use `fallback_on=(ModelAPIError,)` for the default behavior.'
+                f'will be accepted. Use `fallback_on={default}` for the default behavior.'
             )
         return predicates
 

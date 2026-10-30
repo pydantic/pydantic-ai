@@ -2800,3 +2800,26 @@ async def test_sticky_stays_on_the_model_that_answered_a_refusal():
     second = await agent.run('y', message_history=first.all_messages())
     assert second.output == 'backup answered'
     assert calls == ['backup']
+
+
+@pytest.mark.parametrize(
+    'make, message',
+    [
+        pytest.param(
+            lambda: ModelFallback(FunctionModel(success), fallback_on=[]),
+            '`ModelFallback` created with an empty `fallback_on`: all exceptions will propagate and all responses '
+            'will be accepted. Use `fallback_on=(ModelAPIError, ContentFilterError)` for the default behavior.',
+            id='ModelFallback',
+        ),
+        pytest.param(
+            lambda: FallbackModel(FunctionModel(success), fallback_on=[]),
+            '`FallbackModel` created with an empty `fallback_on`: all exceptions will propagate and all responses '
+            'will be accepted. Use `fallback_on=(ModelAPIError,)` for the default behavior.',
+            id='FallbackModel',
+        ),
+    ],
+)
+def test_an_empty_fallback_on_suggests_the_owners_default(make: Callable[[], object], message: str):
+    with pytest.raises(UserError) as exc_info:
+        make()
+    assert str(exc_info.value) == message

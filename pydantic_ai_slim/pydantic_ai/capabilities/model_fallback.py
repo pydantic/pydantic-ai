@@ -157,7 +157,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             raise UserError('`ModelFallback` requires at least one model to fall back to.')
         self.models = list(models)
         self.sticky = sticky
-        self._predicates = FallbackPredicates.parse(fallback_on, owner='ModelFallback')
+        self._predicates = FallbackPredicates.parse(
+            fallback_on, owner='ModelFallback', default='(ModelAPIError, ContentFilterError)'
+        )
         self._supplies_model = False
         self._default_model = None
         self._step = None
