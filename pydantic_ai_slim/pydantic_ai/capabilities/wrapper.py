@@ -205,6 +205,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         )
 
     @property
+    def _has_after_model_request(self) -> bool:
+        return (
+            type(self).after_model_request is not WrapperCapability.after_model_request
+            or self.wrapped._has_after_model_request
+        )
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         return (
             type(self).wrap_run_event_stream is not WrapperCapability.wrap_run_event_stream

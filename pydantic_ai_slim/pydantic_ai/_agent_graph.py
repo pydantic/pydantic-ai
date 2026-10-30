@@ -2430,6 +2430,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             teardown below acts on it, raising any other error, once the consumer is done with the stream.
             """
             if not cut_short:
+                if not ctx.deps.root_capability._has_after_model_request:  # pyright: ignore[reportPrivateUsage]
+                    # Nothing can reject the response inside the handler, so it finishes once the consumer leaves the
+                    # stream, as it always has. A retry `wrap_model_request` decides on is reported from there.
+                    return None
                 # The consumer has seen the whole response, so let the handler finish as it would once the consumer
                 # leaves the stream, and `after_model_request` pass its verdict before the stream ends. The rest of
                 # `wrap_model_request` is only waited for when the handler asked the model again: a wrapper can still
