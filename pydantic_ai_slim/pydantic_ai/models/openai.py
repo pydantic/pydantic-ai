@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
+import httpx2
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
 from pydantic_core import to_json
@@ -99,6 +100,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
+    _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..native_tools import (
@@ -273,6 +275,9 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
         # been received; it gets the status the same error has before a stream opens.
         raise _model_errors.stream_error(model_name, e.message, e.body) from e
+    except httpx2.HTTPStatusError as e:
+        # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
+        raise _model_errors.transport_status_error(model_name, e.response) from e
 
 
 def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:
@@ -4625,7 +4630,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> str | None:
         """The response to compare this request against for prompt cache diagnostics, if they should be requested.
 
-        That is the most recent response from this provider. OpenAI rejects an ID that doesn't start with `resp` with
+        That is the most recent response from this provider, unless a later compaction satisfies `_is_compaction_boundary`.
+        OpenAI rejects an ID that doesn't start with `resp` with
         a 400, so a response from an endpoint that issues other IDs is skipped. So is one from the `/compact`
         endpoint: like `previous_response_id`, it's a boundary, and a request after it starts a new prefix anyway.
         """
@@ -4634,12 +4640,27 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         ):
             return None
         for message in reversed(messages):
+            if isinstance(message, ModelResponse) and self._is_compaction_boundary(message):
+                return None
             if isinstance(message, ModelResponse) and self.accepts_server_state(message):
-                if message.provider_details and message.provider_details.get('compaction'):
-                    return None
                 response_id = message.provider_response_id
                 return response_id if response_id and response_id.startswith('resp_') else None
         return None
+
+    def _is_compaction_boundary(self, response: ModelResponse) -> bool:
+        """Keep accepted inline server state chainable; otherwise use the portable compaction boundary."""
+        if self.accepts_server_state(response):
+            return bool(response.provider_details and response.provider_details.get('compaction'))
+        return any(
+            isinstance(part, CompactionPart)
+            and _compaction_part_is_wire_boundary(
+                response,
+                part,
+                self.accepts_stateless_artifacts,
+                requires_encrypted_content=self.compaction_requires_encrypted_content,
+            )
+            for part in response.parts
+        )
 
     def _get_previous_response_id_and_new_messages(
         self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False
@@ -4648,19 +4669,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # provider, and return it along with the messages that came after it (which
         # still need to be sent as new input). When nothing suitable is found, returns
         # `(None, messages)` with the full list unchanged. The third element says whether
-        # the most recent response from this provider is a chain boundary (a compaction, or
-        # a changed history), which a concrete seed must not cross either.
+        # retained history has a chain boundary (an accepted compaction, or changed
+        # history from this provider), which a concrete seed must not cross either.
         previous_response_id = None
         trimmed_messages: list[ModelMessage] = []
         for index in range(len(messages) - 1, -1, -1):
             m = messages[index]
+            if isinstance(m, ModelResponse) and self._is_compaction_boundary(m):
+                # Continue from the compaction item instead of restoring the older server-side context.
+                return None, messages, True
             if isinstance(m, ModelResponse) and self.accepts_server_state(m):
-                # Responses from the stateless `/compact` endpoint can't be used as
-                # `previous_response_id`, so the compaction acts as a hard chain boundary:
-                # the next request must pass the `CompactionPart` via the `input` array
-                # (handled by `_map_messages`) without a `previous_response_id`.
-                if m.provider_details and m.provider_details.get('compaction'):
-                    return None, messages, True
                 # The server continues from this response and the history it was created with, so if
                 # either has changed since (a history processor redacted or trimmed them, say),
                 # continuing would silently drop the change: resend everything instead.

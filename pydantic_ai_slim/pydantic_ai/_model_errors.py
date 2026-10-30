@@ -2,7 +2,10 @@
 
 from __future__ import annotations as _annotations
 
-from typing import cast
+from collections.abc import Mapping
+from typing import Protocol, cast
+
+import pydantic_core
 
 from ._utils import is_str_dict
 from .exceptions import (
@@ -295,3 +298,43 @@ def connection_error(model_name: str, message: str, error: BaseException, *, tim
     """A `ModelConnectionError` (or `ModelTimeoutError`) for a transport `error`, with its phase if known."""
     error_class = ModelTimeoutError if timeout else ModelConnectionError
     return error_class(model_name=model_name, message=message, phase=transport_phase(error))
+
+
+class HTTPStatusResponse(Protocol):
+    """The parts of an `httpx` or `httpx2` response that `transport_status_error` reads."""
+
+    @property
+    def status_code(self) -> int: ...
+
+    @property
+    def headers(self) -> Mapping[str, str]: ...
+
+    @property
+    def content(self) -> bytes: ...
+
+
+def transport_status_error(model_name: str, response: HTTPStatusResponse) -> ModelHTTPError:
+    """The `ModelHTTPError` for an error status the HTTP transport raised before the provider SDK saw the response.
+
+    A retrying transport's `validate_response` raises `HTTPStatusError` for a status it retries, and re-raises it
+    once it runs out of attempts. Most SDKs let that exception through unchanged, and `anthropic` and `groq` wrap it
+    in their connection error, though the provider did respond.
+    """
+    try:
+        content = response.content
+    except RuntimeError:  # `ResponseNotRead`: the transport closed the response without reading its body.
+        content = b''
+    text = content.decode(errors='replace')
+    body: object = None
+    if content:
+        try:
+            body = pydantic_core.from_json(content)
+        except ValueError:
+            body = text
+    return ModelHTTPError.for_category(
+        http_status_category(response.status_code, text),
+        status_code=response.status_code,
+        model_name=model_name,
+        body=body,
+        headers=dict(response.headers),
+    )

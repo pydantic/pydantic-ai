@@ -46,7 +46,8 @@ context first, most specific last. Files are deduped by the path a symlink resol
 to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors
 sharing identical content load once. Where the workspace can resolve symlinks, a
 symlinked file is labeled with its target's name, so `CLAUDE.md -> AGENTS.md`
-reaches the model as `AGENTS.md`.
+reaches the model as `AGENTS.md`. A file in an ancestor is labeled relative to the
+working directory, such as `../AGENTS.md`, not by its absolute path.
 
 When `home_dir` is `None` (the default), only the working directory is scanned -- no
 walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
@@ -67,8 +68,10 @@ With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'
 
 ### 3. Nested-on-traversal (off by default)
 
-When the model lists or reads a directory, surface that directory's
-`CLAUDE.md`/`AGENTS.md`. This strategy subscribes to `FileReadEvent` and
+When the model lists a directory or reads a file in it, surface the
+`CLAUDE.md`/`AGENTS.md` of that directory and of every directory between it and
+the working directory, shallowest first: reading `packages/foo/src/x.py` also
+surfaces `packages/foo/AGENTS.md`. This strategy subscribes to `FileReadEvent` and
 `DirectoryListedEvent`, so it receives normalized, containment-checked paths
 instead of inspecting raw tool arguments. It remains opt-in:
 
@@ -93,8 +96,15 @@ result = agent.run_sync('List the source directory.')
 
 `nested_inject='pointer'` (default) enqueues a one-line note pointing at the
 file; `'contents'` enqueues the file body. The note reaches message history
-before the next model request. Each directory is surfaced at most once per run.
+before the next model request. Each directory is surfaced at most once per run,
+and the working directory's files are not surfaced again when the walk-up
+already loaded them.
 As with the walk-up, a symlinked instruction file is named after its target.
+
+With nested traversal on, the instructions also tell the model how instruction
+files relate: each applies to its own directory and everything below it, the
+more deeply nested file wins a conflict, and the user's direct instructions win
+over all of them. The statement is static, so it stays in the cached prefix.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
 the same types by importing `FileReadEvent` and `DirectoryListedEvent` from

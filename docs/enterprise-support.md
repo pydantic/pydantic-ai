@@ -7,7 +7,7 @@ description: "Pydantic AI is open source, with commercial enterprise support fro
 
 Pydantic AI is open source under the MIT license. When it becomes part of a critical agent system, a public issue tracker is not the escalation path you want during an incident, provider change, or major rollout.
 
-Commercial support gives your team direct access to Pydantic AI engineers for production incidents, architecture, provider changes, and upgrades. Enterprise plans include 24/7 priority support, setup assistance, and an SLA matched to your operating model. Your agreement can also define how we coordinate when a vulnerability affects a covered release line.
+Commercial support gives your team direct access to Pydantic AI engineers for production incidents, architecture, provider changes, and upgrades. It covers the Pydantic AI framework and [Pydantic AI Harness](harness/index.md), including its complete agents such as [`Coder`](harness/coder.md). Enterprise plans include 24/7 priority support, setup assistance, and an SLA matched to your operating model. Your agreement can also define how we coordinate when a vulnerability affects a covered release line.
 
 For what Pydantic AI sends outside your infrastructure, which models and clouds it runs on, and how teams control and audit agents, see [Pydantic AI for Enterprise](enterprise.md).
 
@@ -31,7 +31,7 @@ Use the public documentation, issue tracker, and community channels for ordinary
 
 1. **Agree the support boundary**
 
-   Define the framework and provider integrations, release lines, environments, operational and security contacts, and initial response targets covered by your agreement.
+   Define the framework, Harness capabilities and provider integrations, release lines, environments, operational and security contacts, and initial response targets covered by your agreement.
 
 2. **Prepare useful context**
 
