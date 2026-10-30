@@ -31,6 +31,12 @@ const token =
   new URLSearchParams(location.search).get('token') ??
   ''
 
+const RELOADED = 'clai-reloaded-for'
+
+/** The version of the CLAI whose bundle this page loaded again for, after `/update` restarted it; `null` otherwise. */
+export const reloadedFor = sessionStorage.getItem(RELOADED)
+sessionStorage.removeItem(RELOADED)
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -267,7 +273,8 @@ export function preconnect(): void {
 Each new connection watches `watching()`'s sessions again, after calling `onWatch` with the shown one, before any of
 its messages arrive.
 A CLAI restarted since this page loaded has a new token: after a few failed attempts this checks, and
-reports `expired` instead of retrying forever.
+reports `expired` instead of retrying forever. One that `/update` restarted as another version serves its own bundle,
+which the page loads instead of talking to it with this one.
  */
 export function connect(
   onMessage: (message: ServerMessage) => void,
@@ -312,7 +319,22 @@ export function connect(
     send(sessions)
     onState('open')
   }
-  const received = (event: MessageEvent<string>) => onMessage(JSON.parse(event.data) as ServerMessage)
+  // The version of the CLAI this bundle came from, as its first snapshot says.
+  let version: string | null = null
+  const received = (event: MessageEvent<string>) => {
+    const message = JSON.parse(event.data) as ServerMessage
+    if (message.type === 'snapshot') {
+      if (version !== null && message.version !== version) {
+        stopped = true
+        socket?.close()
+        sessionStorage.setItem(RELOADED, message.version)
+        location.reload()
+        return
+      }
+      version = message.version
+    }
+    onMessage(message)
+  }
   const closed = () => {
     if (stopped) return
     onState('closed')

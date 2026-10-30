@@ -28,7 +28,8 @@ watching it (a page watches the last five sessions it showed), closes, except th
 with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
 
 The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
-after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
+after its main checkout's folder, with as much of its path as tells apart projects of one name, as
+`a/scratch` and `b/scratch`), then by worktree (each checkout, labelled with its branch), with
 the current ones first and search across all of them. A folder outside Git is a project of its own.
 A session remembers its checkout when it is saved, so one from a worktree you have since removed
 stays under its project, marked removed, in one **Removed worktrees** group after the live ones,
@@ -81,12 +82,13 @@ outside Git too, and show each file once, as one diff from before the first chan
 disk now. A file the session wrote whole counts as created, unless the last commit has it with
 content the session did not write, which it is then compared with. These scopes read the
 conversation, so after `/compact` they start from the compacted summary. **Uncommitted** is
-`git diff HEAD` in the session's directory (untracked files are left out, as there), and **Branch
+`git diff HEAD` in the session's directory, with untracked files that are not ignored listed as
+added, as `git status` and the git chip count them, and **Branch
 vs base** compares the files, uncommitted changes included, with where the branch left its base:
 `origin/HEAD`, else `main` or `master`. Each file shows its status (A, M, or D) and added and
 removed lines; click it to jump to its diff. Files with many changed lines start collapsed. The
-panel asks again when a turn ends, and **Refresh** asks at once. It takes the plugin side panels'
-place, so opening one closes the other.
+panel asks again when a turn ends, and **Refresh** asks at once. It shares one column with Monty
+and the plugin side panels, so opening one closes the others.
 
 <!-- From #10442 -->
 The **Settings** window (the gear in the sidebar's footer, or Cmd/Ctrl+,) has a section per area
