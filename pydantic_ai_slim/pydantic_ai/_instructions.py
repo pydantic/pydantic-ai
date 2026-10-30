@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponsePart,
+    ModelSettingsDeltaPart,
     _instruction_text_hash,  # pyright: ignore[reportPrivateUsage]
     _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
 )
@@ -461,6 +462,9 @@ class LoadedInstructionValues:
     _changed: set[str] = field(default_factory=set[str], repr=False)
     """The capabilities whose value an instruction change delivered, rather than their load return."""
 
+    _unstated: dict[str, int] = field(default_factory=dict[str, int], repr=False)
+    """The index of the message holding each load whose instructions nothing has stated since, as `of` folds them."""
+
     @property
     def stated_in_history(self) -> list[str]:
         """The loaded capabilities whose instructions an instruction change in history states, in load order.
@@ -474,12 +478,20 @@ class LoadedInstructionValues:
     def of(cls, messages: Sequence[ModelMessage]) -> LoadedInstructionValues:
         """The values at the end of `messages`."""
         loaded = cls()
-        for _, part in loaded_window_parts(messages):
+        for index, part in loaded_window_parts(messages):
             if loaded.tracks(part):
                 loaded.apply(part)
-            else:
-                loaded.observe(part)
+            elif (capability_id := loaded.observe(part)) is not None and loaded.values[capability_id] is None:
+                loaded._unstated[capability_id] = index
         return loaded
+
+    def unstated_load_index(self, capability_id: str) -> int | None:
+        """The index of the message holding `capability_id`'s load, if nothing has stated its instructions since.
+
+        That message is where they're stated: the request after the load. A load return from an earlier version,
+        which states them itself, has none.
+        """
+        return self._unstated.get(capability_id)
 
     def observe(self, part: ModelRequestPart | ModelResponsePart) -> str | None:
         """Fold in `part`, returning the capability it loads if it's a `load_capability` return completing a load.
@@ -492,12 +504,14 @@ class LoadedInstructionValues:
                 if isinstance(block, InstructionPart) and (capability_id := _loaded_block_capability_id(block.id)):
                     self.values.pop(capability_id, None)
                     self._changed.discard(capability_id)
+                    self._unstated.pop(capability_id, None)
         if (capability_id := self._loads.observe(part)) is not None:
             assert isinstance(part, LoadCapabilityReturnPart)
             # Moved to the end, so the values stay in load order.
             self.values.pop(capability_id, None)
             self.values[capability_id] = part.instructions
             self._changed.discard(capability_id)
+            self._unstated.pop(capability_id, None)
         return capability_id
 
     def tracks(self, part: ModelRequestPart | ModelResponsePart) -> TypeGuard[InstructionDeltaPart]:
@@ -515,6 +529,7 @@ class LoadedInstructionValues:
         previous = self.values[capability_id] if capability_id in self._changed else None
         self.values[capability_id] = change.content
         self._changed.add(capability_id)
+        self._unstated.pop(capability_id, None)
         return previous
 
 
@@ -577,13 +592,14 @@ def _loaded_texts(parts: Sequence[InstructionPart]) -> dict[str, str | None]:
 
 
 def update_loaded_instruction_history(
-    messages: Sequence[ModelMessage],
+    messages: list[ModelMessage],
     parts: Sequence[InstructionPart],
     targets: Sequence[ModelRequest],
     *,
+    history: list[ModelMessage],
     keep_without_parts: Collection[str] = (),
 ) -> None:
-    """Append changes to loaded capabilities' instructions to the outgoing request.
+    """Record changes to loaded capabilities' instructions in history.
 
     `parts` are the loaded capabilities' instruction parts this request resolved, each addressed beneath its
     capability's block, after the `before_model_request` hooks. A loaded block whose joined text differs from
@@ -591,20 +607,57 @@ def update_loaded_instruction_history(
     [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart], in load order, and one whose parts
     are all empty is withdrawn.
 
+    A block is first stated on the request holding its load. When that's an earlier request, because the
+    history came from a client that doesn't keep instruction records, the statement is restored there, in both
+    `messages` and the persisted `history`, rather than added after the latest message: every request then
+    states it at the same place, as one keeping its history on the server does. Its text is the capability's
+    current instructions; only the place comes from the history.
+
     A loaded block with no parts at all is withdrawn too, because the capability's instructions resolved to
     nothing or it is no longer configured, unless it's in `keep_without_parts`: a capability that's eager
     again, whose instructions are back in the prefix.
     """
     current = _loaded_texts(parts)
-    changes = [
-        _instruction_change(loaded_instruction_id(capability_id), previous, content)
-        for capability_id, previous in LoadedInstructionValues.of(messages).values.items()
-        if (capability_id in current or capability_id not in keep_without_parts)
-        and (content := current.get(capability_id)) != previous
-    ]
+    loaded = LoadedInstructionValues.of(messages)
+    changes: list[InstructionDeltaPart] = []
+    restored: dict[int, list[InstructionDeltaPart]] = {}
+    for capability_id, previous in loaded.values.items():
+        if capability_id not in current and capability_id in keep_without_parts:
+            continue
+        if (content := current.get(capability_id)) == previous:
+            continue
+        change = _instruction_change(loaded_instruction_id(capability_id), previous, content)
+        index = loaded.unstated_load_index(capability_id)
+        if index is not None and not any(messages[index] is target for target in targets):
+            restored.setdefault(index, []).append(change)
+        else:
+            changes.append(change)
+    for index, statements in restored.items():
+        _restore_statements(messages, history, index, statements)
     if changes:
         for target in targets:
             target.parts = [*target.parts, *changes]
+
+
+def _restore_statements(
+    messages: list[ModelMessage], history: list[ModelMessage], index: int, statements: list[InstructionDeltaPart]
+) -> None:
+    """Restore `statements` on the request at `index` in `messages`, and on the same request in `history`.
+
+    They go where that request recorded them when it was sent: after its other parts, ahead of the model settings
+    change recorded after the instructions. The request is replaced with a copy, so a caller's message isn't
+    changed.
+    """
+    request = messages[index]
+    assert isinstance(request, ModelRequest)
+    at = len(request.parts)
+    while at and isinstance(request.parts[at - 1], ModelSettingsDeltaPart):
+        at -= 1
+    restored = replace(request, parts=[*request.parts[:at], *statements, *request.parts[at:]])
+    messages[index] = restored
+    for position, message in enumerate(history):
+        if message is request:
+            history[position] = restored
 
 
 def _recorded_instruction_values(

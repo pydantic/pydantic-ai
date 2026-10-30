@@ -3052,6 +3052,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 messages,
                 loaded_parts,
                 recording_targets,
+                history=ctx.state.message_history,
                 keep_without_parts={
                     capability_id
                     for capability_id, capability in ctx.deps.capabilities.items()
