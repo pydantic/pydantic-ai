@@ -2253,45 +2253,31 @@ async def test_stream_tool_call(allow_model_requests: None):
     )
 
 
-@pytest.mark.parametrize(
-    'tool_call_deltas',
-    [
-        pytest.param(
-            [
-                MistralToolCall(
-                    index=0, id='c1', function=MistralFunctionCall(name='search', arguments=''), type='function'
-                ),
-                MistralToolCall(
-                    index=0,
-                    id='null',
-                    function=MistralFunctionCall(name='', arguments='{"query": "ver'),
-                    type='function',
-                ),
-                MistralToolCall(
-                    index=0, id='null', function=MistralFunctionCall(name='', arguments='rous"}'), type='function'
-                ),
-            ],
-            id='name_first',
-        ),
-        pytest.param(
-            [
-                MistralToolCall(
-                    index=0, id='null', function=MistralFunctionCall(name='', arguments='{"query":'), type='function'
-                ),
-                MistralToolCall(
-                    index=0,
-                    id='c1',
-                    function=MistralFunctionCall(name='search', arguments=' "verrous"}'),
-                    type='function',
-                ),
-            ],
-            id='empty_start',
-        ),
-    ],
-)
-async def test_stream_tool_call_split_across_deltas_accumulates(
-    allow_model_requests: None, tool_call_deltas: list[MistralToolCall]
-):
+@pytest.mark.parametrize('tool_call_deltas_id', ['name_first', 'empty_start'])
+async def test_stream_tool_call_split_across_deltas_accumulates(allow_model_requests: None, tool_call_deltas_id: str):
+    # Built inside the test so importing this module does not require the mistral package.
+    tool_call_deltas = {
+        'name_first': [
+            MistralToolCall(
+                index=0, id='c1', function=MistralFunctionCall(name='search', arguments=''), type='function'
+            ),
+            MistralToolCall(
+                index=0,
+                id='null',
+                function=MistralFunctionCall(name='', arguments='{"query": "ver'),
+                type='function',
+            ),
+            MistralToolCall(
+                index=0, id='null', function=MistralFunctionCall(name='', arguments='rous"}'), type='function'
+            ),
+        ],
+        'empty_start': [
+            MistralToolCall(
+                index=0, id='null', function=MistralFunctionCall(name='', arguments='{"query":'), type='function'
+            ),
+            MistralToolCall(index=0, id='c1', function=MistralFunctionCall(name='search', arguments=' "verrous"}')),
+        ],
+    }[tool_call_deltas_id]
     completion = [
         [
             func_chunk(tool_calls=[tc], finish_reason='tool_calls' if index == len(tool_call_deltas) - 1 else None)
