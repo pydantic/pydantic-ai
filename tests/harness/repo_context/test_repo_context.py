@@ -632,16 +632,22 @@ class TestNestedTraversal:
     @pytest.mark.parametrize(
         ('call', 'notes'),
         [
-            pytest.param(('write_file', {'path': 'sub/AGENTS.md', 'content': 'WRITTEN'}), 0, id='write'),
+            pytest.param(('write_file', {'path': 'sub/AGENTS.md', 'content': 'WRITTEN'}), snapshot([]), id='write'),
             # A read can return a window of the file and an edit changes part of it, so the note still comes.
-            pytest.param(('read_file', {'path': 'sub/AGENTS.md'}), 1, id='read'),
             pytest.param(
-                ('edit_file', {'path': 'sub/AGENTS.md', 'old_text': 'NESTED', 'new_text': 'EDITED'}), 1, id='edit'
+                ('read_file', {'path': 'sub/AGENTS.md'}),
+                snapshot(['<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>']),
+                id='read',
+            ),
+            pytest.param(
+                ('edit_file', {'path': 'sub/AGENTS.md', 'old_text': 'NESTED', 'new_text': 'EDITED'}),
+                snapshot(['<context-file path="sub/AGENTS.md">\nEDITED BODY\n</context-file>']),
+                id='edit',
             ),
         ],
     )
     async def test_only_writing_the_instruction_file_itself_counts_as_surfacing_it(
-        self, tmp_path: Path, call: tuple[str, dict[str, str]], notes: int
+        self, tmp_path: Path, call: tuple[str, dict[str, str]], notes: list[str]
     ) -> None:
         _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
         _write(tmp_path / 'sub' / 'one.py', 'one')
@@ -663,7 +669,28 @@ class TestNestedTraversal:
                 RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
             ],
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
-        assert len(_repo_notes(result.all_messages())) == notes
+        assert _repo_notes(result.all_messages()) == notes
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_writing_the_instruction_file_through_a_symlink_counts_as_surfacing_it(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        (tmp_path / 'sub' / 'CLAUDE.md').symlink_to('AGENTS.md')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                args = json.dumps({'path': 'sub/CLAUDE.md', 'content': 'WRITTEN'})
+                yield {0: DeltaToolCall(name='write_file', json_args=args, tool_call_id='call')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path, content_hashes=False),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == []
 
     async def test_reading_a_deep_file_surfaces_every_directory_between_it_and_the_working_directory(
         self, tmp_path: Path
