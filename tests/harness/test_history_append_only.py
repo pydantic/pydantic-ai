@@ -383,6 +383,26 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
         ],
         _code_mode_discoveries(_SEARCH_TIDES, ('tides', {'port': 'Brest'})),
     ),
+    # A discovery the summary replaced is recorded again as a reveal right after it (#11493), so the tool stays
+    # callable without another search, and the requests after the compaction only append.
+    'SummarizingCompaction+ToolSearch': (
+        lambda _: [
+            SummarizingCompaction(TestModel(), max_messages=8, keep_messages=2),
+            ToolSearch(strategy='keywords'),
+            _deferred_forecast_and_tides(),
+        ],
+        Scenario(
+            turns=(
+                Turn(calls=(('search_tools', {'queries': ['forecast']}),)),
+                Turn(calls=(('forecast', {'city': 'Paris'}),)),
+                Turn(text='Sunny in Paris.'),
+                # The second run's second request compacts, and the model then calls the tool it found in the first.
+                Turn(calls=(('look_up', {'topic': 'sports'}),)),
+                Turn(calls=(('forecast', {'city': 'Brest'}),)),
+                Turn(text='Sunny in Brest.'),
+            ),
+        ),
+    ),
     # The documented contrast: the catalog lives in `run_code`'s description.
     'CodeMode(dynamic_catalog=False)+ToolSearch': (
         lambda _: [CodeMode(dynamic_catalog=False), ToolSearch(strategy='keywords'), _deferred_forecast_and_tides()],
@@ -462,6 +482,15 @@ ALLOWED: dict[str, Allowed] = {
     'RelevanceCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
     'SlidingWindowCompaction': Allowed(_COMPACTION, _HISTORY),
     'SummarizingCompaction': Allowed(_COMPACTION, _HISTORY),
+    # The compaction, and on Chat Completions, which has no deferred-tool channel, the first run's reveal adding
+    # `forecast` to `tools` (docs/tools-advanced.md). The reveal recorded after the summary must move nothing more.
+    # Only Chat Completions needs the second move: Anthropic and OpenAI Responses move once, for the compaction,
+    # but `Allowed` can't vary `max_moves` by provider.
+    'SummarizingCompaction+ToolSearch': Allowed(
+        f'{_COMPACTION}; on Chat Completions a local reveal also adds the tool to `tools`, as documented',
+        (*_HISTORY, ('tools', 'tool:search_tools')),
+        max_moves=2,
+    ),
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
     # `keep_pairs`: one on the third request and one on the fifth.
     'TieredCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
