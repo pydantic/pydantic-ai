@@ -24,12 +24,9 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
-from pydantic_ai._frame_seal import FRAME_SEAL_KEY
-from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
-    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
@@ -116,38 +113,16 @@ def _canonical_message(message: ModelMessage) -> ModelMessage:
     bookkeeping to a request that an earlier snapshot already holds: an
     `InstructionDeltaPart` when an `on_change='append'` block changes, an
     `InstructionBaselinePart` when an instruction window opens or closes.
-    It also stores the conversation's frame seal in a request's reserved
-    `__pydantic_ai__` metadata when the request is about to be sent, which can be
-    after a snapshot already holds it. Clearing exactly those makes the dedup key
-    stable across the boundary; every other field keeps participating in the key,
-    so two genuinely distinct messages sharing parts stay distinct.
+    Clearing exactly those makes the dedup key stable across
+    the boundary; every other field keeps participating in the key, so two
+    genuinely distinct messages sharing parts stay distinct.
     """
     if isinstance(message, ModelRequest):
         parts = [part for part in message.parts if not isinstance(part, InstructionDeltaPart | InstructionBaselinePart)]
-        return replace(
-            message,
-            parts=parts,
-            timestamp=None,
-            run_id=None,
-            conversation_id=None,
-            instructions=None,
-            metadata=_without_frame_seal(message.metadata),
-        )
+        return replace(message, parts=parts, timestamp=None, run_id=None, conversation_id=None, instructions=None)
     # `ModelMessage` is exactly the `ModelRequest | ModelResponse` union, so any
     # other message is a `ModelResponse`.
     return replace(message, timestamp=None, run_id=None, conversation_id=None)
-
-
-def _without_frame_seal(metadata: dict[str, Any] | None) -> dict[str, Any] | None:
-    """`metadata` without the frame seal pydantic-ai stores in its reserved namespace, and without the namespace if empty."""
-    namespace = (metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-    if metadata is None or not is_str_dict(namespace) or FRAME_SEAL_KEY not in namespace:
-        return metadata
-    rest = {key: value for key, value in namespace.items() if key != FRAME_SEAL_KEY}
-    stripped = {key: value for key, value in metadata.items() if key != _PYDANTIC_AI_METADATA_KEY}
-    if rest:
-        stripped[_PYDANTIC_AI_METADATA_KEY] = rest
-    return stripped or None
 
 
 def message_hash(message: ModelMessage) -> str:

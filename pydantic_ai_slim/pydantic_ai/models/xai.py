@@ -10,7 +10,6 @@ from functools import cached_property
 from typing import Any, Literal, assert_never, cast
 
 from .. import _model_errors, _utils
-from .._frame_seal import frame_seal
 from .._run_context import RunContext
 from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
 from ..exceptions import (
@@ -57,7 +56,6 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
-    _tool_return_text_and_files,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     Model,
@@ -455,11 +453,10 @@ class XaiModel(Model[AsyncClient]):
         # Pydantic AI doesn't guarantee tool-result part ordering, so we track
         # tool call order as we walk message history and reorder tool results.
         pending_tool_call_ids: list[str] = []
-        seal = frame_seal(messages)
 
         for message in messages:
             if isinstance(message, ModelRequest):
-                mapped_request_parts = await self._map_request_parts(message.parts, pending_tool_call_ids, seal=seal)
+                mapped_request_parts = await self._map_request_parts(message.parts, pending_tool_call_ids)
                 xai_messages.extend(mapped_request_parts)
             elif isinstance(message, ModelResponse):
                 xai_messages.extend(self._map_response_parts(message))
@@ -483,14 +480,12 @@ class XaiModel(Model[AsyncClient]):
         self,
         parts: Sequence[ModelRequestPart],
         pending_tool_call_ids: list[str],
-        *,
-        seal: str,
     ) -> list[chat_types.chat_pb2.Message]:
         """Map ModelRequest parts to xAI messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
         tool_results: list[ToolReturnPart] = []
 
-        for part in _sendable_request_parts(parts, seal=seal):
+        for part in _sendable_request_parts(parts):
             if isinstance(part, SystemPromptPart):
                 xai_messages.append(system(part.content))
             elif isinstance(part, UserPromptPart):
@@ -514,7 +509,7 @@ class XaiModel(Model[AsyncClient]):
             tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
             file_content: list[UserContent] = []
             for part in tool_results:
-                text, files = _tool_return_text_and_files(part, seal=seal)
+                text, files = part.model_response_str_and_user_content()
                 xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
                 file_content.extend(files)
             if file_content and (

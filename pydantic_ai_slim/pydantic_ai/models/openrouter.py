@@ -11,7 +11,6 @@ from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, override
 
 from .. import _model_errors, usage
-from .._frame_seal import frame_seal
 from .._framing import frame_seal_announcement
 from .._run_context import RunContext
 from .._utils import is_str_dict
@@ -1036,9 +1035,9 @@ class OpenRouterModel(OpenAIChatModel):
             return
 
         caches_instruction_prefix = self._resolved_profile.get('openrouter_supports_dynamic_instruction_cache', False)
-        # The frame seal announcement ends the instructions and is dynamic only in that it differs from one
-        # conversation to the next: it never changes within one, so it doesn't keep the instructions from caching.
-        announcement = frame_seal_announcement(frame_seal(messages), system_role=False)
+        # The frame seal announcement ends the instructions and is marked dynamic only to keep cache points ahead of
+        # it: its text never changes, so it doesn't keep the instructions from caching.
+        announcement = frame_seal_announcement(system_role=False)
         if not caches_instruction_prefix and any(
             part.dynamic and part.content != announcement for part in instruction_parts
         ):

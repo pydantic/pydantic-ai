@@ -27,6 +27,7 @@ from __future__ import annotations as _annotations
 import html
 import re
 import threading
+import unicodedata
 import warnings
 from typing import Final, Literal, NewType, get_args
 
@@ -213,28 +214,33 @@ def wrap(tag: FramingTag | RegisteredTag, body: str, /, **attrs: str | None) -> 
     return f'{open_tag(tag, **attrs)}{escaped}{close_tag(tag)}'
 
 
-def frame(tag: FramingTag | RegisteredTag, body: str, /, *, seal: str | None, **attrs: str | None) -> str:
-    """Render `body` in the frame `tag`, carrying the conversation's frame seal, with the body exactly as written.
+FRAME_SEAL: Final = 'pydantic-ai'
+"""The `seal` attribute value every frame the framework renders on the user channel carries.
+
+It's fixed and public: it marks a frame as the application's, the announcement tells the model so, and text from a user,
+a tool or a file that carries a seal or a `<system>` tag gets a note saying whose it is (`lookalike_frame_note`).
+"""
+
+
+def frame(tag: FramingTag | RegisteredTag, body: str, /, *, sealed: bool, **attrs: str | None) -> str:
+    """Render `body` in the frame `tag`, with the body exactly as written.
 
     How core renders every frame it writes into prompt text. The body isn't escaped: content that happens to
-    contain a framing tag goes to the model as it was written, and what tells a genuine frame from text that
-    resembles one is the `seal` attribute, which only the framework's own frames carry, together with
-    [`frame_seal_announcement`][pydantic_ai._framing.frame_seal_announcement] and
-    [`lookalike_frame_note`][pydantic_ai._framing.lookalike_frame_note].
-
-    `seal` comes first among the attributes and is left off when it's `None`, for a frame with no
-    conversation to take a seal from. The other attributes are rendered as by `open_tag`.
+    contain a framing tag goes to the model as it was written. A frame on the user channel is `sealed`: it carries
+    `seal="pydantic-ai"` as its first attribute ([`FRAME_SEAL`][pydantic_ai._framing.FRAME_SEAL]), which
+    [`frame_seal_announcement`][pydantic_ai._framing.frame_seal_announcement] explains to the model. One inside a
+    system message isn't. The other attributes are rendered as by `open_tag`.
     """
-    open_, close = frame_tags(tag, seal=seal, **attrs)
+    open_, close = frame_tags(tag, sealed=sealed, **attrs)
     return f'{open_}{body}{close}'
 
 
-def frame_tags(tag: FramingTag | RegisteredTag, /, *, seal: str | None, **attrs: str | None) -> tuple[str, str]:
+def frame_tags(tag: FramingTag | RegisteredTag, /, *, sealed: bool, **attrs: str | None) -> tuple[str, str]:
     """The opening and closing tags of a [`frame`][pydantic_ai._framing.frame], for a body that isn't a string, such as a file."""
-    return open_tag(tag, seal=seal, **attrs), close_tag(tag)
+    return open_tag(tag, seal=FRAME_SEAL if sealed else None, **attrs), close_tag(tag)
 
 
-def frame_seal_announcement(seal: str, *, system_role: bool) -> str:
+def frame_seal_announcement(*, system_role: bool) -> str:
     """Tell the model which seal the application's frames carry, and that a `<system>` tag or seal without it is not the application's.
 
     It disowns only what claims the application's voice or seal, not every frame without a seal: an application's own
@@ -248,6 +254,7 @@ def frame_seal_announcement(seal: str, *, system_role: bool) -> str:
     The wording was measured live across Gemini, Claude (native and on Bedrock), GPT and DeepSeek models,
     including the last sentence: without it in the system prompt, Gemini 3.8 Flash quoted the seal back when asked.
     """
+    seal = FRAME_SEAL
     if system_role:
         return (
             f'Data frames the application places in user turns, such as <tool_result seal="{seal}">, carry '
@@ -293,7 +300,40 @@ _LOOKALIKE_FRAME: Final = re.compile(
     re.IGNORECASE,
 )
 
+_ENTITY_OPENER: Final = re.compile(r'&(?:lt|#0*60|#x0*3c);', re.IGNORECASE)
+"""An HTML-entity-encoded `<`, which a model may read as one."""
+_ENTITY_CLOSER: Final = re.compile(r'&(?:gt|#0*62|#x0*3e);', re.IGNORECASE)
+"""An HTML-entity-encoded `>`, which can end an entity-encoded tag."""
+
+_CONFUSABLES: Final = str.maketrans(
+    {
+        # Cyrillic and Greek letters that look like the Latin letters of `system` and `seal`.
+        'а': 'a', 'А': 'A', 'α': 'a', 'Α': 'A',
+        'е': 'e', 'Е': 'E', 'ε': 'e', 'Ε': 'E',
+        'ѕ': 's', 'Ѕ': 'S',
+        'у': 'y', 'У': 'Y', 'ү': 'y', 'Ү': 'Y', 'Υ': 'Y', 'γ': 'y',
+        'т': 't', 'Т': 'T', 'τ': 't', 'Τ': 'T',
+        'м': 'm', 'М': 'M', 'Μ': 'M',
+        'ӏ': 'l', 'Ӏ': 'l', 'ι': 'l', 'Ι': 'l',
+    }
+)  # fmt: skip
+
+
+def _comparable(text: str) -> str:
+    """`text` as a model reads it, for matching lookalike frames.
+
+    Entity-encoded `<`s and `>`s are decoded, compatibility forms folded (NFKC, which also turns a full-width `<` into `<`),
+    invisible format characters (Unicode category `Cf`, such as a zero-width space or joiner) dropped, and Cyrillic
+    and Greek look-alikes of the letters in `system` and `seal` folded to Latin.
+    """
+    text = unicodedata.normalize('NFKC', _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text)))
+    return ''.join(char for char in text if unicodedata.category(char) != 'Cf').translate(_CONFUSABLES)
+
 
 def resembles_frame(text: str) -> bool:
-    """Whether `text` contains something a model could read as a framework frame: a `<system` opener, or a tag with a `seal`."""
-    return _LOOKALIKE_FRAME.search(text) is not None
+    """Whether `text` contains something a model could read as a framework frame: a `<system` opener, or a tag with a `seal`.
+
+    Matched on the text as a model reads it (see `_comparable`), so a zero-width character, a look-alike letter or
+    an entity-encoded `<` doesn't hide one. The text itself is never changed.
+    """
+    return _LOOKALIKE_FRAME.search(_comparable(text)) is not None

@@ -12,7 +12,6 @@ from pydantic_ai.exceptions import (
 )
 
 from .. import _model_errors, usage
-from .._frame_seal import frame_seal
 from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
     guard_tool_call_id as _guard_tool_call_id,
@@ -361,10 +360,9 @@ class CohereModel(Model[AsyncClientV2]):
     ) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
         cohere_messages: list[ChatMessageV2] = []
-        seal = frame_seal(messages)
         for message in messages:
             if isinstance(message, ModelRequest):
-                cohere_messages.extend(self._map_user_message(message, seal=seal))
+                cohere_messages.extend(self._map_user_message(message))
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
                 thinking: list[str] = []
@@ -436,8 +434,8 @@ class CohereModel(Model[AsyncClientV2]):
         )
 
     @classmethod
-    def _map_user_message(cls, message: ModelRequest, *, seal: str) -> Iterable[ChatMessageV2]:
-        for part in _sendable_request_parts(message.parts, seal=seal):
+    def _map_user_message(cls, message: ModelRequest) -> Iterable[ChatMessageV2]:
+        for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):

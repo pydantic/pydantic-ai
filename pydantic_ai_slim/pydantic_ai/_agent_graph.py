@@ -87,7 +87,6 @@ from ._deferred_capabilities import (
     parse_loaded_capabilities,
     registered_loaded_capability_ids,
 )
-from ._frame_seal import latest_stored_frame_seal, store_frame_seal, stored_frame_seal
 from ._genai_prices import best_effort_price, fill_response_cost
 from ._history_mirroring import HistoryMirroringMessages
 from ._instructions import (
@@ -1541,31 +1540,6 @@ async def _prepare_request_parameters(
     )
 
 
-def _carry_frame_seal_forward(history: list[_messages.ModelMessage]) -> None:
-    """Store the conversation's frame seal on the request about to be sent, when an earlier request stores it.
-
-    Every request from the first one that needed the seal then carries it, so compaction or a history processor that
-    drops the opening turns still leaves it in history.
-    """
-    last = next((m for m in reversed(history) if isinstance(m, _messages.ModelRequest)), None)
-    if last is not None and stored_frame_seal(last) is None and (seal := latest_stored_frame_seal(history)) is not None:
-        store_frame_seal(last, seal)
-
-
-def _keep_frame_seal(history: list[_messages.ModelMessage], prepared: list[_messages.ModelMessage]) -> None:
-    """Store the frame seal `prepare_messages` put on the outgoing request on the stored request too.
-
-    `prepare_messages` only changes the copy it sends, so this is what makes the conversation's seal part of its
-    history: every later request, and every later run on that history, reads it back instead of deriving it again.
-    """
-    outgoing = next((m for m in reversed(prepared) if isinstance(m, _messages.ModelRequest)), None)
-    if outgoing is None or (seal := stored_frame_seal(outgoing)) is None:
-        return
-    stored = next((m for m in reversed(history) if isinstance(m, _messages.ModelRequest)), None)
-    if stored is not None and stored_frame_seal(stored) != seal:
-        store_frame_seal(stored, seal)
-
-
 def _keep_default_output_mode(
     state: GraphAgentState,
     model: models.Model,
@@ -2953,8 +2927,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         runs per attempt, in `_prepare_attempt`.
         """
         persistent_messages_before_processing = len(ctx.state.message_history)
-        # Before any hook or history processor can drop the requests that stored it.
-        _carry_frame_seal_forward(ctx.state.message_history)
         mirrored_messages = HistoryMirroringMessages(request_context.messages, ctx.state.message_history)
         request_context.messages = mirrored_messages
         try:
@@ -3207,7 +3179,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
             request_context.model_request_parameters = model_request_parameters
             prepared = model.prepare_messages(messages, model_request_parameters)
-            _keep_frame_seal(ctx.state.message_history, prepared)
             # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
             # it, behind that request's `CachePoint`, so an inserted message isn't guaranteed to reach the
             # wire as a turn of its own. A rewrite that needs its own turn belongs in the adapter, where

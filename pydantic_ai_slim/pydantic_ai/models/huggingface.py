@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from typing import Any, Literal, assert_never, cast, overload
 
 from .. import ModelAPIError, UnexpectedModelBehavior, _model_errors, _utils, usage
-from .._frame_seal import frame_seal
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -42,7 +41,6 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
-    _tool_return_text_and_files,  # pyright: ignore[reportPrivateUsage]
 )
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -435,10 +433,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
     ) -> list[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         """Just maps a `pydantic_ai.Message` to a `huggingface_hub.ChatCompletionInputMessage`."""
         hf_messages: list[ChatCompletionInputMessage | ChatCompletionOutputMessage] = []
-        seal = frame_seal(messages)
         for message in messages:
             if isinstance(message, ModelRequest):
-                async for item in self._map_user_message(message, seal=seal):
+                async for item in self._map_user_message(message):
                     hf_messages.append(item)
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
@@ -513,16 +510,16 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         return tool_param
 
     async def _map_user_message(
-        self, message: ModelRequest, *, seal: str
+        self, message: ModelRequest
     ) -> AsyncIterable[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         file_content: list[UserContent] = []
-        for part in _sendable_request_parts(message.parts, seal=seal):
+        for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
                 yield ChatCompletionInputMessage.parse_obj_as_instance({'role': 'system', 'content': part.content})  # pyright: ignore[reportUnknownMemberType]
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_file_content = _tool_return_text_and_files(part, seal=seal)
+                tool_text, tool_file_content = part.model_response_str_and_user_content()
                 file_content.extend(tool_file_content)
                 yield ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
                     {

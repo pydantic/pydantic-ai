@@ -38,7 +38,7 @@ def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str,
     return parts
 
 
-def render_replayed_thinking(content: str, profile: ModelProfile, *, seal: str | None) -> tuple[str, bool]:
+def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, bool]:
     """Render reasoning that can't be replayed through a model's native channel, as tagged text.
 
     The inverse of [`split_content_into_text_and_thinking`][pydantic_ai._thinking_part.split_content_into_text_and_thinking]:
@@ -69,7 +69,7 @@ def render_replayed_thinking(content: str, profile: ModelProfile, *, seal: str |
     carry_in_user_turn = profile.get('mimics_assistant_message_formatting', False)
     if carry_in_user_turn:
         # The reasoning goes in as written; the frame's `seal` is what sets the wrapper apart from a lookalike.
-        text = frame(ASSISTANT_THINKING_TAG, f'\n{content}\n', seal=seal)
+        text = frame(ASSISTANT_THINKING_TAG, f'\n{content}\n', sealed=True)
     else:
         start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
         text = '\n'.join([start_tag, content, end_tag])

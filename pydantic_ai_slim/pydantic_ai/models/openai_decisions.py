@@ -10,7 +10,6 @@ from typing import ClassVar, Literal, assert_never, cast
 from pydantic import JsonValue
 
 from .. import _model_errors
-from .._frame_seal import frame_seal
 from .._framing import TOOL_RESULT_TAG, frame_tags
 from .._http import to_httpx2_timeout
 from .._thinking_part import render_replayed_thinking
@@ -349,10 +348,8 @@ class _Conversation:
         self._images = iter(enumerate(images, start=1))
         self._profile = profile
         self._items: list[ResponseInputItemParam] = []
-        self._frame_seal: str | None = None
 
     def items(self, messages: Sequence[ModelMessage]) -> str | list[DecisionInputMessageParam]:
-        self._frame_seal = frame_seal(messages)
         calls = {
             part.tool_call_id
             for message in messages
@@ -477,7 +474,7 @@ class _Conversation:
             # A trimmed or compacted history can keep a result without its call, which the API refuses natively. It
             # goes on the user channel instead, framed as the tool's so it doesn't read as the user's own words.
             open_tag, close_tag = frame_tags(
-                TOOL_RESULT_TAG, seal=self._frame_seal, tool_name=part.tool_name, tool_call_id=part.tool_call_id
+                TOOL_RESULT_TAG, sealed=True, tool_name=part.tool_name, tool_call_id=part.tool_call_id
             )
             framed: list[str | MultiModalContent] = [open_tag, *part.content_items(mode='str'), close_tag]
             self._user(framed)
@@ -488,9 +485,7 @@ class _Conversation:
         elif isinstance(part, ThinkingPart):
             # Thinking a provider only returned encrypted, as a `signature` with no text, has nothing to show.
             if part.content:
-                self._message(
-                    'assistant', render_replayed_thinking(part.content, self._profile, seal=self._frame_seal)[0]
-                )
+                self._message('assistant', render_replayed_thinking(part.content, self._profile)[0])
         elif isinstance(part, ToolCallPart | NativeToolCallPart):
             self._items.append(
                 ResponseFunctionToolCallParam(

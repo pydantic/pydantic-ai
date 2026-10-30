@@ -15,7 +15,6 @@ import httpx2
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_context_input_tokens
-from .._frame_seal import frame_seal
 from .._gateway_cost import fill_gateway_header_cost
 from .._run_context import RunContext
 from ..exceptions import (
@@ -1431,7 +1430,6 @@ class GoogleModel(Model[Client]):
         )
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
-        seal = frame_seal(messages)
 
         for m in messages:
             if isinstance(m, ModelRequest):
@@ -1441,13 +1439,13 @@ class GoogleModel(Model[Client]):
                 # of the attribution the framing exists to give it.
                 tool_return_media: list[PartDict] = []
 
-                for part in _sendable_request_parts(m.parts, seal=seal):
+                for part in _sendable_request_parts(m.parts):
                     if isinstance(part, SystemPromptPart):
                         system_parts.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        function_response_part, framed_media = await self._map_tool_return(part, seal=seal)
+                        function_response_part, framed_media = await self._map_tool_return(part)
                         message_parts.append(function_response_part)
                         tool_return_media.extend(framed_media)
                     elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
@@ -1512,7 +1510,7 @@ class GoogleModel(Model[Client]):
 
         return system_instruction, contents
 
-    async def _map_tool_return(self, part: ToolReturnPart, *, seal: str) -> tuple[PartDict, list[PartDict]]:
+    async def _map_tool_return(self, part: ToolReturnPart) -> tuple[PartDict, list[PartDict]]:
         """Map a `ToolReturnPart` to Google API format, handling multimodal content.
 
         Returns the `function_response` part and, separately, any files this model can't carry
@@ -1535,9 +1533,7 @@ class GoogleModel(Model[Client]):
                 function_response_parts.append(fr_part)
             else:
                 fallback_refs.append(f'See file {file.identifier}.')
-                open_tag, close_tag = _tool_result_provenance_tags(
-                    part.tool_name, part.tool_call_id, file.identifier, seal=seal
-                )
+                open_tag, close_tag = _tool_result_provenance_tags(part.tool_name, part.tool_call_id, file.identifier)
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.extend([{'text': open_tag}, file_part, {'text': close_tag}])
 

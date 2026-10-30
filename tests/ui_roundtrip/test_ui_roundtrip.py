@@ -43,7 +43,7 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 import anyio
@@ -100,7 +100,6 @@ with try_import() as imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaUsage
     from openai.types.chat import ChatCompletionMessage
 
-    from pydantic_ai._frame_seal import FRAME_SEAL_KEY
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -152,22 +151,8 @@ def _project_part(part: ModelRequestPart | ModelResponsePart) -> dict[str, Any]:
 
 
 # Keys in the reserved `__pydantic_ai__` message metadata that are the UI adapters' own bookkeeping, not state
-# that changes how later requests render. The frame seal does change how they render, but a history that comes back
-# without it gets the same one again, derived from the conversation's first prompt, so it isn't compared message by
-# message: the wire property checks that every frame goes out with the seal the server-held history renders.
-_UI_BOOKKEEPING_METADATA = frozenset({'ui_message_id', 'frame_seal'})
-
-
-def _without_frame_seal(message: ModelMessage) -> ModelMessage:
-    """`message` without the frame seal the server stores in its reserved metadata namespace."""
-    namespace = (message.metadata or {}).get(INTERNAL_METADATA_KEY)
-    if not isinstance(namespace, dict) or FRAME_SEAL_KEY not in namespace:
-        return message
-    rest = {key: value for key, value in cast(dict[str, Any], namespace).items() if key != FRAME_SEAL_KEY}
-    metadata = {key: value for key, value in (message.metadata or {}).items() if key != INTERNAL_METADATA_KEY}
-    if rest:
-        metadata[INTERNAL_METADATA_KEY] = rest
-    return replace(message, metadata=metadata or None)
+# that changes how later requests render.
+_UI_BOOKKEEPING_METADATA = frozenset({'ui_message_id'})
 
 
 def _framework_metadata(message: ModelMessage) -> dict[str, Any]:
@@ -980,8 +965,6 @@ class Client(ABC):
     def received(self, adapter: UIAdapter[Any, Any, Any, Any, Any], expected: list[ModelMessage]) -> Turn:
         """What the client sent, next to what it should have, both sanitized as the adapter does."""
         sent = self.adapter_type.load_messages(adapter.run_input.messages[:-1])
-        # The server's history stores the conversation's frame seal, which no client gets or sends back.
-        expected = [_without_frame_seal(message) for message in expected]
         return Turn(sent=self.sanitize(adapter, sent), expected=self.sanitize(adapter, expected), history=[], calls=[])
 
     @property

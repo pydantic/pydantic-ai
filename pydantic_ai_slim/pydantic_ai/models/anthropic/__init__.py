@@ -13,7 +13,6 @@ from typing_extensions import TypedDict
 
 from ... import UnexpectedModelBehavior, _utils, usage
 from ..._context_size import mark_context_input_tokens
-from ..._frame_seal import frame_seal
 from ..._http import to_httpx2_timeout
 from ..._run_context import RunContext
 from ..._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
@@ -2641,7 +2640,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # one of those would be just as unknown as one naming a tool that's gone.
             declared_tool_names=set(self._tool_choice_declarations(model_settings, model_request_parameters)[0]),
             tool_defs_by_name={tool.name: tool for tool in model_request_parameters.function_tools},
-            frame_seal=frame_seal(messages),
         )
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
@@ -2743,7 +2741,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> None:
         """Append a `ModelRequest`'s user turn, then its `system` entries, to `map_context.anthropic_messages`."""
         request_context = _MapModelRequestContext()
-        for part_index, request_part in enumerate(_sendable_request_parts(message.parts, seal=map_context.frame_seal)):
+        for part_index, request_part in enumerate(_sendable_request_parts(message.parts)):
             if isinstance(request_part, SystemPromptPart):
                 self._map_system_prompt_part(
                     request_part, part_index < standing_prompt_count, request_context, map_context
@@ -3034,9 +3032,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     )
                 )
             elif isinstance(response_part, ThinkingPart):
-                self._map_thinking_part(
-                    message, response_part, assistant_content_params, carried_thinking_params, map_context.frame_seal
-                )
+                self._map_thinking_part(message, response_part, assistant_content_params, carried_thinking_params)
             elif isinstance(response_part, NativeToolCallPart):
                 if self._replays_native_tool_part(message, response_part):
                     self._map_native_tool_call_part(response_part, assistant_content_params, map_context)
@@ -3099,7 +3095,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         part: ThinkingPart,
         assistant_content_params: list[_AssistantContentBlockParam],
         carried_thinking_params: list[BetaTextBlockParam],
-        seal: str,
     ) -> None:
         # An empty signature (e.g. from an interrupted stream) is never valid,
         # so fall back to tagged text rather than triggering a 400 from the API.
@@ -3114,7 +3109,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     BetaThinkingBlockParam(thinking=part.content, signature=part.signature, type='thinking')
                 )
         elif part.content:  # pragma: no branch
-            thinking_text, carry_in_user_turn = render_replayed_thinking(part.content, self.profile, seal=seal)
+            thinking_text, carry_in_user_turn = render_replayed_thinking(part.content, self.profile)
             thinking_param = BetaTextBlockParam(text=thinking_text, type='text')
             if carry_in_user_turn:
                 carried_thinking_params.append(thinking_param)
@@ -3889,8 +3884,6 @@ class _MapMessagesContext:
     bm25_requested: bool
     declared_tool_names: set[str]
     tool_defs_by_name: dict[str, ToolDefinition]
-    frame_seal: str
-    """The conversation's frame seal, which every frame this request puts on the user channel carries."""
     system_prompt_parts: list[str] = field(default_factory=list[str])
     anthropic_messages: list[BetaMessageParam] = field(default_factory=list[BetaMessageParam])
     rendered_tool_additions: set[str] = field(default_factory=set[str])

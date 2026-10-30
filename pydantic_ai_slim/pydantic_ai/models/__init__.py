@@ -52,13 +52,7 @@ from .._file_input import (
     unsupported_file_input,
     unsupported_file_note,
 )
-from .._frame_seal import (
-    frame_seal,
-    has_stored_frame_seal,
-    is_framework_frame,
-    with_frame_seal,
-    with_frame_seal_on_frame,
-)
+from .._frame_seal import is_framework_frame, with_frame_seal_on_frame
 from .._framing import (
     CONVERSATION_SUMMARY_TAG,
     SYSTEM_TAG,
@@ -145,7 +139,6 @@ from ..messages import (
     _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _render_system_prompt_context,  # pyright: ignore[reportPrivateUsage]
-    _retry_feedback_model_text,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
@@ -1726,8 +1719,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Also wraps non-leading `SystemPromptPart`s as `<system seal="...">`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`; on such a profile the instructions end with a
         sentence saying what the tag means (see `_get_instruction_parts`). Every frame it renders on the user
-        channel carries the conversation's frame seal (`pydantic_ai._frame_seal`), which it stores on the last
-        request; nothing the user or a tool wrote is rewritten. A user, tool or file item whose text resembles
+        channel carries the frame seal (`pydantic_ai._framing.FRAME_SEAL`); nothing the user or a tool wrote is
+        rewritten. A user, tool or file item whose text resembles
         a frame gets a note next to it, and on a profile with inline system messages the first request with a
         frame or a note gets the seal announcement (see `_note_lookalike_frames`). It also converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
@@ -1753,8 +1746,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
-        # Read before anything is rendered: the stored seal, or the one derived from the first prompt.
-        seal = frame_seal(messages)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
             # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
@@ -1785,10 +1776,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         authored = messages
         # Translated before every later step — the tool-availability announcement and the `<system>`
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
-        messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback, seal=seal)
+        messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
         # Both passes above replace parts one for one, so `authored` still lines up with `messages`.
-        messages, renders_frames = self._note_lookalike_frames(authored, messages, seal=seal)
+        messages = self._note_lookalike_frames(authored, messages)
 
         clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
         if not clears_request_scoped_prompts:
@@ -1867,28 +1858,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _move_request_scoped_prompts_to_tail(messages)
 
         if not inline_system:
-            wrapped = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count, seal=seal)
-            renders_frames = renders_frames or wrapped is not messages
-            # The announcement itself goes at the end of the instructions; see `_get_instruction_parts`.
-            renders_frames = renders_frames or (
-                self._announces_frame_seal
-                and first_request is not None
-                and bool(
-                    standing_prompt_count
-                    or _instruction_parts_of(messages, model_request_parameters or ModelRequestParameters())
-                )
-            )
-            messages = wrapped
+            # The announcement goes at the end of the instructions; see `_get_instruction_parts`.
+            messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
         messages = _order_tool_results_by_call(messages)
 
         if (tool_call_id_length := self.profile.get('tool_call_id_length')) is not None:
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
-        if renders_frames or has_stored_frame_seal(messages):
-            # The request being sent stores the seal, and the agent graph keeps it on the stored request, so every
-            # later request finds it again even once compaction or trimming has taken away what it was derived from.
-            messages = _with_frame_seal_on_last_request(messages, seal)
         return messages
 
     def _translate_legacy_tool_reveals(
@@ -1921,13 +1898,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         return _replace_tool_search_exchanges_with_deltas(messages, translated_call_ids)
 
-    def _note_lookalike_frames(
-        self,
-        authored: list[ModelMessage],
-        messages: list[ModelMessage],
-        *,
-        seal: str,
-    ) -> tuple[list[ModelMessage], bool]:
+    def _note_lookalike_frames(self, authored: list[ModelMessage], messages: list[ModelMessage]) -> list[ModelMessage]:
         """Note each user, tool or file item whose text resembles a framework frame, and announce the seal where needed.
 
         `authored` is the history as stored and `messages` the same history with retries translated, part for part.
@@ -1944,12 +1915,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         compaction summary, a tool's files moved onto the user channel and reasoning carried into a user turn. The
         request is found from the history alone, so the announcement stays in the same place on every later request.
 
-        Returns the messages, and whether the history has any frame or note, which means the seal has to be stored.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         announce = inline_system and self._announces_frame_seal
         first_request_index = next((i for i, m in enumerate(messages) if isinstance(m, ModelRequest)), None)
-        has_frames = False
         announced = False
         new_messages: list[ModelMessage] = []
         changed = False
@@ -1964,16 +1933,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 for part in response.parts
             )
             parts, frame_at = self._request_with_lookalike_notes(
-                original, message, seal=seal, first_request=index == first_request_index
+                original, message, first_request=index == first_request_index
             )
             if frame_at is None and carries_thinking:
                 frame_at = len(parts)
             if frame_at is not None:
-                has_frames = True
                 if announce and not announced:
                     announced = True
                     announcement = SystemPromptPart(
-                        content=frame_seal_announcement(seal, system_role=True),
+                        content=frame_seal_announcement(system_role=True),
                         timestamp=message.timestamp or _utils.now_utc(),
                     )
                     parts.insert(frame_at, announcement)
@@ -1981,14 +1949,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 message = replace(message, parts=parts)
                 changed = True
             new_messages.append(message)
-        return (new_messages if changed else messages), has_frames
+        return new_messages if changed else messages
 
     def _request_with_lookalike_notes(
         self,
         authored: ModelRequest,
         request: ModelRequest,
         *,
-        seal: str,
         first_request: bool,
     ) -> tuple[list[ModelRequestPart], int | None]:
         """`request`'s parts with lookalike notes added, and where the announcement goes if this request carries it.
@@ -2005,8 +1972,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         for original, part in zip(authored.parts, request.parts):
             sources = _lookalike_sources(original)
             if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                # A frame a capability wrote gets the conversation's seal here, on every request, like core's own.
-                content = [with_frame_seal_on_frame(c, seal) if is_framework_frame(c) else c for c in part.content]
+                # A frame a capability wrote gets the seal here, like core's own.
+                content = [with_frame_seal_on_frame(c) if is_framework_frame(c) else c for c in part.content]
                 if any(new is not old for new, old in zip(content, part.content)):
                     part = replace(part, content=content)
             if _is_tool_result_part(part):
@@ -2263,19 +2230,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         synthesizing them from `ModelRequest.instructions` in message history when it's `None` (e.g. direct
         `model.request()` calls).
 
-        Where the profile's `supports_inline_system_prompts` is `False`, and `prepare_messages` stored the
-        conversation's frame seal on the history because it frames something, the frame seal announcement is the last
-        part, so everything ahead of it in the system prompt stays the same across conversations and keeps its
-        cache points. It's `dynamic`, since it differs from one conversation to the next.
+        Where the profile's `supports_inline_system_prompts` is `False` and there's a standing prompt, the frame seal
+        announcement is the last part. It's marked `dynamic` so the instruction cache points stay where they'd be
+        without it, ahead of it.
         """
         parts = _instruction_parts_of(messages, model_request_parameters)
         if (
             self._announces_frame_seal
             and not self.profile.get('supports_inline_system_prompts', False)
-            and has_stored_frame_seal(messages)
             and (parts or _first_request_has_standing_prompt(messages))
         ):
-            announcement = frame_seal_announcement(frame_seal(messages), system_role=False)
+            announcement = frame_seal_announcement(system_role=False)
             parts = [*(parts or []), InstructionPart(content=announcement, dynamic=True)]
         return parts
 
@@ -3642,14 +3607,13 @@ _CONVERSATION_SUMMARY_PROVENANCE = (
 )
 
 
-def _conversation_summary_text(content: str | None, *, seal: str | None) -> str:
+def _conversation_summary_text(content: str | None) -> str:
     """*content* framed as a summary of the conversation it replaced, with where it came from.
 
     A summarization model wrote it from a history that can include tool output; it goes in as written, and the
-    conversation's frame `seal` on the frame is what tells it apart from a lookalike. A realtime session, which has
-    no stored history to take a seal from, passes `None`.
+    frame `seal` on the frame is what tells it apart from a lookalike.
     """
-    return frame(CONVERSATION_SUMMARY_TAG, f'\n{_CONVERSATION_SUMMARY_PROVENANCE}\n\n{content or ""}\n', seal=seal)
+    return frame(CONVERSATION_SUMMARY_TAG, f'\n{_CONVERSATION_SUMMARY_PROVENANCE}\n\n{content or ""}\n', sealed=True)
 
 
 def _standing_system_prompt_count(request: ModelRequest) -> int:
@@ -3957,14 +3921,11 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
     )
 
 
-def _wrap_non_leading_system_prompts(
-    messages: list[ModelMessage], *, standing_prompt_count: int, seal: str | None
-) -> list[ModelMessage]:
+def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system seal="...">`-tagged `UserPromptPart`s.
 
-    The content goes in as written; the conversation's frame `seal` is what tells the block apart from a
-    `<system>` tag in text the user or a tool wrote, as the announcement at the end of the instructions says.
-    A realtime session, which has no stored history to take a seal from, passes `None`.
+    The content goes in as written; the frame `seal` is what tells the block apart from a `<system>` tag in text
+    the user or a tool wrote, as the announcement at the end of the instructions says.
 
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything
@@ -3988,7 +3949,7 @@ def _wrap_non_leading_system_prompts(
         start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
-                UserPromptPart(content=frame(SYSTEM_TAG, part.content, seal=seal), timestamp=part.timestamp)
+                UserPromptPart(content=frame(SYSTEM_TAG, part.content, sealed=True), timestamp=part.timestamp)
                 if index >= start and isinstance(part, SystemPromptPart)
                 else part
                 for index, part in enumerate(msg.parts)
@@ -3999,18 +3960,6 @@ def _wrap_non_leading_system_prompts(
             new_messages.append(msg)
 
     return new_messages if changed else messages
-
-
-def _with_frame_seal_on_last_request(messages: list[ModelMessage], seal: str) -> list[ModelMessage]:
-    """`messages` with the last request storing the conversation's frame seal, or `messages` itself when it already does."""
-    # Only called when the history frames something or stores a seal, so it has a request.
-    index = next(i for i in range(len(messages) - 1, -1, -1) if isinstance(messages[i], ModelRequest))
-    request = messages[index]
-    assert isinstance(request, ModelRequest)
-    stamped = with_frame_seal(request, seal)
-    if stamped is request:
-        return messages
-    return [*messages[:index], stamped, *messages[index + 1 :]]
 
 
 def _lookalike_sources(part: ModelRequestPart) -> list[LookalikeSource]:
@@ -4504,7 +4453,7 @@ def _legacy_retry_as_sendable(
 
 
 def _sendable_request_parts(  # pyright: ignore[reportUnusedFunction]
-    parts: Sequence[ModelRequestPart], *, seal: str | None
+    parts: Sequence[ModelRequestPart],
 ) -> Generator[ModelRequestPart]:
     """A request's parts as an adapter maps them, with any deprecated `RetryPromptPart` rendered.
 
@@ -4516,7 +4465,7 @@ def _sendable_request_parts(  # pyright: ignore[reportUnusedFunction]
         if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             yield _legacy_retry_as_sendable(part)
         elif isinstance(part, CompactionPart):
-            yield UserPromptPart(_conversation_summary_text(part.content, seal=seal))
+            yield UserPromptPart(_conversation_summary_text(part.content))
         else:
             yield part
 
@@ -4577,7 +4526,7 @@ for, on a turn the user didn't write.
 """
 
 
-def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool, seal: str) -> list[ModelMessage]:
+def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool) -> list[ModelMessage]:
     """Replace every retry part with the part that carries it on the wire.
 
     Runs in [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] ahead of the tool-search
@@ -4608,11 +4557,11 @@ def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool,
             part = translated
         elif not isinstance(part, RetryFeedbackPart) or keep_feedback:
             return part
-        text = _retry_feedback_model_text(part, seal=seal)
+        text = part.model_response()
         if not _retry_feedback_speaks_for_the_harness(part):
             return UserPromptPart(content=text, timestamp=part.timestamp)
         if in_standing_run:
-            return UserPromptPart(content=frame(SYSTEM_TAG, text, seal=seal), timestamp=part.timestamp)
+            return UserPromptPart(content=frame(SYSTEM_TAG, text, sealed=True), timestamp=part.timestamp)
         return SystemPromptPart(content=text, timestamp=part.timestamp)
 
     first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
