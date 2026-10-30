@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
+import httpx2
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
 from pydantic_core import to_json
@@ -273,6 +274,9 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
         # been received; it gets the status the same error has before a stream opens.
         raise _model_errors.stream_error(model_name, e.message, e.body) from e
+    except httpx2.HTTPStatusError as e:
+        # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
+        raise _model_errors.transport_status_error(model_name, e.response) from e
 
 
 def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:

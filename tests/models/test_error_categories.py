@@ -33,7 +33,10 @@ from pydantic_ai import (
     ModelTimeoutError,
     ModelUnavailableError,
 )
+from pydantic_ai.capabilities import ModelFallback
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from ..conftest import try_import
 
@@ -53,6 +56,7 @@ with try_import() as imports_successful:
     from huggingface_hub import AsyncInferenceClient
     from huggingface_hub.errors import HfHubHTTPError
     from openai import AsyncOpenAI
+    from tenacity import retry_if_exception_type, stop_after_attempt, wait_none
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.cohere import CohereModel
@@ -72,6 +76,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
     from .mock_xai import MockXai, get_grok_text_chunk
     from .test_bedrock import _bedrock_model_with_error  # pyright: ignore[reportPrivateUsage]
@@ -206,6 +211,28 @@ def _raise(kind: Literal['connect', 'timeout', 'pool']) -> Handler:
             raise error_class('failed', request=request)
         error_class2 = {'connect': httpx2.ConnectError, 'timeout': httpx2.ReadTimeout, 'pool': httpx2.PoolTimeout}[kind]
         raise error_class2('failed', request=request)
+
+    return handler
+
+
+def _gave_up(
+    status_code: int, headers: dict[str, str] | None = None, *, content: bytes | None = None, read: bool = True
+) -> Handler:
+    """What a retrying transport raises once its `validate_response` rejected the last attempt's status.
+
+    With `read=False`, the response's body was never read, as when the transport closes a response from the network
+    that its `validate_response` rejected.
+    """
+
+    def handler(request: Any) -> Any:
+        http = httpx if isinstance(request, httpx.Request) else httpx2
+        if read:
+            response = http.Response(status_code, headers=headers, content=content, request=request)
+        else:
+            response = http.Response(
+                status_code, headers=headers, stream=http.ByteStream(content or b''), request=request
+            )
+        raise http.HTTPStatusError(f'Server error {status_code}', request=request, response=response)
 
     return handler
 
@@ -1385,6 +1412,131 @@ CASES = [
         categories=_REJECTED,
         attrs={'status_code': 400},
     ),
+    Case(
+        id='openai-transport-gave-up',
+        model=_openai,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='openai-transport-gave-up-stream',
+        model=_openai,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-transport-gave-up',
+        model=_openrouter,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='openrouter-transport-gave-up-stream',
+        model=_openrouter,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+        stream=True,
+    ),
+    Case(
+        id='anthropic-transport-gave-up',
+        model=_anthropic,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='anthropic-transport-gave-up-stream',
+        model=_anthropic,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+        stream=True,
+    ),
+    Case(
+        id='groq-transport-gave-up',
+        model=_groq,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='groq-transport-gave-up-stream',
+        model=_groq,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+        stream=True,
+    ),
+    Case(
+        id='google-transport-gave-up',
+        model=_google,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='google-transport-gave-up-stream',
+        model=_google,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+        stream=True,
+    ),
+    Case(
+        id='mistral-transport-gave-up',
+        model=_mistral,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='mistral-transport-gave-up-stream',
+        model=_mistral,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+        stream=True,
+    ),
+    Case(
+        id='cohere-transport-gave-up',
+        model=_cohere,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='openai-transport-gave-up-unread-body',
+        model=_openai,
+        handler=_gave_up(503, content=b'{"error": "unavailable"}', read=False),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='openai-transport-gave-up-text-body',
+        model=_openai,
+        handler=_gave_up(503, content=b'upstream overloaded'),
+        categories=_OVERLOADED,
+        attrs={'status_code': 503, 'body': 'upstream overloaded'},
+    ),
+    Case(
+        id='openai-transport-gave-up-json-body',
+        model=_openai,
+        handler=_gave_up(500, content=b'{"error": "boom"}'),
+        categories={ModelHTTPError, ModelServerError},
+        attrs={'status_code': 500, 'body': {'error': 'boom'}},
+    ),
+    Case(
+        id='openai-transport-gave-up-rate-limit',
+        model=_openai,
+        handler=_gave_up(429, headers={'retry-after': '3'}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'retry_after': 3.0},
+    ),
 ]
 
 
@@ -1403,6 +1555,83 @@ async def test_http_provider_error_category(allow_model_requests: None, case: Ca
     for attr, expected in case.attrs.items():
         assert getattr(exc, attr) == expected, attr
     assert (exc.__cause__ is not None) == case.has_cause
+
+
+def _retrying_client(handler: Handler) -> httpx2.AsyncClient:
+    """A client with the retrying transport from the retries guide: 3 attempts, rejecting 5xx statuses."""
+
+    def validate_response(response: httpx2.Response) -> None:
+        if response.status_code >= 500:
+            response.raise_for_status()
+
+    transport = AsyncHTTPX2TenacityTransport(
+        config=RetryConfig(
+            retry=retry_if_exception_type(httpx2.HTTPStatusError),
+            wait=wait_none(),
+            stop=stop_after_attempt(3),
+            reraise=True,
+        ),
+        wrapped=httpx2.MockTransport(handler),
+        validate_response=validate_response,
+    )
+    return httpx2.AsyncClient(transport=transport)
+
+
+def _retrying_openai(client: httpx2.AsyncClient) -> Model:
+    return OpenAIChatModel(
+        'gpt-5.2', provider=OpenAIProvider(api_key='test', base_url='http://localhost/v1', http_client=client)
+    )
+
+
+def _retrying_anthropic(client: httpx2.AsyncClient) -> Model:
+    return AnthropicModel(
+        'claude-sonnet-4-5', provider=AnthropicProvider(api_key='test', base_url='http://localhost', http_client=client)
+    )
+
+
+def _retrying_google(client: httpx2.AsyncClient) -> Model:
+    return GoogleModel(
+        'gemini-2.5-flash', provider=GoogleProvider(api_key='test', http_client=client, base_url='http://localhost')
+    )
+
+
+def _retrying_mistral(client: httpx2.AsyncClient) -> Model:
+    return MistralModel(
+        'mistral-large-latest',
+        provider=MistralProvider(api_key='test', base_url='http://localhost', http_client=client),
+    )
+
+
+@pytest.mark.parametrize(
+    'make_model',
+    [_retrying_openai, _retrying_anthropic, _retrying_google, _retrying_mistral],
+    ids=['openai', 'anthropic', 'google', 'mistral'],
+)
+async def test_model_fallback_after_retrying_transport_gives_up(
+    allow_model_requests: None, make_model: Callable[[httpx2.AsyncClient], Model]
+):
+    """A status the retrying transport gave up on is a `ModelHTTPError`, so `ModelFallback` moves on."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(503, json={'error': {'message': 'unavailable'}})
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('from the fallback model')])
+
+    agent = Agent(
+        make_model(_retrying_client(handler)),
+        model_settings={'max_retries': 0},
+        capabilities=[ModelFallback(FunctionModel(fallback))],
+    )
+    result = await agent.run('hello')
+
+    assert result.output == 'from the fallback model'
+    assert len(requests) == 3
+    [attempt] = result.response.failed_attempts or []
+    assert attempt.outcome == 'error'
+    assert attempt.error is not None and attempt.error.startswith('ModelUnavailableError: status_code: 503')
 
 
 def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientError:
