@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, Literal, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, cast, overload
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
@@ -790,3 +790,14 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
+
+_REMOVED_IN_V2 = {
+    'DeferredToolCalls': 'use `pydantic_ai.tools.DeferredToolRequests`, whose `calls` replaces `tool_calls`.',
+}
+
+if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
+
+    def __getattr__(name: str) -> object:
+        from ._removed_names import removed_name_error
+
+        raise removed_name_error(__name__, name, _REMOVED_IN_V2)

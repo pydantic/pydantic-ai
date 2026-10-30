@@ -6,7 +6,7 @@ from copy import copy
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import cache
-from typing import Annotated, Any, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler, TypeAdapter
@@ -725,3 +725,15 @@ class UsageLimits:
             )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_REMOVED_IN_V2 = {
+    'Usage': "use `RunUsage` for a run's usage, or `RequestUsage` for a single request's.",
+}
+
+if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
+
+    def __getattr__(name: str) -> object:
+        from ._removed_names import removed_name_error
+
+        raise removed_name_error(__name__, name, _REMOVED_IN_V2)

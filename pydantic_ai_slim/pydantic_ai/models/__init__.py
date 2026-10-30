@@ -4775,3 +4775,15 @@ def _synthesize_tool_availability_delta_messages(
             transformed.append(replace(message, parts=request_parts))
 
     return transformed if changed else messages
+
+
+_REMOVED_IN_V2 = {
+    'cached_async_http_client': 'use `create_async_http_client()`.',
+}
+
+if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
+
+    def __getattr__(name: str) -> object:
+        from .._removed_names import removed_name_error
+
+        raise removed_name_error(__name__, name, _REMOVED_IN_V2)

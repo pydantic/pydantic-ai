@@ -11,6 +11,8 @@ The [Upgrade Guide](changelog.md) is the canonical source for *why* each change 
 !!! tip "Upgrade through the latest V1 first"
     Most of what V2 removes is deprecated as of v1.100.0, and each deprecation warning names its replacement. Upgrading to the latest V1 and resolving every warning applies the bulk of this page mechanically, and leaves you only the [default behavior changes](changelog.md#changes-not-covered-by-deprecation-warnings) to reason about. Message history serialized with V1 still deserializes in V2.
 
+Importing one of the most common removed names, such as `OpenAIModel`, `MCPServerStdio` or `pydantic_ai.usage.Usage`, raises an `ImportError` that names its replacement and links this page.
+
 ## Agent configuration
 
 Most V1 `Agent(...)` arguments that configured behavior moved onto [capabilities](capabilities/overview.md), a single composable primitive that bundles an agent's tools, [hooks](hooks.md), instructions, and model settings.

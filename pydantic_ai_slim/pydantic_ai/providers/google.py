@@ -236,3 +236,15 @@ This lists single-region values only. `GoogleCloudProvider` also accepts the `'g
 `'us'`/`'eu'` multi-regions (routed to the `aiplatform.{us,eu}.rep.googleapis.com` data-residency endpoints)
 as separate union members on its `location` parameter.
 """
+
+_REMOVED_IN_V2 = {
+    'GoogleGLAProvider': 'use `GoogleProvider`.',
+    'GoogleVertexProvider': 'use `pydantic_ai.providers.google_cloud.GoogleCloudProvider`.',
+}
+
+if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
+
+    def __getattr__(name: str) -> object:
+        from .._removed_names import removed_name_error
+
+        raise removed_name_error(__name__, name, _REMOVED_IN_V2)

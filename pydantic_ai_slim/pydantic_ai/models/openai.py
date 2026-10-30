@@ -7644,3 +7644,16 @@ def _map_mcp_call(
             provider_name=provider_name,
         ),
     )
+
+
+_REMOVED_IN_V2 = {
+    'OpenAIModel': 'use `OpenAIChatModel` (the same Chat Completions API), or `OpenAIResponsesModel`.',
+    'OpenAIModelSettings': 'use `OpenAIChatModelSettings`.',
+}
+
+if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
+
+    def __getattr__(name: str) -> object:
+        from .._removed_names import removed_name_error
+
+        raise removed_name_error(__name__, name, _REMOVED_IN_V2)

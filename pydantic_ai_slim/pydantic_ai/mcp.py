@@ -2430,3 +2430,20 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
         toolsets.append(toolset.prefixed(name))
 
     return toolsets
+
+
+_REMOVED_IN_V2 = {
+    'MCPServerStdio': 'use `MCPToolset`, which picks the transport from its arguments; its timeout and retry defaults differ.',
+    'MCPServerSSE': 'use `MCPToolset`, which picks the transport from its arguments; its timeout and retry defaults differ.',
+    'MCPServerStreamableHTTP': 'use `MCPToolset`, which picks the transport from its arguments; its timeout and retry defaults differ.',
+    'MCPServerHTTP': 'use `MCPToolset`, which picks the transport from its arguments; its timeout and retry defaults differ.',
+    'FastMCPToolset': 'use `MCPToolset`.',
+    'load_mcp_servers': 'use `load_mcp_toolsets`.',
+}
+
+if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
+
+    def __getattr__(name: str) -> object:
+        from ._removed_names import removed_name_error
+
+        raise removed_name_error(__name__, name, _REMOVED_IN_V2)
