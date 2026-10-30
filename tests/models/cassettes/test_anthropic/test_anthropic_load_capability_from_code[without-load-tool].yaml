@@ -1,0 +1,969 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1180"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Where is my refund for order ABC-123?
+            type: text
+        model: claude-haiku-4-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            First call open_ticket on its own. Once it returns, call refund_status for the
+            order. Never call load_capability.
+        - type: text
+          text: |-
+            <context id="capability:deferred_capabilities">
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+            - refunds: Refund tools.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        thinking:
+          type: enabled
+          budget_tokens: 10000
+        tool_choice:
+          type: auto
+        tools:
+        - name: open_ticket
+          description: Open the customer's support ticket for order ABC-123.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - name: refund_status
+          description: Look up the refund status for an order.
+          input_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=88
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-09c8ea9b3f0cbf79321bc2076a42bef1-44a35e1a3a87f1a4-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CgTSzfUxvURxkzM6UBta3","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":704,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available","speed":"standard"},"diagnostics":null}   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is asking"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" about a refund"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" for order ABC-"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"123. According"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to the instructions"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", I should"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":":"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n1. First"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" call open_ticket"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" on its own"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n2. Once"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" it returns, call"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" refund_status"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" for the order"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n3. Never call"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" load_capability"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nHowever"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", I notice that"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" there's a de"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ferred capability context"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" that"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" mentions"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" \"refunds:"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Refund tools"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" - but"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" instruction"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" explicitly"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" says \"Never call"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" load_capability\","}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" so"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I should not load"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" that"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" capability.\n\nLet"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me check"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" what I have"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" available"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I can"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" see the"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" open_ticket function"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" is"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" available."}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" But"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I need to check"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" if ref"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"und_status is"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" available as a"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" tool that"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" can call. Looking"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" at the function definitions"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" provided"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", I only"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" see \"open_"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ticket\" listed"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" in"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the available functions"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"."}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nWait"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", let me rec"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"onsider. The"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" instructions say \"Once"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" it returns, call"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" refund_status"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" for the order\""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" - this suggests that"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" refund_status"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" should"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" be available"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":". But it"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"'s not in"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the current"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" function definitions"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I was"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" given. "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nThe"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" context"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" mentions that"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" \"refunds:"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Refund tools"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\" are"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" de"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ferred capabilities"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" that"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" can be loaded."}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" But I"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"'m explicitly"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" told \""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Never call load_"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"capability.\""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" This seems like a"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" contradiction"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" or test"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":".\n\nGiven the"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" explicit instruction \""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Never call load_"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"capability\", I should"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" proceed"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" without"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" calling load_capability"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":". But"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" then"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" ref"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"und_status wouldn"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"'t be available to"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me.\n\nLet"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me start"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" by calling open_"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ticket as"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" instruct"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ed, and then"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I'll see what"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" happens next"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"."}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"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"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01GLc3HfAryYcD8vod8GX2Tf","name":"open_ticket","input":{},"caller":{"type":"direct"}}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":704,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":357,"output_tokens_details":{"thinking_tokens":318}}            }
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-10-27T21:26:16.062045+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "5568"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Where is my refund for order ABC-123?
+            type: text
+        - role: assistant
+          content:
+          - thinking: |-
+              The user is asking about a refund for order ABC-123. According to the instructions, I should:
+              1. First call open_ticket on its own
+              2. Once it returns, call refund_status for the order
+              3. Never call load_capability
+
+              However, I notice that there's a deferred capability context that mentions "refunds: Refund tools" - but the instruction explicitly says "Never call load_capability", so I should not load that capability.
+
+              Let me check what I have available. I can see the open_ticket function is available. But I need to check if refund_status is available as a tool that I can call. Looking at the function definitions provided, I only see "open_ticket" listed in the available functions.
+
+              Wait, let me reconsider. The instructions say "Once it returns, call refund_status for the order" - this suggests that refund_status should be available. But it's not in the current function definitions I was given.
+
+              The context mentions that "refunds: Refund tools" are deferred capabilities that can be loaded. But I'm explicitly told "Never call load_capability." This seems like a contradiction or test.
+
+              Given the explicit instruction "Never call load_capability", I should proceed without calling load_capability. But then refund_status wouldn't be available to me.
+
+              Let me start by calling open_ticket as instructed, and then I'll see what happens next.
+            signature: >-
+              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
+            type: thinking
+          - id: toolu_01GLc3HfAryYcD8vod8GX2Tf
+            type: tool_use
+            name: open_ticket
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_01GLc3HfAryYcD8vod8GX2Tf
+            type: tool_result
+            content:
+            - text: Ticket for order ABC-123 opened.
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - id: pyd_ai_7b07ccd818575915
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - refund_status
+        - role: user
+          content:
+          - tool_use_id: pyd_ai_7b07ccd818575915
+            type: tool_result
+            content:
+            - tool_name: refund_status
+              type: tool_reference
+            is_error: false
+          - text: |-
+              <system><context id="capability:refunds">
+              Always give the refund date in the format DD/MM/YYYY.
+              </context></system>
+            type: text
+        model: claude-haiku-4-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            First call open_ticket on its own. Once it returns, call refund_status for the
+            order. Never call load_capability.
+        - type: text
+          text: |-
+            <context id="capability:deferred_capabilities">
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+            - refunds: Refund tools.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        thinking:
+          type: enabled
+          budget_tokens: 10000
+        tool_choice:
+          type: auto
+        tools:
+        - name: open_ticket
+          description: Open the customer's support ticket for order ABC-123.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - name: refund_status
+          description: Look up the refund status for an order.
+          input_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=94
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-2268fb92ecf88820235da1150187fde7-3fa4ee317412abbb-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CgTSzvJwuan4gppRRDCGZ","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":949,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available","speed":"standard"},"diagnostics":null}             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is asking"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" about their refund"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" for order ABC-"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"123. I've"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" already"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" opened the ticket."}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Now the"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" system"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" has"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" loaded"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" refunds"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" capability and provided"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me with the"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" refund_"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"status function."}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I should call"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" ref"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"und_status with"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" order"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"_id \""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ABC-123\""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to get the ref"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"und status information."}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"ErAECrgBCBMYAipAcM5tPBlW8Ru0R9gugIXlr+bdsZ+Z2MB8TGGrveEwCMbSGQ/YT9H3B38jKOXBdyrzGn+JD+h76W+oaIzHIHgQzjIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNDRhZTY3NmMtOTU4Zi00ZDY4LTkxMDgtZWFlOWRlN2IzNjZimgEbChljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxqAH5rYTXBhIM/ZDF+B0r61G4Ne8YGgz0ADx2F9srRSlmTrkiMHFdWWqUSig3H2dfIFnTGiqP1UkatZYm0fYGr1BZ5REyiW8GzN2mw/lC9GEqSSDheCqkAp68W1+rEfe97+LQpCezNjIZcOH4CgGXCZJ+cnVwL/mqZZjcxIWLJZuBne6pDWWoeUguuVwPB8LpNtQpMatyLwE52CnBsZaWU439CjvNTkUDYqBkOTPU8QMYQWlWdAQNh1x8mSaycQhnpKlFhIEd7vnB9Z+aHLsWgWgJ1dk+hZjejTTzm7JENTFj7DfI2U8/QhdFtW2U2xNo65DtT8zJRP4oKcoZV5QBAulARjDgOS5mb+e+3E5rb356INTDMhLzSsdBX/7z0Naw8qu/dv5Fu6CpaXWt4oIgfK9UOONRLD70zGZrJtKbZjn31+kiSpOugS8QUv+pDiLXv5dQOrjvyrUn8pNNp0d/yWBABsweqT/BEb1jABtjX12XYBoqxBzr7zuizrQYAQ=="}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01NoAotGG8HV4MRs9HNt12zf","name":"refund_status","input":{},"caller":{"type":"direct"}}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"order"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"_id\": \""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ABC-123"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"}"}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":949,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":131,"output_tokens_details":{"thinking_tokens":70}}           }
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-10-27T21:26:17.370986+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "6992"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Where is my refund for order ABC-123?
+            type: text
+        - role: assistant
+          content:
+          - thinking: |-
+              The user is asking about a refund for order ABC-123. According to the instructions, I should:
+              1. First call open_ticket on its own
+              2. Once it returns, call refund_status for the order
+              3. Never call load_capability
+
+              However, I notice that there's a deferred capability context that mentions "refunds: Refund tools" - but the instruction explicitly says "Never call load_capability", so I should not load that capability.
+
+              Let me check what I have available. I can see the open_ticket function is available. But I need to check if refund_status is available as a tool that I can call. Looking at the function definitions provided, I only see "open_ticket" listed in the available functions.
+
+              Wait, let me reconsider. The instructions say "Once it returns, call refund_status for the order" - this suggests that refund_status should be available. But it's not in the current function definitions I was given.
+
+              The context mentions that "refunds: Refund tools" are deferred capabilities that can be loaded. But I'm explicitly told "Never call load_capability." This seems like a contradiction or test.
+
+              Given the explicit instruction "Never call load_capability", I should proceed without calling load_capability. But then refund_status wouldn't be available to me.
+
+              Let me start by calling open_ticket as instructed, and then I'll see what happens next.
+            signature: >-
+              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
+            type: thinking
+          - id: toolu_01GLc3HfAryYcD8vod8GX2Tf
+            type: tool_use
+            name: open_ticket
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_01GLc3HfAryYcD8vod8GX2Tf
+            type: tool_result
+            content:
+            - text: Ticket for order ABC-123 opened.
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - id: pyd_ai_7b07ccd818575915
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - refund_status
+        - role: user
+          content:
+          - tool_use_id: pyd_ai_7b07ccd818575915
+            type: tool_result
+            content:
+            - tool_name: refund_status
+              type: tool_reference
+            is_error: false
+          - text: |-
+              <system><context id="capability:refunds">
+              Always give the refund date in the format DD/MM/YYYY.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - thinking: >-
+              The user is asking about their refund for order ABC-123. I've already opened
+              the ticket. Now the system has loaded the refunds capability and provided me with
+              the refund_status function. I should call refund_status with order_id "ABC-123" to
+              get the refund status information.
+            signature: >-
+              ErAECrgBCBMYAipAcM5tPBlW8Ru0R9gugIXlr+bdsZ+Z2MB8TGGrveEwCMbSGQ/YT9H3B38jKOXBdyrzGn+JD+h76W+oaIzHIHgQzjIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNDRhZTY3NmMtOTU4Zi00ZDY4LTkxMDgtZWFlOWRlN2IzNjZimgEbChljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxqAH5rYTXBhIM/ZDF+B0r61G4Ne8YGgz0ADx2F9srRSlmTrkiMHFdWWqUSig3H2dfIFnTGiqP1UkatZYm0fYGr1BZ5REyiW8GzN2mw/lC9GEqSSDheCqkAp68W1+rEfe97+LQpCezNjIZcOH4CgGXCZJ+cnVwL/mqZZjcxIWLJZuBne6pDWWoeUguuVwPB8LpNtQpMatyLwE52CnBsZaWU439CjvNTkUDYqBkOTPU8QMYQWlWdAQNh1x8mSaycQhnpKlFhIEd7vnB9Z+aHLsWgWgJ1dk+hZjejTTzm7JENTFj7DfI2U8/QhdFtW2U2xNo65DtT8zJRP4oKcoZV5QBAulARjDgOS5mb+e+3E5rb356INTDMhLzSsdBX/7z0Naw8qu/dv5Fu6CpaXWt4oIgfK9UOONRLD70zGZrJtKbZjn31+kiSpOugS8QUv+pDiLXv5dQOrjvyrUn8pNNp0d/yWBABsweqT/BEb1jABtjX12XYBoqxBzr7zuizrQYAQ==
+            type: thinking
+          - id: toolu_01NoAotGG8HV4MRs9HNt12zf
+            type: tool_use
+            name: refund_status
+            input:
+              order_id: ABC-123
+        - role: user
+          content:
+          - tool_use_id: toolu_01NoAotGG8HV4MRs9HNt12zf
+            type: tool_result
+            content:
+            - text: "Order ABC-123: refund issued on 2026-05-01."
+              type: text
+            is_error: false
+        model: claude-haiku-4-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            First call open_ticket on its own. Once it returns, call refund_status for the
+            order. Never call load_capability.
+        - type: text
+          text: |-
+            <context id="capability:deferred_capabilities">
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+            - refunds: Refund tools.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        thinking:
+          type: enabled
+          budget_tokens: 10000
+        tool_choice:
+          type: auto
+        tools:
+        - name: open_ticket
+          description: Open the customer's support ticket for order ABC-123.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - name: refund_status
+          description: Look up the refund status for an order.
+          input_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=94
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-074ba7436b83a7a6e8339eae8ae372fd-a80323e3d905e4d0-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CgTT11tnzSDxetGbePyU4","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1108,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available","speed":"standard"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Your"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" refund for order"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ABC-123 "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"was"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" issued on **"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"01"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"/05/2"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"026**"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". The ticket"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for your"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" order has"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" been opened."}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" If"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you have"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" any further"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" questions or"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" concerns"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" about"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" your refund,"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" please let me know"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0               }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1108,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":51,"output_tokens_details":{"thinking_tokens":0}}          }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-10-27T21:26:18.223065+00:00
