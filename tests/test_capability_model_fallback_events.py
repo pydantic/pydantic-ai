@@ -7,9 +7,6 @@ from typing import Literal
 import anyio
 import pytest
 from inline_snapshot import snapshot
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent, ModelRetry, RunContext, ToolOutput
@@ -29,7 +26,13 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from tests.conftest import try_import
 from tests.test_capability_model_fallback_output import Answer
+
+with try_import() as otel_sdk_installed:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 
 @dataclass
@@ -42,6 +45,7 @@ class RecordFallbacks(AbstractCapability[object]):
 
 
 class TestOutputFallbackEvent:
+    @pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed')
     async def test_output_policy_starts_from_selected_model(self) -> None:
         exporter = InMemorySpanExporter()
         provider = TracerProvider()
@@ -62,10 +66,18 @@ class TestOutputFallbackEvent:
             return value
 
         assert (await agent.run('Answer.')).output == 'ready'
-        assert sum(span.name == 'model_fallback.output_fallback' for span in exporter.get_finished_spans()) == 1
+        assert (
+            sum(
+                event.name == 'model_fallback.output_fallback'
+                for span in exporter.get_finished_spans()
+                for event in span.events
+            )
+            == 1
+        )
 
     @pytest.mark.parametrize('include_content', [False, True])
     @pytest.mark.parametrize('producer', ['test', None])
+    @pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed')
     async def test_retry_events_and_single_trace(self, include_content: bool, producer: str | None) -> None:
         exporter = InMemorySpanExporter()
         provider = TracerProvider()
@@ -112,12 +124,13 @@ class TestOutputFallbackEvent:
         adapter = TypeAdapter(CapabilityEvent)
         assert adapter.validate_json(adapter.dump_json(event)) == event
         spans = exporter.get_finished_spans()
-        [transition] = [s for s in spans if s.name == 'model_fallback.output_fallback']
+        assert not any(span.name == 'model_fallback.output_fallback' for span in spans)
+        [transition] = [e for s in spans for e in s.events if e.name == 'model_fallback.output_fallback']
         attributes: dict[str, object] = dict(transition.attributes or {})
-        assert attributes.pop('model_fallback.producer', None) == producer
         assert attributes == snapshot(
             {
-                'model_fallback.model': 'backup',
+                'model_fallback.source_model_id': 'test:primary',
+                'model_fallback.target_model_id': 'test:backup',
                 'model_fallback.source': 'response_output',
             }
         )

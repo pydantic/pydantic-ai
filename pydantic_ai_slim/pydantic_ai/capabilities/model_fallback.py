@@ -4,6 +4,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
+from opentelemetry.trace import get_current_span
+
 from pydantic_ai import exceptions
 from pydantic_ai._fallback import FallbackChain, FallbackOn, FallbackPredicates
 from pydantic_ai._utils import replace_no_init
@@ -36,7 +38,9 @@ class OutputFallbackEvent(CapabilityEvent, namespace='model_fallback', name='out
     target_model_id: str
     """The configured selection ID of the model prepared for the next request."""
     source: Literal['response_output', 'output_tool']
+    """Whether response-level output or an output tool triggered the switch."""
     retry: RetryInfo[str]
+    """The triggering retry's cause, attempt, and effective budget."""
 
 
 _SpecFallbackError = Literal[
@@ -331,12 +335,16 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                     tool_call_id=retry.tool_call_id,
                 )
             )
-            with ctx.tracer.start_as_current_span('model_fallback.output_fallback') as span:
-                if span.is_recording():
-                    span.set_attribute('model_fallback.model', request_context.model.model_name)
-                    span.set_attribute('model_fallback.source', retry.source)
-                    if retry.response.model_name is not None:
-                        span.set_attribute('model_fallback.producer', retry.response.model_name)
+            span = get_current_span()
+            if span.is_recording():
+                span.add_event(
+                    'model_fallback.output_fallback',
+                    attributes={
+                        'model_fallback.source_model_id': _pin_id(self._output_selection),
+                        'model_fallback.target_model_id': request_context.model_id or request_context.model.model_id,
+                        'model_fallback.source': retry.source,
+                    },
+                )
             self._output_transition = None
         self._attempted_models.append(request_context.model)
         if request_context.model_id is not None:
@@ -463,6 +471,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
               - ModelFallback:
                   models: [anthropic:claude-opus-5-5]
                   fallback_on: [ModelRateLimitError, ModelUnavailableError]
+                  output_retry_threshold: 1
         """
         # Spec arguments reach here unvalidated: the annotations above are what the published spec schema
         # advertises, not something that rejects other values on the way in.
