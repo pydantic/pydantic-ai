@@ -198,6 +198,9 @@ ModelContextDepsT = TypeVar('ModelContextDepsT')
 def known_model_names() -> tuple[str, ...]:
     """Return every model name known to [`KnownModelName`][pydantic_ai.models.KnownModelName].
 
+    The list is intended for autocomplete and error suggestions; it is not exhaustive of the model
+    ids accepted by providers and should not be used to validate user input.
+
     This is the public, stable way to enumerate the known model ids. Prefer it over introspecting
     the `KnownModelName` type alias directly (e.g. `get_args(KnownModelName.__value__)`), which is
     not part of the public API and would break if the alias were ever recomposed.
