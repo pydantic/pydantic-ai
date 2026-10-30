@@ -124,9 +124,8 @@ def _plain(value: Any) -> Any:
         return TextContent(_unsealed(value.content), metadata=_plain(value.metadata))
     if isinstance(value, list):
         return [_plain(item) for item in cast(list[Any], value)]
-    if isinstance(value, dict):
-        return {key: item for key, item in cast(dict[str, Any], value).items() if key != '__pydantic_ai__'}
-    return value
+    # The rest is a `TextContent`'s metadata.
+    return {key: item for key, item in cast(dict[str, Any], value).items() if key != '__pydantic_ai__'}
 
 
 def _all_user_text(messages: list[ModelMessage]) -> str:
