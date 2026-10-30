@@ -586,7 +586,7 @@ class _UnansweredDialog(_FakeDialog):
         await asyncio.Event().wait()
 
 
-class _AlertingEvaluatePage(_FakePage):
+class _AlertingEvaluatePage(_HangingEvaluatePage):
     """A page whose script opens a dialog and, like `alert()`, does not return until it is answered."""
 
     def __init__(self, dialog: _FakeDialog) -> None:
@@ -595,8 +595,7 @@ class _AlertingEvaluatePage(_FakePage):
 
     async def evaluate(self, expression: str) -> object:
         self.emit('dialog', self._dialog)
-        await asyncio.Event().wait()
-        return None  # pragma: no cover -- unreachable; the wait is cancelled
+        return await super().evaluate(expression)
 
 
 class _FakeInstallerProcess:
@@ -2670,7 +2669,7 @@ class TestPlaywrightBrowserLifecycle:
     ) -> None:
         # An `anyio` cancel is level-triggered: every unshielded await in teardown raises
         # again, so waiting out the in-flight dialog answer would skip both closes and
-        # leave Chromium and the driver running until the process exits.
+        # leave Chromium and the driver running.
         dialog = _UnansweredDialog()
         cm = _install_fake_driver(monkeypatch, _AlertingEvaluatePage(dialog))
         agent = Agent(TestModel(call_tools=['execute_js']), capabilities=[PlaywrightBrowser()])
