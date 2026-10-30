@@ -671,7 +671,7 @@ async def test_stream_text(allow_model_requests: None):
 
 
 async def test_stream_text_from_list_content(allow_model_requests: None):
-    """Some OpenAI-compatible servers stream `delta.content` as a list of parts; only their text is kept."""
+    """Some OpenAI-compatible servers stream `delta.content` as a list of parts; non-text parts go to `provider_details`."""
 
     def list_chunk(content: list[Any]) -> chat.ChatCompletionChunk:
         return chunk([ChoiceDelta.model_construct(content=content, role='assistant')])
@@ -688,9 +688,16 @@ async def test_stream_text_from_list_content(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
 
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    assert response.provider_details['content_parts'] == snapshot(
+        [{'type': 'reference', 'reference_ids': [1]}, {'type': 'reference', 'reference_ids': [2]}]
+    )
+
 
 async def test_request_list_content(allow_model_requests: None):
-    """Some OpenAI-compatible servers return `message.content` as a list of parts; only their text is kept."""
+    """Some OpenAI-compatible servers return `message.content` as a list of parts; non-text parts go to `provider_details`."""
     message = ChatCompletionMessage.model_construct(
         content=[{'type': 'text', 'text': 'hello '}, {'type': 'reference', 'reference_ids': [1]}, 'world'],
         role='assistant',
@@ -700,6 +707,15 @@ async def test_request_list_content(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'hello world'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'stop',
+            'content_parts': [{'type': 'reference', 'reference_ids': [1]}],
+            'timestamp': IsDatetime(),
+        }
+    )
 
 
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:

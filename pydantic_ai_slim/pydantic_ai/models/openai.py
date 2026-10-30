@@ -25,7 +25,16 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
-from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    JsonValue,
+    ModelWrapValidatorHandler,
+    PrivateAttr,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
@@ -493,30 +502,44 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
 
 
-def _join_text_content_parts(content: object) -> object:
-    """Join a list of content parts into the string the Chat Completions API specifies, keeping only their text.
+def _split_content_parts(content: object) -> tuple[object, list[object]]:
+    """Split a list of content parts into the string the Chat Completions API specifies, and the parts that aren't text.
 
     Some OpenAI-compatible servers (Mistral models served by the Albert API, for one) return `content` as a list of
-    parts like `[{'type': 'text', 'text': '...'}]`, especially when the answer carries references. Parts other than
-    text, like those references, are dropped. Anything that isn't a list is returned unchanged; a list with no text
-    becomes `None`.
+    parts like `[{'type': 'text', 'text': '...'}]`, especially when the answer carries references. The text parts are
+    joined; the others, like those references, are returned as they came, for the response's
+    `provider_details['content_parts']`. Anything that isn't a list is returned unchanged; a list with no text becomes
+    `None`.
     """
     if not isinstance(content, list):
-        return content
+        return content, []
     texts: list[str] = []
+    others: list[object] = []
     for part in cast(list[object], content):
         if isinstance(part, str):
             texts.append(part)
         elif _utils.is_str_dict(part) and part.get('type') == 'text' and isinstance(text := part.get('text'), str):
             texts.append(text)
-    return ''.join(texts) or None
+        else:
+            others.append(part)
+    return ''.join(texts) or None, others
 
 
 class _ChatCompletionMessage(chat.ChatCompletionMessage):
-    @field_validator('content', mode='before')
+    _non_text_content_parts: list[object] = PrivateAttr(default_factory=list[object])
+
+    @model_validator(mode='wrap')
     @classmethod
-    def _join_content_parts(cls, value: object) -> object:
-        return _join_text_content_parts(value)
+    def _split_content(
+        cls, data: object, handler: ModelWrapValidatorHandler[_ChatCompletionMessage]
+    ) -> _ChatCompletionMessage:
+        non_text_parts: list[object] = []
+        if _utils.is_str_dict(data) and isinstance(data.get('content'), list):
+            content, non_text_parts = _split_content_parts(data['content'])
+            data = {**data, 'content': content}
+        message = handler(data)
+        message._non_text_content_parts = non_text_parts
+        return message
 
 
 class _ChatCompletionChoice(chat_completion.Choice):
@@ -1874,6 +1897,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             provider_details['moderation'] = response.moderation.model_dump()
         if response.service_tier:
             provider_details['service_tier'] = response.service_tier
+        if isinstance(choice.message, _ChatCompletionMessage) and choice.message._non_text_content_parts:
+            provider_details['content_parts'] = choice.message._non_text_content_parts
 
         # Handle refusal responses (structured output safety filter)
         if choice.message.refusal:
@@ -5460,6 +5485,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _logprobs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
     _raw_text_content: str = field(default='', init=False)
     _pending_raw_annotations: list[object] = field(default_factory=list[object], init=False)
+    _non_text_content_parts: list[object] = field(default_factory=list[object], init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -5533,6 +5559,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
             if self._logprobs:
                 self.provider_details = {**(self.provider_details or {}), 'logprobs': self._logprobs}
+            if self._non_text_content_parts:
+                self.provider_details = {
+                    **(self.provider_details or {}),
+                    'content_parts': self._non_text_content_parts,
+                }
             if (
                 self._model_profile.get('openai_chat_streaming_requires_finish_reason', False)
                 and not self._has_finish_reason
@@ -5677,7 +5708,8 @@ class OpenAIStreamedResponse(StreamedResponse):
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
         # Handle the text part of the response. Some OpenAI-compatible servers stream it as a list of parts.
-        content = _join_text_content_parts(choice.delta.content)
+        content, non_text_parts = _split_content_parts(choice.delta.content)
+        self._non_text_content_parts.extend(non_text_parts)
         if isinstance(content, str) and content:
             self._raw_text_content += content
             emitted = False
