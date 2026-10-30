@@ -89,7 +89,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
     """
 
     sub_agent_usage_limits: UsageLimits | None = None
-    """`UsageLimits` applied to every sub-agent run, replacing pydantic-ai's default.
+    """`UsageLimits` applied to every sub-agent run, replacing the parent run's limits or pydantic-ai's default.
 
     With `forward_usage=False`, a per-run `total_tokens_limit` of `T` plus `max_agent_calls` of
     `N` bounds the tree to roughly `N * T` tokens (each run can overshoot by its final response,
