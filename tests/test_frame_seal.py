@@ -214,6 +214,7 @@ def test_a_vercel_round_trip_renders_the_same_frames():
 
 
 @pytest.mark.skipif(not agui_available(), reason='ag-ui not installed')
+@pytest.mark.filterwarnings('ignore:ag-ui-protocol .* predates the `encrypted_value` field:UserWarning')
 def test_an_agui_dump_has_nothing_seal_specific():
     dumped = AGUIAdapter.dump_messages(history_with_retry_feedback())
 
