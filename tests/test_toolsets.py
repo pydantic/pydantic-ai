@@ -1280,6 +1280,7 @@ async def test_toolset_max_retries_inherits_from_agent():
                 parts=[ToolCallPart(tool_name='always_fails', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=52, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -1386,6 +1387,7 @@ async def test_prepare_function_sees_agent_max_retries():
                 parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=52, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -1408,6 +1410,7 @@ async def test_prepare_function_sees_agent_max_retries():
                 parts=[TextPart(content='{"my_tool":0}')],
                 usage=RequestUsage(input_tokens=53, output_tokens=7),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -1992,24 +1995,25 @@ async def test_combined_toolset_instructions_empty():
 async def test_combined_toolset_collects_instructions_concurrently_in_child_order():
     """Instruction collection starts all children together without changing their declared order."""
     started: list[str] = []
-    all_started = anyio.Event()
+    started_when_resumed: list[list[str]] = []
 
     class SynchronizingToolset(MockToolsetWithInstructions):
         async def get_instructions(self, ctx: RunContext[object]) -> str:
             assert self.custom_instructions is not None
             started.append(self.custom_instructions)
-            if len(started) == 2:
-                all_started.set()
-            await all_started.wait()
+            # Concurrent children all start before the first one resumes; sequential ones don't.
+            await anyio.lowlevel.checkpoint()
+            started_when_resumed.append(list(started))
             return self.custom_instructions
 
     combined = CombinedToolset(
         [SynchronizingToolset('First.', id='first'), SynchronizingToolset('Second.', id='second')]
     )
 
-    with anyio.fail_after(1):
-        instructions = await combined.get_instructions(build_run_context(None))
+    instructions = await combined.get_instructions(build_run_context(None))
 
+    # Either child may start first (Trio picks its own order); concurrency means both started before either resumed.
+    assert sorted(started_when_resumed[0]) == ['First.', 'Second.']
     assert instructions == [
         InstructionPart(content='First.', dynamic=True, id=InstructionId(ToolsetInstructionSource('first'))),
         InstructionPart(content='Second.', dynamic=True, id=InstructionId(ToolsetInstructionSource('second'))),

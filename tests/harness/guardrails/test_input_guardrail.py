@@ -52,14 +52,12 @@ from pydantic_ai_harness import (
     InputBlocked,
     InputGuardrail,
 )
+from pydantic_ai_harness._callable import is_run_context
 from pydantic_ai_harness.guardrails._capability import (
     _find_prompt_part,  # pyright: ignore[reportPrivateUsage]
     _prompt_text,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai_harness.guardrails._shared import (
-    _is_run_context,  # pyright: ignore[reportPrivateUsage]
-    takes_ctx,
-)
+from pydantic_ai_harness.guardrails._shared import takes_ctx
 from pydantic_ai_harness.guardrails.detectors import redact_secrets
 from pydantic_ai_harness.subagents import (
     DelegationReports,
@@ -1924,7 +1922,7 @@ class TestFindPromptPart:
 
 
 class TestIsRunContext:
-    """`_is_run_context` reads an annotation, matching an unresolved string by name."""
+    """`is_run_context` reads an annotation, matching an unresolved string by name."""
 
     @pytest.mark.parametrize(
         ('annotation', 'expected'),
@@ -1949,7 +1947,7 @@ class TestIsRunContext:
         ],
     )
     def test_annotation(self, annotation: object, expected: bool):
-        assert _is_run_context(annotation) is expected
+        assert is_run_context(annotation) is expected
 
 
 class TestTakesCtx:

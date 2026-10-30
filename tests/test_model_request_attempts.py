@@ -961,3 +961,51 @@ async def test_a_wrapper_that_answers_itself_stops_the_stream_being_primed(error
             return await result.get_output()
 
     assert await asyncio.wait_for(run(), timeout=10) == 'blocked'
+
+
+class MarkHistoryPerAttempt(AbstractCapability[None]):
+    """Records each attempt on the latest request through `ctx.messages`, then asks for a second attempt."""
+
+    async def prepare_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        index = max(i for i, message in enumerate(ctx.messages) if isinstance(message, ModelRequest))
+        request = ctx.messages[index]
+        assert isinstance(request, ModelRequest)
+        marks = (request.metadata or {}).get('attempts', [])
+        ctx.messages[index] = replace(request, metadata={'attempts': [*marks, request_context.attempt]})
+        if request_context.attempt == 1:
+            raise RetryModelRequest()
+        return request_context
+
+
+@pytest.mark.parametrize('mode', ['run', 'run_stream', 'iter'])
+async def test_history_changes_in_prepare_model_request_persist_across_attempts(mode: str):
+    """Changes to `ctx.messages` in `prepare_model_request` reach the run's history and survive a further attempt.
+
+    Changes to `request_context` are for one attempt; the run's history is not rolled back between attempts.
+    """
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+
+    agent = Agent(
+        FunctionModel(success, stream_function=stream),
+        deps_type=type(None),
+        capabilities=[MarkHistoryPerAttempt()],
+    )
+    if mode == 'run':
+        messages = (await agent.run('x')).all_messages()
+    elif mode == 'run_stream':
+        async with agent.run_stream('x') as streamed:
+            assert await streamed.get_output() == 'hello'
+        messages = streamed.all_messages()
+    else:
+        async with agent.iter('x') as run:
+            async for _ in run:
+                pass
+        assert run.result is not None
+        messages = run.result.all_messages()
+    request = messages[0]
+    assert isinstance(request, ModelRequest)
+    assert request.metadata == {'attempts': [1, 2]}

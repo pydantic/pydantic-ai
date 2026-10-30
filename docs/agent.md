@@ -501,6 +501,7 @@ async def main():
                     cost=Decimal('0.000182'), input_tokens=56, output_tokens=7
                 ),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -571,6 +572,7 @@ async def main():
                         cost=Decimal('0.000182'), input_tokens=56, output_tokens=7
                     ),
                     model_name='{{ openai:medium.name }}',
+                    model_id='{{ openai:medium }}',
                     timestamp=datetime.datetime(...),
                     run_id='...',
                     conversation_id='...',
@@ -2051,6 +2053,8 @@ We recommend [Pydantic Logfire](https://logfire.pydantic.dev/docs/), which has b
 
 ### Tracing with Logfire
 
+Run `uvx logfire-cli wizard --task pydantic-ai` once from your project. It signs you in, picks or creates a project, and has your coding agent add the following instrumentation. See [Using Logfire](logfire.md#using-logfire) for details.
+
 ```python
 import logfire
 
@@ -2095,7 +2099,7 @@ Evals let you define test cases, run them against your agent, and score the resu
 
 Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can send traces to any compatible backend. Even if you use the Logfire SDK for its convenience, you can configure it to send data to other backends. See [alternative backends](logfire.md#using-opentelemetry) for setup instructions.
 
-[Full Logfire integration guide →](logfire.md)
+[Full Logfire integration guide →](logfire.md#using-logfire)
 
 ## Model errors
 
@@ -2157,6 +2161,7 @@ with capture_run_messages() as messages:  # (2)!
                     cost=Decimal('0.000164'), input_tokens=62, output_tokens=4
                 ),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -2188,6 +2193,7 @@ with capture_run_messages() as messages:  # (2)!
                     cost=Decimal('0.000216'), input_tokens=68, output_tokens=8
                 ),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',

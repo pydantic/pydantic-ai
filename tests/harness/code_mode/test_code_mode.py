@@ -47,6 +47,7 @@ from pydantic_ai import (
     ToolDefinition,
     capture_run_messages,
 )
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch, Toolset
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -5363,3 +5364,42 @@ class TestCodeModeOSAccessInTemporal:
         mount = MountDir(virtual_path='/work', host_path=str(tmp_path))
         code = "from pathlib import Path\nPath('/work/data.txt').read_text()"
         assert await self._run(code, handler, mount) == 'hello-from-host'
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    """Runtime-only fields (`os_access`, `repl_store`, a sandbox factory) must not erase the whole schema entry."""
+    definitions = AgentSpec.model_json_schema_with_capabilities([CodeMode])['$defs']
+    assert sorted(definitions['spec_params_CodeMode']['properties']) == snapshot(
+        [
+            'defer_loading',
+            'description',
+            'dynamic_catalog',
+            'eager',
+            'id',
+            'max_retries',
+            'max_tool_calls',
+            'monty_sandbox',
+            'resource_limits',
+            'speculate',
+            'tools',
+        ]
+    )
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    code_mode = CodeMode[None].from_spec(
+        tools=['add'], max_tool_calls=5, resource_limits={'max_duration_secs': 2.0}, speculate='declared', id='code'
+    )
+    assert (
+        code_mode.tools,
+        code_mode.max_tool_calls,
+        code_mode.resource_limits,
+        code_mode.speculate,
+        code_mode.id,
+    ) == (
+        ['add'],
+        5,
+        {'max_duration_secs': 2.0},
+        'declared',
+        'code',
+    )

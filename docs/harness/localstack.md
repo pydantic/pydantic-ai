@@ -16,6 +16,8 @@ stop a LocalStack Docker container for each run, or one that the runs inside
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model gets LocalStack instructions and two tools, aws_cli and localstack_health. An aws_cli command, given without the leading aws, is first checked against allowed_services or denied_services; a command that names a blocked service or passes --endpoint-url, --profile, --region or --no-sign-request is rejected. Otherwise the AWS CLI runs without a shell, with the endpoint, region and test credentials injected, against LocalStack at localhost.localstack.cloud:4566, and labelled stdout, stderr and exit code come back, keeping the tail when long. With manage_container=True the capability starts a LocalStack Docker container for the run, waits for its health check, and stops it when the run ends.](../img/harness/localstack.svg)
+
 ## The problem
 
 Agents that build or test cloud infrastructure need somewhere to create buckets,

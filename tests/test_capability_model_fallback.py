@@ -165,14 +165,14 @@ async def test_streaming_open_failure_falls_back():
 
 
 def _suspended_history(pinned_model_id: str) -> list[ModelMessage]:
-    """History ending in a response a provider suspended, pinned to the fallback candidate that started it."""
+    """History ending in a response a provider suspended, started by the model `pinned_model_id` identifies."""
     return [
         ModelRequest(parts=[UserPromptPart('x')]),
         ModelResponse(
             parts=[TextPart('partial')],
+            model_id=pinned_model_id,
             state='suspended',
             provider_response_id='job-1',
-            metadata={'__pydantic_ai__': {'fallback_candidate': pinned_model_id}},
         ),
     ]
 
@@ -490,7 +490,8 @@ async def test_suspended_response_is_pinned_to_the_model_that_served_it():
     suspended = messages[-1]
     assert isinstance(suspended, ModelResponse)
     assert suspended.state == 'suspended'
-    assert suspended.metadata == snapshot({'__pydantic_ai__': {'fallback_candidate': 'scripted:scripted'}})
+    assert suspended.model_id == 'scripted:scripted'
+    assert suspended.metadata is None
 
 
 async def test_complete_response_is_not_pinned():
@@ -613,14 +614,21 @@ async def test_fallback_candidates_are_entered_once_and_exited_with_the_run():
     assert events.count('request') == len([m for m in result.all_messages() if isinstance(m, ModelResponse)])
 
 
-async def test_a_pin_to_an_unknown_model_is_refused():
-    agent = Agent(FunctionModel(success, model_name='step'), capabilities=[ModelFallback(FunctionModel(success))])
-    with pytest.raises(UserError, match="started by 'function:gone'"):
-        await agent.run(message_history=_suspended_history('function:gone'))
+async def test_a_response_started_outside_the_chain_resumes_on_the_step_model():
+    """A suspended response a model outside the chain started is continued by the step's model, as without fallback."""
+    continued: list[bool] = []
+
+    def step_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        continued.append(_ends_suspended(messages))
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(step_model, model_name='step'), capabilities=[ModelFallback(FunctionModel(success))])
+    await agent.run(message_history=_suspended_history('function:gone'))
+    assert continued == [True]
 
 
 async def test_a_fallback_model_candidate_keeps_its_own_pin():
-    """`ModelFallback`'s pin sits beside `FallbackModel`'s, so a `FallbackModel` candidate still resumes on its inner model."""
+    """`ModelFallback` leaves the metadata alone, so a `FallbackModel` candidate still resumes on its inner model."""
     fallback = ModelFallback[None](TestModel())
     inner = FunctionModel(success, model_name='inner')
     ctx = RunContext[None](deps=None, model=inner, usage=RunUsage())
@@ -630,10 +638,8 @@ async def test_a_fallback_model_candidate_keeps_its_own_pin():
     response = ModelResponse(
         parts=[], state='suspended', metadata={'__pydantic_ai__': {'fallback_model_id': 'function:inner-of-inner'}}
     )
-    stamped = await fallback.after_model_request(ctx, request_context=request_context, response=response)
-    assert stamped.metadata == {
-        '__pydantic_ai__': {'fallback_model_id': 'function:inner-of-inner', 'fallback_candidate': inner.model_id}
-    }
+    accepted = await fallback.after_model_request(ctx, request_context=request_context, response=response)
+    assert accepted.metadata == {'__pydantic_ai__': {'fallback_model_id': 'function:inner-of-inner'}}
 
 
 def test_fallback_requires_a_model():
@@ -735,8 +741,8 @@ async def test_a_rejected_resumed_continuation_describes_only_what_this_run_bill
             parts=[TextPart('old')],
             model_name='primary',
             state='suspended',
+            model_id=primary_model.model_id,
             usage=RequestUsage(input_tokens=100, output_tokens=10),
-            metadata={'__pydantic_ai__': {'fallback_candidate': primary_model.model_id}},
         ),
     ]
     agent = Agent(
@@ -2009,12 +2015,12 @@ async def test_a_failed_batch_moves_on_down_the_chain_across_resumed_runs():
         runs.append(await batched_agent().run(message_history=runs[-1].all_messages()))
 
     assert runs[-1].output == 'success (no tool calls)'
-    # The model each pending run ended waiting on, as its response is pinned to.
-    assert [
-        (run.output.response.metadata or {}).get('__pydantic_ai__', {}).get('fallback_candidate')
-        for run in runs
-        if isinstance(run.output, PendingModelResponse)
-    ] == ['test:primary', 'test:second', 'test:third']
+    # The model each pending run ended waiting on, as its response records.
+    assert [run.output.response.model_id for run in runs if isinstance(run.output, PendingModelResponse)] == [
+        'test:primary',
+        'test:second',
+        'test:third',
+    ]
     # Every model got one batch: none was submitted to again after its result failed.
     assert (len(primary.created), len(second.created), len(third.created)) == (1, 1, 1)
 
@@ -2090,9 +2096,7 @@ async def test_a_rejected_pending_batch_request_is_withdrawn_once():
     assert judged == ['suspended', 'suspended']
     assert primary.canceled == [batch.id for batch in primary.created]
     assert (len(primary.created), len(backup.created), backup.canceled) == (1, 1, [])
-    assert (pending.output.response.metadata or {}).get('__pydantic_ai__', {}).get('fallback_candidate') == (
-        'test:backup'
-    )
+    assert pending.output.response.model_id == 'test:backup'
 
     # The fallback's batch request was left for a later run, which collects it.
     result = await batched_agent().run(message_history=pending.all_messages())

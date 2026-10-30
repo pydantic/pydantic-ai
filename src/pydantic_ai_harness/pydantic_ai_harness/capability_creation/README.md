@@ -9,6 +9,8 @@ capabilities written or selected by application code, see
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/capability_creation/)
 
+![In one run the model calls author_capability with a name and Python source. CapabilityCreation writes it to <directory>/<name>.py, imports it, checks that it holds exactly one AbstractCapability subclass that constructs with no arguments, calls its static getters, and records it in manifest.json. The capability is not live in that run. Your loop calls creation.store.load_active() and passes the result to the next agent.run as capabilities, so its tools, hooks and instructions take effect there. The authored code runs in the agent process, so a run requires a writable LocalWorkspace.](https://pydantic.dev/docs/ai/img/harness/capability-creation.svg)
+
 ## The problem
 
 A coding agent often discovers, mid-task, that it wants a behavior its host does not

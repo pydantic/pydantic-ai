@@ -8,6 +8,8 @@ Let an agent read and send Slack messages, browse channels, and work with canvas
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the Slack capability connects to Slack's hosted MCP server at mcp.slack.com/mcp with a Slack user token (xoxp-); bot tokens (xoxb-) are not accepted. The model sees the server's tool names unchanged, such as slack_send_message, and messages it posts appear as that user. Your auth function returns the token for each run.](../img/harness/slack.svg)
+
 ## Install and connect
 
 ```bash

@@ -21,7 +21,20 @@ print(result.output)
 
 Use `BinaryContent(...)` when the asset is already in memory instead of at a URL.
 
-Not every model supports every input type. Keep provider expectations in mind when the user chooses a specific model.
+Not every model supports every input type, but the agent isn't limited to what its model reads natively. Add the `FileUnderstanding` capability to have another model describe each file the agent's model can't take, judged by the model's profile; the agent's model gets the description in the file's place, and files it reads are sent as they are:
+
+```python
+from pydantic_ai import Agent, AudioUrl
+from pydantic_ai.capabilities import FileUnderstanding
+
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[FileUnderstanding(fallback_subagent_model='google:gemini-3-flash-preview')],
+)
+result = agent.run_sync(['Summarize this call.', AudioUrl(url='https://example.com/call.mp3')])
+```
+
+Without it, a file in the prompt that the model can't take fails the request, and one a tool returned is replaced by a note saying the model can't read it. Descriptions are recorded in the message history, so later turns reuse them. See [File Understanding](https://pydantic.dev/docs/ai/capabilities/file-understanding/).
 
 For Gemini models that support agentic video processing, set `vendor_metadata={'media_processing': 'AGENTIC'}` on a `VideoUrl`, video `BinaryContent`, or video `UploadedFile`. See Google's [agentic video understanding guide](https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding).
 
@@ -105,6 +118,7 @@ Rules of thumb:
 - Pass `run_id=` when your app mints an id before the run starts (e.g. one created, stored, or handed out to a client first) and you want `ctx.run_id` / stamps / OTel to match it.
 - Do **not** pass `run_id=''`, or reuse a `run_id` that already appears on `message_history` — both raise `UserError` because they break `new_messages()` boundary detection. Correlate pause/resume and multi-turn work with `conversation_id` instead. When retrying a failed run with the same `run_id`, rebuild `message_history` without the failed attempt's messages.
 - Pass `conversation_id='new'` to fork a thread off existing history; `'new'` is **not** a sentinel for `run_id`.
+- Each `ModelResponse` from a model request also records `model_id`: the model the agent sent it to, as configured (the selection string like `'openai:gpt-5'`, or `Model.model_id`), including the candidate a `ModelFallback` moved it to. Use it, not the provider-reported `model_name` (often a dated version), to tell which of your models answered. `sanitize_messages` resets it on client-supplied history.
 - UI adapters (`VercelAIAdapter`, `AGUIAdapter`) put a `message_history` you pass in front of the client's messages by default (`manage_message_history='client'`), and warn when a client message's UI message id is already in it (only histories that went through an adapter carry those ids, so a hand-built one duplicates silently). `useChat` and `@ag-ui/client` send the whole conversation every request, so when you persist `result.all_messages()` server-side (e.g. in `on_complete`) and pass it back, also pass `manage_message_history='server'` (adapter field, `from_request`, `dispatch_request`): only the client's new turn (its messages after the last assistant response) is used, a new turn starting with a stored user message id (regenerate/edit) cuts the stored history before it (a regenerate of an id the stored history lacks is rejected as a protocol error event), and client tool results only count for calls still unanswered at the end of the stored history.
 - UI adapters auto-wire protocol thread/chat ids into `conversation_id`. Protocol run ids (e.g. AG-UI `runId`) are **not** mapped into agent `run_id` — pass `run_id=` on the adapter/`Agent.run` if you need them aligned. A `UIEventStream` used standalone (no adapter, e.g. encoding events out of a durable execution workflow or a queue) has no protocol ids to wire: `AGUIEventStream(thread_id=..., run_id=...)` takes them directly, and defaults each to a fresh UUID that matches nothing agent-side, so pass the run's own `conversation_id`/`run_id` to keep them aligned.
 - AG-UI live failed tool outcomes round-trip through a namespaced payload on `ReasoningEncryptedValueEvent.encrypted_value` with `ag-ui-protocol >= 0.1.11`. Earlier event streams have no outcome carrier, so reloading them reconstructs the tool result as successful.
