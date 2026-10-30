@@ -6,7 +6,7 @@ import threading
 import warnings
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass, field
@@ -3105,6 +3105,57 @@ async def test_early_rejection_retry_budget(
     assert len(socket.sent) == expected_retries + 1
     assert delays == [0.25] * expected_retries
     assert socket.close_count == 1
+
+
+@pytest.mark.parametrize('replacement_fails', [False, True])
+async def test_rejection_budget_survives_an_unsent_socket_replacement(
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    http: HTTPResponses,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement_fails: bool,
+):
+    """Unsent socket replacements and HTTP fallback retain the budget already spent on provider rejections."""
+    rejection: Frame = {
+        'type': 'error',
+        'status': 503,
+        'error': {
+            'type': 'server_error',
+            'code': 'server_error',
+            'message': 'retry later',
+            'headers': {'retry-after-ms': '1'},
+        },
+    }
+    socket = sockets.pending[0]
+    socket.responses = deque([[rejection]])
+    replacement = ScriptedSocket(responses=deque([[rejection], [rejection]]))
+    sockets.pending.append(replacement)
+    http.replies.extend(
+        httpx2.Response(
+            503,
+            headers={'retry-after-ms': '1'},
+            json={'error': {'type': 'server_error', 'message': 'HTTP retry later'}},
+        )
+        for _ in range(2)
+    )
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        socket.send_error = ConnectionClosedOK(None, None)
+        if replacement_fails:
+            sockets.connect_error = SSLCertVerificationError(1, 'certificate verify failed')
+
+    monkeypatch.setattr(anyio, 'sleep', sleep)
+    agent = Agent(websocket_model(http.provider(), settings=OpenAIResponsesModelSettings(max_retries=1)))
+    with pytest.warns(UnsupportedSettingWarning, match='using HTTP') if replacement_fails else nullcontext():
+        with pytest.raises(ModelHTTPError):
+            await agent.run('hello')
+    assert len(socket.sent) == 1
+    assert len(replacement.sent) == (0 if replacement_fails else 1)
+    assert len(http.requests) == (1 if replacement_fails else 0)
+    assert sockets.connect_count == 2
+    assert delays == [0.001]
 
 
 async def test_early_rejection_backoff_has_jitter(

@@ -4615,10 +4615,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 else await self._reserve_websocket_lane(asyncio.get_running_loop(), messages, given_settings)
             )
             if retry is None:
+                http_settings: OpenAIResponsesModelSettings = {
+                    **given_settings,
+                    'max_retries': max(
+                        0,
+                        model_settings.get('max_retries', self.client.max_retries) - websocket_stream.rejection_retries,
+                    ),
+                }
                 return await _utils.replace_no_init(self, _websocket_stream=None)._responses_create(
-                    messages, stream, given_settings, model_request_parameters
+                    messages, stream, http_settings, model_request_parameters
                 )
             retry.retried = True
+            retry.rejection_retries = websocket_stream.rejection_retries
             return await self._create_on_websocket_lane(
                 retry, messages, stream, given_settings, model_request_parameters
             )
