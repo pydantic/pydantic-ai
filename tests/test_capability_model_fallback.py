@@ -1593,7 +1593,7 @@ async def test_rejected_attempt_span_status_says_what_rejected_it(capfire: Captu
     await _capability_agent(*chain, instrument=True).run('x')
     assert rejected_statuses() == ['Response rejected']
     await _fallback_model_agent(*chain, instrument=True).run('x')
-    assert rejected_statuses() == ['Response rejected by a `fallback_on` response handler']
+    assert rejected_statuses() == ['Response rejected by `fallback_on`']
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
@@ -2741,23 +2741,24 @@ async def test_every_model_refusing_raises_the_group():
     ]
 
 
-async def test_fallback_model_falls_back_on_refusals_when_named():
-    """`FallbackModel` keeps its `(ModelAPIError,)` default, and falls back on a refusal when `fallback_on` names it."""
+async def test_fallback_model_does_not_fall_back_on_refusals_by_default():
+    """`FallbackModel` keeps its `(ModelAPIError,)` default, so a refusal ends the run as before."""
     calls: list[str] = []
     with pytest.raises(ContentFilterError):
         await Agent(FallbackModel(_refusal('primary', calls), _answering('backup', calls))).run('x')
     assert calls == ['primary']
 
-    for text in (None, 'I cannot help with that.'):
-        calls.clear()
-        model = FallbackModel(
-            _refusal('primary', calls, text),
-            _answering('backup', calls),
-            fallback_on=(ModelAPIError, ContentFilterError),
-        )
-        result = await Agent(model).run('x')
-        assert result.output == 'backup answered'
-        assert calls == ['primary', 'backup']
+
+@pytest.mark.parametrize('text', [None, 'I cannot help with that.'], ids=['empty', 'with-text'])
+async def test_fallback_model_falls_back_on_refusals_when_named(text: str | None):
+    """`FallbackModel` falls back on a refusal, empty or with text, when `fallback_on` names `ContentFilterError`."""
+    calls: list[str] = []
+    model = FallbackModel(
+        _refusal('primary', calls, text), _answering('backup', calls), fallback_on=(ModelAPIError, ContentFilterError)
+    )
+    result = await Agent(model).run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
 
 
 async def test_spec_falls_back_on_refusals_by_default_and_can_opt_out():
