@@ -632,6 +632,32 @@ class TestNestedTraversal:
             ]
         )
 
+    async def test_a_symlink_in_the_path_does_not_surface_files_outside_the_working_directory(
+        self, tmp_path: Path
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'OUTSIDE BODY')
+        repo = tmp_path / 'repo'
+        _write(repo / 'README.md', 'readme')
+        (repo / 'bounce').symlink_to(tmp_path)
+        path = f'bounce/{repo.name}/README.md'
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args=f'{{"path":"{path}"}}', tool_call_id='x')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=repo),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=repo))
+        # The read itself is allowed, since the file resolves inside the repo; `bounce` resolves outside it.
+        assert 'readme' in str(result.all_messages())
+        assert _repo_notes(result.all_messages()) == []
+
     @pytest.mark.parametrize(
         'call',
         [

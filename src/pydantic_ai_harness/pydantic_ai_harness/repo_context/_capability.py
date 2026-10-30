@@ -318,7 +318,15 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         Files are enqueued shallowest first, so the most specific file is the latest one the model reads.
         """
         working_dir = await self._working_dir(ctx.workspace)
+        real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
         for current in directories_up_to(directory, working_dir):
+            # The traversed directory itself was authorized by the tool, but a symlinked directory in its path
+            # can take a lexical ancestor between it and the working directory outside the project, so each of
+            # those must resolve inside the working directory too.
+            if current != directory and not Path(await ctx.workspace.realpath(str(current))).is_relative_to(
+                real_working_dir
+            ):
+                continue
             await self._enqueue_directory(ctx, current)
 
     async def _enqueue_directory(self, ctx: RunContext[AgentDepsT], directory: Path) -> None:
