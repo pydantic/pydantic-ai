@@ -68,7 +68,9 @@ jobs:
           path: ${{ runner.temp }}/native-capture-input
 
       - name: Collect the downloaded native capture artifacts
-        run: node .github/scripts/gh_aw_native_capture/collect_downloaded.cjs "$RUNNER_TEMP/native-capture-input" "$RUNNER_TEMP/native-capture-roundtrip"
+        run: |
+          node .github/scripts/gh_aw_native_capture/collect_downloaded.cjs "$RUNNER_TEMP/native-capture-input" "$RUNNER_TEMP/native-capture-roundtrip"
+          node -e 'const r = require(process.argv[1]); if (r.status !== "passed" || r.cases.length !== 3) process.exit(1)' "$RUNNER_TEMP/native-capture-roundtrip/result.json"
 
       - name: Preserve artifact roundtrip evidence
         if: always()

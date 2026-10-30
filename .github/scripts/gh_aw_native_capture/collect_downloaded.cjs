@@ -130,5 +130,14 @@ async function main() {
   }
 }
 
-if (require.main === module) main().catch(error => { console.error(error.stack); process.exitCode = 1; });
+if (require.main === module) {
+  let completed = false;
+  process.on('beforeExit', () => {
+    if (!completed) {
+      console.error('Artifact collection exited before completing its acceptance assertions');
+      process.exitCode = 1;
+    }
+  });
+  main().then(() => { completed = true; }).catch(error => { completed = true; console.error(error.stack); process.exitCode = 1; });
+}
 module.exports = { copyVerifiedHelpers, requireRegularTree };

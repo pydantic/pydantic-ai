@@ -8,6 +8,8 @@ function installActionsAdapter() {
   const summaries = [];
   const summary = new Proxy({}, {
     get(_target, name) {
+      // A summary is not a thenable: awaiting write() must resolve normally.
+      if (name === 'then') return undefined;
       if (name === 'write') return async () => summary;
       if (name === 'stringify') return () => summaries.join('\n');
       if (name === 'clear') return () => summary;

@@ -247,6 +247,11 @@ def run_case(
             log=case_evidence / 'postprocess.log',
             timeout=60,
         )
+        conclusion = json.loads((case_evidence / 'conclusion-step.json').read_text())
+        if conclusion.get('status') != 'passed':
+            raise RuntimeError(f'{case}: postprocessing did not finish its acceptance assertions')
+        if not (case_evidence / 'actions-log.json').is_file():
+            raise RuntimeError(f'{case}: postprocessing exited before its completion receipt')
         result: dict[str, object] = {
             'case': case,
             'awf_exit_code': awf.returncode,
