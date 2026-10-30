@@ -130,6 +130,28 @@ async def test_openrouter_provider_quantization_and_sort(
     assert request_capture.body()['provider'] == {'quantizations': ['nvfp4'], 'sort': 'exacto'}
 
 
+async def test_openrouter_provider_performance_thresholds(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """OpenRouter accepts `preferred_min_throughput` percentile cutoffs and a bare `preferred_max_latency`."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('z-ai/glm-5.3-flash', provider=provider)
+    settings = OpenRouterModelSettings(
+        max_tokens=300,
+        openrouter_provider={
+            'sort': 'price',
+            'preferred_min_throughput': {'p75': 50.0},
+            'preferred_max_latency': 0.35,
+        },
+    )
+    await model_request(model, [ModelRequest.user_text_prompt('Who are you? One sentence.')], model_settings=settings)
+    assert request_capture.body()['provider'] == {
+        'sort': 'price',
+        'preferred_min_throughput': {'p75': 50.0},
+        'preferred_max_latency': 0.35,
+    }
+
+
 async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)

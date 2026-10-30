@@ -1,5 +1,5 @@
 ---
-description: "Use models from many labs through OpenRouter with Pydantic AI, with app attribution, OpenRouter model settings, tool choice, prompt caching and web search."
+description: "Use models from many labs through OpenRouter with Pydantic AI, with app attribution, OpenRouter model settings, provider routing, tool choice, prompt caching and web search."
 ---
 
 # OpenRouter
@@ -106,6 +106,29 @@ Claude answers a forced [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_
 When you ask for thinking explicitly on an `anthropic/` model, an explicit `tool_choice='required'` (or a list of tool names) also raises a [`UserError`][pydantic_ai.exceptions.UserError], where the direct API would send it: OpenRouter doesn't reject that combination but silently drops the `reasoning` field from the request, so the response would come back with no thinking at all. Disable thinking or use `tool_choice='auto'` instead.
 
 If a resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
+
+## Provider routing
+
+OpenRouter routes a request between providers serving the same model. The [`Provider` object](https://openrouter.ai/docs/features/provider-routing) you pass in [`openrouter_provider`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_provider] is sent verbatim, so you can steer routing on [performance](https://openrouter.ai/docs/features/provider-routing#performance-thresholds) with `preferred_min_throughput` (the minimum throughput you want to pay for, in tokens per second) and `preferred_max_latency` (the maximum latency you want to pay for, in seconds). Each accepts a bare value, treated as the p50 cutoff, or per-percentile cutoffs:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+
+model = OpenRouterModel('anthropic/claude-sonnet-4-5')
+agent = Agent(model)
+
+result = agent.run_sync(
+    'What is the capital of France?',
+    model_settings=OpenRouterModelSettings(
+        openrouter_provider={
+            'sort': 'price',
+            'preferred_min_throughput': {'p75': 50.0},
+            'preferred_max_latency': 0.35,
+        },
+    ),
+)
+```
 
 ## Prompt Caching
 
