@@ -1,7 +1,9 @@
 """The Changes panel in the shipped UI: a session's changed files after two turns, by scope."""
 
+import asyncio
 import json
 import re
+import threading
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -137,3 +139,53 @@ async def test_changes_panel_lists_the_files_of_two_turns(page: Page, changes_ui
     await page.keyboard.press('ControlOrMeta+Shift+E')
     await expect(panel).to_have_count(0)
     await expect(toggle).to_have_attribute('aria-pressed', 'false')
+
+
+@dataclass
+class HeldChanges:
+    url: str
+    release: threading.Event
+
+
+@pytest.fixture
+def held_changes(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterator[HeldChanges]:
+    """A session whose next turn stays running until `release` is set, without blocking the server loop."""
+    root = tmp_path_factory.mktemp('browser-changes-held').resolve()
+    release = threading.Event()
+
+    async def held(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        while not release.is_set():
+            await asyncio.sleep(0.05)
+        yield 'DONE'
+
+    with pytest.MonkeyPatch.context() as patch, start_blocking_portal() as portal:
+        patch.setenv('HOME', str(root / 'home'))
+        patch.setenv('XDG_CONFIG_HOME', str(root / 'config'))
+        patch.setenv('XDG_STATE_HOME', str(root / 'state'))
+        patch.setattr(models, 'ALLOW_MODEL_REQUESTS', False)
+        fleet = Fleet(root=root, portal=portal, agents={'home': Agent(FunctionModel(stream_function=held))})
+        try:
+            with serve(fleet) as url:
+                yield HeldChanges(url=url, release=release)
+        finally:
+            release.set()
+            fleet.exit()
+
+
+async def test_changes_panel_loads_during_a_running_turn(page: Page, held_changes: HeldChanges) -> None:
+    """A panel opened mid-turn shows the git scope now, instead of Loading… until the turn ends."""
+    await page.goto(f'{held_changes.url}/?token={TOKEN}')
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    await composer.fill('Hold this turn')
+    await composer.press('Enter')
+    await expect(page.locator('.topbar-status .activity.busy')).to_be_visible()
+    await page.get_by_role('button', name=re.compile(r'^Changes')).click()
+    panel = page.get_by_role('complementary', name='Changes')
+    async with page.expect_response(re.compile(r'/changes\?scope=uncommitted'), timeout=2000) as sent:
+        await panel.get_by_role('tab', name='Uncommitted').click()
+    assert (await sent.value).ok
+    await expect(panel.locator('.changes-empty')).to_have_text('This workspace is not in a Git repository.', timeout=2000)
+    await expect(panel.locator('.changes-empty')).not_to_have_text('Loading…')
+    held_changes.release.set()
+    await expect(page.locator('.topbar-status .activity')).to_have_text('ready')

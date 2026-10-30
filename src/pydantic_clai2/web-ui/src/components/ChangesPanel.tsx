@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SessionApi } from '../api'
 import { MOD } from '../platform'
 import type { ChangeScope, Changes, FileChange } from '../protocol'
@@ -27,23 +27,32 @@ const PREVIEW_LINES = 60
 
 export const CHANGES_KEY = 'E'
 
-/** The files `session` changed in `scope`, asked again whenever `active` turns on, such as when a turn ends, and when
- * `saved` changes, as it does once the session has saved the turn. An answer stays until the next arrives, but only for
- * the session `owner` it was asked for. Without `diffs`, files come with their counts alone, as for the header's count. */
+/** The files `session` changed in `scope`. Asks while `enabled`, and again whenever `enabled` stays on.
+ * While `hold` is set, as during a turn, an answer already in hand waits; a scope with none still asks once, so opening
+ * the panel mid-turn shows what is on disk instead of `Loading…`. That answer stays until the next arrives, and only
+ * for the session `owner` it was asked for. Without `diffs`, files come with their counts alone, as for the header's count. */
 export function useChanges(
   session: SessionApi,
   scope: ChangeScope,
   owner: string,
-  active: boolean,
+  enabled: boolean,
+  hold = false,
   diffs = true,
   saved = 0,
 ) {
   const [found, setFound] = useState<{ owner: string; scope: ChangeScope; changes: Changes | null; error: string | null }>()
   const [version, setVersion] = useState(0)
+  const answered = useRef<string | null>(null)
   useEffect(() => {
-    if (!active) return
+    if (!enabled) return
+    const key = `${owner}\0${scope}\0${String(diffs)}`
+    if (hold && answered.current === key) return
     let current = true
-    const settle = (changes: Changes | null, error: string | null) => current && setFound({ owner, scope, changes, error })
+    const settle = (changes: Changes | null, error: string | null) => {
+      if (!current) return
+      answered.current = key
+      setFound({ owner, scope, changes, error })
+    }
     session.changes(scope, diffs).then(
       (changes) => settle(changes, null),
       (error: unknown) => settle(null, error instanceof Error ? error.message : String(error)),
@@ -51,7 +60,7 @@ export function useChanges(
     return () => {
       current = false
     }
-  }, [session, scope, owner, active, diffs, version, saved])
+  }, [session, scope, owner, enabled, hold, diffs, version, saved])
   const refresh = useCallback(() => setVersion((value) => value + 1), [])
   const mine = found?.owner === owner && found.scope === scope ? found : undefined
   return { changes: mine?.changes ?? null, error: mine?.error ?? null, refresh }
@@ -90,14 +99,17 @@ export function ChangesPanel({
   session,
   owner,
   active,
+  running,
   saved,
   onClose,
 }: {
   session: SessionApi
   /** The session shown, which the answers belong to. */
   owner: string
-  /** Whether to ask: off while a turn runs, so the panel asks again as it ends. */
+  /** Whether the page can ask. Off until the socket is open. */
   active: boolean
+  /** A turn is in progress: keep the answer in hand, and still ask once for a scope that has none. */
+  running: boolean
   /** Changes whenever the session list does, including once the session has saved a turn; the panel then asks again. */
   saved: number
   onClose: () => void
@@ -107,7 +119,7 @@ export function ChangesPanel({
     return SCOPES.find((entry) => entry.scope === stored)?.scope ?? 'session'
   })
   useEffect(() => localStorage.setItem('clai-changes-scope', scope), [scope])
-  const { changes, error, refresh } = useChanges(session, scope, owner, active, true, saved)
+  const { changes, error, refresh } = useChanges(session, scope, owner, active, running, true, saved)
   // Paths opened or closed by hand; the rest follow their size.
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(() => new Map())
   const files = changes?.files ?? []
@@ -128,8 +140,8 @@ export function ChangesPanel({
         <button
           className="ghost small changes-refresh"
           onClick={refresh}
-          disabled={!active}
-          title={active ? 'Ask again' : 'Asks again when the turn ends'}
+          disabled={!active || running}
+          title={active && !running ? 'Ask again' : 'Asks again when the turn ends'}
         >
           Refresh
         </button>
