@@ -274,8 +274,9 @@ def test_output_json_schema_contains_refs_preserve_branch_types():
 
     first_item = create_model('Item', value=(int, ...))
     second_item = create_model('Item', value=(str, ...))
-    first = create_model('First', values=(list[first_item], Field(json_schema_extra=use_contains)))
-    second = create_model('Second', values=(list[second_item], Field(json_schema_extra=use_contains)))
+    # These model classes are generated at runtime, rather than available as static type expressions.
+    first = create_model('First', values=(list[first_item], Field(json_schema_extra=use_contains)))  # pyright: ignore[reportInvalidTypeForm]
+    second = create_model('Second', values=(list[second_item], Field(json_schema_extra=use_contains)))  # pyright: ignore[reportInvalidTypeForm]
 
     schema = Agent(TestModel(), output_type=[first, second]).output_json_schema()
 
