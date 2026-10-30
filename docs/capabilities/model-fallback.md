@@ -122,6 +122,8 @@ capabilities:
       fallback_on: [ModelRateLimitError, ModelUnavailableError]
 ```
 
+A spec can also set [`sticky: true`](#staying-on-the-model-that-answered) the same way.
+
 Model names are resolved when they're attempted, like those passed to `ModelFallback(...)`, so a spec can also list model IDs of your own that a [`ResolveModelId`](resolve-model-id.md) capability resolves, passed to [`Agent.from_spec()`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file()`][pydantic_ai.agent.Agent.from_file] with `capabilities=`.
 
 ## How attempts work
