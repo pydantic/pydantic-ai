@@ -2,7 +2,8 @@
 
 from __future__ import annotations as _annotations
 
-from typing import cast
+from collections.abc import Mapping
+from typing import Any, cast
 
 from ._utils import is_str_dict
 from .exceptions import (
@@ -295,3 +296,20 @@ def connection_error(model_name: str, message: str, error: BaseException, *, tim
     """A `ModelConnectionError` (or `ModelTimeoutError`) for a transport `error`, with its phase if known."""
     error_class = ModelTimeoutError if timeout else ModelConnectionError
     return error_class(model_name=model_name, message=message, phase=transport_phase(error))
+
+
+def content_filter_message(provider_details: Mapping[str, Any] | None) -> str:
+    """The message of the `ContentFilterError` raised for a response with `finish_reason='content_filter'`.
+
+    It names the provider's own finish or block reason, and then the refusal text a provider like Anthropic sends
+    alongside its `'refusal'` stop reason, so neither is lost.
+    """
+    details = provider_details or {}
+    reasons: list[str] = []
+    if reason := details.get('finish_reason'):
+        reasons.append(f"Finish reason: '{reason}'")
+    elif reason := details.get('block_reason'):
+        reasons.append(f"Block reason: '{reason}'")
+    if refusal := details.get('refusal'):
+        reasons.append(f'Refusal: {refusal!r}')
+    return ' '.join(['Content filter triggered.', '. '.join(reasons)]) if reasons else 'Content filter triggered.'
