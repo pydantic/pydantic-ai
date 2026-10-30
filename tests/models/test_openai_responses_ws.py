@@ -2241,8 +2241,8 @@ async def test_send_timeout(allow_model_requests: None, sockets: SocketHarness):
 @pytest.mark.parametrize(
     ('connect_error', 'stream'),
     [
-        pytest.param(SSLCertVerificationError(1, 'certificate verify failed'), False, id='tls'),
-        pytest.param(InvalidHandshake('proxy connection failed'), True, id='proxy'),
+        pytest.param(lambda: SSLCertVerificationError(1, 'certificate verify failed'), False, id='tls'),
+        pytest.param(lambda: InvalidHandshake('proxy connection failed'), True, id='proxy'),
     ],
 )
 @pytest.mark.parametrize('reconnect', [False, True])
@@ -2250,7 +2250,7 @@ async def test_handshake_transport_failure_uses_http(
     allow_model_requests: None,
     sockets: SocketHarness,
     http: HTTPResponses,
-    connect_error: Exception,
+    connect_error: Callable[[], Exception],
     stream: bool,
     reconnect: bool,
 ):
@@ -2266,7 +2266,7 @@ async def test_handshake_transport_failure_uses_http(
             messages = [*user_prompt('first'), first, *messages]
             socket.send_error = ConnectionClosedOK(None, None)
             sockets.pending.append(unopened)
-        sockets.connect_error = connect_error
+        sockets.connect_error = connect_error()
         if stream or reconnect:
             events = text_events('from HTTP', 'resp_http')
             body = ''.join(
