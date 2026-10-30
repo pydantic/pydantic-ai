@@ -860,6 +860,9 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
         model_settings.pop(setting, None)
 
 
+_ResponsesTimeout = float | HTTPX2Timeout | NotGiven
+
+
 @dataclass
 class _ResponsesRequestParams:
     """Typed request parameters shared by Responses API calls."""
@@ -3511,7 +3514,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             self.client,
             self.model_name,
             headers,
-            HTTPX2Timeout(self.client.timeout if isinstance(timeout, NotGiven) else timeout),
+            self._resolve_websocket_timeout(timeout),
             self._websocket_connection_options or {},
             NAMED_LANE_LIMIT if stream_id_lanes else 0,
             functools.partial(_status_error, self.model_name, self._provider.model_id_namespace),
@@ -4504,11 +4507,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     @staticmethod
     def _build_request_options(
         model_settings: OpenAIResponsesModelSettings,
-    ) -> tuple[dict[str, str], float | HTTPX2Timeout | NotGiven]:
+    ) -> tuple[dict[str, str], _ResponsesTimeout]:
         extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
         timeout = to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN))
         return extra_headers, timeout
+
+    def _resolve_websocket_timeout(self, timeout: _ResponsesTimeout) -> HTTPX2Timeout:
+        """Resolve at each use: request preparation may change settings after lane reservation."""
+        return HTTPX2Timeout(self.client.timeout if isinstance(timeout, NotGiven) else timeout)
 
     def _prepare_responses_settings(
         self,
@@ -4562,7 +4569,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             try:
                 if await websocket_stream.send(
                     {key: value for key, value in body.items() if not isinstance(value, Omit)},
-                    HTTPX2Timeout(self.client.timeout if isinstance(timeout, NotGiven) else timeout),
+                    self._resolve_websocket_timeout(timeout),
                 ):
                     # Only an explicit rejection before the response starts may be retried. Prime the stream so
                     # later errors, including failures after partial output, stay with the caller's retry policy.
