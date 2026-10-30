@@ -23,49 +23,43 @@ def limit_retry_after(*, model: Model) -> None:
     # with_options returns a new SDK client; neither model.client nor provider.client has a setter.
     # Keep that authenticated client and its pool instead of reconstructing the plugin's provider.
     hooks = model.client._client.event_hooks['response']  # pyright: ignore[reportPrivateUsage]
-    if _limit_retry_after not in hooks:
-        hooks.append(_limit_retry_after)
+    if limit_response_retry_after not in hooks:
+        hooks.append(limit_response_retry_after)
 
 
-async def _limit_retry_after(response: httpx2.Response) -> None:
+async def limit_response_retry_after(response: httpx2.Response) -> None:
     if response.status_code != 429 or response.headers.get('x-should-retry') == 'false':
         return
     request = response.request
     if request.method != 'POST' or not request.url.path.endswith(('/v1/messages', '/v1/messages/count_tokens')):
         return
-    delay = _retry_after(headers=response.headers)
-    if delay is not None and delay > _MAX_RETRY_AFTER:
+    # Match the SDK, not core's error-metadata parser: fractional seconds are valid,
+    # and negative/NaN milliseconds do not fall through to the seconds header.
+    delay: float | None = None
+    if (milliseconds := response.headers.get('retry-after-ms')) is not None:
+        try:
+            delay = float(milliseconds) / 1000
+        except ValueError:
+            pass
+    if delay is None:
+        raw = response.headers.get('retry-after')
+        if raw is None:
+            return
+        try:
+            delay = float(raw)
+        except ValueError:
+            parsed = parsedate_tz(raw)
+            if parsed is None:
+                return
+            try:
+                delay = mktime_tz(parsed) - time.time()
+            except (OverflowError, ValueError):
+                return
+    if delay > _MAX_RETRY_AFTER:
         # This is a local wait-budget decision, not a header the provider sent.
         # Leave the status, body, Retry-After and quota/reset headers intact.
         response.extensions[_REJECTED_RETRY_AFTER] = delay
         response.headers['x-should-retry'] = 'false'
-
-
-def _retry_after(*, headers: httpx2.Headers) -> float | None:
-    """Match the SDK parser, not the core error-metadata parser.
-
-    The SDK accepts fractional seconds. Valid non-positive/NaN milliseconds do not fall through
-    to Retry-After; core's metadata parser intentionally has different semantics.
-    """
-    if (milliseconds := headers.get('retry-after-ms')) is not None:
-        try:
-            return float(milliseconds) / 1000
-        except ValueError:
-            pass
-    raw = headers.get('retry-after')
-    if raw is None:
-        return None
-    try:
-        return float(raw)
-    except ValueError:
-        pass
-    parsed = parsedate_tz(raw)
-    if parsed is None:
-        return None
-    try:
-        return mktime_tz(parsed) - time.time()
-    except (OverflowError, ValueError):
-        return None
 
 
 def retry_after_message(*, error: ModelRateLimitError) -> str | None:
