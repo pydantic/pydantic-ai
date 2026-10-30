@@ -1,7 +1,11 @@
-/** `1234` as `1.2k`, `56789` as `57k`; `?` when unknown. */
+/** `1234` as `1.2k`, `56789` as `57k`, `1500000` as `1.5M`; `?` when unknown. */
 export function compact(tokens: number | null | undefined): string {
   if (tokens === null || tokens === undefined) return '?'
   if (tokens < 1000) return String(tokens)
+  if (tokens >= 1_000_000) {
+    const text = (tokens / 1_000_000).toFixed(1).replace(/\.0$/, '')
+    return `${text}M`
+  }
   return `${(tokens / 1000).toFixed(tokens >= 10000 ? 0 : 1)}k`
 }
 
