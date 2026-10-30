@@ -417,7 +417,6 @@ console.log(JSON.stringify(results));
 HEAD = 'a' * 40
 OLD_HEAD = 'b' * 40
 BOT = review_gates.ReviewUser(id=1, login='github-actions[bot]', type='Bot')
-AUTHOR = review_gates.ReviewUser(id=2, login='author', type='User')
 MAINTAINER = review_gates.ReviewUser(id=3, login='maintainer', type='User')
 
 
@@ -462,7 +461,6 @@ class ReviewGitHub:
                 'state': 'closed' if self.closed else 'open',
                 'head': {'sha': self.head, 'repo': {'id': self.repository}},
                 'base': {'sha': OLD_HEAD},
-                'user': AUTHOR,
                 'changed_files': 1,
                 'labels': [{'name': label} for label in self.labels if label]
                 if self.labels is not None
