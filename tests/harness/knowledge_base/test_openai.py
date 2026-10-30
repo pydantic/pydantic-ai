@@ -176,7 +176,7 @@ class TestSearch:
     @pytest.mark.parametrize('status', [429, 500])
     async def test_transient_errors_become_model_retry(self, status: int) -> None:
         server = _Server({('POST', '/v1/vector_stores/vs_1/search'): httpx2.Response(status, json={'error': {}})})
-        with pytest.raises(ModelRetry, match='Knowledge base search failed'):
+        with pytest.raises(ModelRetry, match=r'Knowledge base search failed \(\w+\); try again\.'):
             await _store(server).search('q', limit=5, filter=None)
 
     async def test_connection_errors_become_model_retry(self) -> None:
@@ -186,7 +186,7 @@ class TestSearch:
         client = AsyncOpenAI(
             api_key='k', max_retries=0, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(refuse))
         )
-        with pytest.raises(ModelRetry, match='Knowledge base search failed'):
+        with pytest.raises(ModelRetry, match=r'Knowledge base search failed \(\w+\); try again\.'):
             await OpenAIVectorStore('vs_1', client=client).search('q', limit=5, filter=None)
 
     async def test_auth_errors_propagate(self) -> None:
@@ -255,7 +255,7 @@ class TestRead:
 
     async def test_transient_errors_become_model_retry(self) -> None:
         server = _Server({_FILE: _file(), _CONTENT: httpx2.Response(503, json={'error': {}})})
-        with pytest.raises(ModelRetry, match='Reading the document failed'):
+        with pytest.raises(ModelRetry, match=r'Reading the document failed \(\w+\); try again\.'):
             await _store(server).read('file-1', max_chars=100, filter=None)
 
 
@@ -317,3 +317,11 @@ class TestConfiguration:
     def test_from_spec_rejects_bedrock_options_for_openai(self, options: dict[str, Any]) -> None:
         with pytest.raises(ValueError, match='only apply to backend="bedrock"'):
             KnowledgeBase[None].from_spec(backend='openai', knowledge_base_id='vs_1', **options)
+
+
+class TestFailClosedRead:
+    async def test_file_without_the_named_attribute_is_not_read(self) -> None:
+        server = _Server({_FILE: _file({'year': 2025}), _CONTENT: _content('text')})
+        not_globex = normalize_filter({'field': 'tenant_id', 'operator': '!=', 'value': 'globex'})
+        assert await _store(server).read('file-1', max_chars=100, filter=not_globex) is None
+        assert [path for _, path, _ in server.requests] == ['/v1/vector_stores/vs_1/files/file-1']

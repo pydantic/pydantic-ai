@@ -132,8 +132,9 @@ Bedrock has no API to read a document back, and a document's chunks can't be rea
 so reading is opt-in and goes to the source. With `read_source_documents=True`, passages from an S3
 data source get an opaque document id, and `read_document` fetches the source object from S3, which
 needs `s3:GetObject` on the bucket. Before fetching, the run's filter is checked against the
-attributes in the object's `.metadata.json` sidecar (Bedrock's own metadata convention); with a
-filter set, an object without a sidecar is not read. Text objects are returned as they are. Other
+attributes in the object's `.metadata.json` sidecar (Bedrock's own metadata convention). The check
+fails closed: with a filter set, an object whose sidecar is missing, unreadable, or lacks a field the
+filter names is not read. Text objects are returned as they are. Other
 content, such as PDFs, goes to `convert`, a function from the object's bytes, content type and URI
 to text, and without one reads as unavailable, so the model works from the passages:
 
@@ -275,7 +276,8 @@ is how Bedrock evaluates them too. Each backend translates the tree to its own f
 raises `UserError` for what it can't apply rather than searching without it: Bedrock and OpenAI have
 no `NOT`, so negate the comparisons there instead. A static filter's shape is checked when the
 capability is built. `read_document` applies the
-same filter, so a document outside it reads as missing even when the model knows its id. The filter
+same filter, more strictly: a document missing a field the filter names reads as missing too, even
+when the model knows its id. The filter
 is resolved before the backend call, so under durable execution a recovered run replays the same
 scoped request.
 
@@ -369,7 +371,7 @@ Any object with an async `search` method is a backend. Add an async `read` metho
 ```python
 from collections.abc import Sequence
 
-from pydantic_ai_harness.knowledge_base import Document, FilterNode, Passage, SearchMode, matches
+from pydantic_ai_harness.knowledge_base import Document, FilterNode, Passage, SearchMode, allows_read, matches
 
 PAGES = {'deploys': Document('deploys', 'Deploys run every weekday at 10:00.', metadata={'team': 'platform'})}
 
@@ -392,7 +394,7 @@ class Wiki:
 
     async def read(self, document_id: str, *, max_chars: int, filter: FilterNode | None) -> Document | None:
         page = PAGES.get(document_id)
-        return page if page is not None and matches(page.metadata, filter) else None
+        return page if page is not None and allows_read(page.metadata, filter) else None
 ```
 
 A backend owns its transport and failure policy: raise `ModelRetry` for a failure the model can
@@ -400,7 +402,9 @@ recover from by searching again, such as throttling, and let anything else propa
 arrives as a checked tree (`FilterNode`); translate it to your service, or apply it with `matches`,
 and raise `UserError` for an operator, mode or threshold you can't honour. `read` gets the run's
 filter too and must return `None` for a document outside it: otherwise a tenant-scoped agent could
-open another tenant's document by guessing its id.
+open another tenant's document by guessing its id. Check it with `allows_read`, which fails closed:
+unlike `matches`, it also refuses a document that lacks a field the filter names, so a negative
+condition such as `!=` can't let a document through only because its metadata is incomplete.
 
 ## Multiple instances
 

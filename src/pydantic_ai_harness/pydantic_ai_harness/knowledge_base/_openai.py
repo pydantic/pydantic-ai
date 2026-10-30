@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.native_tools import FileSearchTool
 from pydantic_ai.tools import RunContext
-from pydantic_ai_harness.knowledge_base._backend import Document, FilterNode, Passage, SearchMode, matches
+from pydantic_ai_harness.knowledge_base._backend import Document, FilterNode, Passage, SearchMode, allows_read
 
 try:
     from openai import APIConnectionError, AsyncOpenAI, InternalServerError, NotFoundError, RateLimitError
@@ -115,7 +115,7 @@ class OpenAIVectorStore:
                 **options,
             )
         except (APIConnectionError, RateLimitError, InternalServerError) as error:
-            raise ModelRetry(f'Knowledge base search failed: {error}') from error
+            raise ModelRetry(f'Knowledge base search failed ({type(error).__name__}); try again.') from error
         return [
             Passage(
                 text='\n'.join(part.text for part in result.content),
@@ -138,7 +138,7 @@ class OpenAIVectorStore:
         try:
             file = await client.vector_stores.files.retrieve(document_id, vector_store_id=self.vector_store_id)
             attributes = dict(file.attributes or {})
-            if not matches(attributes, filter):
+            if not allows_read(attributes, filter):
                 return None
             async for part in client.vector_stores.files.content(document_id, vector_store_id=self.vector_store_id):
                 if part.text:
@@ -149,7 +149,7 @@ class OpenAIVectorStore:
         except NotFoundError:
             return None
         except (APIConnectionError, RateLimitError, InternalServerError) as error:
-            raise ModelRetry(f'Reading the document failed: {error}') from error
+            raise ModelRetry(f'Reading the document failed ({type(error).__name__}); try again.') from error
         return Document(document_id=document_id, text=''.join(parts), metadata=attributes)
 
     def file_search_tool(self, ctx: RunContext[object], *, limit: int) -> FileSearchTool | None:

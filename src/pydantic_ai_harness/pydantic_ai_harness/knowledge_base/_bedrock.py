@@ -31,8 +31,8 @@ External assumptions (verified 2026-10-30 against botocore 1.42.63 and the API r
 from __future__ import annotations
 
 import functools
-import hashlib
 import json
+import secrets
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -42,7 +42,14 @@ import anyio.to_thread
 from typing_extensions import Unpack
 
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai_harness.knowledge_base._backend import Document, FilterNode, FilterScalar, Passage, SearchMode, matches
+from pydantic_ai_harness.knowledge_base._backend import (
+    Document,
+    FilterNode,
+    FilterScalar,
+    Passage,
+    SearchMode,
+    allows_read,
+)
 
 try:
     import boto3
@@ -196,6 +203,7 @@ class BedrockKnowledgeBase:
     """A boto3 `s3` client for `read_source_documents`; when `None`, one is built like `client`."""
 
     _documents: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False, compare=False)
+    _ids: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate configuration against the `Retrieve` API's documented bounds."""
@@ -286,9 +294,9 @@ class BedrockKnowledgeBase:
         except ClientError as error:
             if error.response.get('Error', {}).get('Code') not in _RECOVERABLE_ERROR_CODES:
                 raise
-            raise ModelRetry(f'Knowledge base search failed: {error}') from error
+            raise ModelRetry(_retry_message('Knowledge base search failed', error)) from error
         except (BotocoreConnectionError, ReadTimeoutError) as error:
-            raise ModelRetry(f'Knowledge base search failed: {error}') from error
+            raise ModelRetry(_retry_message('Knowledge base search failed', error)) from error
         passages = [self._passage(result) for result in response['retrievalResults']]
         if score_threshold is None:
             return passages
@@ -304,34 +312,31 @@ class BedrockKnowledgeBase:
         return Passage(passage.text, passage.source, passage.score, self._remember(uri), passage.metadata)
 
     def _remember(self, uri: str) -> str:
-        """An opaque id for `uri`, so no storage path reaches the model, remembered for `read`."""
-        document_id = _DOCUMENT_ID_PREFIX + hashlib.sha256(uri.encode()).hexdigest()[:24]
+        """A random id for `uri`, so no storage path reaches the model and ids can't be derived; kept for `read`."""
+        document_id = self._ids.pop(uri, None) or _DOCUMENT_ID_PREFIX + secrets.token_hex(12)
         self._documents.pop(document_id, None)
         self._documents[document_id] = uri
+        self._ids[uri] = document_id
         while len(self._documents) > _MAX_REMEMBERED_DOCUMENTS:
-            del self._documents[next(iter(self._documents))]
+            forgotten = next(iter(self._documents))
+            del self._ids[self._documents.pop(forgotten)]
         return document_id
 
     async def read(self, document_id: str, *, max_chars: int, filter: FilterNode | None) -> Document | None:
         """Read the source object behind a passage from S3, if its sidecar's attributes match `filter`.
 
-        Returns `None` for an unknown id, a missing object, an object outside the filter (or without
-        a sidecar while a filter is set), and content that is neither text nor turned into text by
-        `convert`. `max_chars` is not applied here: the object is read whole.
+        Returns `None` for an unknown id, a missing object, an object outside the filter, and content
+        that is neither text nor turned into text by `convert`. The filter check fails closed: a missing
+        or unreadable sidecar, or one without a field the filter names, blocks a filtered read. `max_chars` is not applied here: the object is read whole.
         """
         uri = self._documents.get(document_id)
         if uri is None:
             return None
         bucket, _, key = uri.removeprefix('s3://').partition('/')
         sidecar = await self._get(bucket, f'{key}.metadata.json')
-        if sidecar is None:
-            if filter is not None:
-                return None
-            attributes: dict[str, FilterScalar] = {}
-        else:
-            attributes = _sidecar_attributes(sidecar[0])
-            if not matches(attributes, filter):
-                return None
+        attributes = _sidecar_attributes(sidecar[0]) if sidecar is not None else {}
+        if not allows_read(attributes, filter):
+            return None
         source = await self._get(bucket, key)
         if source is None:
             return None
@@ -358,10 +363,10 @@ class BedrockKnowledgeBase:
             if code in _MISSING_OBJECT_CODES:
                 return None
             if code in _RECOVERABLE_S3_CODES:
-                raise ModelRetry(f'Reading the document failed: {error}') from error
+                raise ModelRetry(_retry_message('Reading the document failed', error)) from error
             raise
         except (BotocoreConnectionError, ReadTimeoutError) as error:
-            raise ModelRetry(f'Reading the document failed: {error}') from error
+            raise ModelRetry(_retry_message('Reading the document failed', error)) from error
 
     async def _text(self, data: bytes, content_type: str | None, key: str, uri: str) -> str | None:
         media_type = (content_type or '').split(';')[0].strip().lower()
@@ -549,3 +554,9 @@ def _attribute_value(value: object) -> FilterScalar | None:
             if isinstance(found, str | int | float | bool):
                 return found
     return None
+
+
+def _retry_message(what: str, error: Exception) -> str:
+    """A retry prompt naming the failure's kind only: the error text can carry endpoints and bucket names."""
+    code = error.response.get('Error', {}).get('Code') if isinstance(error, ClientError) else None
+    return f'{what} ({code or type(error).__name__}); try again.'

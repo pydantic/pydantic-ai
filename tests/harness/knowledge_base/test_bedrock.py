@@ -420,7 +420,7 @@ class TestErrors:
     )
     async def test_transient_service_errors_become_model_retry(self, code: str) -> None:
         backend = BedrockKnowledgeBase('KB123', client=_FakeClient(error=_client_error(code)))
-        with pytest.raises(ModelRetry, match=f'Knowledge base search failed: .*{code}'):
+        with pytest.raises(ModelRetry, match=rf'Knowledge base search failed \({code}\); try again\.'):
             await backend.search('q', limit=5, filter=None)
 
     @pytest.mark.parametrize('code', ['AccessDeniedException', 'ResourceNotFoundException', 'ValidationException'])
@@ -843,3 +843,35 @@ class TestReadSourceDocuments:
         document_id = found.metadata['results'][0]['document_id']
         read = await toolset.read_document(ctx, document_id)
         assert str(read.return_value) == f'Document: {document_id}\n\nFull manual text.'
+
+    async def test_reads_fail_closed_on_fields_the_filter_names(self) -> None:
+        """A negative condition can't let a document through because its sidecar lacks the field or is unreadable."""
+        not_globex = normalize_filter({'field': 'tenant_id', 'operator': '!=', 'value': 'globex'})
+        for sidecar in (_sidecar({'year': 2025}), (b'not json', 'application/json')):
+            s3 = _FakeS3(
+                {
+                    ('kb-bucket', 'ingested/acme/manual.md'): (b'text', 'text/plain'),
+                    ('kb-bucket', 'ingested/acme/manual.md.metadata.json'): sidecar,
+                }
+            )
+            backend = _reader(s3, _s3_result(_URI))
+            assert await backend.read(await _document_id(backend), max_chars=100, filter=not_globex) is None
+            assert s3.keys == ['ingested/acme/manual.md.metadata.json']
+
+    async def test_ids_are_random_per_backend_and_stable_within_one(self) -> None:
+        first = _reader(_FakeS3(), _s3_result(_URI))
+        second = _reader(_FakeS3(), _s3_result(_URI))
+        assert await _document_id(first) == await _document_id(first)
+        assert await _document_id(first) != await _document_id(second)
+
+    async def test_retry_messages_carry_no_error_text(self) -> None:
+        endpoint = 'https://kb-bucket.s3.eu-central-1.amazonaws.com/ingested/acme/manual.md'
+        s3 = _FakeS3(error=EndpointConnectionError(endpoint_url=endpoint))
+        backend = _reader(s3, _s3_result(_URI))
+        with pytest.raises(ModelRetry) as raised:
+            await backend.read(await _document_id(backend), max_chars=100, filter=None)
+        assert raised.value.message == 'Reading the document failed (EndpointConnectionError); try again.'
+        search = BedrockKnowledgeBase('KB123', client=_FakeClient(error=EndpointConnectionError(endpoint_url=endpoint)))
+        with pytest.raises(ModelRetry) as raised:
+            await search.search('q', limit=5, filter=None)
+        assert 'kb-bucket' not in raised.value.message and 'amazonaws' not in raised.value.message

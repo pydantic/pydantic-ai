@@ -126,6 +126,22 @@ def matches(metadata: Mapping[str, object], filter: MetadataFilter | None) -> bo
     return node is None or _evaluate(metadata, node)
 
 
+def allows_read(metadata: Mapping[str, object], filter: FilterNode | None) -> bool:
+    """Whether a document with `metadata` may be read under `filter`, failing closed.
+
+    Stricter than `matches`: every field the filter names must be present, so a negative condition
+    (`!=`, `not in`) can't let a document through only because it lacks the field, or because its
+    metadata couldn't be read. Backends use it in `read`, where the model names a document directly.
+    """
+    return filter is None or (_fields(filter) <= metadata.keys() and _evaluate(metadata, filter))
+
+
+def _fields(node: FilterNode) -> set[str]:
+    if 'conditions' in node:
+        return set[str]().union(*(_fields(child) for child in node['conditions']))
+    return {node['field']}
+
+
 def _evaluate(metadata: Mapping[str, object], node: FilterNode) -> bool:
     if 'conditions' in node:
         results = [_evaluate(metadata, child) for child in node['conditions']]
@@ -237,7 +253,8 @@ class ReadableKnowledgeBase(Protocol):
 
         `filter` is the run's search filter. Applying it here is what keeps a tenant-scoped agent from
         opening another tenant's document by id, so a backend must return `None` for a document whose
-        metadata doesn't match. The text may stop after `max_chars` characters (one more lets the caller
+        metadata doesn't match, and should fail closed with `allows_read`: a document missing a field the
+        filter names, or whose metadata can't be read, is not returned. The text may stop after `max_chars` characters (one more lets the caller
         see that it continues).
         """
         ...

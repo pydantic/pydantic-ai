@@ -35,6 +35,7 @@ from pydantic_ai_harness.knowledge_base import (
     MetadataFilter,
     Passage,
     SearchMode,
+    allows_read,
     matches,
     normalize_filter,
 )
@@ -674,3 +675,38 @@ class TestCanRead:
         assert list(await _toolset(_Switchable(_DOCUMENTS)).get_tools(_ctx())) == ['search_knowledge_base']
         instructions = KnowledgeBase[None](_Switchable()).get_instructions()
         assert isinstance(instructions, str) and 'read_document' not in instructions
+
+
+class TestAllowsRead:
+    @pytest.mark.parametrize(
+        ('metadata', 'filter', 'expected'),
+        [
+            ({}, None, True),
+            ({'tenant_id': 'acme'}, {'tenant_id': 'acme'}, True),
+            ({'tenant_id': 'acme'}, {'tenant_id': 'globex'}, False),
+            ({}, {'field': 'tenant_id', 'operator': '!=', 'value': 'globex'}, False),
+            ({}, {'field': 'tenant_id', 'operator': 'not in', 'value': ['globex']}, False),
+            ({'tenant_id': 'acme'}, {'field': 'tenant_id', 'operator': '!=', 'value': 'globex'}, True),
+            (
+                {'tenant_id': 'acme'},
+                {
+                    'operator': 'AND',
+                    'conditions': [
+                        {'field': 'tenant_id', 'operator': '==', 'value': 'acme'},
+                        {'field': 'year', 'operator': '!=', 'value': 2020},
+                    ],
+                },
+                False,
+            ),
+        ],
+    )
+    def test_every_named_field_must_be_present(
+        self, metadata: dict[str, object], filter: MetadataFilter | None, expected: bool
+    ) -> None:
+        assert allows_read(metadata, normalize_filter(filter)) is expected
+
+    async def test_in_memory_read_fails_closed(self) -> None:
+        backend = InMemoryKnowledgeBase([Document('untagged', 'text')])
+        not_globex = normalize_filter({'field': 'tenant_id', 'operator': '!=', 'value': 'globex'})
+        assert len(await backend.search('text', limit=5, filter=not_globex)) == 1
+        assert await backend.read('untagged', max_chars=100, filter=not_globex) is None

@@ -9,7 +9,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai_harness.knowledge_base._backend import Document, FilterNode, Passage, SearchMode, matches
+from pydantic_ai_harness.knowledge_base._backend import Document, FilterNode, Passage, SearchMode, allows_read, matches
 
 _TOKEN = re.compile(r'\w+')
 _PARAGRAPH = re.compile(r'\n\s*\n')
@@ -121,6 +121,6 @@ class InMemoryKnowledgeBase:
         ]
 
     async def read(self, document_id: str, *, max_chars: int, filter: FilterNode | None) -> Document | None:
-        """Return the stored document if it matches `filter`, else `None`; the caller cuts the text at `max_chars`."""
+        """Return the stored document if `allows_read` lets it through `filter`, else `None`; the caller cuts the text."""
         document = self._documents.get(document_id)
-        return document if document is not None and matches(document.metadata, filter) else None
+        return document if document is not None and allows_read(document.metadata, filter) else None
