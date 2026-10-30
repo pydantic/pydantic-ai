@@ -26,7 +26,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.builtin_plugins.web.app import HEADER
+from pydantic_clai2.builtin_plugins.web.app import HEADER, ASGIApp, create_app
+from pydantic_clai2.builtin_plugins.web.server import WebServer
 from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
@@ -454,6 +455,32 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     assert (await request.value).post_data_json == {'text': 'Alpha after reconnect'}
     await expect(page.locator('.markdown').filter(has_text='Markdown survived').last).to_be_visible()
     await expect(page.locator('.markdown').filter(has_text='Beta answer', visible=True)).to_have_count(0)
+
+
+async def test_a_clai_restarted_as_a_new_version_reloads_the_page(page: Page, web_ui: WebUI) -> None:
+    """A page left open across `/update`'s restart loads the new CLAI's bundle rather than keep the old one."""
+    fleet = web_ui.fleet
+
+    def app(port: int) -> ASGIApp:
+        return create_app(service=fleet.service, token=TOKEN, hosts=frozenset({f'127.0.0.1:{port}'}))
+
+    server = fleet.portal.call(lambda: WebServer.serve(app, host='127.0.0.1', port=0))
+    port = server.port
+    version = fleet.service.version
+    try:
+        await page.goto(f'http://127.0.0.1:{port}/?token={TOKEN}')
+        await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
+        await page.evaluate('window.claiTestOldBundle = true')
+        fleet.portal.call(server.stop)
+        await expect(page.get_by_title('Reconnecting…', exact=True)).to_be_visible()
+        fleet.service.version = f'{version}+updated'
+        server = fleet.portal.call(lambda: WebServer.serve(app, host='127.0.0.1', port=port))
+        await expect(page.get_by_text(f'Updated CLAI to {version}+updated.')).to_be_visible()
+        await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
+        assert await page.evaluate('window.claiTestOldBundle ?? null') is None
+    finally:
+        fleet.service.version = version
+        fleet.portal.call(server.stop)
 
 
 async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None:
