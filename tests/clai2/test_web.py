@@ -86,6 +86,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     image_id,
 )
+from pydantic_clai2.builtin_plugins.web.sidebar import project_names
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -93,7 +94,13 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
 from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.image_codec import decode_images
-from pydantic_clai2.runtime.project_identity import git_checkout, project_identity, worktree_roots
+from pydantic_clai2.runtime.project_identity import (
+    MISSING,
+    ProjectIdentity,
+    git_checkout,
+    project_identity,
+    worktree_roots,
+)
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 from pydantic_clai2.ui.menus.menu_worker import require_terminal
@@ -1022,6 +1029,24 @@ def test_sidebar_tells_apart_projects_that_share_a_name(make_web: 'MakeWeb', tmp
         'Third': str(Path('z', 'a', 'scratch')),
         'Other': 'other',
         'Relative': 'scratch',
+    }
+
+
+def test_projects_of_one_folder_show_their_keys() -> None:
+    """Two projects of one folder, as when Git failed once while listing it, show their keys.
+
+    Removed folders keeps its name, which a real folder of that name adds its parent to.
+    """
+    repository = ProjectIdentity(key='/x/scratch/.git', name='scratch', root='/x/scratch', checkout='main')
+    fallback = ProjectIdentity(key='/x/scratch', name='scratch', root='/x/scratch')
+    removed = ProjectIdentity(key=MISSING, name='Removed folders', root='/gone', missing=True)
+    named = ProjectIdentity(key='/y/Removed folders', name='Removed folders', root='/y/Removed folders')
+    identities = {identity.key: identity for identity in (repository, fallback, removed, named)}
+    assert project_names(identities) == {
+        '/x/scratch/.git': '/x/scratch/.git',
+        '/x/scratch': '/x/scratch',
+        MISSING: 'Removed folders',
+        '/y/Removed folders': str(Path('y', 'Removed folders')),
     }
 
 
