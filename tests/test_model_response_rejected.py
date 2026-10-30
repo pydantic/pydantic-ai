@@ -40,6 +40,8 @@ from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputDataT
+from pydantic_ai.run import AgentRun
+from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance
@@ -467,3 +469,26 @@ async def test_response_usage_is_counted_when_after_model_request_passes_its_ver
                 assert run.usage.output_tokens > 0
 
     assert counted_after_exhausting is counted_before_leaving
+
+
+@pytest.mark.parametrize('capabilities', [[], [AcceptEverything()]], ids=['no hooks', 'accepting hook'])
+async def test_consumer_raising_after_the_verdict_counts_the_response_once(capabilities: list[AbstractCapability[Any]]):
+    """A consumer that raises after reading the whole stream commits the response as interrupted.
+
+    With an `after_model_request` hook its usage was already counted when the hooks passed their verdict, so the
+    interrupted commit doesn't count it again.
+    """
+    agent = Agent(FunctionModel(stream_function=always_announce), capabilities=capabilities)
+    runs: list[AgentRun[None, str]] = []
+
+    with pytest.raises(RuntimeError, match='consumer failed'):
+        async with agent.iter('When does the store open?') as run:
+            runs.append(run)
+            async for node in run:  # pragma: no branch
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for _ in stream:
+                            pass
+                        raise RuntimeError('consumer failed')
+
+    assert runs[0].usage == RunUsage(input_tokens=50, output_tokens=5, requests=1)

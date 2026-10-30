@@ -2592,7 +2592,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             # A genuine failure rather than a walk-away: cancel the still-live job so it doesn't leak.
                             await _cancel_interrupted_job(wrap_request_context, partial)
                         self._commit_interrupted_response(
-                            ctx, partial, recorded, (_handler_request_context or wrap_request_context).messages
+                            ctx,
+                            partial,
+                            recorded,
+                            (_handler_request_context or wrap_request_context).messages,
+                            # An `after_model_request` verdict at the end of the model stream recorded it already.
+                            record_billed_usage=not _handler_usage_recorded,
                         )
                 else:
                     try:
@@ -2646,18 +2651,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         streamed: _messages.ModelResponse,
         recorded: _messages.ModelResponse,
         request_messages: Sequence[_messages.ModelMessage],
+        *,
+        record_billed_usage: bool = True,
     ) -> None:
         """Commit the response an interrupted stream produced so far, without checking usage limits.
 
         `streamed` is the stream's response so far, and `recorded` is it as `_interrupted_stream_response` recorded it.
         `request_messages` are the messages the stream was requested with, which end in the suspended response it
-        resumed, if any.
+        resumed, if any. `record_billed_usage` is `False` when the handler already added the response's usage to the
+        run's.
         """
         recorded.run_id = ctx.state.run_id
         recorded.conversation_id = ctx.state.conversation_id
         recorded.model_id = recorded.model_id or self._serving_model_id
         recorded.workspace_ref = ctx.deps.workspace_ref
-        _record_billed_usage(ctx.state.usage, _billed_by_request(recorded, request_messages))
+        if record_billed_usage:
+            _record_billed_usage(ctx.state.usage, _billed_by_request(recorded, request_messages))
         if recorded.parts:
             # The agent acted on what was streamed before the interruption, so the step counts;
             # a stream that failed before producing anything doesn't.
