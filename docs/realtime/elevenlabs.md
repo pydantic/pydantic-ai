@@ -224,6 +224,23 @@ model = ElevenLabsAgentsRealtimeModel(
 
 Telephony (`ulaw_8000`) agents are not supported.
 
+### Speech timestamps
+
+ElevenLabs times each character the agent says, which
+[`output_speech_timestamps=True`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps]
+turns into a timestamp per word (see [Speech timestamps](audio.md#speech-timestamps)), punctuation included:
+
+```python
+from pydantic_ai.realtime.elevenlabs_agents import ElevenLabsAgentsRealtimeModelSettings
+
+timed_words = ElevenLabsAgentsRealtimeModelSettings(output_speech_timestamps=True)
+```
+
+Audio tags such as `[laughs]` are timed as words of their own, which go with the tags removed from the transcript
+(see [Provider-specific quirks](#provider-specific-quirks)). A barge-in cuts the message's timestamps down to the
+words ElevenLabs says were heard, and its
+[`interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] is where the first word not heard starts.
+
 ### Tool synchronization
 
 `elevenlabs_agents_tool_sync` controls how the session's
@@ -283,6 +300,7 @@ parameter's description only when the local schema declares one.
 | Explicit interruption/truncation | Unsupported | ElevenLabs [interrupts server-side](turns.md#barge-in) and emits `RealtimeResponseInterruptedEvent`; `interrupt()` raises |
 | Session seeding | Unsupported | The conversation WebSocket has no history-seeding channel |
 | Input transcription | Full feature support | Always on: per-utterance final transcripts from the agent's ASR; `input_transcription_model` is ignored |
+| Speech timestamps | Full feature support | Per word, see [Speech timestamps](#speech-timestamps) |
 | Native tools | Unsupported | None can be configured from the session; configure [local fallbacks](tools.md#native-tools) for web capabilities. The agent's own MCP tool calls are recorded as `NativeToolCallPart`s named `mcp_server:<server id>` |
 | Async tool calls | Unsupported | The agent waits for each tool result (see [concurrent tool execution](tools.md#concurrent-tool-execution)) |
 | Usage | Limited parameter support | Context tokens only, with `context_usage` in the agent's `client_events`; no cost (see [Usage and cost](#usage-and-cost)) |

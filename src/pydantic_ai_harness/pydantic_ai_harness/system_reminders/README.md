@@ -14,6 +14,8 @@ Re-inject behavioral guidance mid-run to counter instruction fade -- without inv
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/system_reminders/)
 
+![SystemReminders runs in the before_model_request hook. A Reminder with interval=3 fires on requests 3 and 6. When it fires, the reminder is added at the tail of that request, after the cache breakpoint, so the cached prefix of tools, instructions and conversation is reused. The next request does not show it again.](https://pydantic.dev/docs/ai/img/harness/system-reminders.svg)
+
 ## The problem
 
 Long multi-turn runs suffer instruction fade: after many tool-use turns the model progressively ignores the guidance it was given at the start. A single start-of-session system prompt is not enough for extended work. The fix is to re-state targeted guidance mid-run -- on a fixed cadence, or reactively when a condition is detected.

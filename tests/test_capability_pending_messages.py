@@ -67,6 +67,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import AgentStream
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
@@ -2190,6 +2191,107 @@ async def test_enqueue_asap_drains_at_end_if_arrived_during_final_step():
             ),
         ]
     )
+
+
+async def test_enqueue_at_deferred_tool_pause_is_recorded_without_another_model_request():
+    """Content left in the queue when a run pauses for deferred tools goes into the history and the pause stands.
+
+    A redirect would give the model a turn while the deferred call is unanswered.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[ToolCallPart(tool_name='lookup'), ToolCallPart(tool_name='gated')])
+
+    @dataclass
+    class LateContentCap(AbstractCapability[Any]):
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            ctx.enqueue('late content')
+            return response
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[LateContentCap()])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:
+        # Never approved in this test.
+        return 'approved'  # pragma: no cover
+
+    result = await agent.run('Hello')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert call_count == 1
+    assert result.all_messages()[-1] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='late content', timestamp=IsDatetime())],
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
+@pytest.mark.parametrize('case', ['all_calls_deferred', 'queued_response'])
+async def test_enqueue_at_deferred_tool_pause_redirects_when_history_cannot_record_it(case: str):
+    """The pause redirects as before when recording would change how the paused history resumes.
+
+    After a step whose calls all deferred, a trailing request would read as interrupting them; a queued
+    `ModelResponse` would read as the paused response.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count > 1:
+            return ModelResponse(parts=[TextPart(content='done')])
+        calls = [ToolCallPart(tool_name='gated')]
+        if case == 'queued_response':
+            calls.insert(0, ToolCallPart(tool_name='lookup'))
+        return ModelResponse(parts=calls)
+
+    @dataclass
+    class LateContentCap(AbstractCapability[Any]):
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if call_count == 1:
+                if case == 'queued_response':
+                    ctx.enqueue(ModelResponse(parts=[TextPart(content='synthetic turn')]), 'late content')
+                else:
+                    ctx.enqueue('late content')
+            return response
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[LateContentCap()])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:
+        # Never approved in this test.
+        return 'approved'  # pragma: no cover
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'done'
+    assert call_count == 2
 
 
 async def test_enqueue_when_idle_drains_after_leftover_asap():

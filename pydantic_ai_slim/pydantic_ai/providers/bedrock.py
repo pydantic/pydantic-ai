@@ -65,6 +65,30 @@ _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE: dict[str, tuple[str, ...]] = {
     'array': ('maxItems',),
 }
 
+# Bedrock rejects a `pattern` using lookaround or backreferences with a 400. Source: AWS docs at
+# https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html, verified against
+# `us.anthropic.claude-opus-4-7` and `qwen.qwen3-32b-v1:0` on 2026-10-29. Every escaped digit counts as a
+# backreference, octal escapes and character classes included; `(?=` inside a character class is literal.
+_REGEX_UNSUPPORTED_TOKENS = ('(?=', '(?!', '(?<=', '(?<!', '(?P=')
+
+
+def _regex_contains_unsupported_syntax(pattern: str) -> bool:
+    escaped = in_class = False
+    for i, char in enumerate(pattern):
+        if escaped:
+            if char in '0123456789':
+                return True
+            escaped = False
+        elif char == '\\':
+            escaped = True
+        elif in_class:
+            in_class = char != ']'
+        elif char == '[':
+            in_class = True
+        elif pattern.startswith(_REGEX_UNSUPPORTED_TOKENS, i):
+            return True
+    return False
+
 
 @dataclass(init=False)
 class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
@@ -119,6 +143,9 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
                     incompatible[key] = schema[key]
             if schema_type == 'array' and schema.get('minItems', 0) > 1:
                 incompatible['minItems'] = schema['minItems']
+        pattern = schema.get('pattern')
+        if isinstance(pattern, str) and _regex_contains_unsupported_syntax(pattern):
+            incompatible['pattern'] = pattern
 
         if incompatible:
             notes: list[str] = []

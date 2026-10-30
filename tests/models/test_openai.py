@@ -670,6 +670,38 @@ async def test_stream_text(allow_model_requests: None):
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
+async def test_stream_text_from_list_content(allow_model_requests: None):
+    """Some OpenAI-compatible servers stream `delta.content` as a list of parts; only their text is kept."""
+
+    def list_chunk(content: list[Any]) -> chat.ChatCompletionChunk:
+        return chunk([ChoiceDelta.model_construct(content=content, role='assistant')])
+
+    stream = [
+        list_chunk(['hello ']),
+        list_chunk([{'type': 'text', 'text': 'world'}, {'type': 'reference', 'reference_ids': [1]}]),
+        list_chunk([{'type': 'reference', 'reference_ids': [2]}]),
+        chunk([]),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+
+
+async def test_request_list_content(allow_model_requests: None):
+    """Some OpenAI-compatible servers return `message.content` as a list of parts; only their text is kept."""
+    message = ChatCompletionMessage.model_construct(
+        content=[{'type': 'text', 'text': 'hello '}, {'type': 'reference', 'reference_ids': [1]}, 'world'],
+        role='assistant',
+    )
+    mock_client = MockOpenAI.create_mock(completion_message(message))
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    result = await agent.run('hello')
+    assert result.output == 'hello world'
+
+
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:
     c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
     mock_client = MockOpenAI.create_mock(c.model_copy(update={'service_tier': 'default'}))

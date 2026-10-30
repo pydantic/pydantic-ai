@@ -193,6 +193,7 @@ def test_openapi_schema_transformer_prunes_map_schemas_before_traversal():
         'properties': {'kept': {'type': 'string'}},
         'additionalProperties': {'type': 'integer'},
         'patternProperties': {'^x': {'type': 'boolean'}},
+        'propertyNames': {'type': 'string', 'pattern': '^[a-z]+$'},
     }
     visited_types: list[str] = []
 
@@ -207,6 +208,26 @@ def test_openapi_schema_transformer_prunes_map_schemas_before_traversal():
 
     assert transformed == snapshot({'type': 'object', 'properties': {'kept': {'type': 'string'}}})
     assert visited_types == ['string', 'object']
+
+
+def test_openapi_schema_transformer_prunes_contains_before_traversal():
+    """`Schema` has no `contains`, so a recursive one is dropped instead of refused.
+
+    A recording can't check this: cassettes match on method and URI, not the request body.
+    """
+    schema: JsonSchema = {
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'properties': {'children': {'type': 'array', 'contains': {'$ref': '#/$defs/Node'}}},
+            }
+        },
+        '$ref': '#/$defs/Node',
+    }
+
+    assert GoogleOpenAPISchemaTransformer(schema).walk() == snapshot(
+        {'type': 'object', 'properties': {'children': {'type': 'array'}}}
+    )
 
 
 # =============================================================================

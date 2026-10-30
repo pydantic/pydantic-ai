@@ -7619,7 +7619,11 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
                 pass
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(started.wait(), timeout=1)
+    # Order on the wrapper rather than a wall-clock deadline, which a stalled CI worker can overrun before the run
+    # gets that far. A run that ends without reaching the wrapper fails here instead of hanging.
+    wrapper_reached = asyncio.create_task(started.wait())
+    await asyncio.wait({wrapper_reached, task}, return_when=asyncio.FIRST_COMPLETED)
+    assert started.is_set(), task
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

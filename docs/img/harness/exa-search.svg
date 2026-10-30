@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="732" viewBox="0 0 880 732" role="img" aria-labelledby="t d">
+<title id="t">Exa Search: excerpts first, full pages on request</title>
+<desc id="d">The model calls tools added by ExaSearch. web_search calls Exa search and returns the top five hits with title, URL and excerpts; get_page calls Exa get_contents for one URL, capped at 10,000 characters; the opt-in deep_search calls Exa search with type deep and returns one cited answer. The separate ExaAgent capability adds exa_agent, which creates an Exa Agent run and defers until it completes. Every tool returns a ToolReturn: the text goes to the model and the sources entry of its metadata holds ExaSource records for your app.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="731" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Exa Search: excerpts first, full pages on request</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">web_search returns short excerpts per hit, so surveying sources stays cheap; get_page reads one chosen URL in full.</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">deep_search and the separate ExaAgent hand longer research to Exa.</text>
+<rect x="212" y="140" width="372" height="212" rx="14" fill="none" stroke="#B417B7" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="226" y="132" width="99.6" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="233" y="144" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">EXASEARCH</text>
+<rect x="228" y="170" width="142.4" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="299.2" y="186.3" font-size="12" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">web_search(query)</text>
+<text x="228" y="211" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">top num_results hits (default 5): title, URL, excerpts</text>
+<rect x="228" y="232" width="113.2" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="284.6" y="248.3" font-size="12" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">get_page(url)</text>
+<text x="228" y="273" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">one page in full, capped at max_text_chars (10,000)</text>
+<rect x="228" y="294" width="171.7" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="313.9" y="310.3" font-size="12" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">deep_search(question)</text>
+<text x="228" y="335" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">opt-in with include_deep_search=True: one cited answer</text>
+<rect x="212" y="388" width="372" height="100" rx="14" fill="none" stroke="#B417B7" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="226" y="380" width="90.1" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="233" y="392" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">EXAAGENT</text>
+<rect x="228" y="418" width="135.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="295.6" y="434.3" font-size="12" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">exa_agent(query)</text>
+<text x="228" y="459" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">creates an Exa run and defers; polls it to completion inline,</text>
+<text x="228" y="476" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">or returns DeferredToolRequests with execution=&#x27;external&#x27;</text>
+<rect x="32" y="164" width="112" height="36" rx="18" fill="#092224"/>
+<text x="88" y="187" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="32" y="234" width="112" height="96" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="88" y="251.3" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">instructions</text>
+<text x="88" y="270.1" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">search wide,</text>
+<text x="88" y="286.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">read the best</text>
+<text x="88" y="303.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">pages in full,</text>
+<text x="88" y="319.8" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">cite URLs</text>
+<line x1="88" y1="232" x2="88" y2="202" stroke="#B417B7" stroke-width="1.6" marker-end="url(#al)"/>
+<line x1="148" y1="176" x2="225" y2="176" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="225" y1="188" x2="148" y2="188" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<path d="M 188 176 L 188 422 Q 188 430 196 430 L 225 430" stroke="#092224" stroke-width="1.6" fill="none" marker-end="url(#ai)"/>
+<rect x="640" y="140" width="208" height="212" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="654" y="162" font-size="13.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Exa API</text>
+<text x="654" y="186.5" font-size="12" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">search</text>
+<text x="654" y="248.5" font-size="12" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">get_contents</text>
+<text x="654" y="310.5" font-size="12" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">search(type=&#x27;deep&#x27;)</text>
+<text x="848" y="128" font-size="12" fill="#55726A" text-anchor="end" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">key: EXA_API_KEY</text>
+<line x1="374.4" y1="182" x2="636" y2="182" stroke="#0E9C86" stroke-width="1.6" marker-end="url(#aa)"/>
+<line x1="345.2" y1="244" x2="636" y2="244" stroke="#0E9C86" stroke-width="1.6" marker-end="url(#aa)"/>
+<line x1="403.7" y1="306" x2="636" y2="306" stroke="#0E9C86" stroke-width="1.6" marker-end="url(#aa)"/>
+<rect x="640" y="388" width="208" height="100" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="652" y="415.8" font-size="13.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Exa Agent API</text>
+<text x="652" y="435.1" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">run: queued, running, then</text>
+<text x="652" y="451.6" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">completed, failed or cancelled (up</text>
+<text x="652" y="468.2" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">to an hour)</text>
+<line x1="367.1" y1="430" x2="636" y2="430" stroke="#0E9C86" stroke-width="1.6" marker-end="url(#aa)"/>
+<text letter-spacing="1.3" x="32" y="528" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WHAT EACH TOOL RETURNS</text>
+<rect x="32" y="544" width="128" height="76" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="96" y="586" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">ToolReturn</text>
+<rect x="212" y="544" width="636" height="32" rx="8" fill="#FFFFFF" stroke="#092224" stroke-width="1.3"/>
+<text x="224" y="564.5" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">return_value</text>
+<text x="325.8" y="564.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the text the model sees, ending in a Sources: block</text>
+<rect x="212" y="588" width="636" height="32" rx="8" fill="#FFFFFF" stroke="#092224" stroke-width="1.3"/>
+<text x="224" y="608.5" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">metadata[&#x27;sources&#x27;]</text>
+<text x="377.1" y="608.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ExaSource records (url, title) for your app to render; never sent to the model</text>
+<path d="M 160 582 L 180 582 Q 186 582 186 576 L 186 566 Q 186 560 192 560 L 208 560" stroke="#092224" stroke-width="1.6" fill="none" marker-end="url(#ai)"/>
+<path d="M 186 582 L 186 598 Q 186 604 192 604 L 208 604" stroke="#092224" stroke-width="1.6" fill="none" marker-end="url(#ai)"/>
+<rect x="32" y="634" width="816" height="32" rx="8" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.3"/>
+<text x="44" y="654.5" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">401 402 403</text>
+<text x="138.5" y="654.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">bad key or no credits: raised. Rate limits, network errors, empty pages: a retry prompt.</text>
+<rect x="32" y="685" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="696" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="685" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="696" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by ExaSearch / ExaAgent</text>
+<rect x="327.7" y="685" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="347.7" y="696" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Exa service</text>
+<rect x="436.4" y="685" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="456.4" y="696" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your app</text>
+<rect x="527.4" y="685" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="547.4" y="696" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">stops the run</text>
+</svg>
