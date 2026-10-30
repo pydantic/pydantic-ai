@@ -7,6 +7,9 @@ External assumptions (verified 2026-10-30 against openai 3.31.0 and
   filters (equality, ranges, `in` and its negation) and compound `and` / `or` filters over file
   attributes; there is no `not`. `ranking_options.score_threshold` runs from 0 to 1. The search is
   semantic, with no keyword-only or hybrid mode on this endpoint. Each result carries `file_id`, `filename`, `score`, `attributes` and text `content`.
+- Scores come from the default reranker (`ranking_options.ranker='auto'`), run from 0 to 1, and vary
+  slightly between identical calls; `score_threshold` cuts on that scale. With `ranker='none'` the
+  threshold is ignored. Checked live 2026-10-30.
 - `vector_stores.files.content` pages through a file's parsed text, which `read` uses.
 - The Responses API's `file_search` tool searches the same vector stores natively; core sends it as
   `FileSearchTool(file_store_ids=[...])` on `OpenAIResponsesModel`.

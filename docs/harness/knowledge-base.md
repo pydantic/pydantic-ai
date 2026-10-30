@@ -147,7 +147,8 @@ agent = Agent(
 
 Upload and attribute files with the OpenAI API; the backend only queries the store. A file's id is
 its document id, so `read_document` opens the whole file. Searches return at most 50 passages, the
-API maximum. The search is semantic, and `score_threshold` (0 to 1) is applied by the API. The
+API maximum. The search is semantic, and `score_threshold` (0 to 1) is applied by the API to its
+reranked scores, which vary slightly between identical calls, so leave some margin. The
 default client reads `OPENAI_API_KEY`; pass `client=AsyncOpenAI(...)` to configure it. Rate limits,
 server errors and connection failures become retry prompts.
 
