@@ -101,6 +101,7 @@ print(dice_result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.0000480'), input_tokens=54, output_tokens=2),
         model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -129,6 +130,7 @@ print(dice_result.all_messages())
             cost=Decimal('0.00005625'), input_tokens=55, output_tokens=4
         ),
         model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -155,6 +157,7 @@ print(dice_result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.000087'), input_tokens=56, output_tokens=12),
         model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',

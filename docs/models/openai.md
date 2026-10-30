@@ -632,6 +632,10 @@ agent = Agent(model)
 
 Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI only through this API — `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` and `stop_sequences`. The Responses API accepts none of them, so they are dropped on the default `openai:` path.
 
+### Audio input {#audio-input}
+
+On Chat Completions, only OpenAI's audio models take audio input, such as `gpt-audio` and `gpt-4o-audio-preview`: the OpenAI models with `audio` in their name. With another OpenAI model, audio in the prompt raises an error, and audio a tool returns is replaced by a note saying the model can't read it. The Responses API takes no audio input. The rule applies to `OpenAIProvider`. OpenAI-compatible providers, including Azure, report audio input for every model, since their model names don't say which models take it. If you point `OpenAIProvider(base_url=...)` at another server that serves an audio model, such as vLLM with Voxtral, use [`OpenAICompatibleProvider`](compatible-apis.md#other-endpoints) for it, or pass `profile=OpenAIModelProfile(supports_audio_file_input=True)` to the model.
+
 ## Decisions API {#decisions-api}
 
 OpenAI's [Decisions API](https://developers.openai.com/api/docs/guides/decisions) runs a GPT model as a [decision model](decision.md): it answers typed questions about text or images, each with a probability or a distribution over the options, rather than writing text. [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] is the Pydantic AI model class for it, so an agent's output type and tools become the questions as described on the [Decision models](decision.md) page.

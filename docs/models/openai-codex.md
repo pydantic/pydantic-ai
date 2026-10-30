@@ -103,7 +103,7 @@ If `save()` raises, the refreshed credentials stay live in memory and a [`Creden
 
 ## Tracing without exposing credentials
 
-[Logfire instrumentation](../logfire.md) can trace agent runs without capturing OAuth credentials. Leave HTTP body capture disabled unless you need it: `logfire.instrument_httpx(capture_all=True)` captures authorization codes and token responses, which require additional scrubbing patterns.
+[Logfire instrumentation](../logfire.md#using-logfire) can trace agent runs without capturing OAuth credentials. Leave HTTP body capture disabled unless you need it: `logfire.instrument_httpx(capture_all=True)` captures authorization codes and token responses, which require additional scrubbing patterns.
 
 If you enable full HTTP capture, configure scrubbing before starting the OAuth flow:
 

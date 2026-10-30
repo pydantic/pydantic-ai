@@ -748,7 +748,18 @@ class BedrockProvider(Provider[BaseClient]):
         # cross-region inference geo prefix (e.g. `us.anthropic.claude-haiku-4-5-20251001-v1:0`).
         provider, model_name = split_bedrock_model_id(model_name)
         if provider in provider_to_profile:
-            return provider_to_profile[provider](model_name)
+            profile = provider_to_profile[provider](model_name)
+            if provider == 'amazon':
+                # `amazon_model_profile` reports video for the Nova models that take it.
+                return profile
+            # Converse takes the `video` content block only on Amazon Nova, whatever the family's own profile
+            # says, so a video becomes a note rather than being rejected. Verified live (2026-10, us-east-1 and
+            # us-west-2): Claude, Llama 4 Maverick, Pixtral Large and the natively video-capable Qwen3-VL
+            # (`qwen.qwen3-vl-235b-a22b`), Kimi K2.5 and K3 (`moonshotai.kimi-k2.5`, `us.moonshotai.kimi-k3`) and
+            # Nemotron Nano 12B v2 VL (`nvidia.nemotron-nano-12b-v2`) all answer "This model doesn't support the
+            # video content block", while Nova Lite describes the video. A family added to the table above gets
+            # this too.
+            return merge_profile(profile, ModelProfile(supports_video_input=False))
 
         return None
 
