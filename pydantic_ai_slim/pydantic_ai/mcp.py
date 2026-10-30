@@ -2442,7 +2442,6 @@ _REMOVED_IN_V2 = {
     'MCPServerSSE': _USE_MCP_TOOLSET,
     'MCPServerStreamableHTTP': _USE_MCP_TOOLSET,
     'MCPServerHTTP': _USE_MCP_TOOLSET,
-    'FastMCPToolset': 'use `MCPToolset`.',
     'load_mcp_servers': 'use `load_mcp_toolsets`.',
 }
 

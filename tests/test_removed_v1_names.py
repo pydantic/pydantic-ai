@@ -12,7 +12,6 @@ MIGRATION_URL = 'https://pydantic.dev/docs/ai/overview/migration/'
 MODULES = {
     'pydantic_ai.models.openai': 'openai',
     'pydantic_ai.mcp': 'fastmcp',
-    'pydantic_ai.providers.google': 'google.genai',
     'pydantic_ai.usage': None,
     'pydantic_ai.output': None,
     'pydantic_ai.models': None,
@@ -34,16 +33,9 @@ def _import(module: str) -> object:
         ('pydantic_ai.mcp', 'MCPServerSSE', '`MCPToolset`'),
         ('pydantic_ai.mcp', 'MCPServerStreamableHTTP', '`MCPToolset`'),
         ('pydantic_ai.mcp', 'MCPServerHTTP', '`MCPToolset`'),
-        ('pydantic_ai.mcp', 'FastMCPToolset', '`MCPToolset`'),
         ('pydantic_ai.mcp', 'load_mcp_servers', '`load_mcp_toolsets`'),
         ('pydantic_ai.usage', 'Usage', '`RunUsage`'),
         ('pydantic_ai.output', 'DeferredToolCalls', '`pydantic_ai.tools.DeferredToolRequests`'),
-        ('pydantic_ai.providers.google', 'GoogleGLAProvider', '`GoogleProvider`'),
-        (
-            'pydantic_ai.providers.google',
-            'GoogleVertexProvider',
-            '`pydantic_ai.providers.google_cloud.GoogleCloudProvider`',
-        ),
         ('pydantic_ai.models', 'cached_async_http_client', '`create_async_http_client()`'),
     ],
 )

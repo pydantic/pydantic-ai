@@ -47,8 +47,8 @@ Most V1 `Agent(...)` arguments that configured behavior moved onto [capabilities
 | `pydantic_ai.models.outlines.OutlinesModel`, `pydantic_ai.providers.outlines.OutlinesProvider` | Removed, no replacement |
 | `pydantic_ai.models.cached_async_http_client` | `pydantic_ai.models.create_async_http_client()` |
 | `pydantic_ai.providers.google.GoogleProvider(vertexai=, location=, project=, credentials=)` | `pydantic_ai.providers.google_cloud.GoogleCloudProvider(...)` |
-| `pydantic_ai.providers.google.GoogleGLAProvider` | `pydantic_ai.providers.google.GoogleProvider` |
-| `pydantic_ai.providers.google.GoogleVertexProvider` | `pydantic_ai.providers.google_cloud.GoogleCloudProvider` |
+| `pydantic_ai.providers.google_gla.GoogleGLAProvider` | `pydantic_ai.providers.google.GoogleProvider` |
+| `pydantic_ai.providers.google_vertex.GoogleVertexProvider` | `pydantic_ai.providers.google_cloud.GoogleCloudProvider` |
 | `pydantic_ai.providers.grok.GrokProvider`, `GrokModelName` | `pydantic_ai.providers.xai.XaiProvider` with `pydantic_ai.models.xai.XaiModel` / `XaiModelName` |
 | `GoogleModelSettings['google_vertex_service_tier']`, `['google_service_tier']` | `GoogleModelSettings['google_cloud_service_tier']` |
 | `StreamedResponse.usage()` (custom `Model` subclasses) | `StreamedResponse.usage` property |
