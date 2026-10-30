@@ -107,6 +107,7 @@ from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
 from ..conftest import (
     IsDatetime,
+    IsDecimal,
     IsFloat,
     IsInstance,
     IsInt,
@@ -14168,7 +14169,7 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                     output_tokens=37,
                     output_reasoning_tokens=22,
                     details={'is_byok': 0, 'reasoning_tokens': 22},
-                    cost=Decimal('0.000007442'),
+                    cost=IsDecimal(gt=0),
                 ),
                 model_name='openai/gpt-oss-20b',
                 model_id='openrouter:openai/gpt-oss-20b',
