@@ -17,13 +17,6 @@ boxd = "2026-10-27T23:56:00Z"
 boxlite = "2026-10-18T01:35:01Z"
 cassetter = false
 certifi = "2026-10-20T02:25:00Z"
-daytona = "2026-10-24T00:00:00Z"
-daytona-analytics-api-client = "2026-10-24T00:00:00Z"
-daytona-analytics-api-client-async = "2026-10-24T00:00:00Z"
-daytona-api-client = "2026-10-24T00:00:00Z"
-daytona-api-client-async = "2026-10-24T00:00:00Z"
-daytona-toolbox-api-client = "2026-10-24T00:00:00Z"
-daytona-toolbox-api-client-async = "2026-10-24T00:00:00Z"
 genai-prices = false
 listentome = false
 logfire = false
@@ -1155,7 +1148,7 @@ requires-dist = [
     { name = "boxd", marker = "extra == 'boxd'", specifier = ">=0.2.20,<0.3" },
     { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'boxlite')", specifier = ">=0.10.7,<0.11" },
     { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
-    { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.226.1,<1" },
+    { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.223.1,<1" },
     { name = "e2b", marker = "extra == 'e2b'", specifier = ">=2.48.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.16.0" },
     { name = "fastmcp", marker = "extra == 'stackone'", specifier = ">=3.4.5,<4" },
