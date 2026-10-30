@@ -441,7 +441,7 @@
     {
       "against": "v2.63.0",
       "fingerprint": "d27b6856120a993e16f5711ee2cac9655af3084b5ff76e9c3ed70a174f321d9a",
-      "reason": "Adds `ModelResponseRejectedEvent` to `HandleResponseEvent`; every existing member is unchanged. The version policy lists new stream events as non-breaking.",
+      "reason": "Adds `ModelResponseRejectedEvent` to `HandleResponseEvent`; every existing member is unchanged. The version policy lists new stream events as non-breaking and asks consumers of event streams to code defensively, so code that handles the members it knows keeps working; only an exhaustive `assert_never` over the union sees a new member, as with `ModelSettingsDeltaEvent` (#11111).",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11939"
     }
   ],

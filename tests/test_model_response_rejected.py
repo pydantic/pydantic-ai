@@ -442,3 +442,28 @@ async def test_run_stream_usage_counts_a_hooked_response_once():
         streamed_usage = result.usage
 
     assert streamed_usage == result.usage
+
+
+@pytest.mark.parametrize(
+    ('capabilities', 'counted_before_leaving'),
+    [([], False), ([AcceptEverything()], True)],
+    ids=['no after_model_request hook', 'after_model_request hook'],
+)
+async def test_response_usage_is_counted_when_after_model_request_passes_its_verdict(
+    capabilities: list[AbstractCapability[Any]], counted_before_leaving: bool
+):
+    """With an `after_model_request` hook, the hooks pass their verdict when the model stream ends, so the run counts
+    the response's usage then; without one, it's counted when the consumer leaves the stream, as it always was."""
+    agent = Agent(FunctionModel(stream_function=always_announce), capabilities=capabilities)
+    counted_after_exhausting: bool | None = None
+
+    async with agent.iter('When does the store open?') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for _ in stream:
+                        pass
+                    counted_after_exhausting = run.usage.output_tokens > 0
+                assert run.usage.output_tokens > 0
+
+    assert counted_after_exhausting is counted_before_leaving
