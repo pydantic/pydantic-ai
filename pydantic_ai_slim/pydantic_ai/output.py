@@ -796,5 +796,6 @@ _REMOVED_IN_V2 = {
     'DeferredToolCalls': 'use `pydantic_ai.tools.DeferredToolRequests`, whose `calls` replaces `tool_calls`.',
 }
 
-if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
     __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

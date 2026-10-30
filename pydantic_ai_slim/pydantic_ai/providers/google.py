@@ -244,5 +244,6 @@ _REMOVED_IN_V2 = {
     'GoogleVertexProvider': 'use `pydantic_ai.providers.google_cloud.GoogleCloudProvider`.',
 }
 
-if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
     __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)
