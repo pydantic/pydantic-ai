@@ -58,9 +58,14 @@ from pydantic_clai2.ui.rendering.tool_output import (
 )
 
 
+def prompt_line(text: str) -> Text:
+    """Text the user typed, as the transcript shows it: an accent marker and bold text set it apart from answers."""
+    return Text.assemble(('> ', theme.color(theme.ACCENT)), (terminal_text(text), 'bold'))
+
+
 def print_prompt(console: Console, text: str) -> None:
-    """Echo a submitted prompt, then a blank line: an accent marker and bold text set it apart from answers."""
-    console.print(Text.assemble(('> ', theme.color(theme.ACCENT)), (terminal_text(text), 'bold')), highlight=False)
+    """Echo a submitted prompt, then a blank line."""
+    console.print(prompt_line(text), highlight=False)
     console.print()
 
 
