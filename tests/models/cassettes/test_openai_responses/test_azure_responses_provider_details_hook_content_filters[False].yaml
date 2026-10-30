@@ -1,0 +1,173 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "201"
+      content-type:
+      - application/json
+      host:
+      - pydantic-ai-realtime-dev.openai.azure.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the capital of France? Answer in one word.
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      apim-request-id:
+      - 258be5a3-4e48-4809-a1bd-59d941db46ba
+      azureai-fe-is-streaming:
+      - "False"
+      azureai-fe-offer-type:
+      - paygo
+      content-length:
+      - "2577"
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: resp_01d21b97e48e6fe8006ad29ec423dc81959c99573b94e78e2a
+        object: response
+        created_at: 1792188100
+        status: completed
+        background: false
+        completed_at: 1792188100
+        content_filters:
+        - blocked: false
+          source_type: prompt
+          content_filter_raw: []
+          content_filter_results:
+            hate:
+              filtered: false
+              severity: safe
+            sexual:
+              filtered: false
+              severity: safe
+            violence:
+              filtered: false
+              severity: safe
+            self_harm:
+              filtered: false
+              severity: safe
+            jailbreak:
+              detected: false
+              filtered: false
+          content_filter_offsets:
+            start_offset: 0
+            end_offset: 882
+            check_offset: 0
+        - blocked: false
+          source_type: completion
+          content_filter_raw: []
+          content_filter_results:
+            protected_material_text:
+              detected: false
+              filtered: false
+            protected_material_code:
+              detected: false
+              filtered: false
+            hate:
+              filtered: false
+              severity: safe
+            sexual:
+              filtered: false
+              severity: safe
+            violence:
+              filtered: false
+              severity: safe
+            self_harm:
+              filtered: false
+              severity: safe
+          content_filter_offsets:
+            start_offset: 0
+            end_offset: 5
+            check_offset: 0
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4
+        moderation: null
+        output:
+        - id: msg_01d21b97e48e6fe8006ad29ec4c6d08195aca3b27403b09a53
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: Paris
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 18
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 5
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 23
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-16T22:01:41.003538+00:00

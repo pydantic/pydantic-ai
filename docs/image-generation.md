@@ -1,3 +1,7 @@
+---
+description: "Generate and edit images from Python with the Pydantic AI ImageGenerator API, using GPT Image, Gemini and Grok Imagine models from OpenAI, Google and xAI."
+---
+
 # Image Generation
 
 Pydantic AI provides a provider-agnostic API for generating and editing images with dedicated image models.
@@ -27,7 +31,7 @@ from pathlib import Path
 
 from pydantic_ai import ImageGenerator
 
-generator = ImageGenerator('openai:gpt-image-2')
+generator = ImageGenerator('{{ openai:image }}')
 
 
 async def main():
@@ -74,7 +78,7 @@ Pass reference images through `images` to edit or transform them. The input can 
 ```python {title="image_edit.py"}
 from pydantic_ai import BinaryImage, ImageGenerator
 
-generator = ImageGenerator('google:gemini-3.1-flash-lite-image')
+generator = ImageGenerator('{{ google:image }}')
 
 
 async def replace_subject(source: BinaryImage) -> BinaryImage:
@@ -87,9 +91,10 @@ async def replace_subject(source: BinaryImage) -> BinaryImage:
 
 The order of multiple reference images is preserved. Provider-hosted files are supported by Google and xAI, and the
 [`UploadedFile.provider_name`][pydantic_ai.messages.UploadedFile] must name the provider the file was uploaded to. On
-xAI that is exactly the name of the provider you selected; Google additionally accepts `google-gla`, its pre-v2 name,
-and reads whether the Gemini Files API is available off the client's transport rather than off the provider name, as
-covered under [Google image generation](models/google.md#image-generation). OpenAI's image-edit endpoint requires file
+xAI that is exactly the name of the provider you selected; Google additionally accepts `google-gla` and `google-vertex`,
+its pre-v2 names, and reads off the client's transport rather than the provider name which file store it resolves — the
+Gemini Files API on the Gemini Developer API, Cloud Storage (`gs://`) on Vertex AI — as covered under
+[Google image generation](models/google.md#image-generation). OpenAI's image-edit endpoint requires file
 content, so use `BinaryImage` or `ImageUrl` with OpenAI. Image URLs downloaded by Pydantic AI are limited to 50 MiB.
 
 Editing applies to the whole image: masked editing, where a mask restricts the edit to a region, is not supported.
@@ -99,7 +104,7 @@ Of the providers below only OpenAI exposes that primitive, so there is nothing p
 | --- | --- | --- | --- | --- | --- |
 | OpenAI | ✅ | ✅ | ❌ | ✅ | Reference images must be PNG, JPEG, or WebP; any other media type raises [`UserError`][pydantic_ai.exceptions.UserError]. |
 | Google Gemini API | ✅ | ✅ | ✅ | ❌ | [`UploadedFile.file_id`][pydantic_ai.messages.UploadedFile] must be the Files API URI (`file.uri`, which starts with `https://`), not the `files/...` resource name; any other value raises [`UserError`][pydantic_ai.exceptions.UserError]. A Files API URL passed as an `ImageUrl` instead needs an explicit `media_type`, since those URLs carry no file extension. See [Uploaded Files](input.md#uploaded-files). |
-| Google Cloud (Vertex AI) | ✅ | ✅ | ❌ | ❌ | The Gemini Files API is not available on Vertex AI, and the adapter does not accept the `gs://` URIs Vertex uses instead, so pass reference images as `BinaryImage` or `ImageUrl`. Whether a client targets Vertex is read off the client, not the provider name. |
+| Google Cloud (Vertex AI) | ✅ | ✅ | ✅ | ❌ | The Gemini Files API is not available on Vertex AI; its file store is Cloud Storage, so [`UploadedFile.file_id`][pydantic_ai.messages.UploadedFile] must be a `gs://bucket/path` URI, and an `ImageUrl` whose URL starts with `gs://` is forwarded the same way unless `force_download` is set (pass `media_type` explicitly when the object name carries no extension). Vertex reads the object server-side, so neither is downloaded; `force_download` on a `gs://` URL fails, as Cloud Storage URIs cannot be downloaded. Any other URL is downloaded and inlined. Whether a client targets Vertex is read off the client, not the provider name. |
 | xAI | ✅ | ✅ | ✅ | ✅ | xAI documents up to five reference images and enforces the limit itself: six references to `grok-imagine-image` come back as `INVALID_ARGUMENT` with `This model supports at most 5 input image(s), but 6 were provided.`, which surfaces as a 400 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. Every `UploadedFile` must come before any `ImageUrl` or `BinaryImage`, because xAI sends file IDs ahead of URL and binary inputs; another order raises [`UserError`][pydantic_ai.exceptions.UserError] rather than silently resequencing them. `extra_headers` and `extra_body` are ignored with a warning: the transport is gRPC, which has no per-request header or body escape hatch. |
 
 `google:` is the Gemini Developer API (Google AI Studio) and `google-cloud:` is Vertex AI, exactly as for
@@ -162,7 +167,7 @@ export GOOGLE_API_KEY='your-api-key'
 
 The `google-cloud:` prefix uses Google Cloud instead, which authenticates with Application Default Credentials rather
 than an API key. See the [Google image-generation notes](models/google.md#image-generation) for provider-specific
-behavior and [Google Cloud configuration](models/google.md#google-cloud-enterprise) for the credential options.
+behavior and [Google Cloud configuration](models/google-cloud.md#authentication) for the credential options.
 
 ### xAI
 
@@ -202,7 +207,7 @@ from pydantic_ai.images.openai import OpenAIImageGenerationModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 model = OpenAIImageGenerationModel(
-    'gpt-image-2',
+    '{{ openai:image.name }}',
     provider=OpenAIProvider(base_url='https://my-provider.com/v1', api_key='your-api-key'),
 )
 generator = ImageGenerator(model)
@@ -223,7 +228,7 @@ from pydantic_ai.images import ImageGenerationSettings
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 
 generator = ImageGenerator(
-    'openai:gpt-image-2',
+    '{{ openai:image }}',
     settings=OpenAIImageGenerationSettings(openai_quality='low', openai_output_format='jpeg'),
 )
 
@@ -395,8 +400,8 @@ from pydantic_ai import ImageGenerator
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 from pydantic_ai.images.xai import XaiImageGenerationSettings
 
-openai_generator = ImageGenerator('openai:gpt-image-2', settings=OpenAIImageGenerationSettings(openai_n=3))
-xai_generator = ImageGenerator('xai:grok-imagine-image', settings=XaiImageGenerationSettings(xai_n=3))
+openai_generator = ImageGenerator('{{ openai:image }}', settings=OpenAIImageGenerationSettings(openai_n=3))
+xai_generator = ImageGenerator('{{ xai:image }}', settings=XaiImageGenerationSettings(xai_n=3))
 ```
 
 Gemini returns one image per request, so there is no Google equivalent.
@@ -415,7 +420,7 @@ than one image or need per-image metadata such as `revised_prompt`.
 ```python {title="image_generation_result.py"}
 from pydantic_ai import ImageGenerator
 
-generator = ImageGenerator('openai:gpt-image-2')
+generator = ImageGenerator('{{ openai:image }}')
 
 
 async def main():
@@ -468,7 +473,7 @@ Because a block is reported as an exception rather than an empty result, you can
 from pydantic_ai import ImageGenerator
 from pydantic_ai.exceptions import ContentFilterError
 
-generator = ImageGenerator('openai:gpt-image-2')
+generator = ImageGenerator('{{ openai:image }}')
 
 
 async def main():
@@ -500,7 +505,7 @@ from pydantic_ai import ImageGenerator
 
 logfire.configure()
 
-generator = ImageGenerator('openai:gpt-image-2', instrument=True)
+generator = ImageGenerator('{{ openai:image }}', instrument=True)
 
 # Or instrument all image generators globally
 ImageGenerator.instrument_all()
@@ -515,7 +520,7 @@ Each call opens a span named `image_generation {model}` carrying `gen_ai.operati
 `gen_ai.output.type='image'`. `image_generation` is a custom operation name: the OpenTelemetry GenAI conventions
 enumerate no value for image generation, while `image` is one of their standard output types.
 
-See the [Debugging and Monitoring guide](logfire.md) for more details on using Logfire with Pydantic AI.
+See the [Debugging and Monitoring guide](logfire.md#using-logfire) for Logfire setup and more details on using it with Pydantic AI.
 
 ## Testing
 
@@ -527,7 +532,7 @@ from pydantic_ai.images import ImageGenerationSettings, TestImageGenerationModel
 
 
 async def test_image_workflow():
-    generator = ImageGenerator('openai:gpt-image-2')
+    generator = ImageGenerator('{{ openai:image }}')
     test_model = TestImageGenerationModel()
 
     with generator.override(model=test_model):
@@ -612,4 +617,6 @@ The direct API and agent image generation serve different use cases:
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | An agent should decide when to generate an image, with native execution when available and a direct image-model fallback otherwise. |
 | [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] | You need direct control over a conversational model provider's native image-generation tool. |
 
-See the [`ImageGeneration` capability](capabilities/image-generation.md) for provider-adaptive agent usage.
+See the [`ImageGeneration` capability](capabilities/image-generation.md) for provider-adaptive agent usage, and
+[Getting the Generated Image](capabilities/image-generation.md#getting-the-generated-image) for reading the image
+back out of an agent run.

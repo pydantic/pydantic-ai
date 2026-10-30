@@ -49,7 +49,7 @@ from pydantic_ai import (
     RunContext,
     SpeechPartDelta,
 )
-from pydantic_ai.capabilities import WebSearch
+from pydantic_ai.capabilities import Caching, WebSearch
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import NativeToolReturnPart, TextPartDelta
 from pydantic_ai.native_tools import WebSearchTool
@@ -234,6 +234,7 @@ def _draw_agent() -> Agent[None, str]:
         name='diagram_drawer',
         instructions=DRAW_INSTRUCTIONS,
         model_settings={'max_tokens': 16_384},
+        capabilities=[Caching()],
     )
 
 

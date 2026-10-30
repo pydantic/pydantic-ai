@@ -1,9 +1,16 @@
+---
+description: "Evaluate how an AI system behaved, not only what it returned, by querying the OpenTelemetry spans from a run with span-based evaluators in Pydantic Evals."
+---
+
 # Span-Based Evaluation
 
 Evaluate AI system behavior by analyzing OpenTelemetry spans captured during execution.
 
-!!! note "Requires Logfire"
-    Span-based evaluation requires `logfire` to be installed and configured:
+!!! note "Requires the logfire SDK"
+    These evaluators read the OpenTelemetry span tree captured during the run, so the
+    [`logfire`](../how-to/logfire-integration.md) SDK must be installed and configured. No Pydantic Logfire
+    account is needed: the SDK captures spans locally.
+
     ```bash
     pip install 'pydantic-evals[logfire]'
     ```
@@ -329,13 +336,15 @@ evaluators = [
         evaluation_name='had_retries',
     ),
 
-    # Fallback was used
+    # A model request attempt failed, so another one was made
     HasMatchingSpan(
-        query={'name_contains': 'fallback_model'},
-        evaluation_name='used_fallback',
+        query={'name_contains': 'model request attempt'},
+        evaluation_name='had_failed_attempts',
     ),
 ]
 ```
+
+Each attempt at a model request that failed or was rejected gets a `model request attempt <model name>` span, whether [`ModelFallback`](../../capabilities/model-fallback.md#failed-attempts-and-telemetry), a [`FallbackModel`](../../models/overview.md#failed-attempts-and-usage) or another capability that raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] moved on from it, so it shows that the request was attempted again, not that it fell back to another model. The span's `gen_ai.request.model` attribute names the model it tried.
 
 ### Complex Behavioral Checks
 
@@ -409,9 +418,9 @@ from pydantic_evals.otel import SpanTree
 # Example API (requires span_tree from context)
 def example_api(span_tree: SpanTree) -> None:
     span_tree.find(lambda n: True)  # Find all matching nodes
+    span_tree.first({'name_contains': 'test'})  # Find the first matching node
     span_tree.any({'name_contains': 'test'})  # Check if any span matches
-    span_tree.all({'name_contains': 'test'})  # Check if all spans match
-    span_tree.count({'name_contains': 'test'})  # Count matching spans
+    len(span_tree.find({'name_contains': 'test'}))  # Count matching spans
 
     # Iteration
     for node in span_tree:
@@ -468,9 +477,10 @@ Test queries incrementally:
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan
+from pydantic_evals.otel import SpanQuery
 
 # Start simple
-query = {'name_contains': 'tool'}
+query: SpanQuery = {'name_contains': 'tool'}
 
 # Add conditions gradually
 query = {'and_': [

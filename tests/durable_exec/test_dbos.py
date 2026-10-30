@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import re
+import subprocess
+import sys
 import time
 import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -36,11 +38,11 @@ from pydantic_ai import (
     ModelSettings,
     PartDeltaEvent,
     PartStartEvent,
-    RetryPromptPart,
+    PendingModelResponse,
+    RetryInfo,
     RunContext,
     RunUsage,
     TextPart,
-    TextPartDelta,
     Tool,
     ToolCallPart,
     ToolReturnPart,
@@ -48,26 +50,42 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import MCP, Capability, DynamicCapability
+from pydantic_ai.capabilities import (
+    MCP,
+    BatchModelRequests,
+    Capability,
+    DynamicCapability,
+    Hooks,
+    ModelFallback,
+    WrapperCapability,
+)
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
+from pydantic_ai.durable_exec._utils import mark_streamed_before_failing, streamed_before_failing
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelAPIError,
+    ModelHTTPError,
+    ModelRequestTimeout,
     ModelRetry,
     RunCancelled,
+    RunTimedOut,
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
 from pydantic_ai.models import (
+    Model,
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    ModelSelectionContext,
     StreamedResponse,
 )
+from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -77,15 +95,20 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
+    WebRTCSession,
 )
-from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_ai.workspaces import LocalWorkspaceBackend
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
-from ..conftest import IsDatetime, IsNow, IsStr
+from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging
+from ..realtime_connections import InferredConnection
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
+    from dbos._error import DBOSAwaitedWorkflowCancelledError
+    from dbos._serialization import DBOSDefaultSerializer, deserialize_exception, serialize_exception
 
     from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
     from pydantic_ai.durable_exec.dbos import (
@@ -126,8 +149,10 @@ from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from .._inline_snapshot import snapshot
+from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -137,7 +162,6 @@ from ..model_lifecycle_utils import LifecycleTrackingModel
 warnings.filterwarnings('ignore', message='`DBOSAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='dbos'),
     pytest.mark.filterwarnings('ignore:`DBOSAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'),
@@ -187,21 +211,7 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]
         yield dbos
     finally:
         DBOS.destroy()
-        # `enable_otlp=True` makes DBOS attach an OTel `LoggingHandler` and a `DBOSLogTransformer`
-        # filter to the root logger and every registered logger, and `DBOS.destroy()` does not detach
-        # them. A leaked handler/filter's emit path imports `dbos._context`, which imports
-        # `http.server` - fatal inside the Temporal workflow sandbox when an xdist worker later runs
-        # the temporal suite. Detach them here.
-        # TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
-        # https://github.com/dbos-inc/dbos-transact-py/issues/821
-        from dbos import _logger as dbos_logger_module
-        from opentelemetry.sdk._logs import LoggingHandler
-
-        for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
-            for handler in [h for h in logger.handlers if isinstance(h, LoggingHandler)]:
-                logger.removeHandler(handler)
-            for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
-                logger.removeFilter(log_filter)
+        detach_dbos_logging()
 
 
 model = OpenAIChatModel(
@@ -223,6 +233,15 @@ def test_dbos_agent_construction_warns_deprecated() -> None:
         DBOSAgent(Agent(TestModel(), name='dbos_agent_deprecation_probe'))  # pyright: ignore[reportDeprecated]
 
 
+async def test_dbos_agent_rejects_model_wrappers(dbos: DBOS) -> None:
+    """The deprecated wrapper agent sends requests without the capabilities' model wrappers, so it refuses them."""
+    agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='dbos_batched_agent', capabilities=[BatchModelRequests()])
+    )
+    with pytest.raises(UserError, match='`DBOSAgent` does not support capabilities that wrap the model'):
+        await agent.run('hello')
+
+
 async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, openai_api_key: str) -> None:
     """Test that a simple agent can run in a DBOS workflow."""
 
@@ -233,6 +252,27 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DB
 
     output = await run_simple_agent()
     assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def round_trip_workspace(ctx: RunContext[None]) -> str:
+    await ctx.workspace.write_text('note.txt', 'workspace content')
+    return await ctx.workspace.read_text('note.txt')
+
+
+async def test_dbos_agent_rejects_a_workspace_in_its_workflow(dbos: DBOS, tmp_path: Path) -> None:
+    """The deprecated wrapper has no durability capability, so a workspace's operations could not run as steps."""
+    agent = Agent(
+        TestModel(call_tools=['round_trip_workspace']),
+        name='dbos_agent_workspace',
+        deps_type=type(None),
+        tools=[round_trip_workspace],
+    )
+    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    with pytest.raises(
+        UserError, match='Workspaces are not supported inside a DBOS workflow through the deprecated wrapper agent'
+    ):
+        await dbos_agent.run('Use the workspace.', workspace=LocalWorkspaceBackend(tmp_path))
 
 
 class Deps(BaseModel):
@@ -336,6 +376,7 @@ iter_handler_stream_agent = Agent(
 )
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
     # Set a workflow ID for testing list steps
     wfid = str(uuid.uuid4())
@@ -495,7 +536,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                    content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                 ),
                             ],
                         ),
@@ -504,7 +545,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                    content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                 ),
                             ],
                         ),
@@ -558,7 +599,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=2'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                    content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                 ),
                             ],
                         ),
@@ -716,7 +757,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=3'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                    content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
                                 ),
                             ],
                         ),
@@ -967,7 +1008,7 @@ async def test_capability_contributed_toolset_id_from_capability():
         ],
     )
     # Previously raised `UserError` from the DBOS id-less-MCP guard because the contributed MCP leaf
-    # had `id=None`; it now derives `mcp.example.com-api` from the URL, so construction succeeds.
+    # had `id=None`; it now derives `mcp.example.com` from the URL's hostname, so construction succeeds.
     dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
 
     leaves: list[AbstractToolset[object]] = []
@@ -975,14 +1016,14 @@ async def test_capability_contributed_toolset_id_from_capability():
         toolset.apply(leaves.append)
     # The contributed MCP leaf carries the URL-derived id; the `billing` function toolset carries the
     # capability id.
-    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
+    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
 
 
 async def test_capability_contributed_toolsets_with_colliding_derived_id():
     """Two genuinely different MCP servers whose URLs derive the same id are rejected by `Agent`.
 
-    Both would key their steps on `a.com-api` under DBOS, the second server returning the first's
+    Both would key their steps on `a.com` under DBOS, the second server returning the first's
     cached tools. DBOS used to be what caught it, because `MCP(url=...)` left the capability
     anonymous and only its toolset carried the derived id, so the agent-level capability-id
     uniqueness check had nothing to compare. Now the capability takes the same derived id, and a
@@ -997,7 +1038,10 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
     """
     with pytest.raises(
         match=re.escape(
-            "Capability id 'a.com-api' is used by multiple capabilities. Ids identify one capability within a run, so give each a distinct `id`."
+            "Capability id 'a.com' is used by multiple capabilities that derived it from their configuration, "
+            'such as `MCP` capabilities for servers on the same host. Ids identify one capability within a run, '
+            'so pass an explicit `id=` to each: a distinct one for different servers, or the same one where '
+            'they configure one server, for example with a rotated credential in the URL.'
         ),
     ):
         DBOSAgent(  # pyright: ignore[reportDeprecated]
@@ -1196,6 +1240,8 @@ async def test_dbos_agent_realtime_signaling_in_workflow():
             await realtime.answer_webrtc_offer('v=0')
         with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
             await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
 async def test_dbos_agent_realtime_signaling_in_step():
@@ -1206,12 +1252,14 @@ async def test_dbos_agent_realtime_signaling_in_step():
         realtime = simple_dbos_agent.realtime(_FakeRealtimeModel())
         with pytest.raises(UserError, match='does not support WebRTC'):
             await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot end a call from the server'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
-class _FakeRealtimeConnection(RealtimeConnection):
-    async def send(self, content: Any) -> None: ...  # pragma: no cover
+class _FakeRealtimeConnection(InferredConnection):
+    async def send_input(self, content: Any) -> None: ...  # pragma: no cover
 
-    async def __aiter__(self) -> AsyncIterator[Any]:
+    async def codec_events(self) -> AsyncIterator[Any]:
         return
         yield  # pragma: no cover
 
@@ -1598,6 +1646,7 @@ def test_dbos_agent_explicit_run_id(dbos: DBOS):
     assert all(m.run_id == 'run-from-dbos' for m in result.all_messages())
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 def test_dynamic_toolset(dbos: DBOS):
     weather_deps = ToggleableDeps('weather')
 
@@ -1692,7 +1741,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1723,11 +1772,14 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                     cost=Decimal('0.0006375'),
                 ),
                 model_name=IsStr(),
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -1750,7 +1802,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         timestamp=IsDatetime(),
                     ),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1772,11 +1824,14 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                     cost=Decimal('0.0005225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -1841,7 +1896,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1872,11 +1927,14 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                     cost=Decimal('0.0006375'),
                 ),
                 model_name=IsStr(),
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -1899,7 +1957,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         timestamp=IsDatetime(),
                     ),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1921,11 +1979,14 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                     cost=Decimal('0.0005225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -1966,7 +2027,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1991,11 +2052,14 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                     cost=Decimal('0.0002875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -2005,14 +2069,16 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Did you mean Mexico City?',
                         tool_name='get_weather_in_city',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2037,11 +2103,14 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                     cost=Decimal('0.0003875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -2058,7 +2127,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2077,11 +2146,14 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                     cost=Decimal('0.00039'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -2148,6 +2220,7 @@ _uninit_instructions_toolset = dbosify_mcp_toolset(
 )
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
     """When the MCP server isn't initialized locally, DBOS wrapper fetches instructions via a step."""
     run_context = RunContext(deps=0, model=TestModel(), usage=RunUsage())
@@ -2156,6 +2229,7 @@ async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
     assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False)
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_mcp_toolset_get_instructions_uses_step_when_server_warm(dbos: DBOS):
     """A warm in-process MCP server must not short-circuit the `get_instructions` step (#5884).
 
@@ -2192,7 +2266,7 @@ async def test_dbos_mcp_toolset_get_instructions_uses_step_when_server_warm(dbos
         assert await inner.get_instructions(run_context) is not None
         instructions = await wrapper.get_instructions(run_context)
 
-    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False)
+    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False, on_change='append')
     assert step_calls == ['step']
 
 
@@ -2211,10 +2285,16 @@ mcptoolset_instructions_agent = Agent(
 mcptoolset_instructions_dbos_agent = DBOSAgent(mcptoolset_instructions_agent)  # pyright: ignore[reportDeprecated]
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_mcptoolset_instructions_propagate(dbos: DBOS):
     """`MCPToolset` instructions propagate through the `DBOSMCPToolset` wrapper."""
     result = await mcptoolset_instructions_dbos_agent.run('Use MCP instructions')
-    assert result.output == snapshot('Be a helpful assistant.')
+    assert result.output == snapshot("""\
+<context id="toolset:mcp">
+Be a helpful assistant.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
 
 
 def test_dbosify_mcptoolset_dispatches_to_dbosmcptoolset():
@@ -2263,6 +2343,7 @@ _mcp_task_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
 )
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
 async def test_dbos_mcptoolset_preserves_task_routing(dbos: DBOS):
     """Effective task routing in `ToolDefinition.metadata` survives DBOS steps."""
     result = await _mcp_task_dbos_agent.run('Call both tools')
@@ -2290,6 +2371,7 @@ mcp_replay_agent = Agent(
 mcp_replay_dbos_agent = DBOSAgent(mcp_replay_agent)  # pyright: ignore[reportDeprecated]
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_mcp_get_tools_recorded_independently_per_run(allow_model_requests: None, dbos: DBOS):
     """#5875 regression: DBOS `get_tools` step scheduling must depend only on the workflow's own history.
 
@@ -2338,6 +2420,7 @@ mcp_retry_budget_agent = Agent(
 mcp_retry_budget_dbos_agent = DBOSAgent(mcp_retry_budget_agent)  # pyright: ignore[reportDeprecated]
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_mcp_tool_inherits_agent_retries(allow_model_requests: None, dbos: DBOS):
     """#5180 regression: a durably-wrapped MCP tool enforces the agent's tool-retry budget, not a hard-coded 1.
 
@@ -2398,12 +2481,65 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     agent = Agent(_durability_fn_model, name='durability_simple', capabilities=[DBOSDurability()])
 
     @DBOS.workflow()
-    async def run_durable_agent() -> str:
+    async def run_durable_agent() -> tuple[str, str | None]:
         result = await agent.run('Hello DBOS')
-        return result.output
+        return result.output, result.response.model_id
 
     output = await run_durable_agent()
-    assert output == 'Echo: Hello DBOS'
+    # The response records the model the request went to, not the DBOS wrapper around it.
+    assert output == ('Echo: Hello DBOS', _durability_fn_model.model_id)
+
+
+async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: DBOS) -> None:
+    """A model step's `ModelHTTPError` reaches workflow code as itself, so error hooks can match on it."""
+
+    def overloaded(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(503, 'overloaded-model', body={'error': 'overloaded'}, headers={'Retry-After': '7'})
+
+    async def describe(
+        ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        assert isinstance(error, ModelHTTPError)
+        return ModelResponse(parts=[TextPart(f'{type(error).__name__} {error.status_code} {error.retry_after}')])
+
+    agent = Agent(
+        FunctionModel(overloaded),
+        name='durability_model_error',
+        deps_type=type(None),
+        capabilities=[Hooks[None](model_request_error=describe), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello DBOS')).output
+
+    assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
+
+
+async def test_dbos_durability_rejects_a_live_workspace_workflow_input(dbos: DBOS, tmp_path: Path) -> None:
+    """A live backend passed into a workflow has no durable steps behind it, so the run refuses it.
+
+    The same agent still takes the backend outside a workflow, where the capability is transparent.
+    The supported shape inside a workflow is a workspace capability attached at construction time;
+    see `test_dbos_workspace.py`.
+    """
+    agent = Agent(
+        TestModel(call_tools=['round_trip_workspace']),
+        name='dbos_durability_workspace',
+        deps_type=type(None),
+        tools=[round_trip_workspace],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent(workspace: LocalWorkspaceBackend) -> AgentRunResult[str]:
+        return await agent.run('Use the workspace.', workspace=workspace)
+
+    with pytest.raises(UserError, match='no capability supplied workspaces when the agent was constructed'):
+        await run_durable_agent(LocalWorkspaceBackend(tmp_path))
+
+    result = await agent.run('Use the workspace.', workspace=LocalWorkspaceBackend(tmp_path))
+    assert result.output == '{"round_trip_workspace":"workspace content"}'
 
 
 async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS) -> None:
@@ -2421,6 +2557,53 @@ async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS
     # Outside a workflow the capability is transparent, so the token works like a normal run.
     result = await agent.run('Hello', cancellation_token=CancellationToken())
     assert result.output == 'Echo: Hello'
+
+
+def _cancel_own_workflow_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('cancel_own_workflow')])
+    return ModelResponse(parts=[TextPart('never reached')])  # pragma: no cover
+
+
+async def cancel_own_workflow() -> str:
+    workflow_id = DBOS.workflow_id
+    assert workflow_id is not None
+    await DBOS.cancel_workflow_async(workflow_id)
+    return 'workflow cancelled'
+
+
+async def test_dbos_durability_workflow_cancellation_carries_run_state(dbos: DBOS) -> None:
+    """Cancelling a DBOS workflow aborts the run with a DBOS `BaseException` rather than a `CancelledError`
+    (`DBOSWorkflowCancelledError`, or `DBOSWorkflowConflictIDError` on dbos 3.2+). The run still
+    attaches its state to it, so `RunCancelled.from_cancellation()` recovers the history inside the workflow."""
+    agent = Agent(
+        FunctionModel(_cancel_own_workflow_model_fn),
+        name='durability_workflow_cancel',
+        tools=[cancel_own_workflow],
+        capabilities=[DBOSDurability()],
+    )
+    recovered: list[RunCancelled | None] = []
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> None:
+        try:
+            await agent.run('Hello')
+        except BaseException as exc:
+            recovered.append(RunCancelled.from_cancellation(exc))
+            raise
+
+    with pytest.raises(DBOSAwaitedWorkflowCancelledError):
+        await run_durable_agent()
+
+    [cancelled] = recovered
+    assert cancelled is not None
+    tool_parts = [
+        (type(part).__name__, part.tool_name)
+        for message in cancelled.all_messages()
+        for part in message.parts
+        if isinstance(part, (ToolCallPart, ToolReturnPart))
+    ]
+    assert tool_parts[0] == ('ToolCallPart', 'cancel_own_workflow')
 
 
 async def test_dbos_durability_registers_legacy_workflows_opt_in(dbos: DBOS) -> None:
@@ -2442,18 +2625,6 @@ async def test_dbos_durability_registers_legacy_workflows_opt_in(dbos: DBOS) -> 
     assert without_flag_durability is not None
     assert without_flag_durability._legacy_run_workflow is None  # pyright: ignore[reportPrivateUsage]
     assert without_flag_durability._legacy_run_sync_workflow is None  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_dbos_durability_accepts_legacy_stream_step_shape(dbos: DBOS) -> None:
-    response = ModelResponse(parts=[TextPart(content='legacy stream')], model_name='legacy')
-    agent = Agent(TestModel(), name='legacy_stream_shape', capabilities=[DBOSDurability()])
-    durability = DBOSDurability.from_agent(agent)
-    assert durability is not None
-    result = await durability._load_streamed_activity_result(  # pyright: ignore[reportPrivateUsage]
-        response, ModelRequestParameters()
-    )
-    assert result.response == response
-    assert result.events
 
 
 async def test_dbos_operation_backend_registers_novel_id_generically(dbos: DBOS) -> None:
@@ -2575,6 +2746,7 @@ async def test_unwrap_recorded_tool_call_result_handles_both_generations() -> No
     assert unwrap_recorded_tool_call_result('raw recorded output') == 'raw recorded output'
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_mcp_model_retry_crosses_step_without_engine_retries(
     dbos: DBOS, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2644,6 +2816,7 @@ async def test_dbos_dynamic_tool_model_retry_crosses_step_without_engine_retries
     assert calls == 2
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_mcp_step_rejects_enqueue_in_workflow(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
     """The MCP step path guards enqueue too: a `process_tool_call=` hook receives the run context."""
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='enqueue_mcp')
@@ -2717,6 +2890,379 @@ class DBOSStepProgressEvent(CustomEvent, name='dbos_step_progress'):
     label: str
 
 
+@dataclass(kw_only=True)
+class DBOSDecisionEvent(CapabilityEvent, namespace='dbos_test', name='decision', dispatch='immediate'):
+    decided: bool = False
+    label: str = ''
+
+
+@pytest.mark.subprocess(reason='Import isolation requires removing private SDK attributes in a fresh interpreter.')
+def test_dbos_import_without_step_reservation_internals() -> None:
+    script = """
+from importlib import import_module
+
+for module_name, name in (
+    ('dbos._context', 'snapshot_step_context'),
+    ('dbos._core', 'run_step_async'),
+    ('dbos._dbos', '_get_dbos_instance'),
+):
+    delattr(import_module(module_name), name)
+
+import_module('pydantic_ai.durable_exec.dbos')
+"""
+    env: dict[str, str] = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    result = subprocess.run([sys.executable, '-c', script], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+async def test_dbos_parallel_immediate_events_keep_emission_step_order(dbos: DBOS) -> None:
+    first_emitted = asyncio.Event()
+    second_listener_finished = asyncio.Event()
+    handled: list[tuple[str, int]] = []
+    observed: list[str] = []
+
+    class Decisions(Capability[object]):
+        async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+            if isinstance(event, DBOSDecisionEvent):
+                if event.label == 'A':
+                    first_emitted.set()
+                    await second_listener_finished.wait()
+                    await asyncio.sleep(0)
+                else:
+                    second_listener_finished.set()
+
+    decisions = Decisions(id='parallel_decisions')
+
+    @decisions.tool
+    async def first(ctx: RunContext[object]) -> str:
+        await ctx.emit(DBOSDecisionEvent(label='A'))
+        return 'first'
+
+    @decisions.tool
+    async def second(ctx: RunContext[object]) -> str:
+        await first_emitted.wait()
+        await ctx.emit(DBOSDecisionEvent(label='B'))
+        return 'second'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                assert DBOS.step_id is not None
+                handled.append((event.label, DBOS.step_id))
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                observed.append(event.label)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='parallel_immediate_order',
+        capabilities=[decisions, ProcessEventStream(observe), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    assert [label for label, _ in sorted(handled, key=lambda entry: entry[1])] == ['A', 'B']
+    assert [step_id for _, step_id in handled] == [4, 5]
+    assert observed == ['A', 'B']
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    for step in steps:
+        first_emitted = asyncio.Event()
+        second_listener_finished = asyncio.Event()
+        observed.clear()
+        fork = await dbos.fork_workflow_async(workflow_id, step['function_id'])
+        assert await fork.get_result() == 'done'
+        assert observed == ['A', 'B']
+
+
+@pytest.mark.parametrize('from_listener', [False, True])
+async def test_dbos_mixed_dispatch_events_keep_emission_step_order(dbos: DBOS, from_listener: bool) -> None:
+    handled: list[tuple[str, int]] = []
+    observed: list[str] = []
+
+    class EmittingCapability(Capability[object]):
+        async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+            if from_listener and isinstance(event, DBOSDecisionEvent):
+                await ctx.emit(DBOSCheckpointEvent(label='B'))
+
+    capability = EmittingCapability(id='mixed_dispatch')
+
+    @capability.tool
+    async def work(ctx: RunContext[object]) -> str:
+        await ctx.emit(DBOSDecisionEvent(label='A'))
+        if not from_listener:
+            await ctx.emit(DBOSCheckpointEvent(label='B'))
+        return 'done'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, (DBOSDecisionEvent, DBOSCheckpointEvent)):
+                assert DBOS.step_id is not None
+                handled.append((event.label, DBOS.step_id))
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, (DBOSDecisionEvent, DBOSCheckpointEvent)):
+                observed.append(event.label)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='mixed_dispatch_order',
+        capabilities=[capability, ProcessEventStream(observe), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    assert [label for label, _ in sorted(handled, key=lambda entry: entry[1])] == ['A', 'B']
+    assert observed == ['A', 'B']
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    fork = await dbos.fork_workflow_async(workflow_id, steps[-1]['function_id'])
+    assert await fork.get_result() == 'done'
+    assert observed == ['A', 'B'] * 2
+
+
+@pytest.mark.parametrize('mixed', [False, True])
+async def test_dbos_immediate_events_then_durable_steps_fork_every_step(dbos: DBOS, mixed: bool) -> None:
+    fetch_started = asyncio.Event()
+    events_handled = asyncio.Event()
+    handled: list[str] = []
+    expected: list[str] = ['A', 'B'] if mixed else ['A']
+    capability = Capability[object](id='reserved_decisions')
+
+    @DBOS.step(name='reserved_decisions.fetch')
+    async def fetch(index: int) -> int:
+        fetch_started.set()
+        if index == 0:
+            await events_handled.wait()
+        return index
+
+    @capability.tool
+    async def work(ctx: RunContext[object]) -> str:
+        await ctx.emit(DBOSDecisionEvent(label='A'))
+        if mixed:
+            await ctx.emit(DBOSCheckpointEvent(label='B'))
+        for index in range(3):
+            await fetch(index)
+        return 'done'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, (DBOSDecisionEvent, DBOSCheckpointEvent)):
+                assert ctx.tool_call_id is None
+                if event.label == 'A':
+                    await fetch_started.wait()
+                handled.append(event.label)
+                if len(handled) == len(expected):
+                    events_handled.set()
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='reserved_decisions',
+        capabilities=[capability, DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    assert handled == expected
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    for step in steps:
+        fork = await dbos.fork_workflow_async(workflow_id, step['function_id'])
+        assert await fork.get_result() == 'done'
+
+
+async def test_dbos_emitting_without_handler_keeps_journal_order(dbos: DBOS) -> None:
+    @DBOS.step(name='no_event_handler.fetch')
+    async def fetch(index: int) -> int:
+        return index
+
+    async def work(ctx: RunContext[object]) -> str:
+        await ctx.emit(DBOSStepProgressEvent(label='one'))
+        await fetch(1)
+        await fetch(2)
+        return 'done'
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='no_event_handler',
+        tools=[work],
+        capabilities=[DBOSDurability[object]()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert [(step['function_id'], step['function_name']) for step in steps] == [
+        (1, 'no_event_handler__model.request'),
+        (2, 'no_event_handler.fetch'),
+        (3, 'no_event_handler.fetch'),
+        (4, 'no_event_handler__model.request'),
+    ]
+    for step in steps:
+        fork = await dbos.fork_workflow_async(workflow_id, step['function_id'])
+        assert await fork.get_result() == 'done'
+
+
+async def test_dbos_parent_emit_inside_nested_run_keeps_own_reservation(dbos: DBOS) -> None:
+    parent_ctx: RunContext[int] | None = None
+    handled: list[tuple[str, str | None]] = []
+
+    async def work(ctx: RunContext[int]) -> str:
+        nonlocal parent_ctx
+        if ctx.deps == 0:
+            parent_ctx = ctx
+            await agent.run('nested', deps=1, run_id='inner')
+        else:
+            assert parent_ctx is not None
+            await parent_ctx.emit(DBOSStepProgressEvent(label='parent'))
+            await ctx.emit(DBOSStepProgressEvent(label='child'))
+        return 'done'
+
+    async def handler(ctx: RunContext[int], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                handled.append((event.label, ctx.run_id))
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=int,
+        name='nested_reservations',
+        tools=[work],
+        capabilities=[DBOSDurability[int](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('outer', deps=0, run_id='outer')).output
+
+    for _ in range(2):
+        handled.clear()
+        assert await run_workflow() == 'done'
+        assert sorted(handled) == [('child', 'inner'), ('parent', 'outer')]
+
+
+async def test_dbos_emission_handler_waits_for_immediate_listeners(dbos: DBOS) -> None:
+    handled: list[bool] = []
+    observed: list[bool] = []
+
+    class Decisions(AbstractCapability[object]):
+        id = 'decisions'
+
+        async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+            if isinstance(event, DBOSDecisionEvent):
+                await asyncio.sleep(0)
+                event.decided = True
+
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            event = DBOSDecisionEvent()
+            for _ in range(3):
+                await ctx.emit(event)
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                handled.append(event.decided)
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                observed.append(event.decided)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='immediate_emission',
+        capabilities=[Decisions(), ProcessEventStream(observe), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+    assert handled == [True] * 3
+    assert observed == [True] * 3
+
+
+@pytest.mark.parametrize('from_tool', [False, True])
+async def test_dbos_caught_immediate_listener_error_keeps_buffered_event(dbos: DBOS, from_tool: bool) -> None:
+    handled: list[DBOSDecisionEvent] = []
+    fail_next = False
+
+    async def emit_events(ctx: RunContext[object]) -> None:
+        nonlocal fail_next
+        event = DBOSDecisionEvent()
+        if not from_tool:
+            # Before a stream exists, a successful emission of the same object is still queued.
+            await ctx.emit(event)
+        fail_next = True
+        with pytest.raises(RuntimeError, match='listener failed'):
+            await ctx.emit(event)
+
+    class Decisions(Capability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            if not from_tool:
+                await emit_events(ctx)
+
+        async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+            if isinstance(event, DBOSDecisionEvent):
+                if fail_next:
+                    await asyncio.sleep(0)
+                    raise RuntimeError('listener failed')
+                event.decided = True
+
+    capability = Decisions(id='caught_decisions')
+
+    @capability.tool
+    async def work(ctx: RunContext[object]) -> str:
+        if from_tool:
+            await emit_events(ctx)
+        return 'done'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                handled.append(event)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='caught_immediate_error',
+        capabilities=[capability, DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+    assert len(handled) == (1 if from_tool else 2)
+
+
 async def test_dbos_workflow_level_emit_reaches_durable_handler(dbos: DBOS) -> None:
     """A capability event emitted at workflow level reaches the durability handler's own step."""
     seen: list[str] = []
@@ -2748,7 +3294,158 @@ async def test_dbos_workflow_level_emit_reaches_durable_handler(dbos: DBOS) -> N
     assert seen == ['start']
 
 
-async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
+@pytest.mark.parametrize('wrapped', [False, True])
+async def test_dbos_emitted_events_precede_tool_steps_on_replay(dbos: DBOS, wrapped: bool) -> None:
+    handled: list[str] = []
+    observed: list[str] = []
+    listened: list[str] = []
+    handled_all = asyncio.Event()
+    step_calls: list[int] = []
+
+    class Listener(Capability[object]):
+        async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+            if isinstance(event, DBOSStepProgressEvent):
+                listened.append(event.label)
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                assert ctx.tool_call_id is None
+                handled.append(event.label)
+                if len(handled) == 3:
+                    handled_all.set()
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                observed.append(event.label)
+
+    @DBOS.step(name='emitted_event_order.record')
+    async def record(index: int) -> None:
+        # The live step yields until the consumer handles every emission. On replay this wait
+        # disappears, exposing any race between handler steps and the tool's second step.
+        await handled_all.wait()
+        step_calls.append(index)
+
+    async def work(ctx: RunContext[object]) -> str:
+        event = DBOSStepProgressEvent(label='progress')
+        for _ in range(3):
+            await ctx.emit(event)
+        await record(1)
+        await record(2)
+        await record(3)
+        return 'done'
+
+    durability = DBOSDurability[object](event_stream_handler=handler)
+    capabilities: list[AbstractCapability[object]] = [Listener(), ProcessEventStream(observe)]
+    capabilities.append(WrapperCapability(durability) if wrapped else durability)
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='emitted_event_order',
+        tools=[work],
+        capabilities=capabilities,
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    for step in steps:
+        observed.clear()
+        listened.clear()
+        fork = await dbos.fork_workflow_async(workflow_id, step['function_id'])
+        assert await fork.get_result() == 'done'
+        assert observed == ['progress'] * 3
+        assert listened == ['progress'] * 3
+    assert [step['function_name'] for step in steps] == [
+        'emitted_event_order__model.request_stream',
+        *['emitted_event_order__event_stream_handler'] * 4,
+        *['emitted_event_order.record'] * 3,
+        'emitted_event_order__event_stream_handler',
+        'emitted_event_order__model.request_stream',
+    ]
+
+
+async def test_dbos_emit_then_wait_delivers_to_both_handlers(dbos: DBOS) -> None:
+    delivered = asyncio.Event()
+    handled: list[str] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                assert ctx.run_step == 1
+                handled.append(event.label)
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                delivered.set()
+
+    async def work(ctx: RunContext[object]) -> str:
+        await ctx.emit(DBOSStepProgressEvent(label='live'))
+        await delivered.wait()
+        return 'done'
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='emit_then_wait',
+        tools=[work],
+        capabilities=[ProcessEventStream(observe), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+    assert handled == ['live']
+
+
+@pytest.mark.parametrize('error_type', [RuntimeError, asyncio.CancelledError])
+async def test_dbos_emission_handler_cleanup(dbos: DBOS, error_type: type[BaseException]) -> None:
+    fail = True
+    handled: list[str] = []
+
+    class EmittingCapability(AbstractCapability[object]):
+        id = 'cleanup_emitter'
+
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            await ctx.emit(DBOSCheckpointEvent(label='start'))
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        nonlocal fail
+        async for event in stream:
+            if isinstance(event, DBOSCheckpointEvent):
+                if fail:
+                    fail = False
+                    raise error_type('handler stopped')
+                handled.append(event.label)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='emission_cleanup',
+        capabilities=[EmittingCapability(), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    with pytest.raises(error_type, match='handler stopped'):
+        await run_workflow()
+    assert await run_workflow() == 'done'
+    assert handled == ['start']
+
+
+@pytest.mark.parametrize('durable_handler', [False, True])
+async def test_dbos_step_emit_is_allowed(dbos: DBOS, durable_handler: bool) -> None:
     """`ctx.emit()` from inside a step is allowed, unlike `ctx.enqueue()`.
 
     Enqueueing is rejected because a replayed step drops the message and changes what the model
@@ -2759,6 +3456,7 @@ async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
     process killed mid-workflow.
     """
     observed: list[str] = []
+    handled: list[str] = []
 
     @DBOS.step()
     async def record(label: str) -> str:
@@ -2775,12 +3473,20 @@ async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
             if isinstance(event, DBOSStepProgressEvent):
                 observed.append(event.label)
 
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                handled.append(event.label)
+
     agent = Agent(
         TestModel(),
         deps_type=object,
         name='dbos_step_emit',
         tools=[emitter],
-        capabilities=[ProcessEventStream(observe), DBOSDurability[object]()],
+        capabilities=[
+            ProcessEventStream(observe),
+            DBOSDurability[object](event_stream_handler=handler if durable_handler else None),
+        ],
     )
 
     @DBOS.workflow()
@@ -2790,6 +3496,7 @@ async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
     await run_workflow()
 
     assert observed == ['one']
+    assert handled == (['one'] if durable_handler else [])
 
 
 async def test_dbos_non_streaming_model_request_rejects_enqueue(dbos: DBOS) -> None:
@@ -2856,6 +3563,60 @@ async def test_dbos_step_wrapped_tool_rejects_cancel_in_workflow(dbos: DBOS) -> 
         await agent.run('run')
 
 
+async def test_dbos_step_wrapped_sub_agent_self_cancel_is_a_failed_tool_return(dbos: DBOS) -> None:
+    """A sub-agent that cancels itself inside a step-wrapped (dynamic) tool fails that tool call, as it does in-process.
+
+    The tool-execute hook around the step sees the `RunCancelled`, with its message only: run state
+    does not cross the durable boundary.
+    """
+    sub_agent = Agent(TestModel(), name='dbos_self_cancelling_sub_agent')
+
+    @sub_agent.tool
+    async def stop(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        return 'discarded'
+
+    hook_errors: list[str] = []
+
+    async def record(
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
+    ) -> Any:
+        assert isinstance(error, RunCancelled)
+        hook_errors.append(
+            f'{type(error).__name__}: run_id={error.run_id is not None}, '
+            f'messages={len(error.all_messages())}, requests={error.usage.requests}'
+        )
+        raise error
+
+    async def delegate() -> str:
+        return (await sub_agent.run('stop')).output
+
+    agent = Agent(
+        TestModel(),
+        name='dbos_sub_agent_cancel',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([delegate]), id='delegate_dynamic')],
+        capabilities=[Hooks(tool_execute_error=record), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> list[str]:
+        result = await agent.run('delegate')
+        return [
+            f'{part.outcome}: {part.content}'
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+    assert await run_workflow() == snapshot(['failed: The sub-agent run was cancelled: The agent run was cancelled.'])
+    assert hook_errors == snapshot(['RunCancelled: run_id=False, messages=0, requests=0'])
+
+
 async def test_dbos_plain_tool_cancel_works_in_workflow(dbos: DBOS) -> None:
     """A plain function tool is NOT step-wrapped under DBOS: it runs at workflow level, where
     `cancel()` is live and replay-consistent (workflow-level code re-executes on recovery),
@@ -2914,6 +3675,7 @@ async def test_dbos_dynamic_get_tools_rejects_enqueue_in_workflow(dbos: DBOS) ->
     )
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_mcp_get_tools_and_instructions_reject_enqueue_in_workflow(
     dbos: DBOS, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3535,7 +4297,7 @@ def test_dbos_durability_get_ordering() -> None:
 
     durability = DBOSDurability()
     ordering = durability.get_ordering()
-    assert ordering == CapabilityOrdering(position='innermost')
+    assert ordering == CapabilityOrdering(position='innermost', wrapped_by=(ModelFallback,))
 
 
 def test_dbos_durability_get_serialization_name() -> None:
@@ -3554,7 +4316,7 @@ async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -
 
 
 async def test_dbos_durability_streaming_in_workflow(dbos: DBOS) -> None:
-    """`ProcessEventStream` receives captured model events in workflow code."""
+    """`ProcessEventStream` receives model events replayed from the step's final response in workflow code."""
     events_in_step: list[tuple[AgentStreamEvent, bool]] = []
 
     async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -3597,7 +4359,7 @@ async def _chunks_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> As
 
 
 async def test_dbos_durability_process_event_stream_fires_workflow_side(dbos: DBOS) -> None:
-    """ProcessEventStream sees the real captured events replayed in the workflow."""
+    """ProcessEventStream sees the step's final response replayed in the workflow, one event per part."""
 
     events_received: list[AgentStreamEvent] = []
 
@@ -3621,12 +4383,8 @@ async def test_dbos_durability_process_event_stream_fires_workflow_side(dbos: DB
     output = await run_durable_agent()
     assert output == 'Streamed response'
 
-    delta_events = [
-        e.delta.content_delta
-        for e in events_received
-        if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
-    ]
-    assert delta_events == ['ed ', 'response']
+    model_events = [e for e in events_received if isinstance(e, (PartStartEvent, PartDeltaEvent))]
+    assert model_events == snapshot([PartStartEvent(index=0, part=TextPart(content='Streamed response'))])
 
 
 async def test_dbos_durability_buffers_caller_streams(dbos: DBOS) -> None:
@@ -3637,21 +4395,19 @@ async def test_dbos_durability_buffers_caller_streams(dbos: DBOS) -> None:
     )
 
     @DBOS.workflow()
-    async def run_durable_streams() -> tuple[list[str], str, list[str]]:
+    async def run_durable_streams() -> tuple[list[str], str, list[PartStartEvent | PartDeltaEvent]]:
         async with agent.run_stream('Hello') as stream:
             chunks = [chunk async for chunk in stream.stream_text(debounce_by=None)]
             output = await stream.get_output()
 
         async with agent.run_stream_events('Hello') as event_stream:
             events = [event async for event in event_stream]
-        deltas = [
-            event.delta.content_delta
-            for event in events
-            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
-        ]
-        return chunks, output, deltas
+        model_events = [event for event in events if isinstance(event, (PartStartEvent, PartDeltaEvent))]
+        return chunks, output, model_events
 
-    assert await run_durable_streams() == (['hello ', 'hello world'], 'hello world', ['hello ', 'world'])
+    assert await run_durable_streams() == snapshot(
+        (['hello world'], 'hello world', [PartStartEvent(index=0, part=TextPart(content='hello world'))])
+    )
 
 
 def test_dbos_durability_event_stream_handler_step_config(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3772,12 +4528,10 @@ def test_dbos_durability_without_handler_does_not_wrap_event_stream() -> None:
     assert DBOSDurability().has_wrap_run_event_stream is False
 
 
-async def test_dbos_durability_runtime_handler_receives_buffered_events(dbos: DBOS) -> None:
+async def test_dbos_durability_runtime_handler_receives_replayed_events(dbos: DBOS) -> None:
     """A per-run `event_stream_handler` passed to `agent.run()` inside a DBOS workflow
 
-    receives the events captured inside the step (rather than being silently dropped).
-    The buffered replay preserves real granular deltas — the per-run handler sees the
-    same multi-chunk stream the construction-time handler would see.
+    receives the model events replayed from the step's final response (rather than being silently dropped).
     """
 
     events_received: list[AgentStreamEvent] = []
@@ -3801,14 +4555,9 @@ async def test_dbos_durability_runtime_handler_receives_buffered_events(dbos: DB
     output = await run_durable_agent()
     assert output == 'Streamed response'
 
-    # The runtime handler got real granular deltas (one PartDeltaEvent per chunk),
-    # not a single synthetic delta with the full text.
-    delta_events = [
-        e.delta.content_delta
-        for e in events_received
-        if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
-    ]
-    assert delta_events == ['ed ', 'response']
+    # The step's live deltas stay out of the workflow: the per-run handler sees each part once, complete.
+    model_events = [e for e in events_received if isinstance(e, (PartStartEvent, PartDeltaEvent))]
+    assert model_events == snapshot([PartStartEvent(index=0, part=TextPart(content='Streamed response'))])
 
 
 async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
@@ -3832,6 +4581,7 @@ async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
     assert isinstance(bound._toolsets_by_id['my_mcp'], DBOSMCPToolset)  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_durability_mcp_operations_run_in_steps(dbos: DBOS) -> None:
     seen_instructions: list[str] = []
 
@@ -3886,7 +4636,7 @@ async def test_dbos_durability_mcp_operations_run_in_steps(dbos: DBOS) -> None:
     # The instructions must actually reach the model, not just produce a step: they're captured
     # during `__aenter__`, and DBOS's `enter-never` lifecycle means the step itself has to connect
     # the server. Asserting only the step name let a silent `None` through.
-    assert 'Be a helpful assistant.' in seen_instructions
+    assert any('Be a helpful assistant.' in instructions for instructions in seen_instructions)
 
 
 async def test_dbos_durability_rejects_idless_mcp_toolset(dbos: DBOS) -> None:
@@ -4112,6 +4862,7 @@ async def test_dbos_durability_ignores_per_tool_metadata(dbos: DBOS, metadata: d
     assert 'dbos_metadata_ignored__dynamic_toolset__dyn.call_tool' in step_names
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_durability_mcp_tool_metadata_false_is_rejected(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
     """MCP tools perform I/O and cannot opt out of their durable DBOS step."""
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='dbos_mcp_opt_out')
@@ -4170,6 +4921,7 @@ def test_dbos_durability_bare_capability_func_requires_explicit_wrapper(dbos: DB
         )
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_durability_dynamic_capability_mcp_runs_in_steps(dbos: DBOS) -> None:
     def call_then_answer(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
@@ -4543,8 +5295,8 @@ async def test_dbos_cancellation_rejects_enqueue(dbos: DBOS) -> None:
 async def test_dbos_durability_streaming_continuation_chain_in_workflow(dbos: DBOS) -> None:
     """A streamed suspended → complete chain is stitched across per-segment DBOS steps.
 
-    `ProcessEventStream` receives each captured segment in workflow code, and the
-    final response merges both segments' text with usage summed once.
+    `ProcessEventStream` receives each segment's final response in workflow code, one event per
+    part, and the final response merges both segments' text with usage summed once.
     """
     model = ScriptedContinuationModel(
         segments=[
@@ -4595,9 +5347,7 @@ async def test_dbos_durability_streaming_continuation_chain_in_workflow(dbos: DB
         for event in events_received
         if isinstance(event, (PartStartEvent, PartDeltaEvent))
     ]
-    assert indices == snapshot(
-        [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartStartEvent', 1), ('PartDeltaEvent', 1)]
-    )
+    assert indices == snapshot([('PartStartEvent', 0), ('PartStartEvent', 1)])
     assert model.request_stream_calls == 2
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
@@ -4637,11 +5387,419 @@ async def test_dbos_durability_continuation_resume_from_history(dbos: DBOS) -> N
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    # The suspended response's 5 + 2 tokens were counted by the run that produced it, so this run counts only
+    # the continuation it requested; the completed response in history still reports the whole turn.
     assert result.usage.requests == 1
-    assert result.usage.input_tokens == 8
-    assert result.usage.output_tokens == 6
+    assert (result.usage.input_tokens, result.usage.output_tokens) == (3, 4)
+    assert (response.usage.input_tokens, response.usage.output_tokens) == (8, 6)
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert model.request_calls == 1
+
+
+async def test_dbos_durability_batch_model_in_workflow(dbos: DBOS) -> None:
+    """`BatchModelRequests` works under `DBOSDurability` through the continuation loop alone.
+
+    The submitting request and every later batch check each run as their own model-request
+    step, with the batching model's `continuation_delay` waits between them in workflow code. The
+    suspended response is replaced by each check and then by the decoded result, so the run
+    ends with one complete response counted as one request.
+    """
+    wrapped = SlowBatchTestModel(pending_checks=2)
+    agent = Agent(
+        wrapped,
+        name='durability_batch',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
+    )
+
+    results: list[AgentRunResult[str]] = []
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await agent.run('go')
+        results.append(result)
+        return result.output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_durable_agent()
+
+    assert output == 'success (no tool calls)'
+    result = results[0]
+    assert [type(message).__name__ for message in result.all_messages()] == ['ModelRequest', 'ModelResponse']
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    assert result.usage.requests == 1
+    assert len(wrapped.created) == 1
+    # Two checks find the batch in progress, the third finds it ended.
+    assert wrapped.status_checks == 3
+    # One step submits the request, then one step per check.
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert step_names.count('durability_batch__model.request') == 4
+    # The waits between checks are durable sleep steps.
+    assert step_names.count('DBOS.sleep') == 3
+
+
+class _ScopedModel(WrapperModel):
+    """Records being entered and exited, and whether it was entered when it served a request."""
+
+    def __init__(self, wrapped: Model, events: list[object]) -> None:
+        super().__init__(wrapped)
+        self.events = events
+        self.entered = False
+
+    async def __aenter__(self) -> _ScopedModel:
+        self.events.append('enter')
+        self.entered = True
+        return await super().__aenter__()
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        self.events.append('exit')
+        self.entered = False
+        return await super().__aexit__(*args)
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        self.events.append(('request', self.entered))
+        return await super().request(messages, model_settings, model_request_parameters)
+
+
+@dataclass
+class _Scoped(AbstractCapability[Any]):
+    events: list[object]
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return _ScopedModel(model, self.events)
+
+
+async def test_dbos_durability_enters_a_capabilitys_model_wrapper_around_each_request_step(dbos: DBOS) -> None:
+    """The step that sends the request enters the wrapper; the workflow's copy only answers questions."""
+    events: list[object] = []
+    agent = Agent(TestModel(), name='durability_scoped_wrapper', capabilities=[_Scoped(events), DBOSDurability()])
+
+    @agent.tool_plain
+    def get_city() -> str:
+        return 'Paris'
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Where?')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        await run_durable_agent()
+    assert events == ['enter', ('request', True), 'exit', 'enter', ('request', True), 'exit']
+
+
+async def test_dbos_durability_batch_model_streams_its_result_to_an_event_stream_handler(dbos: DBOS) -> None:
+    """A streamed request waits for its batch in its steps as `request` does, then streams the result's events."""
+    wrapped = SlowBatchTestModel(pending_checks=2)
+    events: list[AgentStreamEvent] = []
+
+    async def handle(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        events.extend([event async for event in stream])
+
+    agent = Agent(
+        wrapped,
+        name='durability_batch_stream',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('go', event_stream_handler=handle)).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        assert await run_durable_agent() == 'success (no tool calls)'
+
+    assert [event.part for event in events if isinstance(event, PartStartEvent)] == [
+        TextPart(content='success (no tool calls)')
+    ]
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 3)
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps].count('DBOS.sleep') == 3
+
+
+async def test_dbos_durability_batch_model_resume_from_history(dbos: DBOS) -> None:
+    """A run resumed from history ending in a pending batch response waits for that same batch.
+
+    The pending response crosses the step boundary as the last request message, so each step
+    checks the batch it records instead of submitting the request again.
+    """
+    wrapped = SlowBatchTestModel(pending_checks=1)
+    # A request batched before the run, for example by another process.
+    batch_model = BatchPool(**FAST_BATCH_SETTINGS).wrap(wrapped)
+    agent = Agent(
+        wrapped,
+        name='durability_batch_resume',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
+    )
+
+    request = ModelRequest(parts=[UserPromptPart(content='go')])
+    pending = await batch_model.request([request], None, ModelRequestParameters())
+    assert pending.state == 'suspended'
+    assert len(wrapped.created) == 1
+
+    results: list[AgentRunResult[str]] = []
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await agent.run(message_history=[request, pending])
+        results.append(result)
+        return result.output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_durable_agent()
+
+    assert output == 'success (no tool calls)'
+    response = results[0].all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    # No second batch: both steps checked the batch the history recorded.
+    assert len(wrapped.created) == 1
+    assert wrapped.status_checks == 2
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert step_names.count('durability_batch_resume__model.request') == 2
+
+
+async def test_dbos_durability_batch_model_withdraws_a_pending_response_a_hook_rejects(dbos: DBOS) -> None:
+    """A pending batch request a hook rejects is withdrawn through a cancellation step, which cancels its batch."""
+    wrapped = SlowBatchTestModel(pending_checks=10**6)
+
+    @dataclass
+    class RejectPendingOnce(AbstractCapability[object]):
+        rejected: bool = False
+
+        async def after_model_request(
+            self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if response.state == 'suspended' and not self.rejected:
+                self.rejected = True
+                raise ModelRetry('Not this one.')
+            return response
+
+    agent = Agent(
+        wrapped,
+        name='durability_batch_reject',
+        output_type=[str, PendingModelResponse],
+        capabilities=[RejectPendingOnce(), BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> bool:
+        result = await agent.run('go')
+        return isinstance(result.output, PendingModelResponse)
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_durable_agent()
+
+    assert len(wrapped.created) == 2
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'request_stream'])
+async def test_dbos_durability_batch_model_withdraws_a_pending_response_whose_wrapper_fails_to_exit(
+    dbos: DBOS, stream: bool
+) -> None:
+    """A step whose capability wrapper fails to close after the request returned withdraws the pending request."""
+    wrapped = SlowBatchTestModel(pending_checks=10**6)
+
+    class FailingExit(WrapperModel):
+        async def __aexit__(self, *args: Any) -> bool | None:
+            await super().__aexit__(*args)
+            raise RuntimeError('teardown failed')
+
+        @asynccontextmanager
+        async def request_stream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[StreamedResponse]:
+            async with super().request_stream(*args, **kwargs) as streamed:
+                yield streamed
+            raise RuntimeError('teardown failed')
+
+    @dataclass
+    class WrapWithFailingExit(AbstractCapability[object]):
+        def get_wrapper_model(self, model: Model) -> Model | None:
+            return FailingExit(model)
+
+    agent = Agent(
+        wrapped,
+        name='durability_batch_failing_exit',
+        output_type=[str, PendingModelResponse],
+        capabilities=[WrapWithFailingExit(), BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
+    )
+
+    async def handle_events(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> None:
+        await agent.run('go', event_stream_handler=handle_events if stream else None)
+
+    with SetWorkflowID(str(uuid.uuid4())), pytest.raises(RuntimeError, match='teardown failed'):
+        await run_durable_agent()
+
+    assert len(wrapped.created) == 1
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+async def test_dbos_durability_leaves_a_non_batch_suspended_response_running_when_its_wrapper_fails_to_exit(
+    dbos: DBOS,
+) -> None:
+    """A step whose wrapper fails to close leaves another model's suspended job running, as the core would."""
+    model = ScriptedContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['Working'], state='suspended', provider_response_id='job', input_tokens=1, output_tokens=1
+            )
+        ]
+    )
+
+    class FailingExit(WrapperModel):
+        async def __aexit__(self, *args: Any) -> bool | None:
+            await super().__aexit__(*args)
+            raise RuntimeError('teardown failed')
+
+    @dataclass
+    class WrapWithFailingExit(AbstractCapability[object]):
+        def get_wrapper_model(self, model: Model) -> Model | None:
+            return FailingExit(model)
+
+    agent = Agent(
+        model,
+        name='durability_suspended_failing_exit',
+        capabilities=[WrapWithFailingExit(), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> None:
+        await agent.run('go')
+
+    with SetWorkflowID(str(uuid.uuid4())), pytest.raises(RuntimeError, match='teardown failed'):
+        await run_durable_agent()
+
+    assert model.request_calls == 1
+    assert model.cancelled == []
+
+
+async def test_dbos_durability_batch_model_recovery_does_not_submit_again(dbos: DBOS) -> None:
+    """Re-executing the workflow, as recovery does, replays the recorded submission and checks instead of repeating them."""
+    wrapped = SlowBatchTestModel(pending_checks=1)
+    agent = Agent(
+        wrapped,
+        name='durability_batch_recovery',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('go')).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_durable_agent()
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 2)
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    handle = await DBOS.fork_workflow_async(wfid, len(steps))
+    assert await handle.get_result() == output
+    # The fork runs the last step, the check that found the batch ended, again: as every request waiting on the batch
+    # had read its results, they're no longer cached, so the check asks the provider again.
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 3)
+
+
+class _DelayedContinuationModel(ScriptedContinuationModel):
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        return 0.01
+
+
+def _delayed_continuation_model() -> _DelayedContinuationModel:
+    return _DelayedContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['The answer '], state='suspended', provider_response_id='cont1', input_tokens=5, output_tokens=2
+            ),
+            scripted_response(texts=['is 42.'], provider_response_id='cont2', input_tokens=3, output_tokens=4),
+        ]
+    )
+
+
+async def test_dbos_durability_continuation_delay_is_a_durable_sleep(dbos: DBOS) -> None:
+    """The wait before re-polling a suspended segment is a recorded `DBOS.sleep` step.
+
+    Recovery then skips a completed wait instead of sleeping it again.
+    """
+    agent = Agent(_delayed_continuation_model(), name='durability_continuation_delay', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await agent.run('go')
+        return result.output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_durable_agent()
+
+    assert output == 'The answer is 42.'
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == [
+        'durability_continuation_delay__model.request',
+        'DBOS.sleep',
+        'durability_continuation_delay__model.request',
+    ]
+
+
+async def test_dbos_durability_continuation_delay_outside_workflow_and_in_step(dbos: DBOS) -> None:
+    """Outside workflow code (no workflow, or a nested run inside a step) the wait is a plain sleep.
+
+    DBOS rejects its durable sleep there, and a nested run inside a step inherits the workflow-level registration.
+    """
+    agent = Agent(
+        _delayed_continuation_model(), name='durability_continuation_delay_outside', capabilities=[DBOSDurability()]
+    )
+    assert (await agent.run('go')).output == 'The answer is 42.'
+
+    @DBOS.step()
+    async def nested_run() -> str:
+        return (await Agent(_delayed_continuation_model()).run('go')).output
+
+    outer = Agent(
+        TestModel(call_tools=['delegate']), name='durability_continuation_delay_nested', capabilities=[DBOSDurability()]
+    )
+
+    @outer.tool_plain
+    async def delegate() -> str:
+        return await nested_run()
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await outer.run('go')
+        return result.output
+
+    assert await run_durable_agent() == snapshot('{"delegate":"The answer is 42."}')
+
+
+async def test_dbos_agent_continuation_delay_is_a_durable_sleep(dbos: DBOS) -> None:
+    """The deprecated `DBOSAgent` wrapper records the wait between continuation polls as a `DBOS.sleep` step too."""
+    dbos_agent = DBOSAgent(Agent(_delayed_continuation_model(), name='dbos_agent_continuation_delay'))  # pyright: ignore[reportDeprecated]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        result = await dbos_agent.run('go')
+
+    assert result.output == 'The answer is 42.'
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == [
+        'dbos_agent_continuation_delay__model.request',
+        'DBOS.sleep',
+        'dbos_agent_continuation_delay__model.request',
+    ]
 
 
 async def test_dbos_agent_run_sync_from_sync_tool_is_rejected():
@@ -4658,3 +5816,329 @@ async def test_dbos_agent_run_sync_from_sync_tool_is_rejected():
 
     with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
         await outer_agent.run('delegate')
+
+
+@pytest.mark.parametrize('deprecated_agent', [False, True])
+async def test_dbos_mcp_server_keeps_one_session_per_workflow(dbos: DBOS, deprecated_agent: bool) -> None:
+    """A statically attached `MCPToolset` connects once per workflow, not once per step (#8458).
+
+    The first step that needs the server connects it — inside a step, where DBOS retries a failed
+    connection — and the workflow holds the session for the steps that follow, so `cache_tools`
+    serves the later discovery steps and the `tools/list` the MCP SDK issues before a call finds a
+    warm session. Both APIs get it: the deprecated `DBOSAgent` builds its own MCP steps, and until
+    it is removed a `DBOSAgent` user should not be paying for a session per step.
+
+    Not a VCR test: an in-process server is what makes the round trips countable server-side, which
+    is what attributes the MCP SDK's own pre-call listing correctly.
+    """
+    from .counting_mcp import counting_mcp_server, two_echo_calls_model
+
+    server, counts = counting_mcp_server()
+    toolset = MCPToolset(server, id=f'session_mcp_{deprecated_agent}')
+    agent = Agent(
+        two_echo_calls_model(),
+        name=f'dbos_mcp_session_{deprecated_agent}',
+        toolsets=[toolset],
+        capabilities=[] if deprecated_agent else [DBOSDurability()],
+    )
+    durable_agent = DBOSAgent(agent) if deprecated_agent else agent  # pyright: ignore[reportDeprecated]
+
+    @DBOS.workflow(name=f'mcp_session_workflow_{deprecated_agent}')
+    async def run_workflow() -> str:
+        return (await durable_agent.run('go')).output
+
+    assert await run_workflow() == 'done'
+    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    # The workflow closed the session it held; nothing keeps the server connected between runs.
+    assert not toolset.is_running
+
+
+async def test_dbos_decide_span_nests_under_chat(
+    allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire
+) -> None:
+    """A decision model's `decide` span lands under the step, under `chat`, with the request's content policy.
+
+    The step runs in the workflow's process and context, so the policy the `chat` span set reaches it directly.
+    """
+    agent = Agent(
+        ShipItDecisionModel(),
+        output_type=ShipIt,
+        name='dbos_decide',
+        capabilities=[DBOSDurability(), Instrumentation()],
+    )
+
+    @DBOS.workflow()
+    async def run_decision_agent() -> ShipIt:
+        return (await agent.run('The migration is reviewed and the tests pass.')).output
+
+    assert await run_decision_agent() == ShipIt(ship=True)
+    lineage, attributes = decide_span_lineage(capfire.exporter.exported_spans_as_dict())
+    assert lineage[:3] == snapshot(['dbos_decide__model.request', 'chat ship-it', 'invoke_agent dbos_decide'])
+    assert attributes['pydantic_ai.decision.state'] == 'The migration is reviewed and the tests pass.'
+
+
+stable_ids_agent = Agent(TestModel(), name='stable_ids_agent', capabilities=[DBOSDurability()])
+stable_ids_seen: list[tuple[str | None, str | None]] = []
+
+
+class _ProcessCrash(BaseException):
+    """Stands in for the process dying: DBOS leaves the workflow `PENDING` for recovery."""
+
+
+@stable_ids_agent.tool
+def record_ids(ctx: RunContext[object]) -> str:
+    stable_ids_seen.append((ctx.run_id, ctx.conversation_id))
+    return 'ok'
+
+
+@DBOS.workflow()
+async def stable_ids_workflow() -> list[tuple[str, str]]:
+    first = await stable_ids_agent.run('First.')
+    # Concurrent runs resolve their IDs before either starts a step.
+    results = [first, *await asyncio.gather(stable_ids_agent.run('Second.'), stable_ids_agent.run('Third.'))]
+    if len(stable_ids_seen) == 3:
+        raise _ProcessCrash
+    return [(result.run_id, result.conversation_id) for result in results]
+
+
+async def test_dbos_default_ids_survive_recovery(dbos: DBOS) -> None:
+    """Without `run_id=` or `conversation_id=`, a recovered workflow keeps the IDs its steps already saw."""
+    stable_ids_seen.clear()
+    workflow_id = f'stable-ids-{uuid.uuid4()}'
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await stable_ids_workflow()
+    seen = sorted(stable_ids_seen)
+    assert [run_id for run_id, _ in seen] == [f'{workflow_id}:1', f'{workflow_id}:3', f'{workflow_id}:3:1']
+    assert len({*seen[0], *seen[1], *seen[2]}) == 6
+
+    # Resuming the pending workflow re-executes it under the same ID, the way recovery does: model requests
+    # replay from their recorded steps, while the function tool, which runs in the workflow, runs again and
+    # sees the same IDs.
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert sorted(tuple(ids) for ids in await handle.get_result()) == seen
+    assert sorted(stable_ids_seen[3:]) == seen
+
+
+deadline_agent = Agent(TestModel(), name='deadline_agent', capabilities=[DBOSDurability()])
+deadline_seen: list[datetime | None] = []
+
+
+@deadline_agent.tool
+def record_deadline(ctx: RunContext[object]) -> str:
+    deadline_seen.append(ctx.deadline)
+    return 'ok'
+
+
+@DBOS.workflow()
+async def deadline_workflow() -> str:
+    result = await deadline_agent.run('Hello', timeout=3600)
+    if len(deadline_seen) == 1:
+        raise _ProcessCrash
+    return result.output
+
+
+async def test_dbos_deadline_survives_recovery(dbos: DBOS) -> None:
+    """The run's start time is recorded as a step, so a recovered workflow keeps its original deadline."""
+    deadline_seen.clear()
+    workflow_id = f'deadline-{uuid.uuid4()}'
+    before = datetime.now(UTC)
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await deadline_workflow()
+    [deadline] = deadline_seen
+    assert deadline is not None
+    assert before + timedelta(seconds=3600) <= deadline <= datetime.now(UTC) + timedelta(seconds=3600)
+
+    # Recovery re-executes the workflow function: the start-time step replays, so the tool, which runs in
+    # the workflow, sees the same deadline even though time has moved on.
+    await asyncio.sleep(0.01)
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert await handle.get_result() == '{"record_deadline":"ok"}'
+    assert deadline_seen == [deadline, deadline]
+
+
+step_one_selections: list[tuple[int, str | None, str | None, datetime | None]] = []
+
+
+def _record_step_one_selection(ctx: ModelSelectionContext[object]) -> str:
+    step_one_selections.append((ctx.run_step, ctx.run_id, ctx.conversation_id, ctx.deadline))
+    return 'alt'
+
+
+step_one_selector_agent = Agent(
+    'primary',
+    name='step_one_selector_agent',
+    capabilities=[
+        SelectModel(_record_step_one_selection),
+        DBOSDurability(models={'primary': _durability_fn_model, 'alt': _dbos_alt_model}),
+    ],
+)
+
+
+@DBOS.workflow()
+async def step_one_selector_workflow() -> tuple[str, str]:
+    result = await step_one_selector_agent.run('Hello', timeout=3600)
+    if len(step_one_selections) == 1:
+        raise _ProcessCrash
+    return result.run_id, result.conversation_id
+
+
+async def test_dbos_step_one_selector_sees_run_ids_and_deadline(dbos: DBOS) -> None:
+    """A step-one selector sees the run's IDs and deadline, without moving the run's steps.
+
+    They are resolved before the selector runs. A selector that runs no DBOS step of its own leaves the
+    workflow's step counter where it was, so the default run ID keeps its `function_id + 1` position and the
+    start-time step stays the run's first step, as when they were resolved after selection. Recovery replays
+    the start-time step, so the selector sees the same values again.
+    """
+    step_one_selections.clear()
+    workflow_id = f'step-one-selector-{uuid.uuid4()}'
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await step_one_selector_workflow()
+    [(run_step, run_id, conversation_id, deadline)] = step_one_selections
+    assert (run_step, run_id) == (1, f'{workflow_id}:1')
+    assert conversation_id is not None
+    assert deadline is not None
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert [(step['function_id'], step['function_name']) for step in steps] == snapshot(
+        [(1, 'step_one_selector_agent.run_start_time'), (2, 'step_one_selector_agent__model.request')]
+    )
+
+    await asyncio.sleep(0.01)
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert await handle.get_result() == (run_id, conversation_id)
+    assert step_one_selections == [step_one_selections[0]] * 2
+
+
+def _call_slow_tool_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('slow_tool')])
+
+
+timed_out_agent = Agent(
+    FunctionModel(_call_slow_tool_model_fn), name='timed_out_agent', capabilities=[DBOSDurability()]
+)
+
+
+_timed_out_run_contexts: list[RunContext[object]] = []
+
+
+@timed_out_agent.instructions
+def capture_timed_out_run_context(ctx: RunContext[object]) -> str:
+    _timed_out_run_contexts.append(ctx)
+    return 'Call the tool.'
+
+
+@timed_out_agent.tool_plain
+async def slow_tool() -> str:
+    # The deadline passes once the tool is running: expire the run as its timer would, without racing one.
+    cancellation = _timed_out_run_contexts[-1]._cancellation  # pyright: ignore[reportPrivateUsage]
+    assert cancellation is not None
+    cancellation.expire()
+    await asyncio.Event().wait()
+    return 'never reached'  # pragma: no cover
+
+
+@DBOS.workflow()
+async def timed_out_workflow() -> list[str]:
+    try:
+        await timed_out_agent.run('Hello', timeout=3600)
+    except RunTimedOut as exc:
+        return [type(message).__name__ for message in exc.all_messages()]
+    return []  # pragma: no cover
+
+
+async def test_dbos_timeout_in_workflow(dbos: DBOS) -> None:
+    assert await timed_out_workflow() == ['ModelRequest', 'ModelResponse', 'ModelRequest']
+
+
+async def test_dbos_timeout_outside_workflow(dbos: DBOS) -> None:
+    """Outside a workflow the capability is transparent: the run's own clock starts the deadline."""
+    with pytest.raises(RunTimedOut):
+        await timed_out_agent.run('Hello', timeout=0)
+
+
+def _late_stream_failure_agent(name: str, *, fail_after_output: bool, answered: list[str]) -> Agent[object, str]:
+    """An agent whose model fails partway through a stream, or before it, with a `ModelFallback` to another model."""
+
+    async def primary(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        if fail_after_output:
+            yield 'partial'
+        raise ModelAPIError('primary', 'stream broke')
+
+    async def backup(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        answered.append('backup')
+        yield 'from backup'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _event in stream:
+            pass
+
+    return Agent(
+        FunctionModel(stream_function=primary, model_name='primary'),
+        deps_type=object,
+        name=name,
+        capabilities=[
+            ModelFallback('backup'),
+            DBOSDurability(
+                models={'backup': FunctionModel(stream_function=backup, model_name='backup')},
+                event_stream_handler=handler,
+            ),
+        ],
+    )
+
+
+async def test_dbos_stream_failing_after_output_does_not_fall_back(dbos: DBOS) -> None:
+    """A stream that fails after producing output in its step is raised, not fallen back from, and its usage counts.
+
+    The step delivers the output to the event handler before the workflow sees the stream, as outside durable
+    execution, where only a stream that fails before its first event falls back.
+    """
+    answered: list[str] = []
+    agent = _late_stream_failure_agent('dbos_late_stream_failure', fail_after_output=True, answered=answered)
+
+    @DBOS.workflow()
+    async def run_workflow() -> RunUsage:
+        usage = RunUsage()
+        with pytest.raises(ModelAPIError, match='stream broke'):
+            await agent.run('hello', usage=usage)
+        return usage
+
+    usage = await run_workflow()
+    assert answered == []
+    # As without durable execution: the interrupted response is committed with its usage.
+    assert usage == RunUsage(input_tokens=50, output_tokens=1, requests=1)
+
+
+async def test_dbos_stream_failing_before_output_falls_back(dbos: DBOS) -> None:
+    """A stream that fails before producing any output still falls back to the next model."""
+    answered: list[str] = []
+    agent = _late_stream_failure_agent('dbos_early_stream_failure', fail_after_output=False, answered=answered)
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('hello')).output
+
+    assert await run_workflow() == 'from backup'
+    assert answered == ['backup']
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        ModelAPIError('primary', 'stream broke'),
+        ModelHTTPError(503, 'primary', 'overloaded'),
+        ModelRequestTimeout('primary', 5),
+    ],
+    ids=lambda error: type(error).__name__,
+)
+def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError) -> None:
+    """A step that failed after its stream produced output is raised on replay with what the stream produced.
+
+    DBOS records a step's error by pickling it and raises the unpickled copy when a recovered workflow replays the
+    step, so the run treats it as a stream that failed after it started, as the run that recorded it did.
+    """
+    partial = ModelResponse(parts=[TextPart('partial')], usage=RequestUsage(input_tokens=5, output_tokens=1))
+    mark_streamed_before_failing(error, partial)
+    recorded, serialization = serialize_exception(error, None, DBOSDefaultSerializer)
+    replayed = deserialize_exception(recorded, serialization, DBOSDefaultSerializer)
+    assert type(replayed) is type(error)
+    assert streamed_before_failing(replayed) == partial

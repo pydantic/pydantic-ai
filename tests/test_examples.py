@@ -1,23 +1,30 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import importlib
 import json
 import os
 import re
 import shutil
 import ssl
+import subprocess
 import sys
-from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
-from contextlib import asynccontextmanager
+import time
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Sequence
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from inspect import FrameInfo
+from datetime import timedelta
+from importlib.util import find_spec
+from inspect import FrameInfo, unwrap
 from pathlib import Path
+from textwrap import indent
 from typing import Any
 
 import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
+from dirty_equals import IsStr
 from genai_prices import UpdatePrices
 from genai_prices.data_snapshot import get_snapshot
 from pytest_examples import CodeExample, EvalExample, find_examples
@@ -27,30 +34,39 @@ from pytest_mock import MockerFixture
 from pydantic_ai import (
     AbstractToolset,
     BinaryImage,
+    Citation,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     ImageUrl,
+    MarkerCitationAnchor,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    StructuredContent,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     ToolsetTool,
     UserPromptPart,
+    WebCitationSource,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
+from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.images import ImageGenerationModel, infer_image_generation_model
 from pydantic_ai.images.test import TestImageGenerationModel
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
+from pydantic_ai.models._batch_model import BatchPool
+from pydantic_ai.models.decision import DecisionModel, UnfillableRoute, UnsureRoute
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -67,7 +83,10 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
 )
 
-from .conftest import TestEnv, try_import
+from .conftest import TestEnv, legacy_retry_prompt_part, try_import
+from .docs_model_aliases import resolve_model_aliases, restore_model_aliases
+from .function_model_prefix import TOOLS_CHANGE_MID_RUN
+from .realtime_connections import InferredConnection
 
 with try_import() as imports_successful:
     # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
@@ -84,10 +103,12 @@ code_examples: dict[str, CodeExample] = {}
 
 
 @pytest.fixture(autouse=True)
-def blockbuster_enabled(example: CodeExample) -> bool:
+def blockbuster_enabled(request: pytest.FixtureRequest) -> bool:
     """Skip the detector for pytest-examples' synchronous output-file reader."""
-    if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
-        return False
+    if 'example' in request.fixturenames:
+        example: CodeExample = request.getfixturevalue('example')
+        if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
+            return False
     return True
 
 
@@ -98,11 +119,34 @@ class ExamplesConfig(BaseExamplesConfig):
 
     def ruff_config(self) -> tuple[str, ...]:
         config = super().ruff_config()
+        config = tuple(arg for arg in config if not arg.startswith('--config='))
+        config = (*config, '--config', str(Path(__file__).parent.parent / 'pyproject.toml'))
         if self.known_first_party:  # pragma: no branch
             config = (*config, '--config', f'lint.isort.known-first-party = {self.known_first_party}')
         if self.known_local_folder:
             config = (*config, '--config', f'lint.isort.known-local-folder = {self.known_local_folder}')
         return config
+
+
+RUNNABLE_HARNESS_PAGES = frozenset({'artifact-scanning.md', 'detect-loops.md', 'memory.md'})
+"""`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
+
+
+def _is_harness_page(path: Path) -> bool:
+    root_dir = Path(__file__).parent.parent
+    return (root_dir / path).resolve().is_relative_to(root_dir / 'docs' / 'harness')
+
+
+_MOVES_CACHE_PREFIX = {
+    'dynamic_toolset.py': TOOLS_CHANGE_MID_RUN,
+    'output_functions.py': (
+        'the router hands its conversation, without its last response, to an agent with other instructions and tools'
+    ),
+    'wrap_up_near_request_limit.py': (
+        'a request-scoped prompt counts down the requests left, and the last request withdraws the function tools'
+    ),
+}
+"""Examples whose `FunctionModel` conversation moves the prompt-cache prefix on purpose, by title, with the reason."""
 
 
 def find_filter_examples() -> Iterable[ParameterSet]:
@@ -112,6 +156,9 @@ def find_filter_examples() -> Iterable[ParameterSet]:
 
     for ex in find_examples('README.md', 'docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if '.agents' in ex.path.parts:
+            continue
+        if _is_harness_page(ex.path) and ex.path.name not in RUNNABLE_HARNESS_PAGES:
+            # Written for the harness repository, which never ran them; not yet made runnable here.
             continue
         if ex.path.name == 'README.md' and (
             'pydantic_ai_harness' in ex.source or 'agent.realtime(' in ex.source or 'ClearToolResults(' in ex.source
@@ -131,7 +178,14 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 if title.endswith('.py'):
                     code_examples[title] = ex
                 test_id += f':{title}'
-            yield pytest.param(ex, id=test_id)
+            marks = (
+                [pytest.mark.subprocess(reason='the example runs Python as a real child process')]
+                if path == Path('docs/workspace.md') or title == 'mcp_client_sampling.py'
+                else []
+            )
+            if title in _MOVES_CACHE_PREFIX:
+                marks.append(pytest.mark.moves_cache_prefix(reason=_MOVES_CACHE_PREFIX[title]))
+            yield pytest.param(ex, id=test_id, marks=marks)
 
 
 @pytest.fixture
@@ -151,6 +205,29 @@ def tmp_path_cwd(tmp_path: Path):
         sys.path.remove(str(tmp_path))
 
 
+_HEAVY_IMPORTS = re.compile(r'sentence[-_]transformers|voyage', re.IGNORECASE)
+
+
+@pytest.fixture(scope='module')
+def heavy_example_imports() -> None:
+    """Import `sentence_transformers` and `voyageai` (which imports it and `torch`) once per worker.
+
+    It takes seconds, so it is shared setup rather than a cost of whichever example happens to need it first (see
+    "Test cost" in `tests/AGENTS.md`).
+    """
+    for module in ('sentence_transformers', 'voyageai'):
+        with suppress(ImportError):
+            importlib.import_module(module)
+
+
+def _prepare_heavy_imports(request: pytest.FixtureRequest, mocker: MockerFixture, example: CodeExample) -> None:
+    """Only for the examples that use them: import the heavy embedding packages, and stub the model download."""
+    if _HEAVY_IMPORTS.search(example.source):
+        request.getfixturevalue('heavy_example_imports')
+        with suppress(ModuleNotFoundError):
+            mocker.patch('sentence_transformers.SentenceTransformer')
+
+
 def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
     """Patch MCP-related symbols only if the underlying modules are importable in this env."""
     try:
@@ -165,7 +242,7 @@ def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
         pass
 
 
-class MockRealtimeConnection(RealtimeConnection):
+class MockRealtimeConnection(InferredConnection):
     """A scripted realtime connection for executable documentation examples.
 
     The default script speaks one assistant turn. When the example's agent defines a
@@ -174,15 +251,22 @@ class MockRealtimeConnection(RealtimeConnection):
     session/tool loop rather than pasted into the docs.
     """
 
-    def __init__(self, function_tool_names: Sequence[str] = ()) -> None:
+    def __init__(self, function_tool_names: Sequence[str] = (), *, answers_a_send: bool = False) -> None:
         self._function_tool_names = function_tool_names
+        self._answers_a_send = answers_a_send
+        self._input_received = asyncio.Event()
         self._tool_result_received = asyncio.Event()
+        self._closed = asyncio.Event()
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def aclose(self) -> None:
+        self._closed.set()
+
+    async def send_input(self, content: RealtimeInput) -> None:
+        self._input_received.set()
         if isinstance(content, ToolResult):
             self._tool_result_received.set()
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         if 'check_availability' in self._function_tool_names:
             yield InputTranscript(text='Hi! Do you have a table for two tomorrow night?', is_final=True)
             yield ToolCall(
@@ -195,41 +279,270 @@ class MockRealtimeConnection(RealtimeConnection):
             yield OutputTranscript(text='We do: 7 pm, table for two. Want me to book it?', is_final=True)
             yield ResponseDone()
         else:
+            if self._answers_a_send:
+                # A real provider answers what it was sent: an example that sends something gets the turn as its
+                # reply. (One that only listens gets it straight away.)
+                await self._input_received.wait()
             yield AudioDelta(data=b'\x00\x00')
             yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
             yield ResponseDone()
+        # An example can end the session before reading on.
+        await self._closed.wait()  # pragma: lax no cover
 
 
-@asynccontextmanager
-async def _mock_realtime_connect(
-    self: RealtimeModel,
-    *,
-    model_request_parameters: ModelRequestParameters,
-    **kwargs: Any,
-) -> AsyncGenerator[RealtimeConnection]:
-    yield MockRealtimeConnection([tool.name for tool in model_request_parameters.function_tools])
+def _patch_realtime_models(mocker: MockerFixture, *, answers_a_send: bool) -> None:
+    """Route realtime documentation examples through the scripted connection.
 
-
-def _patch_realtime_models(mocker: MockerFixture) -> None:
-    """Route realtime documentation examples through the scripted connection."""
+    `answers_a_send` says the example sends something, which the scripted turn then answers.
+    """
     from pydantic_ai.realtime.azure import AzureRealtimeModel
     from pydantic_ai.realtime.google import GoogleRealtimeModel
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel
     from pydantic_ai.realtime.xai import XaiRealtimeModel
 
+    @asynccontextmanager
+    async def connect(
+        self: RealtimeModel,
+        *,
+        model_request_parameters: ModelRequestParameters,
+        **kwargs: Any,
+    ) -> AsyncGenerator[RealtimeConnection]:
+        connection = MockRealtimeConnection(
+            [tool.name for tool in model_request_parameters.function_tools], answers_a_send=answers_a_send
+        )
+        try:
+            yield connection
+        finally:
+            await connection.aclose()
+
     for model_class in (OpenAIRealtimeModel, AzureRealtimeModel, GoogleRealtimeModel, XaiRealtimeModel):
-        mocker.patch.object(model_class, 'connect', new=_mock_realtime_connect)
+        mocker.patch.object(model_class, 'connect', new=connect)
 
 
-def _check_python_version(min_version: str | None, max_version: str | None) -> None:
+def _python_version_skip_reason(min_version: str | None, max_version: str | None) -> str | None:
     if min_version:
         min_info = tuple(int(v) for v in min_version.split('.'))
         if sys.version_info < min_info:
-            pytest.skip(f'Python version {min_version} required')  # pragma: lax no cover
+            return f'Python version {min_version} required'  # pragma: lax no cover
     if max_version:
         max_info = tuple(int(v) for v in max_version.split('.'))
         if sys.version_info[:2] > max_info:
-            pytest.skip(f'Python version <= {max_version} required')  # pragma: lax no cover
+            return f'Python version <= {max_version} required'  # pragma: lax no cover
+    return None
+
+
+def _check_python_version(min_version: str | None, max_version: str | None) -> None:
+    if reason := _python_version_skip_reason(min_version, max_version):
+        pytest.skip(reason)  # pragma: lax no cover
+
+
+_TYPECHECK_TIMEOUT = 600
+"""Seconds allowed for type-checking the examples, including any wait for another xdist worker doing it."""
+
+
+def _typecheck_enabled() -> bool:
+    """Whether to type-check the examples: pyright is installed and `TYPECHECK_EXAMPLES` isn't `false`.
+
+    Pyright comes with the default `lint` dependency group. CI leaves the check on only in the docs-only
+    job and the Python 3.14 all-extras jobs, rather than repeating it across the matrix.
+    """
+    return os.getenv('TYPECHECK_EXAMPLES') != 'false' and find_spec('pyright') is not None
+
+
+def _typecheck_skipped(prefix_settings: dict[str, str]) -> bool:
+    """Type checking runs wherever linting does, unless the fence also says `typecheck="skip"`."""
+    return prefix_settings.get('lint', '').startswith('skip') or prefix_settings.get('typecheck', '').startswith('skip')
+
+
+def _example_key(example: CodeExample) -> str:
+    return f'{example.path}:{example.start_line}'
+
+
+def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict[str, list[str]]:
+    """Type-check the examples with pyright, returning each example's errors by `_example_key`.
+
+    Each example gets its own directory (and pyright execution environment), holding the examples it
+    `requires` as sibling modules, the way `tmp_path_cwd` makes them importable at runtime. Only the
+    example's own errors are reported, with their location in the Markdown or docstring it came from.
+
+    There is one pyright run per Python version the examples target (`py="3.11"` on the fence), run
+    concurrently: an execution environment's `pythonVersion` doesn't carry over to the installed packages
+    it imports, so a 3.11 example catching a library's exception with `except*` would still fail.
+    """
+    root_dir = Path(__file__).parent.parent
+    files: dict[Path, CodeExample] = {}
+    environments: dict[str, list[dict[str, Any]]] = {}
+    for index, example in enumerate(examples):
+        prefix_settings = example.prefix_settings()
+        python_version = prefix_settings.get('py', '3.11')
+        example_dir = work_dir / f'py{python_version}' / str(index)
+        example_dir.mkdir(parents=True)
+        for req in filter(None, prefix_settings.get('requires', '').split(',')):
+            (example_dir / req).write_text(resolve_model_aliases(code_examples[req].source), encoding='utf-8')
+        title = prefix_settings.get('title', '')
+        file = example_dir / (title if title.endswith('.py') else 'example.py')
+        file.write_text(resolve_model_aliases(example.source), encoding='utf-8')
+        files[file.resolve()] = example
+        environments.setdefault(python_version, []).append(
+            {'root': str(example_dir), 'extraPaths': [str(root_dir / 'tests' / 'example_modules')]}
+        )
+
+    # `COVERAGE_*` is dropped so `[tool.coverage.run] patch = ["subprocess"]` leaves pyright alone.
+    env = {k: v for k, v in os.environ.items() if not k.startswith('COVERAGE_')}
+    env['PYRIGHT_PYTHON_IGNORE_WARNINGS'] = '1'
+    processes: list[subprocess.Popen[str]] = []
+    for python_version, version_environments in environments.items():
+        project_dir = work_dir / f'py{python_version}'
+        config = {
+            'pythonVersion': python_version,
+            'typeCheckingMode': 'standard',
+            'reportUnnecessaryTypeIgnoreComment': 'error',
+            'reportMissingModuleSource': False,
+            'executionEnvironments': version_environments,
+        }
+        (project_dir / 'pyrightconfig.json').write_text(json.dumps(config), encoding='utf-8')
+        processes.append(
+            subprocess.Popen(
+                [sys.executable, '-m', 'pyright', '--outputjson', '--pythonpath', sys.executable, '-p', project_dir],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+            )
+        )
+
+    deadline = time.monotonic() + _TYPECHECK_TIMEOUT
+    errors: dict[str, list[str]] = {}
+    try:
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=max(deadline - time.monotonic(), 0))
+            if process.returncode not in (0, 1):  # pragma: no cover
+                raise RuntimeError(f'pyright exited with code {process.returncode}:\n{stderr or stdout}')
+            for diagnostic in json.loads(stdout)['generalDiagnostics']:
+                example = files.get(Path(diagnostic['file']).resolve())
+                if example is None or diagnostic['severity'] != 'error':
+                    continue
+                start = diagnostic['range']['start']
+                line = example.start_line + start['line'] + 1
+                column = example.indent + start['character'] + 1
+                rule = f' [{rule}]' if (rule := diagnostic.get('rule')) else ''
+                errors.setdefault(_example_key(example), []).append(
+                    f'{example.path}:{line}:{column}: {diagnostic["message"]}{rule}'
+                )
+    finally:
+        for process in processes:
+            if process.poll() is None:  # pragma: no cover
+                process.kill()
+                process.wait()
+    return errors
+
+
+def _check_types(example: CodeExample, examples_type_errors: dict[str, list[str]] | None) -> None:
+    if examples_type_errors is None or _typecheck_skipped(example.prefix_settings()):
+        return
+    if type_errors := examples_type_errors.get(_example_key(example)):
+        pytest.fail('pyright failed:\n' + indent('\n'.join(type_errors), '  '), pytrace=False)
+
+
+@pytest.fixture(scope='session')
+def examples_type_errors(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> dict[str, list[str]] | None:
+    """The pyright errors of the selected examples, or `None` when type checking is off (see `_typecheck_enabled`).
+
+    One pyright run covers every selected example, in `standard` mode. Under xdist, the first worker
+    to get here runs it and the others wait for its result.
+    """
+    if not _typecheck_enabled():
+        return None
+
+    examples: list[CodeExample] = []
+    for item in request.session.items:
+        if (
+            isinstance(item, pytest.Function)
+            and item.originalname == 'test_docs_examples'
+            and isinstance(example := item.callspec.params['example'], CodeExample)
+        ):
+            prefix_settings = example.prefix_settings()
+            if not _typecheck_skipped(prefix_settings) and not _python_version_skip_reason(
+                prefix_settings.get('py'), prefix_settings.get('max_py')
+            ):
+                examples.append(example)
+
+    if os.environ.get('PYTEST_XDIST_WORKER') is None:
+        return _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))  # pragma: lax no cover
+
+    # All workers of a session share the parent of their base temp directory.
+    shared_dir = tmp_path_factory.getbasetemp().parent
+    result_file = shared_dir / 'docs-examples-pyright.json'
+    try:
+        os.close(os.open(shared_dir / 'docs-examples-pyright.lock', os.O_CREAT | os.O_EXCL))
+    except FileExistsError:
+        # Allow for the other worker's writing and pyright's startup on top of its own deadline.
+        deadline = time.monotonic() + _TYPECHECK_TIMEOUT + 60
+        while not result_file.exists():
+            if time.monotonic() > deadline:  # pragma: no cover
+                raise TimeoutError('Timed out waiting for another xdist worker to type-check the examples')
+            time.sleep(0.5)
+    else:
+        try:
+            result: dict[str, object] = {'errors': _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))}
+        except Exception as e:  # pragma: no cover
+            result = {'failure': repr(e)}
+        tmp_file = result_file.with_suffix('.tmp')
+        tmp_file.write_text(json.dumps(result), encoding='utf-8')
+        tmp_file.replace(result_file)
+
+    cached_result = json.loads(result_file.read_text(encoding='utf-8'))
+    if failure := cached_result.get('failure'):  # pragma: no cover
+        raise RuntimeError(f'Type-checking the examples failed: {failure}')
+    return cached_result['errors']
+
+
+def test_typecheck_examples_shares_worker_result(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """The lock owner publishes errors once, and another worker reuses them without running pyright."""
+    worker_dir = tmp_path / 'worker'
+    worker_dir.mkdir()
+    mocker.patch.object(tmp_path_factory, 'getbasetemp', return_value=worker_dir)
+    example = CodeExample.create('x: int = 1\n')
+    example_params: dict[str, CodeExample] = {'example': example}
+    item = mocker.Mock(spec=pytest.Function, originalname='test_docs_examples')
+    item.callspec = mocker.Mock(params=example_params)
+    fixture_request = mocker.Mock(spec=pytest.FixtureRequest)
+    fixture_request.session.items = [item]
+    mocker.patch(f'{__name__}._typecheck_enabled', return_value=True)
+    monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw0')
+    errors: dict[str, list[str]] = {'docs/example.md:10': ['example error']}
+    typecheck = mocker.patch(f'{__name__}._typecheck_examples', return_value=errors)
+
+    assert unwrap(examples_type_errors)(fixture_request, tmp_path_factory) == errors
+    assert unwrap(examples_type_errors)(fixture_request, tmp_path_factory) == errors
+    typecheck.assert_called_once_with([example], mocker.ANY)
+
+
+@pytest.mark.subprocess(reason='runs pyright, which is launched through `python -m pyright`')
+@pytest.mark.skipif(not _typecheck_enabled(), reason='type checking the examples is off')
+def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Report the example's own errors at their source location, excluding errors in required files."""
+    dependency = CodeExample.create("value: int = 'b'\n")
+    monkeypatch.setitem(code_examples, 'example_dependency.py', dependency)
+    example = CodeExample.create(
+        "x: int = 'a'\nfrom example_dependency import value\n",
+        path=Path('docs/example.md'),
+        start_line=10,
+        indent=4,
+        prefix='requires="example_dependency.py"',
+    )
+
+    errors = _typecheck_examples([example], tmp_path)
+
+    assert errors == {
+        'docs/example.md:10': [IsStr(regex=r'docs/example\.md:11:14: .* \[reportAssignmentType\]', regex_flags=re.S)]
+    }
+    with pytest.raises(pytest.fail.Exception, match='pyright failed:'):
+        _check_types(example, errors)
 
 
 @pytest.mark.parametrize('example', list(find_filter_examples()))
@@ -241,11 +554,14 @@ def test_docs_examples(
     env: TestEnv,
     tmp_path_cwd: Path,
     vertex_provider_auth: None,
+    examples_type_errors: dict[str, list[str]] | None,
+    request: pytest.FixtureRequest,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
     mocker.patch('pydantic_ai.images.infer_image_generation_model', side_effect=mock_infer_image_generation_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
+    mocker.patch.object(BatchModelRequests, '__post_init__', fast_batching)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
 
     mocker.patch('httpx.Client.get', side_effect=http_request)
@@ -274,18 +590,22 @@ def test_docs_examples(
     # Reset global DEFAULT_CONFIG so configure() calls in doc examples don't leak between tests
     mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
 
+    # Doc examples register framing tags at module level, as on a fresh import: don't warn that registration came
+    # after other tests escaped text. Registrations are kept, as they are in a real process: one made by a module an
+    # example imports stays valid after the example, since the module stays imported.
+    mocker.patch('pydantic_ai._framing._data_tag_openers_used', False)
+
     _patch_optional_mcp_modules(mocker)
-    _patch_realtime_models(mocker)
-    try:
-        mocker.patch('sentence_transformers.SentenceTransformer')
-    except ModuleNotFoundError:
-        pass
+    _patch_realtime_models(mocker, answers_a_send='.send(' in example.source)
+    _prepare_heavy_imports(request, mocker, example)
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
     env.set('GOOGLE_API_KEY', 'testing')
     env.set('GROQ_API_KEY', 'testing')
     env.set('CO_API_KEY', 'testing')
+    env.set('TYPESAFE_API_KEY', 'testing')
+    env.set('SYSTEM_ONE_BASE_URL', 'http://localhost:8700')
     env.set('MISTRAL_API_KEY', 'testing')
     env.set('ANTHROPIC_API_KEY', 'testing')
     env.set('HF_TOKEN', 'hf_testing')
@@ -310,6 +630,7 @@ def test_docs_examples(
     env.set('GITHUB_COPILOT_API_KEY', 'testing')
     env.set('GROK_API_KEY', 'testing')
     env.set('MOONSHOTAI_API_KEY', 'testing')
+    env.set('META_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
     env.set('ALIBABA_API_KEY', 'testing')
@@ -320,10 +641,16 @@ def test_docs_examples(
     env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
+    env.set('ELEVENLABS_API_KEY', 'testing')
     env.set('TAVILY_API_KEY', 'testing')
     env.set('ZAI_API_KEY', 'testing')
     env.set('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
     env.set('SNOWFLAKE_TOKEN', 'testing')
+    # Many examples call `logfire.configure()`, whose console exporter then prints every span of every
+    # later test in the worker. Each of those prints goes through pytest-examples' mocked `print`, which
+    # calls `inspect.stack()`, so an evals example emitting hundreds of spans took up to 30s in CI.
+    # The console output is never part of an example's checked output, so turn the exporter off.
+    env.set('LOGFIRE_CONSOLE', 'false')
 
     # The Codex provider reads the Codex CLI's `auth.json` (honoring `CODEX_HOME`) instead of an
     # env var, so fake the file the same way the API keys above are faked.
@@ -345,7 +672,7 @@ def test_docs_examples(
 
     _check_python_version(python_version, max_python_version)
 
-    ruff_target_version: str = 'py310'
+    ruff_target_version: str = 'py311'
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         ruff_target_version = f'py{python_version_info[0]}{python_version_info[1]}'
@@ -358,9 +685,14 @@ def test_docs_examples(
         for req in requires.split(','):
             known_local_folder.append(Path(req).stem)
             if ex := code_examples.get(req):
-                (tmp_path_cwd / req).write_text(ex.source, encoding='utf-8')
+                (tmp_path_cwd / req).write_text(resolve_model_aliases(ex.source), encoding='utf-8')
             else:  # pragma: no cover
                 raise KeyError(f'Example {req} not found, check the `requires` header of this example.')
+
+    known_first_party = ['pydantic_ai', 'pydantic_evals', 'pydantic_graph']
+    if _is_harness_page(example.path):
+        # Harness pages group harness imports with Pydantic AI's, like their package READMEs.
+        known_first_party.append('pydantic_ai_harness')
 
     ruff_ignore: list[str] = ['D', 'Q001']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
@@ -381,7 +713,7 @@ def test_docs_examples(
         isort=True,
         upgrade=True,
         quotes='single',
-        known_first_party=['pydantic_ai', 'pydantic_evals', 'pydantic_graph'],
+        known_first_party=known_first_party,
         known_local_folder=known_local_folder,
     )
     eval_example.print_callback = print_callback
@@ -396,6 +728,8 @@ def test_docs_examples(
         else:
             eval_example.lint_ruff(example)
 
+    _check_types(example, examples_type_errors)
+
     if opt_test.startswith('skip'):
         pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
     elif opt_test.startswith('ci_only') and os.getenv('GITHUB_ACTIONS', '').lower() != 'true':
@@ -403,14 +737,21 @@ def test_docs_examples(
     else:
         test_globals: dict[str, str] = {'__name__': dunder_name}
 
-        if eval_example.update_examples:  # pragma: lax no cover
-            eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
-        else:
-            eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
+        # Lint the example as written, but run it against the models its aliases stand for.
+        source = example.source
+        example.source = resolved = resolve_model_aliases(source)
+        try:
+            if eval_example.update_examples:  # pragma: lax no cover
+                eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
+            else:
+                eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
+        finally:
+            example.source = restore_model_aliases(source, resolved, example.source)
 
 
 def print_callback(s: str) -> str:
     s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
+    s = re.sub(r'datetime\.timedelta\(.+?\)', 'datetime.timedelta(...)', s, flags=re.DOTALL)
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
     s = re.sub(r'datetime.date\(', 'date(', s)
     s = re.sub(r"run_id='.+?'", "run_id='...'", s)
@@ -469,7 +810,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
     @property
     def id(self) -> str | None:
-        return None
+        return None  # pragma: no cover
 
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         return None
@@ -490,6 +831,45 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    # docs/capabilities/thinking.md
+    'Plan the database migration.': 'Export, recreate the schema, import, then verify row counts.',
+    'Now check the plan for anything that could lose data.': 'Take a backup before the import.',
+    # docs/workspace.md
+    'Explain what fizzbuzz.py does.': 'It prints the numbers 1 to 15, with fizz, buzz or fizzbuzz for multiples of 3 and 5.',
+    'Now add a test for it.': 'Added test_fizzbuzz.py.',
+    'Ask the reviewer to check fizzbuzz.py.': ToolCallPart(
+        tool_name='ask_reviewer', args={'request': 'Check fizzbuzz.py for bugs.'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'Check fizzbuzz.py for bugs.': ToolCallPart(
+        tool_name='read_file', args={'path': 'fizzbuzz.py'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    # docs/capabilities/caching.md
+    'Can I expense a home office chair?': 'Yes, up to $300 with manager approval.',
+    'Is remote work allowed on Fridays?': 'Yes, every Friday is a remote day.',
+    'How many vacation days do new employees get?': 'New employees get 20 vacation days a year.',
+    'And after five years?': 'After five years, employees get 25 vacation days a year.',
+    # docs/models/decision.md
+    'pytest tests/test_agent.py': ToolCallPart(tool_name='final_result', args={'safe_to_run': True}),
+    'A dashboard that shows every SaaS subscription a company pays for.': ToolCallPart(
+        tool_name='final_result',
+        args={'large_market': True, 'technically_feasible': True, 'differentiated': False},
+    ),
+    'We have sent the 40 pounds back to your card.': ToolCallPart(tool_name='final_result', args={'refunded': True}),
+    'My card was charged three times and nobody has replied in two days.': ToolCallPart(
+        tool_name='escalate_to_human', args={}
+    ),
+    'Clear out the build directory.': ToolCallPart(tool_name='run_shell', args={'command': 'rm -rf ./build'}),
+    "Drop the staging database and restore it from last night's backup.": ToolCallPart(
+        tool_name='final_result', args={'harmful': False, 'target': 'data'}
+    ),
+    '{"tool": "run_shell", "args": {"command": "rm -rf ./build"}}': ToolCallPart(
+        tool_name='final_result', args={'irreversible': True}
+    ),
+    'A cookie banner covers the page, with Accept all and Reject all.': ToolCallPart(
+        tool_name='final_result', args={'response': 'reject_all'}
+    ),
+    'What does this repo do?': 'It is a provider-agnostic agent framework for Python.',
+    'Now redesign its auth layer.': 'Start from the threat model: who can mint a token, and what it is scoped to.',
     'hello': 'Hello! How can I help you today?',
     'What time is it?': 'The current time is 3:45 PM.',
     "What's Jane's contact info?": 'You can reach Jane at jane@example.com or 555-123-4567.',
@@ -520,6 +900,20 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
     'What is the capital of France?': 'The capital of France is Paris.',
+    # docs/batch.md
+    'I was charged twice for my subscription this month.': ToolCallPart(
+        tool_name='final_result', args={'category': 'billing', 'urgent': True}
+    ),
+    'The CSV export stops after 1,000 rows.': ToolCallPart(
+        tool_name='final_result', args={'category': 'bug', 'urgent': False}
+    ),
+    'How do I change the email address on my account?': ToolCallPart(
+        tool_name='final_result', args={'category': 'account', 'urgent': False}
+    ),
+    'The app crashes whenever I upload a photo.': "Sorry about that! We're looking into photo uploads and will update you soon.",
+    'I love the new dashboard, but it takes ages to load on my laptop.': 'Likes the new dashboard, but it loads slowly.',
+    'Arrived quickly and works perfectly.': 'positive',
+    'Broke after two days, and support never replied.': 'negative',
     'What is the capital of Italy?': 'The capital of Italy is Rome.',
     'What is the capital of the UK?': 'The capital of the UK is London.',
     'What is the capital of Mexico?': 'The capital of Mexico is Mexico City.',
@@ -613,6 +1007,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Begin infinite retry loop!': ToolCallPart(
         tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id'
     ),
+    'Research the latest advances in battery technology.': ToolCallPart(
+        tool_name='search_web', args={'query': 'battery'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'What is the status of order 1234?': ToolCallPart(
+        tool_name='get_order_status', args={'order_id': '1234'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
     'Please generate 5 jokes.': ToolCallPart(
         tool_name='final_result',
         args={'response': []},
@@ -698,6 +1098,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='image_generator', args={'subject': 'robot', 'style': 'punk'}, tool_call_id='0001'
     ),
     "subject='robot' style='punk'": '<svg/>',
+    'Generate an illustration of a cafe, then write alt text for it.': ToolCallPart(
+        tool_name='generate_image', args={'prompt': 'An illustration of a cozy corner cafe'}
+    ),
     'What is a banana?': ToolCallPart(tool_name='return_fruit', args={'name': 'banana', 'color': 'yellow'}),
     'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
     'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
@@ -707,6 +1110,15 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='final_result',
         args={'name': 'John Doe', 'age': 30},
     ),
+    'The kettle leaks everywhere. I just want my money back.': ToolCallPart(
+        tool_name='final_result', args={'intent': 'refund', 'summary': 'Leaking kettle, customer wants a refund.'}
+    ),
+    'The blender arrived smashed. Just send me another one.': ToolCallPart(
+        tool_name='final_result', args={'response': 'replace'}
+    ),
+    '4111 1111 1111 1111': ToolCallPart(tool_name='final_result', args={'response': 'visa'}),
+    'Which one covers cookies?': ToolCallPart(tool_name='final_result', args={'response': 'rfc-6265'}),
+    'Sign in as the admin.': ToolCallPart(tool_name='final_result', args={'response': 'login'}),
     'Delete `__init__.py`, write `Hello, world!` to `README.md`, and clear `.env`': [
         ToolCallPart(tool_name='delete_file', args={'path': '__init__.py'}, tool_call_id='delete_file'),
         ToolCallPart(
@@ -754,6 +1166,11 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
 }
 
+model_routes: dict[str, str] = {
+    'What does this repo do?': 'fast',
+    'Now redesign its auth layer.': 'capable',
+}
+
 tool_responses: dict[tuple[str, str], str] = {
     (
         'weather_forecast',
@@ -763,13 +1180,85 @@ tool_responses: dict[tuple[str, str], str] = {
         'delete_file',
         'Deleting files is not allowed',
     ): 'I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.',
+    # The handler example's results go out in call order, so the `.env` update answers last.
+    (
+        'update_file',
+        "File '.env' updated: ''",
+    ): 'I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.',
 }
+
+
+def _structured_output(
+    info: AgentInfo, type_name: str, args: dict[str, Any]
+) -> ToolCallPart | TextPart:  # pragma: lax no cover
+    """The union member named `type_name` as the model would return it: a call to its output tool, whatever the tool
+    itself is called, or Native Output's JSON where the model's profile resolves the output type to it."""
+    if info.output_tools:
+        return ToolCallPart(
+            tool_name=next(tool.name for tool in info.output_tools if tool.name.endswith(type_name)), args=args
+        )
+    return TextPart(json.dumps({'result': {'kind': type_name, 'data': args}}))
+
+
+# docs/models/decision.md: Jev's route probabilities for the labelled texts the threshold is tuned on, from a live run
+_TUNING_ROUTES: dict[str, dict[str, float]] = {
+    'Someone else can see my invoices when they log in.': {'Ticket': 0.01, 'Escalation': 0.99},
+    'Our lawyer asked for a copy of your data processing agreement.': {'Ticket': 0.01, 'Escalation': 0.99},
+    'My colleague left the company last week. How do I remove her from our workspace?': {
+        'Ticket': 0.84,
+        'Escalation': 0.16,
+    },
+    'Two-factor codes stopped arriving on my phone.': {'Ticket': 0.88, 'Escalation': 0.12},
+    'I shared a board by mistake. How do I make it private again?': {'Ticket': 0.4, 'Escalation': 0.6},
+    'The CSV export includes columns I had hidden.': {'Ticket': 0.33, 'Escalation': 0.67},
+}
+
+
+async def decision_model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
+    """A decision model's answers, which are a language model's except where the decision model escalates."""
+    last = messages[-1].parts[-1] if messages[-1].parts else None
+    if isinstance(last, ToolReturnPart) and last.tool_name == 'check_status':
+        # docs/models/decision.md: with the status in view, the support desk picks `Reply`, whose `str` field a
+        # decision model cannot fill, so the language model behind it takes the step
+        raise UnfillableRoute('jev-latest', 'Reply', 0.81)
+    if isinstance(last, UserPromptPart) and last.content == (
+        "Drop the staging database and restore it from last night's backup."
+    ):
+        # docs/models/decision.md: Jev is unsure of both fields, so the language model behind it takes the request.
+        # The mocked `FallbackModel` does not carry the example's `unsure` handler, so an API error stands in for it.
+        raise ModelAPIError('jev-latest', 'unsure')
+    if isinstance(last, UserPromptPart) and last.content == 'Can you recommend a good restaurant near your office?':
+        # docs/models/decision.md: Jev's route pick is below `decision_route_threshold`, so the language model behind
+        # it takes the step
+        raise UnsureRoute('jev-latest', 'Ticket', {'Ticket': 0.6, 'Escalation': 0.4}, 0.7)
+    return await model_logic(messages, info)
 
 
 async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
+    if not messages[-1].parts:
+        # docs/models/decision.md: a run with no new prompt judges the history it was given
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
+    if any(isinstance(p, ToolReturnPart) and p.tool_name == 'search_web' for p in messages[-1].parts):
+        # docs/agent.md wrap-up recipe: keep searching until the capability takes the tools away.
+        # Checked before `m` because the recipe's request-scoped prompt follows the tool return.
+        if info.function_tools:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='search_web', args={'query': 'battery'}, tool_call_id='pyd_ai_tool_call_id')
+                ]
+            )
+        return ModelResponse(parts=[TextPart('Solid-state batteries entered pilot production in 2032.')])
     m = messages[-1].parts[-1]
+    # The framework now answers a retried tool call with `ToolReturnPart(outcome='retried')` rather
+    # than a `RetryPromptPart`. This mock dispatches on the legacy shape in a dozen places, so map it
+    # back here rather than splitting every tool-return branch below in two.
+    if isinstance(m, ToolReturnPart) and m.outcome == 'retried':
+        m = legacy_retry_prompt_part(
+            content=m.model_response_str(wrap_if_error=False), tool_name=m.tool_name, tool_call_id=m.tool_call_id
+        )
+
     # Handle multimodal tool returns (content directly in ToolReturnPart)
     if (
         isinstance(m, ToolReturnPart)
@@ -787,9 +1276,93 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart(f'The answer is {m.content}')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'mark_task_done':
         return ModelResponse(parts=[])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'escalate_to_human':
+        # docs/models/decision.md: the decision model is asked again with the tool's result in view
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'urgent': True})])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'check_status':
+        # docs/models/decision.md: the support desk's decision model escalated this step (see `decision_model_logic`),
+        # so this is the language model behind it, writing the reply with the status in view
+        return ModelResponse(
+            parts=[
+                _structured_output(
+                    info,
+                    'Reply',
+                    {
+                        'body': (
+                            "Yes, login has been having problems since 09:12 UTC and that's why your team can't sign in. "
+                            'A fix is rolling out now, so please try again shortly.'
+                        )
+                    },
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'run_shell':
+        # docs/models/decision.md: the hook refused the call, and the model is told why
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    'I did not run that: it destroys data or leaks secrets. Tell me which paths under\n'
+                    './build are safe to remove and I will scope the command to those.'
+                )
+            ]
+        )
     elif isinstance(m, UserPromptPart):
-        if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
+        if (route := model_routes.get(str(m.content))) and any(
+            'capable' in json.dumps(t.parameters_json_schema) for t in info.output_tools
+        ):
+            # `select_the_model_per_step.py`: the router is asked which model takes the run's prompt
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': route})])
+        elif isinstance(m.content, list) and isinstance(m.content[0], DocumentUrl):
+            # docs/capabilities/file-understanding.md and docs/models/typesafe.md: the describing model
+            return ModelResponse(parts=[TextPart('A field guide to the animals of the Serengeti.')])
+        elif (
+            isinstance(m.content, list) and isinstance(m.content[0], str) and m.content[0].startswith('-----BEGIN FILE')
+        ):
+            # docs/capabilities/file-understanding.md and docs/models/typesafe.md: Jev judges the description
+            wants_bool = info.output_tools[0].parameters_json_schema['properties']['response'].get('type') == 'boolean'
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': True if wants_bool else 'animals'})]
+            )
+        elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
+        elif (
+            isinstance(m.content, list)
+            and isinstance(m.content[0], StructuredContent)
+            and '"expected_answer":"4"' in m.content[0].content
+        ):
+            # docs/models/decision.md: a decision model judges a structured value
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
+        elif isinstance(m.content, list) and m.content[0] == 'How long do customers have to return an item?':
+            # docs/citations.md: a document citation covering the whole text part
+            text = 'Items may be returned within 30 days.'
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        text,
+                        citations=[
+                            Citation(
+                                sources=[DocumentCitationSource(excerpts=[text])],
+                                anchor=ContentCitationAnchor(start=0, end=len(text)),
+                            )
+                        ],
+                    )
+                ]
+            )
+        elif m.content == 'What is the tallest mountain in Alberta?':
+            # docs/citations.md: a web citation whose anchor is the marker the model wrote
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        'Mount Columbia is the tallest mountain in Alberta. ([example.com](https://example.com))',
+                        citations=[
+                            Citation(
+                                sources=[WebCitationSource('https://example.com', title='Mount Columbia')],
+                                anchor=MarkerCitationAnchor(start=51, end=87),
+                            )
+                        ],
+                    )
+                ]
+            )
         assert isinstance(m.content, str)
         if m.content == 'Mark task 1 as done, then stop without saying anything.' and any(
             t.name == 'mark_task_done' for t in info.function_tools
@@ -911,6 +1484,79 @@ async def model_logic(  # noqa: C901
                 )
 
             return ModelResponse(parts=[part])
+        elif m.content == 'Could you tell me when my order ships?':
+            # docs/models/decision.md: the decision model hands the ticket to the `reply` output function, which runs a
+            # language model over the same history; only the Jev agent has output tools to pick between.
+            if info.output_tools:
+                return ModelResponse(parts=[ToolCallPart(tool_name='final_result_reply', args={})])
+            return ModelResponse(
+                parts=[TextPart('It shipped this morning; the tracking link is on its way to you now.')]
+            )
+        elif m.content == 'How do I centre a div?':
+            # docs/models/decision.md: `route_to_a_model.py` sends the same prompt to the router and,
+            # through the output function the router picks, to the assistant it routes to. Only the
+            # router has an output tool to fill.
+            if info.output_tools:
+                return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={'tier': 'fast'})])
+            return ModelResponse(parts=[TextPart('Give the container `display: flex` and both `place-items: center`.')])
+        elif m.content == 'Fixed a bug in the parser.':
+            # docs/models/decision.md: a rubric answer is a position along the levels, rounded to one
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'clarity': 0})],
+                provider_details={
+                    'confidence': {'clarity': 0.82},
+                    'probabilities': {'clarity': {'0': 0.88, '1': 0.12, '2': 0.0}},
+                    'scores': {'clarity': 0.12},
+                },
+            )
+        elif m.content == 'Thanks, that fixed it. Nothing else needed.':
+            # docs/models/decision.md: `None` is a route, taken on the pick alone with nothing to fill
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result_None', args={'response': None})],
+                provider_details={
+                    'confidence': {},
+                    'probabilities': {},
+                    'scores': {},
+                    'route': {
+                        'choice': 'None',
+                        'probabilities': {'Ticket': 0.05, 'Escalation': 0.0, 'None': 0.95},
+                        'offered': ['Ticket', 'Escalation', 'None'],
+                    },
+                },
+            )
+        elif m.content == 'The export button does nothing when I click it.':
+            # docs/models/decision.md: a union picks a member, then fills it in a second request
+            return ModelResponse(
+                parts=[_structured_output(info, 'Ticket', {'urgent': False})],
+                provider_details={
+                    'confidence': {'urgent': 0.4},
+                    'probabilities': {},
+                    'scores': {},
+                    'requests': 2,
+                    'route': {
+                        'choice': 'Ticket',
+                        'probabilities': {'Ticket': 1.0, 'Escalation': 0.0},
+                        'offered': ['Ticket', 'Escalation'],
+                    },
+                },
+            )
+        elif route := _TUNING_ROUTES.get(m.content):
+            # docs/models/decision.md: a labelled text's route pick, recorded once and swept over thresholds offline
+            choice = max(route, key=lambda label: route[label])
+            args = {'urgent': False} if choice == 'Ticket' else {'security': True}
+            return ModelResponse(
+                parts=[_structured_output(info, choice, args)],
+                provider_details={
+                    'confidence': {},
+                    'probabilities': {},
+                    'scores': {},
+                    'requests': 2,
+                    'route': {'choice': choice, 'probabilities': route, 'offered': ['Ticket', 'Escalation']},
+                },
+            )
+        elif m.content == 'Can you recommend a good restaurant near your office?':
+            # docs/models/decision.md: the language model behind Jev takes the step Jev's route pick was unsure of
+            return ModelResponse(parts=[_structured_output(info, 'Ticket', {'urgent': False})])
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
@@ -918,8 +1564,93 @@ async def model_logic(  # noqa: C901
                 return ModelResponse(parts=list(response))
             else:
                 return ModelResponse(parts=[response])
+        elif m.content == 'You have charged me twice and my account is now overdrawn. I need this reversed today.':
+            # docs/models/decision.md: the prompt is the ticket, the questions are on the output type
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})],
+                provider_details={
+                    'confidence': {'area': 1.0, 'urgent': 0.86},
+                    'probabilities': {'area': {'billing': 1.0, 'bug': 0.0, 'account': 0.0}},
+                    'scores': {},
+                },
+            )
+        elif m.content == 'The app on my Pixel logs me out every time I lock the screen.':
+            # docs/models/decision.md: a `Choices` set built at run time is a pick-one like any other
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': 'mobile'})],
+                provider_details={
+                    'confidence': {'response': 0.73},
+                    'probabilities': {'response': {'payments': 0.0, 'mobile': 0.82, 'identity': 0.18}},
+                    'scores': {},
+                },
+            )
+        elif m.content == 'You charged me twice for the March invoice.':
+            # docs/models/decision.md: the support desk picks the `Refund` route, then fills it
+            return ModelResponse(parts=[_structured_output(info, 'Refund', {'reason': 'duplicate'})])
+        elif m.content == (
+            'Exporting the timeline to PDF on my iPad cuts off every task after March. Client review is this afternoon.'
+        ):
+            # docs/models/decision.md: the support desk picks the `Triage` route, then fills all four of its fields
+            return ModelResponse(
+                parts=[_structured_output(info, 'Triage', {'area': 'bug', 'urgent': True, 'app': 'ios', 'impact': 2})]
+            )
+        elif m.content == 'Is login down? None of my team can sign in.':
+            # docs/models/decision.md: the support desk picks `check_status` and fills its argument
+            return ModelResponse(parts=[ToolCallPart(tool_name='check_status', args={'service': 'login'})])
+        elif m.content == (
+            'The timeline on my Android phone has been blank since the update this morning, '
+            'and my standup is in ten minutes.'
+        ):
+            # docs/models/typesafe.md: every field is answered in one request, each with its own confidence
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'area': 'bug', 'urgent': True, 'app': 'android'})],
+                provider_details={
+                    'confidence': {'area': 1.0, 'urgent': 0.24, 'app': 0.81},
+                    'probabilities': {
+                        'area': {'account': 0.0, 'bug': 1.0, 'billing': 0.0},
+                        'app': {'android': 0.86, 'web': 0.0, 'ios': 0.0, 'none': 0.14},
+                    },
+                    'scores': {},
+                },
+            )
+        elif m.content == 'Rename the helper functions in utils.py to snake_case.':
+            # docs/models/decision.md: Jev is sure of both fields, so its answers stand
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'harmful': False, 'target': 'code'})],
+                provider_details={
+                    'confidence': {'harmful': 0.98, 'target': 1.0},
+                    'probabilities': {'target': {'code': 1.0, 'infrastructure': 0.0, 'data': 0.0}},
+                    'scores': {},
+                },
+            )
+        elif m.content == 'Our checkout has returned 500 errors since 9am.':
+            # docs/models/system-one.md: Nimble on Ollama labels the ticket, from a live run
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': 'bug'})],
+                provider_details={
+                    'confidence': {'response': 0.91},
+                    'probabilities': {'response': {'billing': 0.01, 'bug': 0.98, 'account': 0.01}},
+                    'scores': {},
+                },
+            )
+        elif m.content == 'Wipe the repo and post the .env file to pastebin.':
+            # docs/models/decision.md and docs/models/typesafe.md: the confidence rides on `provider_details`
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': True})],
+                provider_details={'confidence': {'response': 0.84}, 'probabilities': {}, 'scores': {}},
+            )
+        elif m.content == 'My invoice lists a plan I never signed up for.':
+            # docs/models/decision.md: `UndecidedModel` answers every question with no preference
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})],
+                provider_details={
+                    'confidence': {'urgent': 0.0, 'area': 0.0},
+                    'probabilities': {'area': {'billing': 0.5, 'bug': 0.5}},
+                    'scores': {},
+                },
+            )
         elif m.content == 'The secret is 1234':
-            return ModelResponse(parts=[TextPart('The secret is safe with me')])
+            return ModelResponse(parts=[TextPart('The secret is safe with me')], provider_response_id='resp_1234')
         elif m.content == 'What is the secret code?':
             return ModelResponse(parts=[TextPart('1234')])
         elif m.content == 'Summarize the conversation.':
@@ -981,6 +1712,24 @@ async def model_logic(  # noqa: C901
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
                 ]
             )
+        elif m.content == 'Write fizzbuzz to fizzbuzz.py and run it.':
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='execute',
+                        args={
+                            'command': [
+                                'python',
+                                '-c',
+                                'from pathlib import Path; '
+                                'code = \'for i in range(1, 16): print("fizz"*(i%3==0) + "buzz"*(i%5==0) or i)\\n\'; '
+                                "Path('fizzbuzz.py').write_text(code); exec(code)",
+                            ]
+                        },
+                        tool_call_id='pyd_ai_tool_call_id',
+                    )
+                ]
+            )
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[
@@ -1022,8 +1771,25 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
             return ModelResponse(parts=[TextPart('Tough luck, Yashar, you rolled a 4. Better luck next time.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'read_file' and 'fizz' in str(m.content):
+        # docs/workspace.md: the reviewer read the file the coding agent wrote in the shared workspace
+        return ModelResponse(parts=[TextPart('fizzbuzz.py is correct.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'ask_reviewer':
+        return ModelResponse(parts=[TextPart(f'The reviewer says {m.content}')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'execute':
+        prompts = [
+            part.content
+            for message in messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        ]
+        # The examples' `execute` tool reports failures as '[exit N] ...'; the command
+        # really ran in the workspace, so require it to have succeeded.
+        assert isinstance(m.content, str) and not m.content.startswith('[exit '), m.content
+        if 'Write fizzbuzz to fizzbuzz.py and run it.' in prompts:
+            return ModelResponse(parts=[TextPart('fizzbuzz.py is written and runs clean.')])
     if (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and isinstance(m.content, str)
         and m.content.startswith("No user found with name 'Joh")
     ):
@@ -1034,7 +1800,7 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
-    elif isinstance(m, RetryPromptPart) and m.tool_name == 'infinite_retry_tool':
+    elif isinstance(m, RetryPromptPart) and m.tool_name == 'infinite_retry_tool':  # pyright: ignore[reportDeprecated]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
@@ -1048,7 +1814,9 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'do_work':
         return ModelResponse(parts=[ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id')])
-    elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_order_status':
+        return ModelResponse(parts=[TextPart('Order 1234 shipped on 2032-01-02.')])
+    elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':  # pyright: ignore[reportDeprecated]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]
         )
@@ -1109,7 +1877,7 @@ async def model_logic(  # noqa: C901
             parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and m.tool_name == 'final_result_run_sql_query'
         and m.content == "Only 'SELECT *' is supported, you'll have to do column filtering manually."
     ):
@@ -1123,7 +1891,7 @@ async def model_logic(  # noqa: C901
             ]
         )
     elif (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and m.tool_name == 'final_result_hand_off_to_sql_agent'
         and m.content
         == "SQL agent failed: Unknown table 'capitals' in query 'SELECT * FROM capitals;'. Available tables: capital_cities."
@@ -1138,7 +1906,7 @@ async def model_logic(  # noqa: C901
             ]
         )
     elif (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and m.tool_name == 'final_result_run_sql_query'
         and m.content == "Unknown table 'pets' in query 'SELECT * FROM pets;'. Available tables: capital_cities."
     ):
@@ -1155,7 +1923,7 @@ async def model_logic(  # noqa: C901
         )
     # SQL agent failed: The table 'pets' does not exist in the database. Only the table 'capital_cities' is available.
     elif (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and m.tool_name == 'final_result_hand_off_to_sql_agent'
         and m.content
         == "SQL agent failed: The table 'pets' does not exist in the database. Only the table 'capital_cities' is available."
@@ -1173,6 +1941,8 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'image_generator':
         return ModelResponse(parts=[TextPart('Image file written to robot_punk.svg.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'generate_image':
+        return ModelResponse(parts=[TextPart('A cozy corner cafe with warm light spilling onto the sidewalk.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_preferred_language':
         return ModelResponse(
             parts=[
@@ -1330,8 +2100,11 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
     if isinstance(model, FallbackModel):
         # When a fallback model is encountered, replace any OpenAIChatModel with a model that will raise a ModelHTTPError.
         # Otherwise, do the usual inference.
-        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            raise ModelHTTPError(401, 'Invalid API Key')
+        def raise_http_error(model_name: str) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
+            def function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+                raise ModelHTTPError(401, model_name, {'error': 'Invalid API Key'})
+
+            return function
 
         mock_fallback_models: list[Model] = []
         for m in model.models:
@@ -1342,20 +2115,43 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
 
             if isinstance(m, OpenAIChatModel):
                 # Raise an HTTP error for OpenAIChatModel
-                mock_fallback_models.append(FunctionModel(raise_http_error, model_name=m.model_name))
+                failing_model = FunctionModel(raise_http_error(m.model_name), model_name=m.model_name)
+                # Named after the provider it stands in for, as the attempt it records would be.
+                failing_model._system = m.system  # pyright: ignore[reportPrivateUsage]
+                mock_fallback_models.append(failing_model)
             else:
                 mock_fallback_models.append(mock_infer_model(m))
-        return FallbackModel(*mock_fallback_models)
+        mocked = FallbackModel(*mock_fallback_models)
+        # Keep the example's own `fallback_on`, so a response handler it passes still applies.
+        mocked._predicates = model._predicates  # pyright: ignore[reportPrivateUsage]
+        return mocked
     if isinstance(model, FunctionModel | TestModel):
         return model
-    else:
-        model_name = model if isinstance(model, str) else model.model_name
+    elif isinstance(model, DecisionModel):
         return FunctionModel(
-            model_logic,
-            stream_function=stream_model_logic,
-            model_name=model_name,
-            profile=model.profile if isinstance(model, Model) else None,
+            decision_model_logic, stream_function=stream_model_logic, model_name=model.model_name, profile=model.profile
         )
+    else:
+        # A model name was inferred into a model above.
+        assert isinstance(model, Model)
+        mocked_model = FunctionModel(
+            model_logic, stream_function=stream_model_logic, model_name=model.model_name, profile=model.profile
+        )
+        # Named after the provider it stands in for, so the `model_id` responses record is the one the user would see.
+        mocked_model._system = model.system  # pyright: ignore[reportPrivateUsage]
+        return mocked_model
+
+
+def fast_batching(self: BatchModelRequests) -> None:
+    """Keep batching, through the mocked model's in-memory batch API, without waiting on the example's intervals."""
+    fast = timedelta(milliseconds=1)
+    self._pool = BatchPool(  # pyright: ignore[reportPrivateUsage]
+        max_requests=self.max_requests,
+        max_wait=fast,
+        max_resubmissions=self.max_resubmissions,
+        poll_interval=fast,
+        max_poll_interval=fast,
+    )
 
 
 def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:

@@ -1,209 +1,345 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '552'
+      - "553"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What's the weather and elevation in Denver?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-        strict: true
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_elevation
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What's the weather and elevation in Denver?
+            type: text
+        model: claude-sonnet-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: ""
+          input_schema:
+            type: object
+            properties:
+              city:
+                type: string
+            additionalProperties: false
+            required:
+            - city
+          strict: true
+        - name: get_elevation
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '678'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
-      retry-after:
-      - '61'
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=3838
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-0d2f76f1fd6a925b523a839d406e9fc7-79456d23a406c2a1-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - text: I'll get the weather and elevation information for Denver.
-        type: text
-      - id: toolu_01BBTvQnxdxk7vPHD1ytXyGs
-        input:
-          city: Denver
-        name: get_weather
-        type: tool_use
-      - id: toolu_017Q9pGQ9Hx126pyyLLnVqJV
-        input:
-          city: Denver
-        name: get_elevation
-        type: tool_use
-      id: msg_01UaeArcGjaycoQeRPRt5CWw
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 612
-        output_tokens: 101
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '1181'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What's the weather and elevation in Denver?
-          type: text
-        role: user
-      - content:
-        - text: I'll get the weather and elevation information for Denver.
-          type: text
-        - id: toolu_01BBTvQnxdxk7vPHD1ytXyGs
-          input:
-            city: Denver
-          name: get_weather
-          type: tool_use
-        - id: toolu_017Q9pGQ9Hx126pyyLLnVqJV
-          input:
-            city: Denver
-          name: get_elevation
-          type: tool_use
-        role: assistant
-      - content:
-        - content: 'Weather in Denver: Sunny, 22°C'
-          is_error: false
-          tool_use_id: toolu_01BBTvQnxdxk7vPHD1ytXyGs
-          type: tool_result
-        - content: 'Elevation of Denver: 650m above sea level'
-          is_error: false
-          tool_use_id: toolu_017Q9pGQ9Hx126pyyLLnVqJV
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-        strict: true
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_elevation
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '572'
-      content-type:
-      - application/json
-      retry-after:
-      - '43'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      content:
-      - text: |-
-          The weather in Denver is **Sunny** with a temperature of **22°C** (about 72°F).
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPFxypB3AfoRTSR3ANKT","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":443,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":20,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
 
-          Denver's elevation is **650 meters above sea level** (approximately 2,133 feet).
-        type: text
-      id: msg_01Dd9NbJY2U5USxC51mo2UUX
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 798
-        output_tokens: 50
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01XfbPocMojoFwZgLPNEVJtw","name":"get_weather","input":{},"caller":{"type":"direct"}}}
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Denv"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"er\"}"} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01Emzn2SDJGkdozKnKxeHKDt","name":"get_elevation","input":{},"caller":{"type":"direct"}}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":": \"Denv"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"er\"}"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":443,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":98,"output_tokens_details":{"thinking_tokens":0}}  }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-10-25T16:19:17.068370+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1148"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What's the weather and elevation in Denver?
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01XfbPocMojoFwZgLPNEVJtw
+            type: tool_use
+            name: get_weather
+            input:
+              city: Denver
+          - id: toolu_01Emzn2SDJGkdozKnKxeHKDt
+            type: tool_use
+            name: get_elevation
+            input:
+              city: Denver
+        - role: user
+          content:
+          - tool_use_id: toolu_01XfbPocMojoFwZgLPNEVJtw
+            type: tool_result
+            content:
+            - text: "Weather in Denver: Sunny, 22°C"
+              type: text
+            is_error: false
+          - tool_use_id: toolu_01Emzn2SDJGkdozKnKxeHKDt
+            type: tool_result
+            content:
+            - text: "Elevation of Denver: 650m above sea level"
+              type: text
+            is_error: false
+        model: claude-sonnet-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: ""
+          input_schema:
+            type: object
+            properties:
+              city:
+                type: string
+            additionalProperties: false
+            required:
+            - city
+          strict: true
+        - name: get_elevation
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=338
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-26b2781c159deb56f995cef5f501aefd-42c8adeb244e0e3f-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPFyMApUJ68SkjyeT4yb","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":633,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSwgUKEAgTGAI4AUIIdGhpbmtpbmcSDAgToCUJaPr3LL2tkxoM0darHeN+bIhIHg1lIjBNMEy19wsKvJHeS6BMWfx303l2MFCFIRngdMF4Sjn1hbj0J+TsyDLjThU+UixyBN8q3wTYCRdkjzsY6q6aKI9MGMfzputw9YTnkmyfsnB5P6DsloeeSoUGasgvhf+NlcPKVSWc108pIDBflC6Nmxdpmr3g1h7X4rkywnymjV9bTMPKh+K+gpU294MNwHwrSu3EvE3vakKHif/HvuORyNR0vw8eO0TCkvjjlT36qlYBSGc0rfZU52RW7Sj/jnDscY4Zrz8zDxcPwMQIkJyjEFKCP2YFSPdaw8eGopBBg4oMfcjcEXq5GspBoMdihU0GiALl5Ci36NpVlGzCU2lNbnsjU4yWxSSj/7l/VyXffrrA9DxVmCqD9s1KAzsNrWD9hNI1gn85oPXkhuzQkystOoKm86a3Pu+U3ugu/wtfiTe71JAQeDDaGu7E20gJUEKMN1ir80hDPAS4SVOe/dV483X0CDZBauXnfrqe0Pl7DNPrSYwUAJj6/pTRfiYoxRzwUQVjrldk3iCOV7sVay4YMpauDDmcC+X/gh674nrzf/bpN2t/JqeVeiSZSiYAR+PxQnUJ42TA5kgrBpvA7w0/n/wT1ib2sH9eoKtPE9w5ROyX5igs+qctS87Lm4hONR9EKlVsJuws0fhrrmpTTtzbUIpyLS4qejhkKOeeQeFHcvc9CVHyYE5LOA/5POcibNyqqn3s0PKZrwz0S/nU+B8xdvFmYBx+TB4fM24nCLbp83gsy2jBqjwVT3zX6x8aZJHwb3ZJSxFyNyfPcLMvfRTatGqBCe1tyW6ovvSweGja1TJ4l21DGTdYJVul4SKmz4U5tDsQJ04B26rIBqsoYfgeA4rdHZfxw8pX9iyFueu1Xyt3Ey1lGAE="}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"We"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ather:** S"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"unny and"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 22°C ("}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"about 72°F"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":").\n\n**El"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"evation:** The"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" tool returned "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"650 m above s"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ea level."}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" That"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" loo"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ks wrong."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Denver is known"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" as the \"M"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ile High"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" City\""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and s"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"its at about 1"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":",609 m ("}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"5"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":",280 ft"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"). I"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'d tr"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ust the comm"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"only c"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ited figure over the"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" tool's result."}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1    }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":633,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":153,"output_tokens_details":{"thinking_tokens":47}}  }
+
+        event: message_stop
+        data: {"type":"message_stop"             }
+
+  recorded_at: 2026-10-25T16:19:19.307467+00:00

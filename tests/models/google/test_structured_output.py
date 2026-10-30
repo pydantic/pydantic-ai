@@ -19,7 +19,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import ImageGeneration, NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelRequest,
@@ -36,17 +36,18 @@ from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
-from ...conftest import IsDatetime, IsStr, try_import
+from ...conftest import IsDatetime, IsList, IsStr, RequestCapture, try_import
+from ..citation_utils import IsCitationList
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
 
 if TYPE_CHECKING:
     GoogleModelFactory = Callable[..., GoogleModel]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -98,9 +99,13 @@ async def test_function_tools_with_builtin_tools_unsupported(
         await agent.run('What is the largest city in the user country?')
 
 
-async def test_tool_output_with_builtin_tools_unsupported(allow_model_requests: None, google_model: GoogleModelFactory):
+@pytest.mark.parametrize('optional', [False, True])
+async def test_tool_output_with_builtin_tools_unsupported(
+    allow_model_requests: None, google_model: GoogleModelFactory, optional: bool
+):
+    """A supported native tool goes on the wire even when optional, so it counts against output tools."""
     m = google_model('gemini-2.5-flash')
-    agent = Agent(m, output_type=ToolOutput(CityLocation), capabilities=[NativeTool(WebSearchTool())])
+    agent = Agent(m, output_type=ToolOutput(CityLocation), capabilities=[NativeTool(WebSearchTool(optional=optional))])
 
     with pytest.raises(
         UserError,
@@ -155,9 +160,11 @@ async def test_native_output_with_function_tools(allow_model_requests: None, goo
                     cost=Decimal('0.0003565'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='wlP6af6uB-rBz7IP3s-7kAc',
                 finish_reason='stop',
@@ -196,9 +203,11 @@ async def test_native_output_with_function_tools(allow_model_requests: None, goo
                     cost=Decimal('0.0002965'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='w1P6aZ3uJ9rTz7IPx-674Aw',
                 finish_reason='stop',
@@ -248,9 +257,11 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
                     cost=Decimal('0.0002575'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='g1P6aZnMMZq5qtsPj9fyuQ8',
                 finish_reason='stop',
@@ -289,9 +300,11 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
                     cost=Decimal('0.000217'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='hVP6afiZEuitz7IPypuAsQY',
                 finish_reason='stop',
@@ -331,6 +344,28 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
                         tool_name='web_search',
                         content={
                             'search_suggestions': IsStr(),
+                            'sources': [
+                                {
+                                    'domain': None,
+                                    'title': 'sa.gov',
+                                    'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFF4PwGuaGjMwNhXmTR-G70ouVXbBl1mnLZd-29a_CzaOqM5mo0iAi0gyvC5-GwFpFJZ8q7plWwNrQpo-kNxw4O63YINk1cHU50yRIDxsgZmpCpZ5FkoKoZIY258AEjgBskhpuF9YWmyugfah3CAXfgPAqJUwZp_SyoNr8odaTlTFGzWYIFBEZlA7PBNF7S89nUQYcTj4Rul37cDqPErBwdkWoGbGU07W00pKYyR871kNQ=',
+                                },
+                                {
+                                    'domain': None,
+                                    'title': 'vynmsa.com',
+                                    'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFLfmA7EXzJ69I6opwqAjMgKy1RKFs9m6_CiliD8vtRYa3rT1w-fCjcvdNSnPM7b8JQUzikPl7s50ez4WH-L57CT-Sh7vQnOPHb3IC0htL8zVirFMW6epPnYg2wupE-WKaINzcq7p0M_-3z3g==',
+                                },
+                                {
+                                    'domain': None,
+                                    'title': 'worldatlas.com',
+                                    'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEFngnpSiw5XJ4FSl6NAGsIsDLHvhhQUtmiBni3jUANKRbOUkuk1Sh-E6RgHWXR4ojmkTCsS5VDnWYuHElCz8x00NuBOZxG4vcMcrMLhLrjyRxQWAFS6_mjuyNFcxpQIhMEHNXLZpQBzLZmmkoSHDmxCDTaWxo2pfOzQkyrzeGn',
+                                },
+                                {
+                                    'domain': None,
+                                    'title': None,
+                                    'uri': 'https://www.google.com/search?q=time+in+Mexico',
+                                },
+                            ],
                         },
                         tool_call_id='d6vd9r5q',
                         timestamp=IsDatetime(),
@@ -345,21 +380,25 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
 } \
 """,
                         provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={'thought_signature': IsStr(), 'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(
                     input_tokens=87,
                     output_tokens=78,
                     input_text_tokens=87,
-                    details={'thoughts_tokens': 78, 'text_prompt_tokens': 87},
+                    details={'thoughts_tokens': 78, 'text_prompt_tokens': 87, 'web_search_requests': 1},
                     output_reasoning_tokens=78,
-                    cost=Decimal('0.0002775'),
+                    web_searches=1,
+                    cost=Decimal('0.0142775'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='hlP6ae3uJuqGz7IP-6e9iA0',
                 finish_reason='stop',
@@ -556,9 +595,11 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
                     cost=Decimal('0.0002815'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='iVP6aaqUGp-fz7IPrb-LgA0',
                 finish_reason='stop',
@@ -575,6 +616,19 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
             ),
             ModelResponse(
                 parts=[
+                    TextPart(
+                        content="""\
+2 + 2 is **4**.
+
+As for the weather in Tokyo, it is currently **cloudy** with a temperature of approximately **58°F (14°C)**. The humidity is around 71%, and there is a 30% chance of precipitation throughout the day.\
+""",
+                        provider_name='google',
+                        provider_details={
+                            'thought_signature': 'ErwDCrkDAQw51seeQfRmL5VQKB0za3r0rcYB5VnGk/wP9IY25C1mUSd3YKB8PH3IC/C3tdufhZycWv4aJudl2LSVy0ZQXC8T74IPMVk87/VxBr+Pm+BMCFvBRcJQGNvZMgrQIKGbylDY9ZAXkMdFwEXdtIesDpRRhjUx9SfHsdkALn6fvhZb5Ea9VUMnPGCW82QJgfWU7x1WItV9TROPug+XE7eSq4/sGgnf4Gqg+cUWWxspAChvBUi3+hu1rnPGW5+cr+kufGWuaQLI+WMneegbNFSaWoT9AdJluX4hwNMHaLAXj2kyOjNKlUlo6hvoT/0ck+/pHf8+pr/CNCj6m7EbHZ1aKfMS9TlXfOP30XkUDlQ9GSE/XfAiZkuMzHUC1v5gQ4Fkp2fZV1SsQarNXPwU+G5vUBw2wZ4lyGgUAe76IcQfEyaFjVsjA0oHvgzcXeSKSHephYSUzw44E/FoIq60Sr0oaOXRv5wIrBmiKcZyxSaVSd7B92nE6pZsnHw6FwqVS5dShZhaCNJeQbxzAVbFuLK7QbOFg0CcKn3Pi8PaZLHi4Ej23HMXlduStmtS9jXwltMhGg19xOnzHGmM',
+                            'citations': IsList(length=(1, ...)),
+                        },
+                        citations=IsCitationList(),
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['', 'current weather in Tokyo']},
@@ -594,30 +648,22 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
                         timestamp=IsDatetime(),
                         provider_name='google',
                     ),
-                    TextPart(
-                        content="""\
-2 + 2 is **4**.
-
-As for the weather in Tokyo, it is currently **cloudy** with a temperature of approximately **58°F (14°C)**. The humidity is around 71%, and there is a 30% chance of precipitation throughout the day.\
-""",
-                        provider_name='google',
-                        provider_details={
-                            'thought_signature': 'ErwDCrkDAQw51seeQfRmL5VQKB0za3r0rcYB5VnGk/wP9IY25C1mUSd3YKB8PH3IC/C3tdufhZycWv4aJudl2LSVy0ZQXC8T74IPMVk87/VxBr+Pm+BMCFvBRcJQGNvZMgrQIKGbylDY9ZAXkMdFwEXdtIesDpRRhjUx9SfHsdkALn6fvhZb5Ea9VUMnPGCW82QJgfWU7x1WItV9TROPug+XE7eSq4/sGgnf4Gqg+cUWWxspAChvBUi3+hu1rnPGW5+cr+kufGWuaQLI+WMneegbNFSaWoT9AdJluX4hwNMHaLAXj2kyOjNKlUlo6hvoT/0ck+/pHf8+pr/CNCj6m7EbHZ1aKfMS9TlXfOP30XkUDlQ9GSE/XfAiZkuMzHUC1v5gQ4Fkp2fZV1SsQarNXPwU+G5vUBw2wZ4lyGgUAe76IcQfEyaFjVsjA0oHvgzcXeSKSHephYSUzw44E/FoIq60Sr0oaOXRv5wIrBmiKcZyxSaVSd7B92nE6pZsnHw6FwqVS5dShZhaCNJeQbxzAVbFuLK7QbOFg0CcKn3Pi8PaZLHi4Ej23HMXlduStmtS9jXwltMhGg19xOnzHGmM'
-                        },
-                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=132,
                     output_tokens=183,
                     input_text_tokens=132,
-                    details={'thoughts_tokens': 121, 'text_prompt_tokens': 132},
+                    details={'thoughts_tokens': 121, 'text_prompt_tokens': 132, 'web_search_requests': 1},
                     output_reasoning_tokens=121,
-                    cost=Decimal('0.000615'),
+                    web_searches=1,
+                    cost=Decimal('0.014615'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='i1P6af7qHca0qtsPqaSfuAI',
                 finish_reason='stop',
@@ -673,9 +719,11 @@ async def test_native_output_with_function_and_builtin_tools(
                     cost=Decimal('0.0002305'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='jVP6aY3XK8ucz7IPnO2_sQY',
                 finish_reason='stop',
@@ -705,6 +753,33 @@ async def test_native_output_with_function_and_builtin_tools(
                         tool_name='web_search',
                         content={
                             'search_suggestions': IsStr(),
+                            'sources': [
+                                {
+                                    'domain': None,
+                                    'title': 'travel.com',
+                                    'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGFUMay4cprshyySs0beFNWou1TkT_Pmgbu282OIgNll9dulfoZ9bRpaw0YxsTOrCKGg7erhVHvYfdeCKB0iLNoGESwuc5HBJcbD2mTUJRzUE9Kv2EfrU0Ci3_9Ez_5wLLOd54md7eScK6oMTYOpVOE0RONLBuUN7biO--WVHW_20-1GhEQHkJzyo2JoBggVH9bz1qCBAFWqvUY',
+                                },
+                                {
+                                    'domain': None,
+                                    'title': 'hugequiz.com',
+                                    'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEt1FftgHSP1syPUrH7vnAkcoYEkFfUffsmPEtYyRzkFsAS1ygXLM-7r_IH9PMihmPgUlBqPXYFRSGUUOwZyEJtoTy-2g5KPVV6Sr05kL212NAU_d4_lyhzzU0c6V40isZ3ZLiztO11f3FcpqY=',
+                                },
+                                {
+                                    'domain': None,
+                                    'title': 'vynmsa.com',
+                                    'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQExNjGIQ-7yd8m-3_HGIGIW_w6ZpCiVXkzjvKfP91T26h_lEgcozkeYbo5YPSa0RZgHl60z4R5ZdPWGoN4FFEF2QWkWVHhkqOtuIqLX8ip7PI-DJvxbbVn5Lr4x6eJY3Qk_KO5_7MW_6iilBA==',
+                                },
+                                {
+                                    'domain': None,
+                                    'title': 'worldatlas.com',
+                                    'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHK-wsORH0Obxbz4622eK-fxic9cokhn2Wx9fXx7GZCNubctEutYIrM_wwIp0GCbEeR9XcJUWKYjbZiZxUXyAO0HgWMIekh5V9me-PnvVqQcqKttpBPUTMl-nZ5onyGopEwxgwoMlsZkJm3j7f5jdpJOku3uqAy1eivAvMXKcq6',
+                                },
+                                {
+                                    'domain': None,
+                                    'title': None,
+                                    'uri': 'https://www.google.com/search?q=time+in+Mexico',
+                                },
+                            ],
                         },
                         tool_call_id='ccnih13d',
                         timestamp=IsDatetime(),
@@ -719,22 +794,31 @@ async def test_native_output_with_function_and_builtin_tools(
 } \
 """,
                         provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={'thought_signature': IsStr(), 'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(
                     input_tokens=526,
                     output_tokens=27,
                     input_text_tokens=341,
-                    details={'thoughts_tokens': 27, 'tool_use_prompt_tokens': 86, 'text_prompt_tokens': 341},
+                    details={
+                        'thoughts_tokens': 27,
+                        'tool_use_prompt_tokens': 86,
+                        'text_prompt_tokens': 341,
+                        'web_search_requests': 1,
+                    },
                     output_reasoning_tokens=27,
                     input_tool_tokens=86,
-                    cost=Decimal('0.000344'),
+                    web_searches=1,
+                    cost=Decimal('0.014344'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='jlP6abq1OuqGz7IP-6e9iA0',
                 finish_reason='stop',
@@ -773,6 +857,28 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
                         tool_name='web_search',
                         content={
                             'search_suggestions': IsStr(),
+                            'sources': [
+                                {
+                                    'domain': None,
+                                    'title': 'sa.gov',
+                                    'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHxaMv-GdgCK-W3NgGOcJM8An2wHcQRQVxif1aN4C_NokfytNVHtIY40vkJhscfGyDWvJXcHC--UfQES4HOQRJY2EeMYe9Xb7RXltWBkeJ4SmcoBo4opx0f7_V_ZEwUOAXLXvSixcpBxizGtKaIwgUmARRb06ZucRlgynQfzeVxvI-3OPZ4HxBpvUXSkTER1SAuaibv6rXya9E1zkNM39lW1hb2cJ3wzHSODbmxeK_tZpGa',
+                                },
+                                {
+                                    'domain': None,
+                                    'title': 'vynmsa.com',
+                                    'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFT4AK2D_NX8OThMFYHwYtz8QbQVVcNNGZvoJT05u2NJ7fxeQpI_PALP4ZGTNpMiSh5eilkxjtQUUEDsv7jJsorUZhXPTnHeM-RZUNkUIyn4ALiFGa7RQNHVmNW2ey3KSz6YkOzTnAaVn4Nb_Y=',
+                                },
+                                {
+                                    'domain': None,
+                                    'title': 'worldatlas.com',
+                                    'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEhIeQoP2DKtnk9ijOTTp8pbA3q_n-BH70orGFr7LBQEmzlYwGSiZF9XNrzbj8jvhrW2lUbC9bFMK7C6zkty8DFxwh7qIAmCSF6zK33a2Zm4wI751PC0RLBRFQYHIDkEaC_REp3G4kXjO5MZEVBT1b7glE8ye-S9eMRDP2wOSxZxw==',
+                                },
+                                {
+                                    'domain': None,
+                                    'title': None,
+                                    'uri': 'https://www.google.com/search?q=time+in+Mexico',
+                                },
+                            ],
                         },
                         tool_call_id='0yzlft9k',
                         timestamp=IsDatetime(),
@@ -787,21 +893,25 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
 } \
 """,
                         provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={'thought_signature': IsStr(), 'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(
                     input_tokens=417,
                     output_tokens=71,
                     input_text_tokens=351,
-                    details={'thoughts_tokens': 71, 'text_prompt_tokens': 351},
+                    details={'thoughts_tokens': 71, 'text_prompt_tokens': 351, 'web_search_requests': 1},
                     output_reasoning_tokens=71,
-                    cost=Decimal('0.0004215'),
+                    web_searches=1,
+                    cost=Decimal('0.0144215'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='klP6aYiLELOLqtsP8sPnwAs',
                 finish_reason='stop',
@@ -863,9 +973,11 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
                     cost=Decimal('0.0002325'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='lFP6aZiqNKbXz7IPz-j6gAc',
                 finish_reason='stop',
@@ -927,9 +1039,11 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                     cost=Decimal('0.0002585'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='l1P6af_FOMXVz7IPi8y54Aw',
                 finish_reason='stop',
@@ -983,9 +1097,11 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                     cost=Decimal('0.000309'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='mVP6adOKCunUz7IP5vXVqQ0',
                 finish_reason='stop',
@@ -1033,6 +1149,7 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
             ),
             ModelResponse(
                 parts=[
+                    TextPart(content='{"city": "Mexico City", "country": "Mexico"}'),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['largest city in Mexico']},
@@ -1046,7 +1163,6 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                         timestamp=IsDatetime(),
                         provider_name='google',
                     ),
-                    TextPart(content='{"city": "Mexico City", "country": "Mexico"}'),
                 ],
                 usage=RequestUsage(
                     input_tokens=217,
@@ -1057,6 +1173,7 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                         'tool_use_prompt_tokens': 132,
                         'text_prompt_tokens': 85,
                         'text_tool_use_prompt_tokens': 132,
+                        'web_search_requests': 1,
                     },
                     output_reasoning_tokens=54,
                     input_tool_tokens=132,
@@ -1064,14 +1181,69 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                     cost=Decimal('0.0002701'),
                 ),
                 model_name='gemini-2.5-flash',
+                model_id='google:gemini-2.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='nFP6aZ_4HPuU6dkP-uetwA0',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+        ]
+    )
+
+
+async def test_google_image_generation_local_fallback_with_tool_output(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """A swapped-out native tool doesn't count against output tools on a model without tool combination."""
+
+    class Axolotl(BaseModel):
+        color: str
+
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    model = GoogleModel('gemini-2.5-flash', provider=provider)
+    assert model.profile.get('google_supports_tool_combination') is False
+
+    prompts: list[str] = []
+
+    def generate_image(prompt: str) -> str:
+        """Generate an image from a text prompt."""
+        prompts.append(prompt)
+        return 'The image of a pink axolotl was generated and shown to the user.'
+
+    agent = Agent(model, output_type=ToolOutput(Axolotl), capabilities=[ImageGeneration(local=generate_image)])
+    result = await agent.run('Generate an image of an axolotl, then report its color.')
+
+    assert prompts == snapshot(['an axolotl'])
+    assert result.output == snapshot(Axolotl(color='pink'))
+    assert request_capture.body(':generateContent')['tools'] == snapshot(
+        [
+            {
+                'functionDeclarations': [
+                    {
+                        'description': 'Generate an image from a text prompt.',
+                        'name': 'generate_image',
+                        'parameters_json_schema': {
+                            'additionalProperties': False,
+                            'properties': {'prompt': {'type': 'string'}},
+                            'required': ['prompt'],
+                            'type': 'object',
+                        },
+                    },
+                    {
+                        'description': 'The final response which ends this conversation',
+                        'name': 'final_result',
+                        'parameters_json_schema': {
+                            'properties': {'color': {'type': 'string'}},
+                            'required': ['color'],
+                            'type': 'object',
+                        },
+                    },
+                ]
+            }
         ]
     )

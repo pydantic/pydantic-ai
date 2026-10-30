@@ -1,13 +1,14 @@
 from __future__ import annotations as _annotations
 
 import os
+from datetime import timedelta
 from typing import overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -30,7 +31,7 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
@@ -54,13 +55,10 @@ class OpenRouterModelProfile(OpenAIModelProfile, total=False):
     Anthropic enforces a limit of 4. When set, excess breakpoints are silently removed
     from messages (newest kept first). `None` means no limit."""
     openrouter_supports_forced_tool_choice_with_thinking: bool
-    """Whether the downstream provider accepts a forced `tool_choice` while thinking is enabled.
+    """Deprecated: use [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking] instead.
 
-    Anthropic rejects `tool_choice` `any`/`tool` alongside extended thinking, but OpenRouter swallows the
-    incompatibility by dropping `reasoning` from the request instead of erroring, so the response silently
-    comes back with no reasoning at all. When False and thinking is enabled, a resolved `required` tool
-    choice falls back to `auto` (filtering tools to the requested set), and an explicit
-    `tool_choice='required'` (or an explicit list of tools) raises a `UserError`."""
+    Translated (with a deprecation warning) whenever profiles are merged.
+    """
 
 
 class _OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
@@ -121,11 +119,58 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
 
 
-class OpenRouterProvider(_OpenAICompatibleProvider):
+_MANDATORY_REASONING_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    # Claude Sonnet 5.5 turns thinking off with `thinking={'type': 'between_tools'}` on the Anthropic API, which
+    # OpenRouter's `reasoning` field can't express.
+    'anthropic': ('claude-sonnet-5-5',),
+    'google': ('gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-4-argon'),
+    'moonshotai': ('kimi-k2.7-code', 'kimi-k2-thinking'),
+    'openai': ('gpt-5.2-codex', 'gpt-oss-'),
+    'qwen': (
+        'qwen3.8-max',
+        'qwen3.8-2.4t',
+        'qwen3-vl-30b-a3b-thinking',
+        'qwen3-next-80b-a3b-thinking',
+        'qwen3-235b-a22b-thinking',
+    ),
+    'x-ai': ('grok-4.20-multi-agent', 'grok-build'),
+    'z-ai': ('glm-5.3',),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that make reasoning mandatory.
+
+OpenRouter rejects `reasoning={'effort': 'none'}` on these with "Reasoning is mandatory for this endpoint and cannot
+be disabled", including for models that can turn reasoning off on their own API, so their OpenRouter profile marks
+them always-on and `thinking=False` asks for the lowest effort instead. Taken from `reasoning.mandatory` in
+[OpenRouter's model list](https://openrouter.ai/api/v1/models), for the providers that have a model profile here.
+"""
+
+
+_MID_CONVERSATION_EFFORT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    'anthropic': ('claude-fable-5-1', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'),
+    'openai': ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that accept a mid-conversation effort change.
+
+OpenRouter routes a request carrying a `configuration_update` only to endpoints that accept it, and rejects it with a
+400 ("Mid-conversation reasoning effort (configuration_update) is not supported") on every other model, so this lists
+the models a live probe found accepting it (2026-10-26): Claude Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5,
+and GPT-6 Astra, Sol and Luna and GPT-6.1 Sol. Claude Fable 5 and Sonnet 5, GPT-6.1 Terra and GPT-5.6 are rejected,
+as is every `-pro` variant, which `OpenRouterProvider.model_profile` excludes.
+https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#changing-effort-mid-conversation
+"""
+
+
+class OpenRouterProvider(_OpenAISDKProvider):
     """Provider for OpenRouter API."""
 
     @property
     def name(self) -> str:
+        return 'openrouter'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing reasoning details. Which upstream verifies
+        # them depends on where OpenRouter routed the request, so no other provider is declared compatible.
         return 'openrouter'
 
     @property
@@ -170,6 +215,17 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
             if provider == 'anthropic':
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
+        elif provider == 'z-ai' and model_name.lower().startswith('glm-5.3'):
+            # Inline GLM-5.3 schemas without importing Z.AI's native thinking settings.
+            # See https://github.com/pydantic/pydantic-ai/issues/10243.
+            profile = ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer)
+
+        if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
+            profile = merge_profile(profile, ModelProfile(thinking_always_enabled=True))
+        # OpenRouter rejects the change on every pro variant, such as `openai/gpt-6-astra-pro`.
+        supports_mid_conversation_effort = model_name.lower().startswith(
+            _MID_CONVERSATION_EFFORT_MODEL_PREFIXES.get(provider, ())
+        ) and not model_name.lower().endswith('-pro')
 
         # Cache capability flags are set on the gateway layer based on the downstream provider.
         # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all
@@ -201,12 +257,18 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
                 openai_chat_supports_max_completion_tokens=False,
                 supports_inline_system_prompts=False,
                 supports_thinking=True,
+                # OpenRouter's own Chat Completions extension: a content-less `system` message carrying a
+                # `configuration_update`. Set here because the upstream provider's own channel isn't what's sent.
+                supports_mid_conversation_effort=supports_mid_conversation_effort,
                 # OpenRouter's native tools (web search plugin, advisor) are gateway features that
                 # work with any underlying model, so the upstream profile's vendor-specific tool
                 # gating (e.g. Anthropic's valid-executor list) doesn't apply. Neutralize it here;
                 # `OpenRouterModel.supported_native_tools()` caps the effective set via the
                 # intersection in `Model.profile`.
                 supported_native_tools=SUPPORTED_NATIVE_TOOLS,
+                supports_cache=supports_cache_control,
+                # Only Anthropic routes take a TTL; Gemini caches at its 5-minute default.
+                supported_cache_retentions=('5m', '1h') if supports_anthropic_cache else (),
                 openrouter_supports_cache_control=supports_cache_control,
                 openrouter_supports_cache_ttl=supports_anthropic_cache,
                 openrouter_supports_tool_cache=supports_anthropic_cache,
@@ -215,7 +277,12 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
                 # Anthropic errors on a forced `tool_choice` with thinking enabled; OpenRouter instead
                 # drops `reasoning` from the request and returns a response with no reasoning at all.
                 # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
-                openrouter_supports_forced_tool_choice_with_thinking=provider != 'anthropic',
+                supports_forced_tool_choice_with_thinking=provider != 'anthropic',
+                # OpenRouter documents cache TTLs for the providers whose cache control it passes through:
+                # Anthropic's 5-minute default (1-hour opt-in via `CachePoint`) and Gemini's 5-minute cache
+                # writes. Other routed caches have no OpenRouter-level retention commitment.
+                # https://openrouter.ai/docs/features/prompt-caching
+                default_cache_retention=timedelta(minutes=5) if supports_cache_control else None,
             ),
         )
 

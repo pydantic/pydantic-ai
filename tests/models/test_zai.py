@@ -4,7 +4,16 @@ import re
 
 import pytest
 
-from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    BinaryImage,
+    ModelRequest,
+    ModelResponse,
+    ModelSettingsDeltaPart,
+    TextPart,
+    ThinkingPart,
+    UserPromptPart,
+)
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import FinishReason, ModelResponsePart
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -28,7 +37,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -94,6 +102,7 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                     details={'reasoning_tokens': 638}, input_tokens=17, output_tokens=947, output_reasoning_tokens=638
                 ),
                 model_name='glm-5.1',
+                model_id='zai:glm-5.1',
                 timestamp=IsDatetime(),
                 provider_name='zai',
                 provider_url='https://api.z.ai/api/paas/v4',
@@ -104,7 +113,10 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='Now multiply that result by 2.', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='Now multiply that result by 2.', timestamp=IsDatetime()),
+                    ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True),
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -118,6 +130,7 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                     details={'reasoning_tokens': 144}, input_tokens=974, output_tokens=216, output_reasoning_tokens=144
                 ),
                 model_name='glm-5.1',
+                model_id='zai:glm-5.1',
                 timestamp=IsDatetime(),
                 provider_name='zai',
                 provider_url='https://api.z.ai/api/paas/v4',
@@ -128,7 +141,10 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='And what was my first question?', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='And what was my first question?', timestamp=IsDatetime()),
+                    ModelSettingsDeltaPart(settings={'thinking': None}, top_level=True),
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -142,6 +158,7 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                     output_reasoning_tokens=0,
                 ),
                 model_name='glm-5.1',
+                model_id='zai:glm-5.1',
                 timestamp=IsDatetime(),
                 provider_name='zai',
                 provider_url='https://api.z.ai/api/paas/v4',
@@ -214,6 +231,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str,
                     details={'reasoning_tokens': 88}, output_tokens=96, input_tokens=13, output_reasoning_tokens=88
                 ),
                 model_name='glm-5.1',
+                model_id='zai:glm-5.1',
                 timestamp=IsDatetime(),
                 provider_name='zai',
                 provider_url='https://api.z.ai/api/paas/v4',
@@ -331,7 +349,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str,
                     ),
                     (
                         False,
-                        {'thinking': {'clear_thinking': False}},
+                        {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'low'},
                         [
                             ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
                             TextPart(content='2 + 2 = 4'),
@@ -386,7 +404,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str,
                     ),
                     (
                         False,
-                        {'thinking': {'clear_thinking': False}},
+                        {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'low'},
                         [
                             ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
                             TextPart(content='2 + 2 = 4'),
@@ -412,9 +430,13 @@ async def test_zai_reasoning_effort(
 
     GLM-5.2 accepts every unified level, so its profile carries no mapping and each level goes out
     unchanged. GLM-5.3 and GLM-5.3-flash only accept `low`/`high`/`max`, so their profile maps the
-    rest onto the nearest supported one; they also always reason, so `thinking=False` is dropped
-    before it reaches the wire instead of becoming `type: 'disabled'`. A bare `thinking=True` sends
-    no effort on any of them, leaving Z.AI to apply its own default.
+    rest onto the nearest supported one; they also always reason, so `thinking=False` sends their
+    lowest effort, `low`, instead of `type: 'disabled'`. A bare `thinking=True` sends no effort on any
+    of them, leaving Z.AI to apply its own default.
+
+    The GLM-5.3 `False` rows replay a response recorded when `thinking=False` sent no `type` or effort
+    (no Z.AI key was at hand to re-record them); the payload they now pin is the same one the `minimal`
+    and `low` rows send, which those rows' recordings show the API accepting.
 
     Recording every level is what makes the API's acceptance of each value we emit part of the test
     rather than an assumption. The returned parts are the other half of it, and they are not uniform:

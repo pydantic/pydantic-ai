@@ -10,8 +10,6 @@ import pytest
 from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext, TypeExpression
 from pydantic_graph.join import reduce_list_append, reduce_sum
 
-pytestmark = pytest.mark.anyio
-
 
 @dataclass
 class DecisionState:

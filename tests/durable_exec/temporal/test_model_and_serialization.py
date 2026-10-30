@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sys
 import uuid
@@ -7,12 +8,13 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 from unittest.mock import Mock, patch
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -22,6 +24,7 @@ from pydantic_ai import (
     CodeExecutionTool,
     DocumentUrl,
     FilePart,
+    FunctionToolset,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -40,19 +43,41 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._instrumentation import model_request_parameters_attributes
+from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
+    Capability,
+    DynamicCapability,
     Instrumentation,
     NativeTool,
 )
+from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request_stream
+from pydantic_ai.durable_exec._utils import mark_streamed_before_failing, streamed_before_failing
 from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelAuthenticationError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelNotFoundError,
+    ModelRateLimitError,
+    ModelRequestRejectedError,
+    ModelServerError,
+    ModelTimeoutError,
+    RetryModelRequest,
     UserError,
 )
 from pydantic_ai.messages import (
     CUSTOM_EVENT_TYPES,
     CapabilityEvent,
     CustomEvent,
+    InstructionId,
+    InstructionPart,
+    ModelRequestAttempt,
+    ThinkingPart,
+    ToolsetInstructionSource,
     UnknownCustomEvent,
     UploadedFile,
 )
@@ -62,10 +87,12 @@ from pydantic_ai.models import (
     infer_model,
     infer_model_profile,
 )
+from pydantic_ai.models.decision import DecisionHandOff, UnsureRoute
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
@@ -86,6 +113,7 @@ try:
         PayloadCodec,
         StorageDriver,
     )
+    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
@@ -111,7 +139,20 @@ try:
         TemporalModel,
         _CancelParams as _ModelCancelParams,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.durable_exec.temporal._model_errors import (
+        _retry_policy_type,  # pyright: ignore[reportPrivateUsage]
+        model_errors_as_application_errors,
+        rebuilt_model_errors,
+        rebuilt_retry_requests,
+        retry_requests_as_application_errors,
+    )
+    from pydantic_ai.durable_exec.temporal._replay_safe_tracer_provider import ReplaySafeSDKTracerProvider
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
+    from pydantic_ai.durable_exec.temporal._transports import (
+        _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
+        _CompactMessagesTransport,
+        _ModelRequestTransport,
+    )
 
     from .sandbox_workflow import PydanticAIPluginSandboxWorkflow
 except ImportError:  # pragma: lax no cover
@@ -133,6 +174,11 @@ try:
     from logfire import Logfire
     from logfire._internal.config import LogfireConfig
     from logfire._internal.tracer import _ProxyTracer  # pyright: ignore[reportPrivateUsage]
+    from logfire.testing import CaptureLogfire
+    from opentelemetry.sdk.trace import SpanLimits, TracerProvider as SDKTracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.sdk.trace.id_generator import RandomIdGenerator
     from opentelemetry.trace import ProxyTracer
 except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
@@ -199,7 +245,6 @@ with try_import() as anthropic_imports_successful:
 warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal-model'),
     pytest.mark.filterwarnings(
@@ -401,10 +446,14 @@ async def test_logfire_plugin(client: Client):
     assert isinstance(interceptor, TracingInterceptor)
     if isinstance(interceptor.tracer, ProxyTracer):
         assert interceptor.tracer._instrumenting_module_name == 'temporalio'  # pyright: ignore[reportPrivateUsage] # pragma: lax no cover
-    elif isinstance(interceptor.tracer, _ProxyTracer):
+    elif isinstance(interceptor.tracer, _ProxyTracer):  # pragma: lax no cover
         assert interceptor.tracer.instrumenting_module_name == 'temporalio'  # pragma: lax no cover
     else:
         assert False, f'Unexpected tracer type: {type(interceptor.tracer)}'  # pragma: no cover
+
+    worker_config = plugin.configure_worker({'client': client})
+    assert 'interceptors' in worker_config
+    assert worker_config['interceptors'][0] is interceptor
 
     with patch.object(
         temporal_logfire, 'OpenTelemetryConfig', wraps=temporal_logfire.OpenTelemetryConfig
@@ -443,7 +492,8 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
     `logfire.configure()` is a reset rather than an additive call: it re-derives every unspecified
     argument from the environment and shuts down the existing tracer provider. Calling it on every
     `Client.connect()` silently discarded a host's own scrubbing patterns, additional span processors,
-    console settings, and service name. Pydantic AI is instrumented either way.
+    console settings, and service name. Pydantic AI is instrumented either way, through a replay-safe tracer provider that shares the
+    configured Logfire provider's resource, sampler, and span processor.
 
     `logfire.DEFAULT_LOGFIRE_INSTANCE` is swapped for a stand-in so the assertions don't depend on
     (or disturb) whatever configuration the rest of the test session has installed globally.
@@ -451,66 +501,342 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
     instance = (
         logfire.configure(local=True, send_to_logfire=False) if already_configured else Logfire(config=LogfireConfig())
     )
+    configured_instance = instance if already_configured else logfire.configure(local=True, send_to_logfire=False)
     assert instance.config._initialized is already_configured  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', instance)
+    logfire_provider = configured_instance.config.get_tracer_provider().provider
+    assert isinstance(logfire_provider, SDKTracerProvider)
 
     configure_calls: list[dict[str, Any]] = []
-    instrumented: list[Logfire] = []
+    instrumented: list[tuple[Logfire, dict[str, Any]]] = []
 
+    # Like the real calls, the stand-ins leave Logfire configured and Pydantic AI instrumented, so the plugin
+    # (which sets up at every client, connect and worker hook) configures and instruments only once.
     def configure(**kwargs: Any) -> Logfire:
         configure_calls.append(kwargs)
-        return instance
+        monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', configured_instance)
+        return configured_instance
 
     def instrument_pydantic_ai(self: Logfire, *args: Any, **kwargs: Any) -> None:
-        instrumented.append(self)
+        instrumented.append((self, kwargs))
+        monkeypatch.setattr(Agent, '_instrument_default', True)
 
     monkeypatch.setattr(logfire, 'configure', configure)
     monkeypatch.setattr(Logfire, 'instrument_pydantic_ai', instrument_pydantic_ai)
+    monkeypatch.setattr(Agent, '_instrument_default', False)
 
-    await Client.connect(client.service_client.config.target_host, plugins=[LogfirePlugin()])
+    plugin = LogfirePlugin()
+    await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+    worker_config = plugin.configure_worker({'client': client})
+    assert 'interceptors' in worker_config
+    assert isinstance(worker_config['interceptors'][0], TracingInterceptor)
 
     assert configure_calls == ([] if already_configured else [{}])
-    assert instrumented == [instance]
+    # Pydantic AI is instrumented through Logfire's own proxy, whose provider is now replay-safe and shares
+    # the configured provider's resource, sampler and span processor.
+    assert instrumented == [(configured_instance, {})]
+    replay_safe_provider = configured_instance.config.get_tracer_provider().provider
+    assert isinstance(replay_safe_provider, ReplaySafeSDKTracerProvider)
+    assert replay_safe_provider.resource is logfire_provider.resource
+    assert replay_safe_provider.sampler is logfire_provider.sampler
+    assert (
+        replay_safe_provider._active_span_processor  # pyright: ignore[reportPrivateUsage]
+        is logfire_provider._active_span_processor  # pyright: ignore[reportPrivateUsage]
+    )
 
 
-@pytest.mark.parametrize('already_instrumented', [True, False])
-def test_logfire_plugin_default_setup_preserves_instrumentation(
-    monkeypatch: pytest.MonkeyPatch, already_instrumented: bool
+@pytest.fixture
+def configured_logfire(monkeypatch: pytest.MonkeyPatch) -> Logfire:
+    instance = logfire.configure(local=True, send_to_logfire=False)
+    monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', instance)
+    return instance
+
+
+def _is_replay_safe(tracer: Any) -> bool:
+    """Whether a tracer handed out by Logfire's proxy currently resolves to a replay-safe tracer."""
+    provider = logfire.DEFAULT_LOGFIRE_INSTANCE.config.get_tracer_provider().provider
+    return isinstance(provider, ReplaySafeSDKTracerProvider) and type(tracer.tracer) is type(provider.get_tracer('x'))
+
+
+def test_replay_safe_logfire_preserves_instrumentation_settings(
+    monkeypatch: pytest.MonkeyPatch, configured_logfire: Logfire
 ):
-    """The default setup leaves a host's own Pydantic AI instrumentation settings alone.
+    """A host's own Pydantic AI instrumentation settings survive and become replay-safe in place.
 
     `instrument_pydantic_ai()` replaces rather than merges `Agent._instrument_default`, so calling it
-    unconditionally turned a deliberate `include_content=False` back on, putting prompts, completions
-    and tool call results on exported spans. A host that hasn't instrumented is still instrumented.
-
-    As in `test_logfire_plugin_default_setup` above, `logfire.DEFAULT_LOGFIRE_INSTANCE`, `configure`
-    and `instrument_pydantic_ai` are swapped for stand-ins so the assertions neither depend on nor
-    disturb whatever configuration the rest of the test session has installed globally.
+    unconditionally would turn a deliberate `include_content=False` back on, putting prompts,
+    completions and tool call results on exported spans.
     """
-    instance = Logfire(config=LogfireConfig())
-    monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', instance)
+    host_settings = InstrumentationSettings(
+        tracer_provider=configured_logfire.config.get_tracer_provider(),
+        include_content=False,
+        include_binary_content=False,
+    )
+    monkeypatch.setattr(Agent, '_instrument_default', host_settings)
+    assert not _is_replay_safe(host_settings.tracer)
 
-    instrumented: list[Logfire] = []
+    LogfirePlugin()._setup_replay_safe_instrumentation()  # pyright: ignore[reportPrivateUsage]
 
-    def configure(**kwargs: Any) -> Logfire:
+    assert Agent._instrument_default is host_settings  # pyright: ignore[reportPrivateUsage]
+    assert host_settings.include_content is False
+    assert host_settings.include_binary_content is False
+    assert _is_replay_safe(host_settings.tracer)
+
+
+def test_replay_safe_logfire_instruments_uninstrumented_host(
+    monkeypatch: pytest.MonkeyPatch, configured_logfire: Logfire
+):
+    monkeypatch.setattr(Agent, '_instrument_default', False)
+
+    LogfirePlugin()._setup_replay_safe_instrumentation()  # pyright: ignore[reportPrivateUsage]
+
+    settings = Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(settings, InstrumentationSettings)
+    assert _is_replay_safe(settings.tracer)
+
+
+def test_replay_safe_logfire_honors_suppressed_scopes(monkeypatch: pytest.MonkeyPatch, capfire: CaptureLogfire):
+    """`logfire.suppress_scopes('pydantic-ai')` keeps prompts off exported spans under replay-safe tracing too.
+
+    Logfire enforces suppression in its tracer proxy, so the replay-safe provider has to sit behind the proxy
+    rather than hand out tracers directly.
+    """
+    config = logfire.DEFAULT_LOGFIRE_INSTANCE.config
+    # `suppress_scopes()` is process-wide and suppresses the scope on the tracer, meter and logger providers;
+    # start each from an empty set that `monkeypatch` restores afterwards, or later tests on this worker
+    # record `pydantic-ai` metrics into a no-op meter.
+    for provider in (config.get_tracer_provider(), config.get_meter_provider(), config.get_logger_provider()):
+        monkeypatch.setattr(provider, 'suppressed_scopes', set[str]())
+    monkeypatch.setattr(Agent, '_instrument_default', False)
+    LogfirePlugin()._setup_replay_safe_instrumentation()  # pyright: ignore[reportPrivateUsage]
+    logfire.suppress_scopes('pydantic-ai')
+
+    Agent(TestModel()).run_sync('A prompt the host does not want exported')
+
+    assert capfire.exporter.exported_spans_as_dict() == []
+
+
+def test_replay_safe_sdk_tracer_provider_forwards_flush_to_shared_processor():
+    """Logfire only forwards `force_flush()` to an SDK provider, so the replay-safe provider must be one."""
+    exporter = InMemorySpanExporter()
+    provider = SDKTracerProvider(shutdown_on_exit=False)
+    provider.add_span_processor(BatchSpanProcessor(exporter, schedule_delay_millis=60_000))
+    replay_safe_provider = ReplaySafeSDKTracerProvider(provider)
+    assert isinstance(replay_safe_provider, SDKTracerProvider)
+
+    with replay_safe_provider.get_tracer('test').start_as_current_span('batched'):
+        pass
+    assert exporter.get_finished_spans() == ()
+
+    assert replay_safe_provider.force_flush()
+    assert [span.name for span in exporter.get_finished_spans()] == ['batched']
+    replay_safe_provider.shutdown()
+
+
+def test_replay_safe_sdk_tracer_provider_keeps_host_provider_settings():
+    """Outside a workflow, spans keep the host provider's ID generator and span limits."""
+
+    class FixedIdGenerator(RandomIdGenerator):
+        def generate_span_id(self) -> int:
+            return 0x1234
+
+    exporter = InMemorySpanExporter()
+    provider = SDKTracerProvider(
+        id_generator=FixedIdGenerator(), span_limits=SpanLimits(max_attributes=1), shutdown_on_exit=False
+    )
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    with ReplaySafeSDKTracerProvider(provider).get_tracer('test').start_as_current_span('span') as span:
+        span.set_attributes({'first': 1, 'second': 2})
+
+    [exported] = exporter.get_finished_spans()
+    assert exported.context is not None
+    assert exported.context.span_id == 0x1234
+    assert exported.attributes is not None
+    assert len(exported.attributes) == 1
+    provider.shutdown()
+
+
+def test_logfire_plugin_restores_replay_safety_after_reconfigure(
+    client: Client, monkeypatch: pytest.MonkeyPatch, capfire: CaptureLogfire
+):
+    """`logfire.configure()` swaps a fresh provider into Logfire's proxy; the next worker reinstalls replay-safety."""
+    monkeypatch.setattr(Agent, '_instrument_default', False)
+    proxy = logfire.DEFAULT_LOGFIRE_INSTANCE.config.get_tracer_provider()
+    plugin = LogfirePlugin()
+    worker_config = plugin.configure_worker({'client': client})
+    assert 'interceptors' in worker_config
+    interceptor = worker_config['interceptors'][0]
+    assert isinstance(interceptor, TracingInterceptor)
+    replay_safe_provider = proxy.provider
+    assert isinstance(replay_safe_provider, ReplaySafeSDKTracerProvider)
+    assert _is_replay_safe(interceptor.tracer)
+
+    # Setting up again without a reconfigure keeps the installed provider rather than wrapping it twice.
+    plugin.configure_worker({'client': client})
+    assert proxy.provider is replay_safe_provider
+
+    logfire.configure(send_to_logfire=False, console=False)
+    assert not _is_replay_safe(interceptor.tracer)
+
+    worker_config = plugin.configure_worker({'client': client})
+    assert 'interceptors' in worker_config
+    assert worker_config['interceptors'][0] is interceptor
+    assert _is_replay_safe(interceptor.tracer)
+
+
+def test_logfire_plugin_makes_custom_setup_replay_safe(
+    client: Client, monkeypatch: pytest.MonkeyPatch, configured_logfire: Logfire
+):
+    """A custom `setup_logfire` callback configures Logfire; the plugin still makes its instance replay-safe.
+
+    The callback is called once even though setup runs at every client, worker and replayer hook, since a callback
+    that calls `logfire.configure()` would otherwise reset Logfire each time. It owns Pydantic AI instrumentation,
+    so the plugin doesn't instrument for it.
+    """
+    monkeypatch.setattr(Agent, '_instrument_default', False)
+    calls: list[Logfire] = []
+
+    def setup_logfire() -> Logfire:
+        calls.append(configured_logfire)
+        return configured_logfire
+
+    plugin = LogfirePlugin(setup_logfire)
+    config = client.config()
+    config['plugins'] = [plugin]
+    Client(**config)
+    worker_config = plugin.configure_worker({'client': client})
+    plugin.configure_replayer({})
+
+    assert calls == [configured_logfire]
+    assert isinstance(configured_logfire.config.get_tracer_provider().provider, ReplaySafeSDKTracerProvider)
+    assert 'interceptors' in worker_config
+    interceptor = worker_config['interceptors'][0]
+    assert isinstance(interceptor, TracingInterceptor)
+    assert _is_replay_safe(interceptor.tracer)
+    assert Agent._instrument_default is False  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_logfire_plugin_replay_safe_false(
+    client: Client, monkeypatch: pytest.MonkeyPatch, configured_logfire: Logfire
+):
+    """`replay_safe=False` leaves Logfire's provider alone and traces Temporal through the global tracer provider.
+
+    A custom `setup_logfire` callback then keeps its previous behavior of running on every connect.
+    """
+    monkeypatch.setattr(Agent, '_instrument_default', False)
+    plugin = LogfirePlugin(replay_safe=False)
+
+    worker_config = plugin.configure_worker({'client': client})
+    plugin.configure_replayer({})
+
+    assert not isinstance(configured_logfire.config.get_tracer_provider().provider, ReplaySafeSDKTracerProvider)
+    assert 'interceptors' in worker_config
+    interceptor = worker_config['interceptors'][0]
+    assert isinstance(interceptor, TracingInterceptor)
+    assert not _is_replay_safe(interceptor.tracer)
+
+    calls: list[Logfire] = []
+
+    def setup_logfire() -> Logfire:
+        calls.append(configured_logfire)
+        return configured_logfire
+
+    plugin = LogfirePlugin(setup_logfire, replay_safe=False)
+    await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+    await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+
+    assert calls == [configured_logfire, configured_logfire]
+    assert not isinstance(configured_logfire.config.get_tracer_provider().provider, ReplaySafeSDKTracerProvider)
+
+
+replay_safe_logfire_agent = Agent(
+    TestModel(custom_output_text='replay-safe'),
+    name='replay_safe_logfire_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class ReplaySafeLogfireWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await replay_safe_logfire_agent.run(prompt)).output
+
+
+async def test_logfire_plugin_does_not_emit_spans_during_replay(
+    client_with_logfire: Client, capfire: CaptureLogfire
+) -> None:
+    workflow_id = f'{ReplaySafeLogfireWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[ReplaySafeLogfireWorkflow],
+        plugins=[AgentPlugin(replay_safe_logfire_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        output = await client_with_logfire.execute_workflow(
+            ReplaySafeLogfireWorkflow.run,
+            args=['hello'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        history = await client_with_logfire.get_workflow_handle(workflow_id).fetch_history()
+
+    assert output == 'replay-safe'
+    initial_spans = capfire.exporter.exported_spans_as_dict()
+    span_count = len(initial_spans)
+    initial_start_activity_count = sum(span['name'].startswith('StartActivity:') for span in initial_spans)
+    assert span_count > 0
+    assert initial_start_activity_count > 0
+
+    await Replayer(
+        workflows=[ReplaySafeLogfireWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+        plugins=[LogfirePlugin()],
+    ).replay_workflow(history)
+
+    replayed_spans = capfire.exporter.exported_spans_as_dict()
+    assert len(replayed_spans) == span_count
+    assert sum(span['name'].startswith('StartActivity:') for span in replayed_spans) == initial_start_activity_count
+
+    # The replay-safe provider is installed in Logfire's process-wide proxy, so put Logfire's plain provider back
+    # before each of the remaining replays: otherwise they'd inherit replay-safety from the one above.
+    proxy = logfire.DEFAULT_LOGFIRE_INSTANCE.config.get_tracer_provider()
+    replay_safe_provider = proxy.provider
+    assert isinstance(replay_safe_provider, ReplaySafeSDKTracerProvider)
+
+    def use_plain_provider() -> None:
+        proxy.set_provider(SDKTracerProvider(active_span_processor=replay_safe_provider._active_span_processor))  # pyright: ignore[reportPrivateUsage]
+
+    # A custom `setup_logfire` callback gets replay-safe tracing too.
+    use_plain_provider()
+    await Replayer(
+        workflows=[ReplaySafeLogfireWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+        plugins=[LogfirePlugin(lambda: logfire.DEFAULT_LOGFIRE_INSTANCE)],
+    ).replay_workflow(history)
+    assert len(capfire.exporter.exported_spans_as_dict()) == span_count
+
+    # Control: with `replay_safe=False`, the same replay does emit duplicate spans.
+    use_plain_provider()
+
+    def setup_logfire() -> Logfire:
+        instance = logfire.DEFAULT_LOGFIRE_INSTANCE
+        instance.instrument_pydantic_ai()
         return instance
 
-    def instrument_pydantic_ai(self: Logfire, *args: Any, **kwargs: Any) -> None:
-        instrumented.append(self)
-
-    monkeypatch.setattr(logfire, 'configure', configure)
-    monkeypatch.setattr(Logfire, 'instrument_pydantic_ai', instrument_pydantic_ai)
-
-    settings = InstrumentationSettings(include_content=False, include_binary_content=False)
-    monkeypatch.setattr(Agent, '_instrument_default', settings if already_instrumented else False)
-
-    temporal_logfire._default_setup_logfire()  # pyright: ignore[reportPrivateUsage]
-
-    # With a stand-in in place, whether the plugin instruments at all is the observable: the stand-in
-    # deliberately doesn't assign `_instrument_default`, so asserting on it here would prove nothing.
-    assert instrumented == ([] if already_instrumented else [instance])
-    if already_instrumented:
-        assert Agent._instrument_default is settings  # pyright: ignore[reportPrivateUsage]
+    # `Replayer` does not connect a service client, so invoke the opt-out callback as a real client would.
+    setup_logfire()
+    await Replayer(
+        workflows=[ReplaySafeLogfireWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+        plugins=[LogfirePlugin(setup_logfire, replay_safe=False)],
+    ).replay_workflow(history)
+    assert len(capfire.exporter.exported_spans_as_dict()) > span_count
 
 
 image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
@@ -592,7 +918,7 @@ async def test_oversized_model_response_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134150)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
+            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134347)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedModelResponseWorkflow.run,
@@ -773,6 +1099,13 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
         '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead
+        'workspace',  # live facade cannot cross the activity boundary; only a concrete ref is optionally carried
+        # Live toolsets the run holds entered; an activity may run in another process, so it enters its own
+        '_run_held_toolsets',
+        '_dispatched_tool_name',  # names a tool in the workflow-side `tool_manager`, which an activity doesn't have
+    }
+    carried_only_when_set = {
+        '_tool_name_path',  # set while a name-changing wrapper lists a toolset; defaults to `()` otherwise
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
@@ -781,11 +1114,50 @@ def test_temporal_run_context_serialization_is_exhaustive():
     overlap = serialized & intentionally_unserialized
     assert not overlap, f'Fields both serialized and excluded: {overlap}'
 
-    uncategorized = all_fields - (serialized | intentionally_unserialized)
+    uncategorized = all_fields - (serialized | intentionally_unserialized | carried_only_when_set)
     assert not uncategorized, (
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to '
         '`TemporalRunContext.serialize_run_context` or to `intentionally_unserialized` (with a reason).'
     )
+
+
+async def test_temporal_run_context_carries_tool_name_path():
+    """A toolset listed in an activity under a wrapper reads its tool's count by the wrapper's names.
+
+    The path crosses as JSON and comes back in the shape the toolsets read. A payload without it, from a worker that
+    predates it or a custom `serialize_run_context` that omits it, still loads and lists the tool by the name its
+    toolset holds it under, as before the path existed.
+
+    A unit test, not a workflow or recorded test: a workflow run shows only the count the toolset reads, not the
+    payload that crossed the activity boundary or whether an older payload still loads.
+
+    See https://github.com/pydantic/pydantic-ai/issues/9741.
+    """
+    seen: list[int] = []
+    toolset = FunctionToolset[None]()
+
+    async def record(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        seen.append(ctx.retry)
+        return tool_def
+
+    @toolset.tool(prepare=record)
+    async def fail(ctx: RunContext[None]) -> str:
+        return 'ok'  # pragma: no cover
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), retries={'outer_x': 1})
+    wire = to_jsonable_python(
+        TemporalRunContext.serialize_run_context(
+            with_tool_name_layer(with_tool_name_layer(ctx, 'outer'), {'fail': 'x'})
+        )
+    )
+    assert wire['_tool_name_path'] == ['outer', {'fail': 'x'}]
+    older_wire: dict[str, object] = {key: value for key, value in wire.items() if key != '_tool_name_path'}
+
+    for payload in (wire, older_wire):
+        await toolset.get_tools(TemporalRunContext.deserialize_run_context(payload, deps=None))
+
+    assert seen == [1, 0]
+    assert '_tool_name_path' not in TemporalRunContext.serialize_run_context(ctx)
 
 
 @dataclass
@@ -1297,6 +1669,82 @@ def test_temporal_model_profile_for_raw_strings():
         assert temporal_model_with_registry.profile == alt_model.profile
 
 
+class _CanonicalSystemTestModel(TestModel):
+    @property
+    def canonical_system(self) -> str:
+        return 'anthropic'
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        return frozenset({'bedrock'})
+
+
+def test_temporal_model_canonical_system_follows_active_model():
+    """Which history data a model sends back is decided by the active model, like its identity.
+
+    A raw model string has no model to ask, so its provider name stands in, as it does for `system`.
+    """
+    default_model = TestModel(model_name='default-model')
+    alt_model = _CanonicalSystemTestModel(model_name='alt-model')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__canonical_system',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': alt_model},
+    )
+    anthropic_response = ModelResponse(
+        parts=[ThinkingPart(content='thought', signature='sig', provider_name='anthropic')], provider_name='anthropic'
+    )
+
+    assert (temporal_model.canonical_system, temporal_model.compatible_systems) == ('test', frozenset())
+    assert not temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+    assert not temporal_model.accepts_server_state(anthropic_response)
+    assert temporal_model._model_for_response(anthropic_response) is default_model  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('alt'):
+        assert (temporal_model.canonical_system, temporal_model.compatible_systems) == (
+            'anthropic',
+            frozenset({'bedrock'}),
+        )
+        assert temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+        assert temporal_model._model_for_response(anthropic_response) is alt_model  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('anthropic:claude-sonnet-4-5'):
+        assert (temporal_model.canonical_system, temporal_model.compatible_systems) == ('anthropic', frozenset())
+        assert temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+        assert temporal_model.accepts_server_state(anthropic_response)
+        assert temporal_model._model_for_response(anthropic_response) is temporal_model  # pyright: ignore[reportPrivateUsage]
+
+
+class _NoRestrictionsTestModel(TestModel):
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return native_tool.restricting_settings
+
+
+def test_temporal_model_unsupported_native_tool_settings_follow_active_model():
+    """The native tool settings check asks the active model, so a swapped-in model's limits are the ones applied.
+
+    A raw model string has no model class to ask, so it reports none; the activity's concrete model decides.
+    """
+    temporal_model = TemporalModel(
+        TestModel(model_name='default-model'),
+        activity_name_prefix='test__unsupported_native_tool_settings',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': _NoRestrictionsTestModel(model_name='alt-model')},
+    )
+    web_search = WebSearchTool(allowed_domains=['pydantic.dev'])
+
+    assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset()
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset({'allowed_domains'})
+
+    with temporal_model.using_model('google-gla:gemini-2.5-flash'):
+        assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset()
+
+
 class DefaultHostModel(TestModel):
     @property
     def base_url(self) -> str:
@@ -1482,6 +1930,341 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
         'cancel',
         'exit',
     ]
+
+
+@pytest.mark.parametrize('legacy_payload', [True, False])
+@pytest.mark.parametrize('streaming', [True, False])
+async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: bool, streaming: bool) -> None:
+    identity = 'mcp.example.test'
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path-token', native=True, local=False)
+    assert capability.id == identity
+    observed_ids: list[set[str]] = []
+
+    def check_parameters(info: AgentInfo) -> None:
+        parameters = info.model_request_parameters
+        assert parameters._telemetry_mcp_url_ids is not None  # pyright: ignore[reportPrivateUsage]
+        observed_ids.append(parameters._telemetry_mcp_url_ids)  # pyright: ignore[reportPrivateUsage]
+        attributes = model_request_parameters_attributes(parameters)
+        serialized = attributes['model_request_parameters']
+        assert isinstance(serialized, str)
+        assert json.loads(serialized)['function_tools'][0]['capability_id'] == '[REDACTED]'
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        check_parameters(info)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    async def respond_stream(_messages: list[ModelMessage], info: AgentInfo) -> AsyncGenerator[str, None]:
+        check_parameters(info)
+        yield 'ok'
+
+    async def handle_stream(_ctx: RunContext[object], _stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass
+
+    model = FunctionModel(respond, stream_function=respond_stream)
+    agent = Agent(model, capabilities=[capability])
+    temporal_model = TemporalModel(
+        model,
+        activity_name_prefix='test__request_telemetry_ids',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        event_stream_handler=handle_stream,
+        agent=agent,
+    )
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=model, usage=RunUsage())
+    params = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(
+                    name='ping',
+                    toolset_id=identity,
+                    capability_id=identity,
+                    unless_native=f'mcp_server:{identity}',
+                )
+            ],
+            instruction_parts=[
+                InstructionPart(
+                    'server guidance', id=InstructionId(ToolsetInstructionSource(identity), name='instructions')
+                )
+            ],
+            deferred_capability_ids={identity},
+            _telemetry_mcp_url_ids={identity},
+        ),
+        telemetry_mcp_url_ids={identity},
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(params, mode='json')
+    if legacy_payload:
+        wire.pop('telemetry_mcp_url_ids')
+    decoded = TypeAdapter(_RequestParams).validate_python(wire)
+    if streaming:
+        await ActivityEnvironment().run(
+            temporal_model.request_stream_activity,
+            decoded,
+            deps,  # pyright: ignore[reportArgumentType]  # Temporal's activity wrapper erases the deps generic.
+        )
+    else:
+        await ActivityEnvironment().run(temporal_model.request_activity, decoded, deps)
+
+    assert observed_ids == [{identity}]
+
+
+async def test_temporal_direct_activity_recovers_url_derived_native_mcp_id() -> None:
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=True, local=False)
+    assert capability.id is not None
+    tool = next(iter(capability.get_native_tools()))
+    assert isinstance(tool, MCPServerTool)
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        serialized = model_request_parameters_attributes(info.model_request_parameters)['model_request_parameters']
+        assert isinstance(serialized, str)
+        assert json.loads(serialized)['native_tools'][0]['id'] == '[REDACTED]'
+        return ModelResponse(parts=[TextPart('ok')])
+
+    model = FunctionModel(respond)
+    temporal_model = TemporalModel(
+        model,
+        activity_name_prefix='test__direct_request_telemetry_ids',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+    )
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(native_tools=[tool]),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
+    await ActivityEnvironment().run(
+        temporal_model.request_activity, TypeAdapter(_RequestParams).validate_python(wire), deps
+    )
+
+
+@pytest.mark.parametrize('legacy_payload', [True, False])
+@pytest.mark.parametrize('compact', [True, False])
+def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy_payload: bool) -> None:
+    identity = 'mcp.example.test'
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path-token', native=True, local=False)
+    assert capability.id == identity
+    model = TestModel()
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='ping', capability_id=identity)], _telemetry_mcp_url_ids={identity}
+    )
+    common: dict[str, Any] = {
+        'messages': [ModelRequest.user_text_prompt('hello')],
+        'model_settings': None,
+        'model_request_parameters': parameters,
+        'serialized_run_context': TemporalRunContext.serialize_run_context(ctx),
+    }
+    agent = Agent(model, name='telemetry_recovery', capabilities=[capability])
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    assert bound_durability.agent is agent
+    if compact:
+        payload = _CompactMessagesParams(
+            **common,
+            telemetry_mcp_url_ids={identity},
+            telemetry_mcp_url_toolset_ids={identity},
+            telemetry_mcp_url_tool_names={'ping'},
+            streaming=False,
+            instructions=None,
+        )
+        wire = TypeAdapter(_CompactMessagesParams).dump_python(payload, mode='json')
+        if legacy_payload:
+            wire.pop('telemetry_mcp_url_ids')
+            wire.pop('telemetry_mcp_url_toolset_ids')
+            wire.pop('telemetry_mcp_url_tool_names')
+        decoded = TypeAdapter(_CompactMessagesParams).validate_python(wire)
+        loaded = _CompactMessagesTransport(bound_durability).load((decoded, None), runtime=object())
+        restored = loaded.request_context.model_request_parameters
+    else:
+        payload = _RequestParams(
+            **common,
+            telemetry_mcp_url_ids={identity},
+            telemetry_mcp_url_toolset_ids={identity},
+            telemetry_mcp_url_tool_names={'ping'},
+        )
+        wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
+        if legacy_payload:
+            wire.pop('telemetry_mcp_url_ids')
+            wire.pop('telemetry_mcp_url_toolset_ids')
+            wire.pop('telemetry_mcp_url_tool_names')
+        decoded = TypeAdapter(_RequestParams).validate_python(wire)
+        loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load(
+            (decoded, None), runtime=object()
+        )
+        restored = loaded.model_request_parameters
+
+    assert restored._telemetry_mcp_url_ids == {identity}  # pyright: ignore[reportPrivateUsage]
+    assert restored._telemetry_mcp_url_toolset_ids == (set() if legacy_payload else {identity})  # pyright: ignore[reportPrivateUsage]
+    assert restored._telemetry_mcp_url_tool_names == (None if legacy_payload else {'ping'})  # pyright: ignore[reportPrivateUsage]
+    assert identity not in str(model_request_parameters_attributes(restored))
+
+
+@pytest.mark.parametrize('derived_id', [True, False])
+def test_temporal_legacy_payload_recovers_dynamic_native_mcp_id(derived_id: bool) -> None:
+    url = 'https://mcp.example.test/private/SENTINEL-path-token'
+    identity = 'mcp.example.test' if derived_id else 'chosen-id'
+    model = TestModel()
+    agent = Agent(
+        model,
+        name='telemetry_recovery',
+        capabilities=[DynamicCapability(lambda _ctx: MCP(url, native=True, local=False), id='dynamic-mcp')],
+    )
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(native_tools=[MCPServerTool(id=identity, url=url)]),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    decoded = TypeAdapter(_RequestParams).validate_python(TypeAdapter(_RequestParams).dump_python(payload, mode='json'))
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    parameters = loaded.model_request_parameters
+
+    assert parameters._telemetry_mcp_url_ids == ({identity} if derived_id else set())  # pyright: ignore[reportPrivateUsage]
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert 'SENTINEL-path-token' not in serialized
+    assert json.loads(serialized)['native_tools'][0]['id'] == ('[REDACTED]' if derived_id else identity)
+
+
+@pytest.mark.parametrize('derived_id', [True, False])
+def test_temporal_legacy_payload_recovers_dynamic_local_mcp_capability_id(derived_id: bool) -> None:
+    url = 'https://mcp.example.test/private/SENTINEL-path-token'
+    capability = MCP(url, native=False, local=True, id=None if derived_id else 'chosen-id')
+    assert capability.id is not None
+    model = TestModel()
+    agent = Agent(
+        model,
+        name='telemetry_recovery',
+        capabilities=[DynamicCapability(lambda _ctx: capability, id='dynamic-mcp')],
+    )
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(
+                    name='ping',
+                    toolset_id=capability.id,
+                    capability_id=capability.id,
+                    metadata={'meta': None, 'annotations': None, 'task': False},
+                )
+            ]
+        ),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
+    decoded = TypeAdapter(_RequestParams).validate_python(wire)
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    serialized = model_request_parameters_attributes(loaded.model_request_parameters)['model_request_parameters']
+
+    assert isinstance(serialized, str)
+    assert 'SENTINEL-path-token' not in serialized
+    assert json.loads(serialized)['function_tools'][0]['capability_id'] == '[REDACTED]'
+    assert json.loads(serialized)['function_tools'][0]['toolset_id'] == '[REDACTED]'
+
+
+def test_temporal_legacy_payload_preserves_non_mcp_dynamic_id() -> None:
+    model = TestModel()
+    agent = Agent(
+        model,
+        name='telemetry_recovery',
+        capabilities=[DynamicCapability(lambda _ctx: Capability(id='chosen-id'), id='dynamic-capability')],
+    )
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[ToolDefinition(name='ping', toolset_id='chosen-id', capability_id='chosen-id')]
+        ),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
+    decoded = TypeAdapter(_RequestParams).validate_python(wire)
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    serialized = model_request_parameters_attributes(loaded.model_request_parameters)['model_request_parameters']
+
+    assert isinstance(serialized, str)
+    assert json.loads(serialized)['function_tools'][0]['capability_id'] == 'chosen-id'
+    assert json.loads(serialized)['function_tools'][0]['toolset_id'] == 'chosen-id'
+
+
+@pytest.mark.parametrize('strategy', ['generated_native', 'provided_native', 'factory_native', 'local_only'])
+def test_temporal_legacy_payload_classifies_static_explicit_mcp_id_matching_url(strategy: str) -> None:
+    url = 'https://mcp.example.test/private/SENTINEL-path-token'
+    identity = 'mcp.example.test'
+    model = TestModel()
+    if strategy == 'provided_native':
+        capability = MCP(native=MCPServerTool(id=identity, url=url), local=False)
+    elif strategy == 'generated_native':
+        capability = MCP(url, native=True, local=False, id=identity)
+    elif strategy == 'factory_native':
+        capability = MCP(url, native=lambda _ctx: MCPServerTool(id=identity, url=url), local=False, id=identity)
+    else:
+        capability = MCP(url, native=False, local=True, id=identity)
+    agent = Agent(model, name='telemetry_recovery', capabilities=[capability])
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(native_tools=[MCPServerTool(id=identity, url=url)]),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    decoded = TypeAdapter(_RequestParams).validate_python(TypeAdapter(_RequestParams).dump_python(payload, mode='json'))
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    parameters = loaded.model_request_parameters
+
+    assert parameters._telemetry_mcp_url_ids == ({identity} if strategy == 'local_only' else set())  # pyright: ignore[reportPrivateUsage]
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert 'SENTINEL-path-token' not in json.loads(serialized)['native_tools'][0]['url']
+    assert json.loads(serialized)['native_tools'][0]['id'] == ('[REDACTED]' if strategy == 'local_only' else identity)
+
+
+def test_temporal_legacy_payload_recovers_run_override_native_mcp_id() -> None:
+    url = 'https://mcp.example.test/private/SENTINEL-path-token'
+    capability = MCP(url, native=True, local=False)
+    assert capability.id is not None
+    tool = next(iter(capability.get_native_tools()))
+    assert isinstance(tool, MCPServerTool)
+    model = TestModel()
+    agent = Agent(model, name='telemetry_recovery')
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(native_tools=[tool]),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
+    assert '_telemetry_url_derived_id' not in str(wire)
+    decoded = TypeAdapter(_RequestParams).validate_python(wire)
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    parameters = loaded.model_request_parameters
+
+    assert parameters._telemetry_mcp_url_ids == {capability.id}  # pyright: ignore[reportPrivateUsage]
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert json.loads(serialized)['native_tools'][0]['id'] == '[REDACTED]'
 
 
 async def test_temporal_activity_does_not_manage_registered_models() -> None:
@@ -2352,10 +3135,11 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     else:
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
+    # Foundry serves no mid-conversation system messages, so the standing prompt also says what `<system>` means.
     assert rendered_requests == snapshot(
         [
             {
-                'system': 'leading',
+                'system': f'leading\n\n{SYSTEM_VOICE_ANNOUNCEMENT}',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
@@ -2531,6 +3315,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     ],
                     usage=RequestUsage(input_tokens=61, output_tokens=2),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -2565,6 +3350,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     ],
                     usage=RequestUsage(input_tokens=62, output_tokens=34),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -2697,3 +3483,351 @@ async def test_pydantic_ai_plugin_rejects_bare_agent_without_durability(client: 
         ):
             # The error is raised before reaching here.
             pass  # pragma: no cover
+
+
+# --- Model errors crossing the activity boundary ---
+
+
+def _activity_error(cause: BaseException) -> ActivityError:
+    """An `ActivityError` caused by `cause`, as workflow code receives it."""
+    error = ActivityError(
+        'Activity task failed',
+        scheduled_event_id=1,
+        started_event_id=2,
+        identity='worker',
+        activity_type='model_request',
+        activity_id='1',
+        retry_state=None,
+    )
+    error.__cause__ = cause
+    return error
+
+
+def _crossed(error: ModelAPIError) -> BaseException:
+    """The error workflow code sees after a model activity raised `error`."""
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    with pytest.raises(BaseException) as rebuilt:
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+    return rebuilt.value
+
+
+def test_what_a_stream_produced_before_failing_crosses_with_its_error():
+    """The partial response of a stream that failed after producing output reaches the workflow unchanged.
+
+    Through JSON, as the details of the activity's failure are stored, so the run commits it with its usage.
+    """
+    partial = ModelResponse(
+        parts=[
+            ThinkingPart(content='thinking', id='rs_1', signature='sig', provider_name='openai'),
+            TextPart('partial answer'),
+            ToolCallPart('lookup', {'q': 'x'}, tool_call_id='call_1'),
+        ],
+        usage=RequestUsage(input_tokens=10, output_tokens=3),
+        model_name='primary',
+        provider_name='openai',
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        state='interrupted',
+        failed_attempts=[
+            ModelRequestAttempt(
+                model_name='earlier',
+                provider_name='anthropic',
+                outcome='error',
+                error='ModelAPIError: boom',
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                duration=timedelta(seconds=1),
+            )
+        ],
+    )
+    error = ModelAPIError('primary', 'stream broke')
+    mark_streamed_before_failing(error, partial)
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    wire = ApplicationError(
+        raised.value.message,
+        *json.loads(json.dumps(list(raised.value.details))),
+        type=raised.value.type,
+        non_retryable=raised.value.non_retryable,
+    )
+    with pytest.raises(ModelAPIError) as rebuilt:
+        with rebuilt_model_errors():
+            raise _activity_error(wire)
+    assert streamed_before_failing(rebuilt.value) == partial
+
+
+@pytest.mark.parametrize('model', ['backup', None])
+def test_retry_model_request_crosses_a_capability_activity(model: str | None):
+    """A `RetryModelRequest` a durable capability hook raises reaches the workflow as itself, with its model's name."""
+    with pytest.raises(ApplicationError) as raised:
+        with retry_requests_as_application_errors():
+            raise RetryModelRequest(model)
+    assert raised.value.non_retryable
+    with pytest.raises(RetryModelRequest) as rebuilt:
+        with rebuilt_retry_requests():
+            raise _activity_error(raised.value)
+    assert rebuilt.value.model == model
+
+
+def test_retry_model_request_for_a_model_instance_cant_cross_a_capability_activity():
+    with pytest.raises(UserError, match='can only name the model to attempt by its name'):
+        with retry_requests_as_application_errors():
+            raise RetryModelRequest(TestModel())
+
+
+def test_other_capability_activity_failures_are_raised_as_they_were():
+    failure = _activity_error(ApplicationError('boom', type='ValueError'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_retry_requests():
+            raise failure
+    assert raised.value is failure
+
+
+def test_model_http_error_crosses_with_its_fields():
+    error = ModelHTTPError(
+        503,
+        'gpt-test',
+        body={'error': 'overloaded'},
+        headers={'Retry-After': '7'},
+        suggested_model_id='gpt-better',
+    )
+    rebuilt = _crossed(error)
+    assert isinstance(rebuilt, ModelHTTPError)
+    assert (rebuilt.status_code, rebuilt.model_name, rebuilt.body, rebuilt.headers, rebuilt.suggested_model_id) == (
+        503,
+        'gpt-test',
+        {'error': 'overloaded'},
+        {'retry-after': '7'},
+        'gpt-better',
+    )
+    assert rebuilt.retry_after == 7.0
+    assert str(rebuilt) == str(error)
+    assert isinstance(rebuilt.__cause__, ActivityError)
+
+
+def test_model_api_error_crosses_with_its_type():
+    rebuilt = _crossed(ModelAPIError('gpt-test', 'connection reset'))
+    assert type(rebuilt) is ModelAPIError
+    assert (rebuilt.model_name, rebuilt.message) == ('gpt-test', 'connection reset')
+
+
+def test_a_body_that_is_not_json_crosses_as_a_string():
+    class Opaque:
+        def __str__(self) -> str:
+            return 'opaque body'
+
+    rebuilt = _crossed(ModelHTTPError(500, 'gpt-test', body=Opaque()))
+    assert isinstance(rebuilt, ModelHTTPError)
+    assert rebuilt.body == 'opaque body'
+
+
+def test_decision_hand_offs_cross_with_their_fields():
+    rebuilt = _crossed(DecisionHandOff('decider', 'search', 0.4, 'handed off'))
+    assert isinstance(rebuilt, DecisionHandOff)
+    assert (rebuilt.model_name, rebuilt.route, rebuilt.probability, rebuilt.message) == (
+        'decider',
+        'search',
+        0.4,
+        'handed off',
+    )
+
+    unsure = _crossed(UnsureRoute('decider', 'search', {'search': 0.4, 'reply': 0.6}, 0.5))
+    assert isinstance(unsure, UnsureRoute)
+    assert (unsure.probabilities, unsure.threshold) == ({'search': 0.4, 'reply': 0.6}, 0.5)
+
+
+def test_a_subclass_with_plain_reduce_state_crosses_with_it():
+    """State without a custom `__setstate__` is restored by `BaseException.__setstate__`, as pickle restores it."""
+
+    class StatefulModelError(ModelAPIError):
+        extra: int | None = None
+
+        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:
+            return self.__class__, (self.model_name, self.message), {'extra': self.extra}
+
+    # Only Pydantic AI's own classes cross, so present this one as one of them.
+    StatefulModelError.__module__ = 'pydantic_ai.exceptions'
+    error = StatefulModelError('gpt-test', 'boom')
+    error.extra = 5
+    rebuilt = _crossed(error)
+    assert isinstance(rebuilt, StatefulModelError)
+    assert rebuilt.extra == 5
+
+
+def test_a_body_that_cannot_be_encoded_is_raised_unchanged():
+    recursive: list[object] = []
+    recursive.append(recursive)
+    with pytest.raises(ModelHTTPError):
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(500, 'gpt-test', body=recursive)
+
+
+def test_the_application_error_keeps_the_type_temporal_retries_on():
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(503, 'gpt-test')
+    assert raised.value.type == 'ModelHTTPError'
+    assert not raised.value.non_retryable
+
+
+@pytest.mark.parametrize(
+    ('error', 'type_name'),
+    [
+        pytest.param(
+            ModelHTTPError.for_category(ModelServerError, status_code=500, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-category',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='gpt-test', in_stream=True),
+            'ModelHTTPError',
+            id='in-stream-http-category',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-authentication',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelRequestRejectedError, status_code=400, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-request-rejected',
+        ),
+        pytest.param(
+            ModelNotFoundError('gpt-test', 'The model does not exist.', in_stream=True),
+            'ModelAPIError',
+            id='not-found',
+        ),
+        pytest.param(
+            ModelContextWindowExceededError('gpt-test', 'context_length_exceeded: too long'),
+            'ModelAPIError',
+            id='context-window',
+        ),
+        pytest.param(ModelTimeoutError('gpt-test', 'timed out', phase='read'), 'ModelAPIError', id='timeout'),
+        pytest.param(
+            ModelServerError('gpt-test', 'server_error: failed', in_stream=True), 'ModelAPIError', id='server'
+        ),
+        pytest.param(ModelAPIError('gpt-test', 'boom'), 'ModelAPIError', id='base'),
+        pytest.param(DecisionHandOff('decider', 'search', 0.4, 'handed off'), 'DecisionHandOff', id='other-subclass'),
+    ],
+)
+def test_a_categorized_error_keeps_the_type_temporal_retries_on(error: ModelAPIError, type_name: str):
+    """A retry policy sees an error with a category as the class it was before categories existed, so
+    `non_retryable_error_types` matches what it did; the workflow still rebuilds it as its own class."""
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    assert raised.value.type == type_name
+    rebuilt = _crossed(error)
+    assert type(rebuilt) is type(error)
+
+
+def test_a_categorized_http_error_is_rebuilt_as_itself_not_its_category():
+    """An HTTP error with a category has the category's name, so it crosses marked as the HTTP variant."""
+    error = ModelHTTPError.for_category(
+        ModelRateLimitError, status_code=429, model_name='gpt-test', headers={'retry-after': '3'}
+    )
+    rebuilt = _crossed(error)
+    assert type(rebuilt) is type(error)
+    assert isinstance(rebuilt, ModelHTTPError) and isinstance(rebuilt, ModelRateLimitError)
+    assert (rebuilt.status_code, rebuilt.retry_after) == (429, 3.0)
+
+    assert type(_crossed(ModelRateLimitError('gpt-test', 'slow down'))) is ModelRateLimitError
+
+
+def test_a_category_subclass_defined_elsewhere_keeps_its_own_type():
+    """Only the categories in `pydantic_ai.exceptions` report their legacy class: a subclass defined elsewhere,
+    like an adapter-specific error, reports its own name, as it did before categories existed."""
+
+    class AdapterTimeoutError(ModelTimeoutError):
+        pass
+
+    assert _retry_policy_type(AdapterTimeoutError('gpt-test', 'timed out', phase='read')) == 'AdapterTimeoutError'
+
+
+def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom')
+    with pytest.raises(ApplicationModelError):
+        with model_errors_as_application_errors():
+            raise error
+
+    def reduce_to_a_name(self: ModelAPIError) -> str:
+        return 'not a reduce tuple'
+
+    monkeypatch.setattr(ModelAPIError, '__reduce__', reduce_to_a_name)
+    with pytest.raises(ModelAPIError):
+        with model_errors_as_application_errors():
+            raise ModelAPIError('gpt-test', 'boom')
+
+
+def test_a_non_retryable_model_error_that_cannot_be_rebuilt_is_still_marked_non_retryable():
+    """An error the workflow can't rebuild, like one defined outside Pydantic AI, still fails the activity without a
+    retry when it's listed, under its own class name as Temporal would have reported it."""
+
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom')
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors((ApplicationModelError,)):
+            raise error
+    assert (raised.value.type, raised.value.non_retryable, raised.value.details) == (
+        'ApplicationModelError',
+        True,
+        (),
+    )
+    assert raised.value.__cause__ is error
+    with pytest.raises(ActivityError):
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+
+
+def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def reduce_to_wrong_args(self: ModelHTTPError) -> tuple[type[ModelHTTPError], tuple[str, ...]]:
+        return ModelHTTPError, ('too', 'many', 'args', 'here')
+
+    monkeypatch.setattr(ModelHTTPError, '__reduce__', reduce_to_wrong_args)
+    with pytest.raises(ModelHTTPError):
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(503, 'gpt-test')
+
+
+@pytest.mark.parametrize(
+    'details',
+    [
+        pytest.param((), id='no-details'),
+        pytest.param(('text',), id='not-a-dict'),
+        pytest.param(({'other': 1},), id='no-model-error'),
+        pytest.param(({'pydantic_ai_model_error': {'module': 'os', 'qualname': 'error'}},), id='outside-pydantic-ai'),
+        pytest.param(({'pydantic_ai_model_error': {'module': 3, 'qualname': 'error'}},), id='malformed'),
+        pytest.param(
+            ({'pydantic_ai_model_error': {'module': 'pydantic_ai.exceptions', 'qualname': 'Missing'}},),
+            id='missing-class',
+        ),
+        pytest.param(
+            ({'pydantic_ai_model_error': {'module': 'pydantic_ai.exceptions', 'qualname': 'UserError'}},),
+            id='not-a-model-error',
+        ),
+    ],
+)
+def test_other_activity_failures_are_raised_unchanged(details: tuple[object, ...]):
+    activity_error = _activity_error(ApplicationError('failed', *details, type='Whatever'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_model_errors():
+            raise activity_error
+    assert raised.value is activity_error
+
+
+def test_an_activity_failure_without_an_application_error_is_raised_unchanged():
+    activity_error = _activity_error(TimeoutError('timed out'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_model_errors():
+            raise activity_error
+    assert raised.value is activity_error

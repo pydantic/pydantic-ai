@@ -3,9 +3,9 @@
 
 Issues enter routing only once triage has applied a priority label
 (`p:1-highest` or `p:2-high`); everything else stays unassigned, on the
-triage automation's plate. The one exception is community pressure: the
-weekly community-demand sweep judges old-but-active unassigned issues and
-applies `community-backed`, which also opens the gate.
+triage automation's plate. `community-backed` does not open the gate: old
+issues with community demand still need a priority label before anyone is
+assigned.
 
 Pull requests are never triaged on gated repositories — a human assigns one
 when an issue warrants it. Ungated repositories blanket-route new intake,
@@ -42,8 +42,6 @@ _MANUAL_OWNER = 'adtyavrdhn'
 _RECOVERY_EPOCH = attention.ROUTING_RECOVERY_EPOCH
 _PRIORITY_LABELS = frozenset(attention.PRIORITY_GATE_LABELS)
 _RECENT_BATCH_LIMIT = 3
-_COMMUNITY_BATCH_LIMIT = 3
-_COMMUNITY_LABEL = attention.COMMUNITY_LABEL
 _ASSIGNEE_LIMIT = 10
 _MAX_ITEM_NUMBER = 2_147_483_647
 # Must match the `last:` on both `timelineItems` connections below.
@@ -191,7 +189,7 @@ def _recently_unassigned(item: Mapping[str, Any]) -> bool:
     looked at the item, and routing must not redo what they undid. Malformed
     timeline data counts as recent, failing toward not assigning.
     """
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     window = dt.timedelta(days=attention.ROUTING_UNASSIGN_BACKOFF_DAYS)
     timeline = item.get('timelineItems')
     if not isinstance(timeline, Mapping) or not isinstance(cast(Mapping[str, object], timeline).get('nodes'), list):
@@ -330,9 +328,8 @@ def _pull_request_precedence(
 def _issue_gate(repo: str, normalized: Mapping[str, Any], number: int) -> Selection | None:
     """Decide whether an issue may be routed at all; None means proceed."""
     # A gate label missing from a truncated first page counts as absent, which
-    # fails toward leaving the item unassigned. `community-backed` (a judged
-    # community-demand verdict, see `community_demand.py`) opens the gate too.
-    if repo in _GATED_REPOS and not _labels(normalized) & (_PRIORITY_LABELS | {_COMMUNITY_LABEL}):
+    # fails toward leaving the item unassigned.
+    if repo in _GATED_REPOS and not _labels(normalized) & _PRIORITY_LABELS:
         return Selection(number=number, decision=None, status='awaiting-triage')
     return None
 
@@ -436,12 +433,6 @@ def _gated_numbers(client: attention.GitHubClient, repo: str, qualified: Sequenc
     return list(dict.fromkeys(_search_numbers(client, issues) + _search_numbers(client, pulls)))
 
 
-def _community_numbers(client: attention.GitHubClient, repo: str) -> list[int]:
-    """List unassigned items the triage agent judged to have genuine community demand."""
-    query = f'repo:{repo} is:open is:issue no:assignee label:"{_COMMUNITY_LABEL}" sort:updated-desc'
-    return _search_numbers(client, query)
-
-
 def _select_numbers(
     client: attention.GitHubClient,
     repo: str,
@@ -470,27 +461,14 @@ def _select_numbers(
     return selected
 
 
-def select_batch(
-    client: attention.GitHubClient,
-    repo: str,
-    *,
-    community_recovery: bool = False,
-) -> list[Selection]:
-    """Select a bounded gated batch, or a community batch when the gate is quiet."""
+def select_batch(client: attention.GitHubClient, repo: str) -> list[Selection]:
+    """Select a bounded gated batch."""
     repo = _repository(repo)
     qualified = _qualified_owners(client, repo)
     gated_numbers = _gated_numbers(client, repo, qualified)
     gated = _select_numbers(client, repo, gated_numbers, limit=_RECENT_BATCH_LIMIT, lane='gate')
     _emit_event('router.sweep', repo=repo, lane='gate', candidates=len(gated_numbers), selected=len(gated))
-    # The community-demand judge runs only on gated repos, so the community
-    # lane must not run elsewhere: on an ungated repo it would sweep backlog
-    # items past the new-intake epoch on a hand-applied label.
-    if gated or not community_recovery or repo not in _GATED_REPOS:
-        return gated
-    community_numbers = _community_numbers(client, repo)
-    community = _select_numbers(client, repo, community_numbers, limit=_COMMUNITY_BATCH_LIMIT, lane='community')
-    _emit_event('router.sweep', repo=repo, lane='community', candidates=len(community_numbers), selected=len(community))
-    return community
+    return gated
 
 
 def assign(client: attention.GitHubClient, repo: str, expected: Decision) -> bool:
@@ -629,11 +607,7 @@ def main() -> int:
             _summary(f'#{args.number}: ' + ('prepared routing intent' if payload else 'route changed'))
             return 0
         if args.mode == 'select':
-            selected = select_batch(
-                client,
-                repo,
-                community_recovery=os.environ.get('ROUTING_COMMUNITY_RECOVERY') == 'true',
-            )
+            selected = select_batch(client, repo)
             decisions = [selection['decision'] for selection in selected if selection['decision'] is not None]
             _output(
                 {
@@ -672,6 +646,7 @@ def main() -> int:
         error = type(exc).__name__
         if isinstance(exc, urllib.error.HTTPError):
             error += f' {exc.code}'
+            exc.close()
         print(f'owner routing failed: {error}', file=sys.stderr)
         return 1
 

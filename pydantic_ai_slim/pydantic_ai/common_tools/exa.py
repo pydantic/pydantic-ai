@@ -12,9 +12,9 @@ These tools are deprecated and will be removed in v3. Use the `ExaSearch` capabi
 
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
-from typing_extensions import Any, TypedDict, deprecated
+from typing_extensions import TypedDict, deprecated
 
 from pydantic_ai import FunctionToolset
 from pydantic_ai._warnings import PydanticAIDeprecationWarning

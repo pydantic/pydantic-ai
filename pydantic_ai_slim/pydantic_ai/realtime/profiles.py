@@ -3,10 +3,22 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
+from typing import Literal
 
 from typing_extensions import TypeAliasType, TypedDict
 
+from ..messages import SpeechTimestampGranularity
 from ..native_tools import AbstractNativeTool
+
+AsyncToolCallMode = TypeAliasType('AsyncToolCallMode', Literal['never', 'optional', 'always'])
+"""Whether a realtime model keeps the conversation going while a tool call runs.
+
+- `'never'`: the model waits for the tool's result before it says anything else.
+- `'optional'`: it's up to the session, via the
+  [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting.
+- `'always'`: the model keeps talking, and answering the user, while a tool runs; it has no mode that
+  waits.
+"""
 
 
 class RealtimeModelProfile(TypedDict, total=False):
@@ -32,6 +44,13 @@ class RealtimeModelProfile(TypedDict, total=False):
     """Whether the model accepts discrete image/video frames via
     image [`BinaryContent`][pydantic_ai.messages.BinaryContent] passed to
     [`send`][pydantic_ai.realtime.RealtimeSession.send]."""
+    image_input_requires_response: bool
+    """Whether an image is only taken as the start of a response, rather than as context.
+
+    When `True`, [`send`][pydantic_ai.realtime.RealtimeSession.send] accepts an image only with
+    `respond=True`, and does so without the model supporting general manual turn control; a context-only
+    image raises. OpenAI GPT-Live sets it: its voice model sees no images, and an image reaches the
+    delegated backend only when that backend runs on it. Default: `False`."""
     supports_manual_turn_control: bool
     """Whether the model supports manual turn-taking — [`commit_audio`][pydantic_ai.realtime.RealtimeSession.commit_audio],
     [`clear_audio`][pydantic_ai.realtime.RealtimeSession.clear_audio], and
@@ -46,7 +65,8 @@ class RealtimeModelProfile(TypedDict, total=False):
 
     Distinct from [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption]:
     a provider may support cancelling a response (barge-in) without supporting output truncation. OpenAI
-    supports both; xAI Grok Voice supports cancellation but not truncation."""
+    supports both; xAI Grok Voice supports cancellation, but its truncation only lands after a response
+    has ended, and unreliably, so it reports `False`."""
     supports_text_output: bool
     """Whether the model can generate text instead of speech, via
     [`output_modality='text'`][pydantic_ai.realtime.RealtimeModelSettings.output_modality].
@@ -56,15 +76,35 @@ class RealtimeModelProfile(TypedDict, total=False):
     [`UserError`][pydantic_ai.exceptions.UserError] before connecting, rather than letting the provider
     fail the handshake (Gemini Live answers `1007 The requested combination of response modalities
     (TEXT) is not supported by the model`) or, worse, silently produce speech anyway (xAI)."""
+    supports_audio_output: bool
+    """Whether the model can generate speech, via
+    [`output_modality='audio'`][pydantic_ai.realtime.RealtimeModelSettings.output_modality].
+
+    Defaults to `True`. A realtime model that only writes text is a perception model rather than a voice
+    assistant: it takes in a live audio and video stream and answers in text, like Gemini's
+    `gemini-robotics-er-2-streaming-preview`, which a robot's controller reads rather than a person hears.
+    When `False`, [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] defaults `output_modality` to `'text'`
+    rather than `'audio'`, and rejects an explicit `output_modality='audio'` with a
+    [`UserError`][pydantic_ai.exceptions.UserError] before connecting (Gemini Live answers `1007 The
+    requested combination of response modalities (AUDIO) is not supported by the model`)."""
     supports_session_seeding: bool
     """Whether the model can seed a session with prior conversation (`message_history`)."""
+    supports_system_messages: bool
+    """Whether a [system prompt sent mid-session](../realtime/turns.md#system-prompts) goes to the model on its
+    protocol's channel for the operator's own text, which it takes as instructions rather than the user's words.
+
+    OpenAI `gpt-realtime` and Azure send a `system` message, and OpenAI GPT-Live, with a reply asked for, gives the
+    delegated backend a developer message. When `False` (the default), the prompt goes out `<system>`-tagged, the
+    way any text would: xAI Grok Voice and Eleven Realtime accept a `system` message, but their models don't act
+    on it. Set it with `profile=` for a model whose support differs from its provider's."""
     supports_webrtc: bool
     """Whether the model supports browser WebRTC signaling, ephemeral client secrets, and a server-side
     control-plane sideband via [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer],
     [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret], and
     [`connect_webrtc`][pydantic_ai.realtime.RealtimeModel.connect_webrtc].
 
-    Supported by OpenAI and Azure OpenAI. Gemini Live and xAI Grok Voice are WebSocket-only."""
+    Supported by OpenAI and Azure OpenAI. OpenAI GPT-Live supports the offer relay and the sideband but has
+    no client secrets. Gemini Live and xAI Grok Voice are WebSocket-only."""
     supports_seeding_images: bool
     """Whether prior images can be included when seeding a session with `message_history`."""
     supports_seeding_audio: bool
@@ -72,14 +112,32 @@ class RealtimeModelProfile(TypedDict, total=False):
     supports_thinking: bool
     """Whether the model supports reasoning/thinking configuration via the
     [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting — OpenAI's `gpt-realtime-2*`
-    reasoning models, Gemini's native-audio models, and xAI's `grok-voice-latest` and
-    `grok-voice-think-*` models. When `False` (the default), a `thinking` setting is silently ignored
-    rather than sent to a model that would reject it."""
-    supports_async_tool_calls: bool
-    """Whether the model runs tool calls asynchronously without blocking generation.
+    reasoning models, the Gemini Live models except Vertex AI's `gemini-live-2.5-flash` and `gemini-3.8-live`
+    (its `gemini-3.8-live-extended-thinking` variant always thinks), xAI's `grok-voice-latest` and
+    `grok-voice-think-*` models, and OpenAI GPT-Live, whose delegated backend does the reasoning. When
+    `False` (the default), a `thinking` setting is silently ignored rather than sent to a model that
+    would reject it."""
+    async_tool_call_mode: AsyncToolCallMode
+    """Whether the model keeps the conversation going while a tool call runs. Default: `'never'`.
 
-    Gemini Live maps this to `Behavior.NON_BLOCKING` on function declarations and
-    `FunctionResponseScheduling.INTERRUPT` on function responses."""
+    With async tool calls, the model can keep speaking (typically saying what it's doing) and answer the
+    user while a tool runs, and the result reaches it when it's ready. Without them, the model goes quiet
+    until the result is back.
+
+    `'optional'` models run tool calls asynchronously when the session asks for it with the
+    [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting, and
+    `'never'` and `'always'` models ignore that setting.
+    OpenAI Realtime, Azure OpenAI, OpenAI GPT-Live, xAI Grok Voice, and
+    `gemini-3.8-live-extended-thinking` are `'always'`; the Gemini native-audio models and
+    `gemini-3.8-live` are `'optional'`; other Gemini Live models are `'never'`, since they accept an
+    async declaration and then wait for the result anyway."""
+    supports_async_tool_calls: bool
+    """Deprecated: use [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] instead.
+
+    A resolved [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile] still carries it,
+    as `async_tool_call_mode != 'never'`. Setting it in a `profile=` override is translated (with a
+    deprecation warning): `True` to `'optional'` and `False` to `'never'`, except that it never changes
+    an `'always'` model, which it never could."""
     supports_tool_return_schema: bool
     """Whether the model natively renders a tool's [`return_schema`][pydantic_ai.tools.ToolDefinition.return_schema]
     (Gemini Live's function-declaration `response` schema). Where it can't, a tool that opted in via
@@ -102,6 +160,44 @@ class RealtimeModelProfile(TypedDict, total=False):
     operation the session can invoke. The OpenAI-protocol providers (OpenAI, Azure OpenAI, xAI) emit
     them; Gemini Live does not — a UI that shows a "listening" indicator should read this flag rather
     than wait for events that will never arrive."""
+    output_speech_timestamp_granularity: SpeechTimestampGranularity | None
+    """How finely the model reports when its speech is heard, with the
+    [`output_speech_timestamps`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps] setting on:
+    per `'word'`, per `'segment'` of one or more words, or `None` (the default) when it doesn't report it.
+    Azure AI Voice Live and ElevenLabs Agents report words."""
+    synthesizes_turn_boundary: bool
+    """Whether [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] is inferred
+    by Pydantic AI rather than reported by the provider.
+
+    `synthesizes_` rather than `supports_` for the same reason as
+    [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]:
+    it describes how a stream is produced, not an operation the session can invoke.
+
+    `False` (the default) means the provider sends an explicit end-of-response frame, so the turn
+    boundary is a protocol fact. `True` means the protocol has no such frame and the adapter derives
+    the boundary from output timing, so it is a good guess rather than a guarantee: a long pause
+    mid-sentence can end a turn early, and an application that must not act on a partial reply should
+    confirm against the transcript. OpenAI GPT-Live is the only model that sets it."""
+    responses_are_requests: bool
+    """Whether each response the session records is one request to the model, for `usage.requests` and
+    the [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] that bounds it.
+
+    `True` (the default) counts every recorded [`ModelResponse`][pydantic_ai.messages.ModelResponse], as a
+    standard run does, and checks the limit before each response starts. `False` is for a model whose
+    recorded responses aren't what it is asked for: OpenAI GPT-Live's spoken replies are turns the
+    session infers, while the requests that spend tokens go to the backend it delegates to. There, each
+    response-scoped usage report counts as one request, and the limit is checked as each arrives, so the
+    report that would go past it ends the session."""
+    response_usage_covers_context: bool
+    """Whether a response's reported token usage covers everything the model holds in context.
+
+    [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used]
+    divides the latest response's [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens] by
+    [`context_window`][pydantic_ai.realtime.RealtimeModelProfile.context_window] when the provider
+    doesn't report the fraction itself, which is only meaningful when those tokens are the whole
+    context. Defaults to `True`. `False` makes it `None` instead of a misleading ratio: xAI Grok Voice
+    reports only the input a response added, and OpenAI GPT-Live's token usage belongs to the
+    backend it delegates to rather than to the voice model's own context."""
     audio_input_sample_rate: int
     """The sample rate, in Hz, expected for raw PCM audio input.
 
@@ -128,18 +224,24 @@ DEFAULT_AUDIO_SAMPLE_RATE = 24000
 
 DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_image_input': False,
+    'image_input_requires_response': False,
     'supports_manual_turn_control': False,
     'supports_interruption': False,
     'supports_output_truncation': False,
     'supports_text_output': True,
     'supports_session_seeding': False,
+    'supports_system_messages': False,
     'supports_webrtc': False,
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
-    'supports_async_tool_calls': False,
+    'async_tool_call_mode': 'never',
     'supports_tool_return_schema': False,
     'supported_native_tools': frozenset(),
     'emits_input_speech_events': False,
+    'output_speech_timestamp_granularity': None,
+    'synthesizes_turn_boundary': False,
+    'responses_are_requests': True,
+    'response_usage_covers_context': True,
     'audio_input_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
     'audio_output_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
     'context_window': None,

@@ -14,19 +14,59 @@ else:
     # union member collapses onto the numeric one it already allows.
     Timeout = legacy_httpx.Timeout if legacy_httpx is not None else float
 
-ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
+ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 """The string effort levels for thinking/reasoning configuration."""
 
 ThinkingLevel: TypeAlias = bool | ThinkingEffort
 """Type alias for thinking/reasoning configuration values.
 
 - `True`: Enable thinking with the provider's default effort.
-- `False`: Disable thinking (silently ignored on always-on models).
-- `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
+- `False`: Disable thinking, or think as little as the model allows if it can't turn thinking off.
+- `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'`: Enable thinking at a specific effort level.
 
 Not all providers support all levels. When a level is not natively supported,
-it maps to the closest available value (e.g. `'xhigh'` -> `'high'` on providers
-that don't support it, `'minimal'` -> `'low'` on providers without a minimal level).
+it maps to the closest available value (e.g. `'xhigh'` and `'max'` -> `'high'` on providers
+that don't support them, `'minimal'` -> `'low'` on providers without a minimal level).
+"""
+
+CacheRetention: TypeAlias = Literal['5m', '30m', '1h']
+"""The retention tiers for prompt-cache configuration.
+
+Not all providers support all tiers. A requested retention snaps down to the
+nearest tier the provider supports (e.g. `'1h'` -> `'5m'` on a provider whose
+longest tier is 5 minutes); a retention below every supported tier snaps up to
+the shortest one. On a provider with no retention tier to request, caching uses
+the provider's default retention.
+"""
+
+
+class CacheConfig(TypedDict, total=False):
+    """Detailed prompt-cache configuration, for the [`cache`][pydantic_ai.settings.ModelSettings.cache] setting.
+
+    `{}` is the same as `cache=True`, and `{'retention': '1h'}` the same as `cache='1h'`.
+    """
+
+    retention: CacheRetention
+    """The retention to cache with, snapped to the nearest tier the provider supports.
+
+    When omitted, the provider's default retention is used.
+    """
+
+    messages: bool
+    """Whether to also cache the growing conversation, not only the stable prompt prefix. Default: `True`.
+
+    With `False`, only the tool definitions and static instructions are cached: useful for many short,
+    one-off conversations that share long instructions or tools, where writing each conversation to the
+    cache would cost more than it saves because it's never read back. On OpenAI requests that can't carry an
+    instruction breakpoint, such as those continuing server-side state, the conversation is cached as well,
+    as caching only the prefix would cache nothing.
+    """
+
+
+CacheSetting: TypeAlias = bool | CacheRetention | CacheConfig
+"""Type alias for prompt-cache configuration values.
+
+See [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] for the value semantics.
 """
 
 ToolChoiceScalar = Literal['none', 'required', 'auto']
@@ -37,8 +77,8 @@ class ToolOrOutput:
     """Restricts function tools while keeping output tools and direct text/image output available.
 
     Use this when you want to control which function tools the model can use
-    in an agent run while still allowing the agent to complete with structured output,
-    text, or images.
+    in an agent run while still allowing all output tools and direct text/image output.
+    A plain list instead forces a call to one of the named function and/or output tools.
 
     See the [Tool Choice guide](../tools-advanced.md#tool-choice) for examples.
     """
@@ -104,6 +144,13 @@ class ModelSettings(TypedDict, total=False):
     `tests/models/test_model_settings_support.py`, so keep the `* Name` bullet shape and put any nuance in
     parentheses after the name.
 
+    A model ignores a setting it doesn't support, so the same settings work across models. For the settings
+    whose absence changes what the request guarantees (`timeout`, `max_retries`, `stop_sequences`,
+    `parallel_tool_calls=False`, `extra_headers` and `extra_body`), it emits an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the others, like `temperature`,
+    are ignored silently. A model class declares what it ignores in
+    [`Model.unsupported_settings`][pydantic_ai.models.Model.unsupported_settings].
+
     Being listed means Pydantic AI sends the setting, not that the service honors it: the
     OpenAI-compatible model classes forward whatever the OpenAI schema accepts, and an individual
     provider behind one of them may ignore a field its own API doesn't define, or reject it. Where we
@@ -167,6 +214,7 @@ class ModelSettings(TypedDict, total=False):
     * Snowflake
     * Z.AI
     * Bedrock Mantle
+    * System One
     """
 
     top_p: float
@@ -218,9 +266,17 @@ class ModelSettings(TypedDict, total=False):
     `httpx2.Timeout` on the paths whose SDK expects one. `httpx2.Timeout` is deliberately not part of
     this contract, because some SDKs behind these settings still reject it.
 
+    On an HTTP client Pydantic AI created (including one from
+    [`create_async_httpx2_client()`][pydantic_ai.models.create_async_httpx2_client]), a number of
+    seconds (or an `httpx.Timeout` whose phases are all equal) can shorten but never lengthen the
+    client's own connect timeout (5 seconds by default) and pool timeout, so a long request timeout
+    doesn't also allow a long wait to connect. An `httpx.Timeout` whose phases differ, and any timeout
+    on another client you pass in yourself, is used as given.
+
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google (numeric seconds only, not `httpx.Timeout`)
@@ -234,6 +290,63 @@ class ModelSettings(TypedDict, total=False):
     * Snowflake
     * Z.AI
     * Bedrock Mantle
+    * TypeSafe
+    * System One
+    * OpenAI Decisions
+    """
+
+    request_timeout: float
+    """A deadline for one request to one model, in seconds, enforced by Pydantic AI for every model.
+
+    [`timeout`][pydantic_ai.settings.ModelSettings.timeout] is applied by the provider client to each attempt:
+    an SDK retry re-arms it, and on a streamed response it only limits the wait for each chunk. This one clock
+    instead covers every attempt the provider SDK and HTTP transport make, any continuation of a paused
+    response, and reading a streamed response through its last chunk, including the time your code takes to
+    consume it. In Temporal's terms, `timeout` is the start-to-close timeout of one attempt and
+    `request_timeout` the schedule-to-close timeout of the whole request.
+
+    When it runs out, the request is cancelled and
+    [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] is raised. A
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] gives each model it tries a fresh deadline,
+    and by default falls back to the next model when one runs out.
+
+    It is not sent to the provider. See [Timeouts](../timeouts.md#model-request-deadlines).
+    """
+
+    max_retries: int
+    """Override how many times the provider SDK's client retries a failed request, for one request.
+
+    `0` makes a single attempt. The SDK still decides which failures to retry and how long to wait
+    between attempts; this setting changes only how many retries it makes, so a request is sent at most
+    `1 + max_retries` times. Without it, the client's own configuration applies: `2` retries for the
+    OpenAI, Anthropic, Groq and Cohere clients Pydantic AI builds, and none for Google's.
+
+    Set it to `0` when something else owns retrying, such as a retrying HTTP transport, a durable
+    execution engine's retry policy, or a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]
+    that should move to its next model as soon as one fails. See
+    [Provider SDK retries](../retries.md#provider-sdk-retries).
+
+    Supported by:
+
+    * OpenAI
+    * OpenAI ChatGPT
+    * OpenAI Codex
+    * Anthropic
+    * Google (keeps the delays and status codes of the provider's `retry_options`)
+    * Groq
+    * Mistral (`0` only, which turns off a `retry_config` set on the client; other values are ignored without a
+      warning)
+    * Cohere
+    * Cerebras
+    * Crusoe
+    * GitHub Copilot
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
+    * TypeSafe (the request's other `RetryPolicy` options are the SDK defaults)
+    * OpenAI Decisions
     """
 
     parallel_tool_calls: bool
@@ -242,6 +355,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI (some models, not o1)
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Groq
@@ -258,7 +372,7 @@ class ModelSettings(TypedDict, total=False):
     """
 
     tool_choice: ToolChoice
-    """Control which function tools the model can use.
+    """Control which tools the model can use.
 
     See the [Tool Choice guide](../tools-advanced.md#tool-choice) for detailed documentation
     and examples.
@@ -267,14 +381,15 @@ class ModelSettings(TypedDict, total=False):
     * `'auto'`: All tools available, model decides whether to use them
     * `'none'`: Disables function tools; model responds with text only (output tools remain for structured output)
     * `'required'`: Forces tool use; excludes output tools so the agent cannot produce a final response when set statically
-    * `list[str]`: Only specified tools; excludes output tools so the agent cannot produce a final response when set statically
+    * `list[str]`: Force a call to one of the specified function and/or output tools; name an output tool to let an agent run finish
     * [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]: Specified function tools plus output tools/text/image
 
-    Note: setting `'required'` or `list[str]` *statically* (via the `model_settings` argument
-    of [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or the agent's own `model_settings`) raises a
-    `UserError`, because it would force a tool call on every step and prevent the agent from
-    producing a final response. To vary `tool_choice` per step (e.g. force a tool on the
-    first step only), return a callable from a capability's
+    Note: setting `'required'` *statically* (via the `model_settings` argument of
+    [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or the agent's own `model_settings`) raises a
+    `UserError`, because it excludes output tools and forces a function tool call on every step.
+    A static `list[str]` is accepted only when it names at least one output tool for the run;
+    otherwise it also prevents the agent from producing a final response. To vary `tool_choice`
+    per step (e.g. force a tool on the first step only), return a callable from a capability's
     [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] —
     those values are trusted to adapt across steps. For single API calls without an agent
     loop, use [`pydantic_ai.direct.model_request`][pydantic_ai.direct.model_request].
@@ -286,7 +401,7 @@ class ModelSettings(TypedDict, total=False):
     * Google
     * Groq
     * Cohere (a named subset is honored by filtering the tool list, not sent as a parameter)
-    * Mistral (a named subset is honored by filtering the tool list, not sent as a parameter)
+    * Mistral (a single forced tool is sent as a parameter; a larger named subset is honored by filtering the tool list)
     * Bedrock
     * xAI
     * HuggingFace
@@ -414,6 +529,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google
@@ -427,25 +543,30 @@ class ModelSettings(TypedDict, total=False):
     * Snowflake
     * Z.AI
     * Bedrock Mantle
+    * TypeSafe
+    * System One
+    * OpenAI Decisions
     """
 
     thinking: ThinkingLevel
     """Enable or configure thinking/reasoning for the model.
 
     - `True`: Enable thinking with the provider's default effort level.
-    - `False`: Disable thinking (silently ignored if the model always thinks).
-    - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
+    - `False`: Disable thinking. On a model that can't turn thinking off, use the lowest effort it accepts;
+      a model that offers no thinking setting at all keeps its default.
+    - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'`: Enable thinking at a specific effort level.
 
     When omitted, the model uses its default behavior (which may include thinking
     for reasoning models).
 
     Provider-specific thinking settings (e.g., `anthropic_thinking`,
-    `openai_reasoning_effort`) take precedence over this unified field.
+    `openai_reasoning_effort`) take precedence over this unified field. When one comes from a broader
+    scope than this field, such as the model's `settings` while this is set for a run, a `UserWarning`
+    names both.
 
-    Listed below are the model classes that translate this field onto the request. A class whose models
-    always reason and take no thinking parameter is not listed at all (Cohere); where only some of a
-    class's models are always-on it stays listed, and the per-model behavior is on the
-    [Thinking page](../capabilities/thinking.md) (Mistral's `magistral`).
+    Listed below are the model classes that translate this field onto the request. Where some of a
+    class's models take no thinking parameter at all, the per-model behavior is on the
+    [Thinking page](../capabilities/thinking.md) (Mistral's dated `magistral` ids).
 
     Supported by:
 
@@ -454,10 +575,11 @@ class ModelSettings(TypedDict, total=False):
     * Google
     * Groq
     * Mistral
+    * Cohere (as `thinking`, with effort levels as a `token_budget`)
     * Bedrock
     * xAI
-    * Cerebras (only `False` is forwarded, as `reasoning_effort='none'`; the enable levels are not
-      sent because Cerebras models reason by default, and `gpt-oss` ignores the disable too)
+    * Cerebras (only `False` is forwarded, as `reasoning_effort='none'`, or `'low'` on `gpt-oss`, which
+      can't turn reasoning off; the enable levels are not sent because Cerebras models reason by default)
     * Crusoe
     * GitHub Copilot (as `reasoning_effort`; which ids accept it, and which levels, is per-model and
       enforced by Copilot, so an unsupported value comes back as a `400 invalid_reasoning_effort`)
@@ -467,6 +589,66 @@ class ModelSettings(TypedDict, total=False):
     * Z.AI (as `extra_body['thinking']`)
     * Bedrock Mantle (the Responses interface only; the Chat Completions interface serves only the
       `gpt-oss-safeguard` models, which take no thinking parameter)
+    """
+
+    citations: bool
+    """Whether to ask for citations from providers that only cite when asked.
+
+    Citations go on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations].
+
+    Supported by:
+
+    * Anthropic (documents, including those returned by tools, and Web Fetch)
+    * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
+    * xAI (inline citations)
+
+    Only used when the output is text. On Anthropic models, a `tool_choice` that forces a tool call raises a
+    `UserError` when the request has something to cite. Providers that always cite ignore this setting. See
+    [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
+    """
+
+    cache: CacheSetting
+    """Enable, configure, or disable library-managed prompt caching for the model request.
+
+    Prompt caching lets the provider serve a long or multi-turn prompt's stable prefix from its cache
+    instead of re-processing it. Cache writes cost more than uncached input (1.25x for Anthropic's
+    5-minute and OpenAI's GPT-5.6 caches, 2x for Anthropic's 1-hour cache) while cache reads cost about
+    0.1x, so a 1.25x write breaks even after one read and a 2x write after two.
+
+    - `True`: Cache the stable prompt prefix (tool definitions and static instructions)
+      and the growing conversation, with the provider's default retention. The library places cache
+      breakpoints, using the provider's automatic caching mode for the conversation where one exists.
+    - `False`: Disable library-managed caching, the same as leaving the setting unset but also
+      overriding a `cache` value in the model's default settings. Explicit
+      [`CachePoint`][pydantic_ai.messages.CachePoint] markers and provider-specific cache settings
+      still apply, and providers that cache implicitly (e.g. OpenAI, Gemini) still do.
+    - `'5m'`/`'30m'`/`'1h'`: Cache with a specific retention, snapped to the nearest tier the
+      provider supports (down where a shorter tier exists).
+    - A [`CacheConfig`][pydantic_ai.settings.CacheConfig]: Cache with an optional `retention`, and with
+      `messages=False` cache only the stable prefix (tool definitions and static instructions), not the
+      conversation: useful for many one-off conversations that share long instructions or tools.
+
+    Explicit `CachePoint` markers in the message history can be combined with this setting; when
+    a request would exceed the provider's maximum number of cache breakpoints, the oldest message
+    breakpoints are dropped first (on OpenAI, the server drops the earliest breakpoints first, starting
+    with the instruction breakpoint). Provider-specific cache settings (e.g. `anthropic_cache`,
+    `bedrock_cache_instructions`) take precedence: if any is set, including to `False`, this unified
+    field is ignored entirely for that request.
+
+    Silently ignored by model classes not listed below, and by models that cache implicitly without
+    request-side configuration.
+
+    Supported by:
+
+    * Anthropic (as `anthropic_cache_instructions`, `anthropic_cache_tool_definitions` and
+      `anthropic_cache`, with `anthropic_cache_messages` instead of `anthropic_cache` on the Bedrock
+      and Vertex SDK clients)
+    * Bedrock (Anthropic and Amazon Nova models only; as `bedrock_cache_instructions`,
+      `bedrock_cache_tool_definitions` and `bedrock_cache_messages`)
+    * OpenRouter (Anthropic and Gemini models only; as `openrouter_cache_instructions`,
+      `openrouter_cache_tool_definitions` and `openrouter_cache_messages`)
+    * OpenAI (GPT-5.6 and later on the OpenAI API and the Azure OpenAI v1 API; as `openai_prompt_cache_options` and
+      `openai_cache_instructions`)
     """
 
     service_tier: ServiceTier
@@ -504,6 +686,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Groq
@@ -516,10 +699,52 @@ class ModelSettings(TypedDict, total=False):
     * Snowflake
     * Z.AI
     * Bedrock Mantle
+    * TypeSafe
+    * System One
+    * OpenAI Decisions
 
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
     Z.AI), the model's own derived keys overwrite yours when the keys collide.
     """
+
+
+ModelSettingName: TypeAlias = Literal[
+    'max_tokens',
+    'temperature',
+    'top_p',
+    'top_k',
+    'timeout',
+    'request_timeout',
+    'max_retries',
+    'parallel_tool_calls',
+    'tool_choice',
+    'seed',
+    'presence_penalty',
+    'frequency_penalty',
+    'logit_bias',
+    'stop_sequences',
+    'extra_headers',
+    'thinking',
+    'citations',
+    'cache',
+    'service_tier',
+    'extra_body',
+]
+"""The name of a [`ModelSettings`][pydantic_ai.settings.ModelSettings] field, as listed in a model class's
+[`unsupported_settings`][pydantic_ai.models.Model.unsupported_settings]."""
+
+
+class RecordedModelSettings(TypedDict, total=False):
+    """The model settings a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] records, by their unified [`ModelSettings`][pydantic_ai.settings.ModelSettings] keys.
+
+    Only settings that shape what the model produces belong here, never transport or client settings such as
+    `extra_headers`, `timeout` or `extra_body`. Each value is JSON-native, so a recorded change round-trips
+    through storage and UI protocols unchanged. The framework records `thinking` today; a model adapter decides
+    which recorded keys it can send mid-conversation and sends the rest as request-level settings.
+    """
+
+    thinking: ThinkingEffort | None
+    """The effort level in effect, or `None` when the unified `thinking` setting names no level (`True`, `False` or unset)."""
 
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:

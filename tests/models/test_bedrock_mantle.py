@@ -30,7 +30,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
 ]
@@ -115,10 +114,15 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
                         cost=Decimal('0.00004257'),
                     ),
                     model_name='openai.gpt-5.6-luna',
+                    model_id='bedrock-mantle:openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
                     provider_name='bedrock-mantle',
                     provider_url='https://bedrock-mantle.us-east-1.api.aws/openai/v1/',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -157,10 +161,15 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
                         cost=Decimal('0.000045265'),
                     ),
                     model_name='openai.gpt-5.6-luna',
+                    model_id='bedrock-mantle:openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
                     provider_name='bedrock-mantle',
                     provider_url='https://bedrock-mantle.us-east-1.api.aws/openai/v1/',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='resp_cizhrpixixp4ylkykezegmnkbgixq2qteaqq2gigeu5aluj6dhva',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -208,10 +217,15 @@ Second tool result: `second result`\
                         cost=Decimal('0.000076285'),
                     ),
                     model_name='openai.gpt-5.6-luna',
+                    model_id='bedrock-mantle:openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
                     provider_name='bedrock-mantle',
                     provider_url='https://bedrock-mantle.us-east-1.api.aws/openai/v1/',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='resp_m2q7figv7bk4ec5owiamz4wtafpld75shl3qo4mkcnrzfeghzetq',
                     finish_reason='stop',
                     run_id=IsStr(),

@@ -1,0 +1,125 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/realtime/calls
+    headers:
+      accept:
+      - application/sdp
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1697"
+      content-type:
+      - multipart/form-data; boundary=8fb9a5ad3a6065ebc1f1b5a6d5a0ed1c
+      host:
+      - api.openai.com
+    body:
+      type: text
+      content: "--8fb9a5ad3a6065ebc1f1b5a6d5a0ed1c\r\nContent-Disposition: form-data; name=\"sdp\"\r\nContent-Type: application/sdp\r\n\r\nv=0\r\no=- 3993840254 3993840254 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\na=msid-semantic:WMS *\r\nm=audio 51603 UDP/TLS/RTP/SAVPF 96 9 0 8\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=extmap:2 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=mid:0\r\na=msid:993a573d-865c-4f89-b4d6-bf0023b36333 28299f45-cf21-4e7d-8945-3fc2846d1979\r\na=rtcp:9 IN IP4 0.0.0.0\r\na=rtcp-mux\r\na=ssrc:596951577 cname:54390b83-64d1-4178-a0ef-a2cafdb3f3a7\r\na=rtpmap:96 opus/48000/2\r\na=rtpmap:9 G722/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ice-ufrag:YnNx\r\na=ice-pwd:jIsRuXZmV9Yq00qk4a33Xe\r\na=fingerprint:sha-256 97:A7:E2:EF:70:B3:AD:B9:06:C8:DF:11:61:01:E5:6F:8F:46:EB:15:50:F2:54:D0:72:51:5B:37:0F:00:21:CB\r\na=setup:actpass\r\nm=application 34376 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sctp-port:5000\r\na=max-message-size:65536\r\na=ice-ufrag:YnNx\r\na=ice-pwd:jIsRuXZmV9Yq00qk4a33Xe\r\na=fingerprint:sha-256 97:A7:E2:EF:70:B3:AD:B9:06:C8:DF:11:61:01:E5:6F:8F:46:EB:15:50:F2:54:D0:72:51:5B:37:0F:00:21:CB\r\na=setup:actpass\r\n\r\n--8fb9a5ad3a6065ebc1f1b5a6d5a0ed1c\r\nContent-Disposition: form-data; name=\"session\"\r\nContent-Type: application/json\r\n\r\n{\"model\":\"gpt-realtime\",\"type\":\"realtime\",\"instructions\":\"Answer in two words.\",\"output_modalities\":[\"audio\"],\"audio\":{\"input\":{\"format\":{\"type\":\"audio/pcm\",\"rate\":24000},\"turn_detection\":{\"type\":\"server_vad\",\"create_response\":true,\"interrupt_response\":true},\"transcription\":{\"model\":\"gpt-realtime-whisper\"}},\"output\":{\"format\":{\"type\":\"audio/pcm\",\"rate\":24000}}}}\r\n--8fb9a5ad3a6065ebc1f1b5a6d5a0ed1c--\r\n"
+  response:
+    status: 201
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - Location, X-Request-Id
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - "1540"
+      content-type:
+      - text/plain; charset=utf-8
+      location:
+      - /v1/realtime/calls/rtc_u1_ETYJSp3oMdsOb7HW9eMflgesrIs0XaTn
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      timing-allow-origin:
+      - "*"
+    body:
+      type: text
+      content: "v=0\r\no=- 2208497645269883454 1790712118 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=msid-semantic:WMS *\r\na=fingerprint:sha-256 F3:38:0F:05:C1:DB:E0:07:DE:B1:CC:3E:75:92:51:18:74:AB:12:A9:72:54:43:F2:79:20:F6:DF:81:86:A7:DE\r\na=ice-lite\r\na=group:BUNDLE 0 1\r\nm=audio 9 UDP/TLS/RTP/SAVPF 96 0 8\r\nc=IN IP4 0.0.0.0\r\na=setup:passive\r\na=mid:0\r\na=ice-ufrag:2Oao6G/u1/3oMdsO\r\na=ice-pwd:ENtRASEGxqhWRskGwE9i9k4QIl0HaDjD\r\na=rtcp-mux\r\na=rtcp-rsize\r\na=rtpmap:96 opus/48000/2\r\na=fmtp:96 minptime=10;useinbandfec=1\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ssrc:1195874377 cname:realtimeapi\r\na=ssrc:1195874377 msid:realtimeapi audio\r\na=ssrc:1195874377 mslabel:realtimeapi\r\na=ssrc:1195874377 label:audio\r\na=msid:realtimeapi audio\r\na=sendrecv\r\na=candidate:1352698770 1 udp 2130706431 68.155.152.41 3478 typ host ufrag 2Oao6G/u1/3oMdsO\r\na=candidate:2321888134 1 tcp 1671430143 68.155.152.41 443 typ host tcptype passive ufrag 2Oao6G/u1/3oMdsO\r\na=candidate:727169150 1 udp 2130706431 4.151.200.38 3478 typ host ufrag 2Oao6G/u1/3oMdsO\r\na=candidate:1878291698 1 tcp 1671430143 4.151.200.38 443 typ host tcptype passive ufrag 2Oao6G/u1/3oMdsO\r\na=candidate:2832417414 1 udp 2130706431 20.168.48.117 3478 typ host ufrag 2Oao6G/u1/3oMdsO\r\na=candidate:3818869066 1 tcp 1671430143 20.168.48.117 443 typ host tcptype passive ufrag 2Oao6G/u1/3oMdsO\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=setup:passive\r\na=mid:1\r\na=sendrecv\r\na=sctp-port:5000\r\na=max-message-size:1073741823\r\na=ice-ufrag:2Oao6G/u1/3oMdsO\r\na=ice-pwd:ENtRASEGxqhWRskGwE9i9k4QIl0HaDjD\r\n"
+  recorded_at: 2026-09-29T20:01:58.965993+00:00
+- request:
+    method: POST
+    uri: >-
+      https://api.openai.com/v1/realtime/calls/rtc_u1_ETYJSp3oMdsOb7HW9eMflgesrIs0XaTn/hangup
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "0"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - "0"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    body:
+      type: none
+  recorded_at: 2026-09-29T20:01:59.382735+00:00
+- request:
+    method: POST
+    uri: >-
+      https://api.openai.com/v1/realtime/calls/rtc_u1_ETYJSp3oMdsOb7HW9eMflgesrIs0XaTn/hangup
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "0"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: none
+  response:
+    status: 404
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        error:
+          message: No session found for the provided call_id
+          type: invalid_request_error
+          code: call_id_not_found
+          param: ""
+  recorded_at: 2026-09-29T20:02:06.559359+00:00

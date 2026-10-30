@@ -1,10 +1,14 @@
+---
+description: "Get structured output from Pydantic AI agents as validated Pydantic models or text, with tool, native or prompted output modes, validators and streaming."
+---
+
 "Output" refers to the final value returned from [running an agent](agent.md#running-agents). This can be either plain text, [structured data](#structured-output), an [image](#image-output), or the result of a [function](#output-functions) called with arguments provided by the model.
 
 The output is wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] or [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] so that you can access other data, like [usage][pydantic_ai.usage.RunUsage] of the run and [message history](message-history.md#accessing-messages-from-results).
 
 Both `AgentRunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
 
-A run ends when the model responds with one of the output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agent.md#usage-limits).
+A run ends when the model responds with one of the output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agent.md#usage-limits). With [`DeferredToolRequests`](deferred-tools.md) or [`PendingModelResponse`](batch.md#ending-a-run-while-it-waits) in the output type, a run can also end early, so you can approve its tools or wait for a model request the provider is still processing, like a batch request, and resume it later.
 
 Here's an example using a Pydantic model as the `output_type`, forcing the model to respond with data matching our specification:
 
@@ -19,12 +23,12 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google:gemini-3-flash-preview', output_type=CityLocation)
+agent = Agent('{{ google:medium }}', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
 print(result.usage)
-#> RunUsage(cost=Decimal('0.0000525'), input_tokens=57, output_tokens=8, requests=1)
+#> RunUsage(cost=Decimal('0.00007275'), input_tokens=57, output_tokens=8, requests=1)
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -49,7 +53,7 @@ Structured outputs (like tools) use Pydantic to build the JSON schema used for t
 
     Specifically, there are three valid uses of `output_type` where you'll need to do this:
 
-    1. When using a union of types, e.g. `output_type=Foo | Bar`. Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands in Python 3.15, type checkers do not consider these a valid value for `output_type`. In addition to the generic parameters on the `Agent` constructor, you'll need to add `# type: ignore` to the line that passes the union to `output_type`. Alternatively, you can use a list: `output_type=[Foo, Bar]`.
+    1. With mypy or Pyright before 1.1.412: when using a type expression that isn't a plain class, like a union `output_type=Foo | Bar`, a `Literal['a', 'b']`, or a constrained `Annotated[float, Field(ge=0, le=1)]`. Pyright 1.1.412 and later accepts these as [PEP 747](https://peps.python.org/pep-0747/) type forms and infers the type they spell, but mypy and older Pyright versions do not consider them a valid value for `output_type`. In addition to the generic parameters on the `Agent` constructor, you'll need to add `# type: ignore` to the line that passes the type expression to `output_type`. For a union, you can alternatively use a list: `output_type=[Foo, Bar]`.
     2. With mypy: When using a list, as a functionally equivalent alternative to a union, or because you're passing in [output functions](#output-functions). Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19142) with mypy to try and get this fixed.
     3. With mypy: when using an async output function. Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19143) with mypy to try and get this fixed.
 
@@ -70,7 +74,7 @@ class Box(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5-mini',
+    '{{ openai:small }}',
     output_type=[Box, str], # (1)!
     instructions=(
         "Extract me the dimensions of a box, "
@@ -87,7 +91,7 @@ print(result.output)
 #> width=10 height=20 depth=30 units='cm'
 ```
 
-1. This could also have been a union: `output_type=Box | str`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. This could also have been a union: `output_type=Box | str`. However, as explained in the "Type checking considerations" section above, with mypy or older Pyright versions that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -97,8 +101,8 @@ Here's an example of using a union return type, which will register multiple out
 from pydantic_ai import Agent
 
 agent = Agent[object, list[str] | list[int]](
-    'openai:gpt-5-mini',
-    output_type=list[str] | list[int],  # type: ignore # (1)!
+    '{{ openai:small }}',
+    output_type=list[str] | list[int],  # (1)!
     instructions='Extract either colors or sizes from the shapes provided.',
 )
 
@@ -111,7 +115,7 @@ print(result.output)
 #> [10, 20, 30]
 ```
 
-1. As explained in the "Type checking considerations" section above, using a union rather than a list requires explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. As explained in the "Type checking considerations" section above, with mypy or older Pyright versions, using a union rather than a list requires explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -178,7 +182,7 @@ def run_sql_query(query: str) -> list[Row]:
 
 
 sql_agent = Agent[object, list[Row] | SQLFailure](
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=[run_sql_query, SQLFailure],
     instructions='You are a SQL agent that can run SQL queries on a database.',
 )
@@ -210,7 +214,7 @@ class RouterFailure(BaseModel):
 
 
 router_agent = Agent[object, list[Row] | RouterFailure](
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=[hand_off_to_sql_agent, RouterFailure],
     instructions='You are a router to other agents. Never try to solve a problem yourself, just pass it on.',
 )
@@ -245,6 +249,8 @@ If desired, this marker class can be used alongside one or more [`ToolOutput`](#
 
 Like other output functions, text output functions can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
+Some models cannot write text at all, and say so through [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output] on their profile — [decision models](models/decision.md) such as [TypeSafe's Jev](models/typesafe.md) are. On those, any `output_type` that leaves text output available is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent: the default `str`, a `str` among several output types, a `TextOutput` function, and [`PromptedOutput`](#prompted-output), which asks for its structured data as text. Give such a model a structured `output_type`, such as a `BaseModel` or a union of them, instead.
+
 !!! note
     When streaming, [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] does **not** apply the `TextOutput` function. To stream the value it produces, use [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] instead. See [Streaming Text](#streaming-text) for details.
 
@@ -257,7 +263,7 @@ def split_into_words(text: str) -> list[str]:
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=TextOutput(split_into_words),
 )
 result = agent.run_sync('Who was Albert Einstein?')
@@ -299,7 +305,7 @@ def save_to_database(ctx: RunContext, record: DatabaseRecord) -> DatabaseRecord:
     return record
 
 
-agent = Agent('openai:gpt-5.2', output_type=save_to_database)
+agent = Agent('{{ openai:medium }}', output_type=save_to_database)
 
 
 async def main():
@@ -326,6 +332,8 @@ In the default Tool Output mode, the output JSON schema of each output type (or 
 
 If you'd like to change the name of the output tool, pass a custom description to aid the model, or turn on or off [strict mode](tools-advanced.md#strict-mode), you can wrap the type(s) in the [`ToolOutput`][pydantic_ai.output.ToolOutput] marker class and provide the appropriate arguments. Note that by default, the description is taken from the docstring specified on a Pydantic model or output function, so specifying it using the marker class is typically not necessary.
 
+Field descriptions reach the model as in [tool schemas](tools.md#docstrings), including a Pydantic model's field docstrings when it sets `use_attribute_docstrings`. An `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] additionally describes each of its options by the docstring written under that member, wherever the enum appears — in an output model, in a tool parameter, or as a bare `Enum` `output_type`. Without the mix-in the docstrings are ignored; see [enum options](tools.md#enum-options).
+
 When using output tools, each tool gets its own retry counter — the output side of the agent retry budget (set with [`AgentRetries`][pydantic_ai.agent.AgentRetries] via `Agent(retries={'output': N})`, or per-run via `agent.run(retries={'output': N})`) is the *default per-tool limit*. To override the limit for an individual output tool, pass [`max_retries`][pydantic_ai.output.ToolOutput.max_retries] on `ToolOutput`: `ToolOutput(Fruit, max_retries=2)`. See [How output retries are enforced](agent.md#how-output-retries-are-enforced) for the relationship to the text-output path's global budget.
 
 To dynamically modify or filter the available output tools during an agent run, you can define an agent-wide `prepare_output_tools` function that will be called ahead of each step of a run. This function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns the output tool definitions to expose for that step. Return `[]` to expose no output tools. This is analogous to the [`prepare_tools` function](tools-advanced.md#prepare-tools) for non-output tools.
@@ -347,7 +355,7 @@ class Vehicle(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=[ # (1)!
         ToolOutput(Fruit, name='return_fruit'),
         ToolOutput(Vehicle, name='return_vehicle'),
@@ -364,7 +372,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Native Output
 
-Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools.
+Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools. On [Anthropic](models/anthropic.md#schema-complexity-limits), the schema is compiled into a grammar with complexity limits that a large schema can exceed, and on a request that thinks, a structured `output_type` uses Native Output even without the marker class, unless its schema is over those limits. On [OpenAI](models/openai.md#structured-output-schemas), a schema over the strict-mode size limits is sent without strict mode.
 
 To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 
@@ -374,7 +382,7 @@ from pydantic_ai import Agent, NativeOutput
 from tool_output import Fruit, Vehicle
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=NativeOutput(
         [Fruit, Vehicle], # (1)!
         name='Fruit_or_vehicle',
@@ -386,7 +394,7 @@ print(repr(result.output))
 #> Vehicle(name='Ford Explorer', wheels=4)
 ```
 
-1. This could also have been a union: `output_type=Fruit | Vehicle`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. This could also have been a union: `output_type=Fruit | Vehicle`. However, as explained in the "Type checking considerations" section above, with mypy or older Pyright versions that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -414,7 +422,7 @@ class Device(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=PromptedOutput(
         [Vehicle, Device], # (1)!
         name='Vehicle or device',
@@ -426,7 +434,7 @@ print(repr(result.output))
 #> Device(name='MacBook', kind='laptop')
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=PromptedOutput(
         [Vehicle, Device],
         template='Gimme some JSON: {schema}'
@@ -437,7 +445,7 @@ print(repr(result.output))
 #> Vehicle(name='Ford Explorer', wheels=4)
 ```
 
-1. This could also have been a union: `output_type=Vehicle | Device`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. This could also have been a union: `output_type=Vehicle | Device`. However, as explained in the "Type checking considerations" section above, with mypy or older Pyright versions that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -505,10 +513,148 @@ HumanDict = StructuredDict(
     description='A human with a name and age',
 )
 
-agent = Agent('openai:gpt-5.2', output_type=HumanDict)
+agent = Agent('{{ openai:medium }}', output_type=HumanDict)
 result = agent.run_sync('Create a person')
 #> {'name': 'John Doe', 'age': 30}
 ```
+
+### Choices known only at run time {#choices}
+
+Sometimes the model has to pick one of a set that doesn't exist until the run is under way: the actions available on the screen in front of an agent, the records a search returned. A `Literal` or an `Enum` (with [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] to describe its members) covers a set you know when you write the code, and gives you exhaustiveness checking that a run-time set cannot. For everything else there is [`Choices()`][pydantic_ai.output.Choices], which takes a mapping from each option to what it means:
+
+```python {title="choices.py"}
+from pydantic_ai import Agent, Choices
+
+Intent = Choices(
+    {
+        'refund': 'The customer wants their money back.',
+        'replace': 'The customer wants a working unit instead.',
+        'escalate': 'Nobody on this tier can resolve it.',
+    },
+    name='customer_intent',
+    description='What the customer is asking for.',
+)
+
+agent = Agent('{{ openai:medium }}', output_type=Intent)
+result = agent.run_sync('The blender arrived smashed. Just send me another one.')
+print(result.output)
+#> replace
+```
+
+The descriptions are what make this worth a helper: each option carries its meaning into the schema the model receives, and the output is one of the keys, validated, and typed `str`. Passing a sequence of keys instead of a mapping describes nothing and asks the same question with a plain `enum`.
+
+Like [`StructuredDict()`](#structured-dict), `Choices()` returns a type, so the same value works as an `output_type`, as a field of a Pydantic model, and as a [tool](tools.md) parameter. A type checker won't accept a type built at runtime in an annotation, though, so as a field or a parameter, put either one in `Annotated` on the type of the value it gives back: `Annotated[str, Intent]` for choices that don't [stand for something else](#choices-that-stand-for-something-else), and `Annotated[dict[str, Any], Person]` for a `StructuredDict()`. Pydantic reads the schema and validation from the metadata, and the type checker sees a plain `str` or `dict`:
+
+```python {title="choices_annotated.py"}
+from typing import Annotated
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, Choices
+
+Intent = Choices(
+    {
+        'refund': 'The customer wants their money back.',
+        'replace': 'The customer wants a working unit instead.',
+        'escalate': 'Nobody on this tier can resolve it.',
+    }
+)
+
+
+class Triage(BaseModel):
+    intent: Annotated[str, Intent]
+    summary: str
+
+
+agent = Agent('{{ openai:medium }}', output_type=Triage)
+
+
+@agent.tool_plain
+def open_ticket(intent: Annotated[str, Intent], summary: str) -> str:
+    """Open a ticket with the team that handles this intent."""
+    return f'Opened a {intent} ticket.'
+
+
+result = agent.run_sync('The kettle leaks everywhere. I just want my money back.')
+print(result.output)
+#> intent='refund' summary='Leaking kettle, customer wants a refund.'
+```
+
+#### Choices that stand for something else
+
+An option can stand for a value instead of its own key, by giving [`Choice`][pydantic_ai.output.Choice] the value alongside the description. The model still picks a key, and the output is what that key stands for:
+
+```python {title="choices_value.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, Choice, Choices
+
+
+@dataclass
+class Doc:
+    id: str
+    title: str
+
+
+docs = [
+    Doc(id='rfc-6265', title='HTTP State Management Mechanism'),
+    Doc(id='rfc-9110', title='HTTP Semantics'),
+]
+
+agent = Agent('{{ openai:medium }}')
+result = agent.run_sync(
+    'Which one covers cookies?',
+    output_type=Choices({doc.id: Choice(doc.title, value=doc) for doc in docs}),
+)
+print(result.output)
+#> Doc(id='rfc-6265', title='HTTP State Management Mechanism')
+```
+
+#### Choices that do something
+
+When the value is a callable, picking it *calls* it, the way an [output function](#output-functions) is called, so the run's output is what the action returned and there is no dispatch table between the model's answer and the thing it meant:
+
+```python {title="choices_action.py"}
+from functools import partial
+
+from pydantic_ai import Agent, Choice, Choices
+
+
+class Screen:
+    def click(self, target: str) -> str:
+        return f'clicked {target}'
+
+    async def observe(self) -> str:
+        return 'the login page'
+
+
+screen = Screen()
+targets = {'login': 'The Login button, top right.', 'forgot': 'The "forgot password" link.'}
+
+actions = {
+    target: Choice(description, value=partial(screen.click, target))
+    for target, description in targets.items()
+}
+actions['reobserve'] = Choice('Look again before deciding.', value=screen.observe)
+
+agent = Agent('{{ openai:medium }}')
+result = agent.run_sync(
+    'Sign in as the admin.',
+    output_type=Choices(actions, description='Which action to take on the screen.'),
+)
+print(result.output)
+#> clicked login
+```
+
+The action takes no arguments, so bind what it needs with `functools.partial` or a closure, and it may be `async`. Like an output function it can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to send the model back for another pick.
+
+!!! note
+    A callable value only means something as an `output_type`, as that is the only place Pydantic AI can call it. Using such a set as a model field or a tool parameter raises a [`UserError`][pydantic_ai.exceptions.UserError] rather than handing back the function itself.
+
+    When [streaming](#streamed-results), the action runs once, for the final output; the partial outputs before it are the key the model picked.
+
+!!! note
+    In a module with `from __future__ import annotations`, a `Choices` type can only be used in an annotation if it's reachable by name where the annotation is evaluated, so a module-level assignment works and one built inside a function does not. This applies to [`StructuredDict()`](#structured-dict) too, and not to the `output_type=` argument, which takes a value rather than an annotation.
 
 ### Validation context {#validation-context}
 
@@ -539,7 +685,7 @@ class Value(BaseModel):
 
 
 agent = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     output_type=Value,
     validation_context=10,
 )
@@ -554,7 +700,7 @@ class Deps:
 
 
 agent = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     output_type=Value,
     deps_type=Deps,
     validation_context=lambda ctx: ctx.deps.increment,
@@ -596,8 +742,8 @@ class InvalidRequest(BaseModel):
 
 Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
-    'google:gemini-3-flash-preview',
-    output_type=Output,  # type: ignore
+    '{{ google:medium }}',
+    output_type=Output,
     deps_type=DatabaseConn,
     instructions='Generate PostgreSQL flavored SQL queries based on user input.',
 )
@@ -636,7 +782,7 @@ For all [other run methods](agent.md#running-agents), `partial_output` is always
 ```python {title="partial_validation_streaming.py" line_length="120"}
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 @agent.output_validator
@@ -673,7 +819,7 @@ To use the generated image as the output of the agent run, you can set `output_t
 ```py {title="image_output.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('openai-responses:gpt-5.2', output_type=BinaryImage)
+agent = Agent('openai-responses:{{ openai:medium.name }}', output_type=BinaryImage)
 
 result = agent.run_sync('Generate an image of an axolotl.')
 assert isinstance(result.output, BinaryImage)
@@ -686,7 +832,7 @@ If an agent does not need to always generate an image, you can use a union of `B
 ```py {title="image_output_union.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('openai-responses:gpt-5.2', output_type=BinaryImage | str)
+agent = Agent('openai-responses:{{ openai:medium.name }}', output_type=BinaryImage | str)
 
 result = agent.run_sync('Tell me a two-sentence story about an axolotl, no image please.')
 print(result.output)
@@ -711,7 +857,7 @@ Include `None` in the `output_type` when finishing without a final message is a 
 ```python {title="optional_output.py"}
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-opus-4-6', output_type=str | None)
+agent = Agent('{{ anthropic:large }}', output_type=str | None)
 
 
 @agent.tool_plain
@@ -731,8 +877,8 @@ When the model returns an empty response and `None` is an allowed output type, t
 
 `None` is also supported in the other output modes, with an extra structured commit path in addition to (or in place of) the empty-response fallback:
 
-- **Bare unions including `None` that use tool mode** — e.g. `output_type=int | None`, `output_type=[int, float, None]`, or `output_type=[ToolOutput(Foo), None]`: a dedicated `final_result_NoneType` output tool is exposed alongside the other output tools, so the model can commit to `None` through a tool call. An empty, blank-text, or thinking-only model response is still also treated as `None`, as with `str | None`.
-- **Explicit output mode markers** — e.g. `output_type=ToolOutput(int | None)`, `output_type=NativeOutput([int, None])`, or `output_type=PromptedOutput([int, None])`: `None` is included as a branch of the structured schema the wrapper generates. The model commits by calling the tool with `null` (for `ToolOutput`) or by selecting the `NoneType` branch of the discriminated schema (for `NativeOutput`/`PromptedOutput`). An empty response is **not** accepted — once you've opted into an explicit structured output mode, the model is expected to commit through the schema.
+- **Bare unions including `None` that use tool mode** — e.g. `output_type=int | None`, `output_type=[int, float, None]`, or `output_type=[ToolOutput(Foo), None]`: a dedicated `final_result_None` output tool is exposed alongside the other output tools, so the model can commit to `None` through a tool call. An empty, blank-text, or thinking-only model response is still also treated as `None`, as with `str | None`.
+- **Explicit output mode markers** — e.g. `output_type=ToolOutput(int | None)`, `output_type=NativeOutput([int, None])`, or `output_type=PromptedOutput([int, None])`: `None` is included as a branch of the structured schema the wrapper generates. The model commits by calling the tool with `null` (for `ToolOutput`) or by selecting the `None` branch of the discriminated schema (for `NativeOutput`/`PromptedOutput`). An empty response is **not** accepted — once you've opted into an explicit structured output mode, the model is expected to commit through the schema.
 
 !!! note
     `output_type=None` on its own is not valid — at least one other output type must be provided alongside `None`.
@@ -761,7 +907,7 @@ Example of streamed text output:
 ```python {title="streamed_hello_world.py" line_length="120"}
 from pydantic_ai import Agent
 
-agent = Agent('google:gemini-3-flash-preview')  # (1)!
+agent = Agent('{{ google:medium }}')  # (1)!
 
 
 async def main():
@@ -789,7 +935,7 @@ We can also stream text as deltas rather than the entire text in each item:
 ```python {title="streamed_delta_hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('google:gemini-3-flash-preview')
+agent = Agent('{{ google:medium }}')
 
 
 async def main():
@@ -821,8 +967,9 @@ Here's an example of streaming a user profile as it's built:
 
 ```python {title="streamed_user_profile.py" line_length="120"}
 from datetime import date
+from typing import NotRequired
 
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
 
@@ -834,7 +981,7 @@ class UserProfile(TypedDict):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=UserProfile,
     instructions='Extract a user profile from the input',
 )
@@ -874,7 +1021,7 @@ class Client(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=list[str | Client],
     instructions='Find the requested clients and explain each match.',
 )
@@ -936,7 +1083,7 @@ class UserProfile(TypedDict, total=False):
     bio: str
 
 
-agent = Agent('openai:gpt-5.2', output_type=UserProfile)
+agent = Agent('{{ openai:medium }}', output_type=UserProfile)
 
 
 async def main():
@@ -980,7 +1127,7 @@ Sometimes you need to stop a streaming response before it completes: a user clic
 ```python {title="stream_cancel_stream_events.py"}
 from pydantic_ai import Agent, FinalResultEvent, PartStartEvent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 async def main():
@@ -1006,7 +1153,7 @@ Call `cancel()` on the [`StreamedRunResult`][pydantic_ai.result.StreamedRunResul
 ```python {title="stream_cancel_stream.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 async def main():
@@ -1042,7 +1189,7 @@ When using [`agent.iter()`][pydantic_ai.agent.Agent.iter] for fine-grained contr
 ```python {title="stream_cancel_iter.py"}
 from pydantic_ai import Agent, FinalResultEvent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 async def main():

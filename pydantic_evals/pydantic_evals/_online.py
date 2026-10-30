@@ -8,6 +8,7 @@ import functools
 import inspect
 import random
 import threading
+import uuid
 import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextvars import ContextVar
@@ -15,11 +16,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 import anyio
-import sniffio
 from anyio.to_thread import run_sync
 from opentelemetry import context as otel_context
 
 from ._otel_emit import build_parent_context, emit_otel_events
+from ._utils import running_on_asyncio
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
@@ -137,9 +138,7 @@ def _remove_background_task(task: asyncio.Task[Any]) -> None:
 
 
 def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
-    library = sniffio.current_async_library()
-
-    if library == 'trio':  # pragma: no cover
+    if not running_on_asyncio():  # pragma: no cover
         import trio.lowlevel
 
         done_event = anyio.Event()
@@ -220,6 +219,17 @@ def _should_evaluate(
     if sampling_mode == 'correlated':
         return sampling_context.call_seed < resolved
     return random.random() < resolved
+
+
+def may_sample(online_eval: OnlineEvaluator, config: OnlineEvalConfig) -> bool:
+    """Whether the evaluator's sample rate leaves any chance of it being sampled."""
+    rate = _resolve_sample_rate_field(online_eval, config)
+    return callable(rate) or rate > 0
+
+
+def evaluation_allowed(config: OnlineEvalConfig) -> bool:
+    """Whether `config` allows evaluation here, apart from the check for an enclosing task run."""
+    return config.enabled and not EVALUATION_DISABLED.get()
 
 
 def sample_evaluators(
@@ -314,6 +324,7 @@ async def _run_and_collect(
     target: str,
     config: OnlineEvalConfig,
     group: _SinkGroup,
+    scoring_run_id: str,
 ) -> None:
     """Run a single evaluator, emit its OTel events, and stash the outcome on the group.
 
@@ -365,6 +376,7 @@ async def _run_and_collect(
                     results=results,
                     failures=failures,
                     target=target,
+                    scoring_run_id=scoring_run_id,
                     include_baggage=config.include_baggage,
                 )
             except Exception as exc:  # pragma: no cover
@@ -439,6 +451,10 @@ async def dispatch_evaluators(
     if not groups:
         return
 
+    # One scoring pass per target call: every event this dispatch emits shares this id,
+    # regardless of which sink group its evaluator landed in.
+    scoring_run_id = str(uuid.uuid4())
+
     # Phase 1: run every evaluator in parallel, collecting outcomes into their group.
     async with anyio.create_task_group() as eval_tg:
         for group in groups.values():
@@ -452,6 +468,7 @@ async def dispatch_evaluators(
                         target,
                         config,
                         group,
+                        scoring_run_id,
                     )
                 )
 

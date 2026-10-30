@@ -1,4 +1,10 @@
+---
+description: "Debug and monitor Pydantic AI agents with Pydantic Logfire or any OpenTelemetry backend, tracing the model requests, tool calls and token usage of every run."
+---
+
 # Pydantic Logfire Debugging and Monitoring
+
+While you build an agent, and once it is in production, its traces are how you find out why a run gave a wrong answer, took too long or cost too much. Pydantic AI emits OpenTelemetry traces of every run, model request and tool call; this page sets up [Pydantic Logfire](#pydantic-logfire) to view them, and covers [any other OpenTelemetry backend](#otel-without-logfire) too.
 
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.
 
@@ -15,7 +21,7 @@ LLM Observability tools that just let you understand how your model is performin
 
 ## Pydantic Logfire
 
-[Pydantic Logfire](https://pydantic.dev/logfire) is an observability platform developed by the team who created and maintain Pydantic Validation and Pydantic AI. Logfire aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs, all using OpenTelemetry.
+[Pydantic Logfire](https://pydantic.dev/logfire) is an AI engineering platform developed by the team who created and maintain Pydantic Validation and Pydantic AI. Logfire aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs, all using OpenTelemetry.
 
 !!! tip "Pydantic Logfire is a commercial product"
     Logfire is a commercially supported, hosted platform with an extremely generous and perpetual [free tier](https://pydantic.dev/pricing/).
@@ -31,7 +37,15 @@ A trace is generated for the agent run, and spans are emitted for each model req
 
 ## Using Logfire
 
-To use Logfire, you'll need a Logfire [account](https://logfire.pydantic.dev). The Logfire Python SDK is included with `pydantic-ai`:
+The quickest way to start is the Logfire wizard. Run it from your project:
+
+```bash
+uvx logfire-cli wizard --task pydantic-ai
+```
+
+It signs you in (or creates a free account), picks or creates a project, and hands the instrumentation to your coding agent, which then checks that the first trace arrived. If a coding agent is already doing the setup, it can run `uvx logfire-cli --no-input --output json wizard --task pydantic-ai --print-prompt` and follow the instructions it returns.
+
+To set it up by hand instead, you'll need a Logfire [account](https://logfire.pydantic.dev). The Logfire Python SDK is included with `pydantic-ai`:
 
 ```bash
 pip/uv-add pydantic-ai
@@ -46,16 +60,14 @@ pip/uv-add "pydantic-ai-slim[logfire]"
 Then authenticate your local environment with Logfire:
 
 ```bash
-py-cli logfire auth
+uvx logfire-cli auth
 ```
 
-And configure a project to send data to:
+And connect this directory to a project to send data to, new or existing:
 
 ```bash
-py-cli logfire projects new
+uvx logfire-cli init
 ```
-
-(Or use an existing project with `logfire projects use`)
 
 This will write to a `.logfire` directory in the current working directory, which the Logfire SDK will use for configuration at run time.
 
@@ -69,7 +81,7 @@ from pydantic_ai import Agent
 logfire.configure()  # (1)!
 logfire.instrument_pydantic_ai()  # (2)!
 
-agent = Agent('openai:gpt-5.2', name='hello_world_agent', instructions='Be concise, reply with one sentence.')  # (4)!
+agent = Agent('{{ openai:medium }}', name='hello_world_agent', instructions='Be concise, reply with one sentence.')  # (4)!
 result = agent.run_sync('Where does "hello world" come from?')  # (3)!
 print(result.output)
 """
@@ -92,6 +104,21 @@ The [Logfire documentation](https://logfire.pydantic.dev/docs/) has more details
 including how to instrument other libraries like [HTTPX](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) and [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/).
 
 Since Logfire is built on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector, see [below](#using-opentelemetry).
+
+### Use Logfire for local development, even if production uses something else {#local-development}
+
+You can use Logfire while you develop, whatever your company runs in production. Logfire's [free tier](https://pydantic.dev/pricing/) needs only a GitHub login, and setup is the two commands and two lines of code above.
+
+Pydantic AI's instrumentation is plain OpenTelemetry, so the same spans can go to your company's backend in production and to Logfire on your laptop. Tell Logfire to send only when it has a token:
+
+```python {test="skip"}
+import logfire
+
+logfire.configure(send_to_logfire='if-token-present')
+logfire.instrument_pydantic_ai()
+```
+
+On your machine, `logfire.configure()` reads the token from the `.logfire` directory that `logfire-cli init` wrote, which is gitignored. A deployment without that directory or a `LOGFIRE_TOKEN` sends nothing to Logfire (`.gitignore` does not keep it out of a Docker build context, so exclude it there too), and the Logfire SDK still exports to the backend set in the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable, as shown [below](#otel). If your application sets up its own OpenTelemetry SDK in production instead, call `logfire.configure()` and `logfire.instrument_pydantic_ai()` only when developing locally, and use [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] in production: it uses the global OpenTelemetry providers your SDK set up.
 
 ### Debugging
 
@@ -126,7 +153,7 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)  # (1)!
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
@@ -172,7 +199,7 @@ logfire.configure(send_to_logfire=False)  # (2)!
 logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -225,7 +252,7 @@ tracer_provider.add_span_processor(span_processor)
 set_tracer_provider(tracer_provider)
 
 Agent.instrument_all()
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -233,28 +260,50 @@ print(result.output)
 
 ### Alternative Observability backends
 
-Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just our observability platform [Pydantic Logfire](#pydantic-logfire).
-
-The following providers have dedicated documentation on Pydantic AI:
-
-<!--Feel free to add other platforms here. They MUST be added to the bottom of the list, and may only be a name with link.-->
-- [Langfuse](https://langfuse.com/docs/integrations/pydantic-ai)
-- [W&B Weave](https://weave-docs.wandb.ai/guides/integrations/pydantic_ai/)
-- [Arize](https://arize.com/docs/ax/observe/tracing-integrations-auto/pydantic-ai)
-- [Openlayer](https://www.openlayer.com/docs/integrations/pydantic-ai)
-- [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
-- [Patronus AI](https://docs.patronus.ai/docs/percival/integrations/pydantic)
-- [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
-- [mlflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
-- [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
-- [Braintrust](https://www.braintrust.dev/docs/integrations/sdk-integrations/pydantic-ai)
-- [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
-- [Laminar](https://docs.laminar.sh/tracing/integrations/pydantic-ai)
-- [Respan](https://respan.ai/docs/integrations/pydantic-ai)
-- [Raindrop](https://raindrop.ai/docs/integrations/pydantic-ai)
-- [Sentry](https://docs.sentry.io/platforms/python/integrations/pydantic-ai/)
+Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just [Pydantic Logfire](#pydantic-logfire).
 
 ## Advanced usage
+
+### Prompt-cache health
+
+Instrumented agent runs report prompt-cache health without additional configuration:
+
+| Attribute | Description |
+|-----------|-------------|
+| `pydantic_ai.cache.hit_ratio` | Fraction of the request's input tokens read from the prompt cache: `cache_read_tokens / input_tokens`, where input tokens include cache reads and writes. |
+| `pydantic_ai.cache.established_tokens` | The cached-prefix size later requests are judged against, for the conversation and the response's provider, endpoint (`provider_url`), and model. It grows as the prefix does, and drops to whatever the current request established after a collapse, so an intentional bust is reported once rather than against a stale high-water mark. |
+| `pydantic_ai.cache.collapsed` | `true` when the request read back less of the established prefix than it could have: more than 5% and at least 2,000 tokens short, the thresholds Claude Code uses for a prompt-cache miss. Message history is append-only, so any real shortfall means the prefix moved or the cache expired, including a partial move deep in the history. |
+| `pydantic_ai.cache.missed_tokens` | Previously established tokens that were not read after a collapse. |
+| `pydantic_ai.cache.collapse_reason` | Collapse classification: `unexpected`, `ttl_expired`, `compacted`, `unknown`, or `unreported`. More values may be added. |
+| `pydantic_ai.cache.not_enabled` | `true` when the request was long enough to cache on a model that needs caching configured, but none was configured (see below). |
+
+These attributes are on model-request spans only. The agent-run span carries no cache ratio, since one aggregated across requests to different models isn't interpretable (the OpenTelemetry GenAI conventions dropped cache attributes from `invoke_agent` spans for the same reason); compute a run-level figure from its `gen_ai.aggregated_usage.*` token counts if you need one.
+
+Only an `unexpected` collapse — one that happens while the provider's documented retention window should still have been active — emits a `pydantic_ai.cache.collapse` span event for alerting and investigation, carrying `established_tokens`, `cache_read_tokens` and `missed_tokens` along with the `provider_name` and `model_name` that served the request. Every other classification is recorded on the span but stays silent, so the event means "cache reuse fell when the cache should still have been warm" rather than "something about caching happened". The detector sees usage and timing, not request content, so it reports that a miss happened, not what caused it; the [Caching](capabilities/caching.md#monitoring-cache-efficiency) page has a debugging order:
+
+| `collapse_reason` | Meaning | Emits the event |
+|-------------------|---------|-----------------|
+| `unexpected` | The retention window should still have been active, so the cached prefix most likely changed. Check for prefix changes and the provider's cache diagnostics. | Yes |
+| `ttl_expired` | The gap since the last request exceeded the provider's retention window. | No |
+| `compacted` | A [`CompactionPart`][pydantic_ai.messages.CompactionPart] (from provider-native compaction, or a summary the application or `SummarizingCompaction` wrote) replaced the history before it, which shrinks the prefix by design. A summary that replaces one with the same text and `metadata` can't be told apart from it, so give each summary you write distinct `metadata`, as `SummarizingCompaction` does. | No |
+| `unknown` | The provider publishes no retention window, so the collapse can't be attributed. | No |
+| `unreported` | The response reported no cache usage at all (see below). | No |
+
+A sustained collapse, such as a prefix that moves on every request so the provider keeps writing a cache nothing reads back, is recorded on every request's span, but emits the event once: it only fires again after a healthy read-back has re-stabilized the cache.
+
+A response reporting neither cache reads nor writes is ambiguous: on providers that report cache writes (Anthropic, Bedrock) it means the cache wasn't engaged for that request — caching disabled, or a prompt below the provider's minimum cacheable size — while on providers that only report reads (OpenAI's implicit caching) it is what a full cache miss looks like. The established prefix was re-sent uncached either way, so the collapse and its missed tokens are recorded as `unreported`, but the cause can't be determined from usage alone, so no event is emitted. Before anything has been cached, such responses are ignored entirely.
+
+Models such as Anthropic's, Bedrock's Claude and Nova, and OpenRouter's Anthropic routes only cache what the request asks them to. When a request of at least 4,096 input tokens (above every supported model's minimum cacheable prompt) goes to such a model with no caching configured (neither the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting nor a provider-specific one), no [`CachePoint`][pydantic_ai.messages.CachePoint] in its history, and no cache usage reported, its span gets `pydantic_ai.cache.not_enabled` and a `pydantic_ai.cache.not_enabled` event carrying `input_tokens` and the `provider_name` and `model_name` that served it, once per conversation and model. Enable caching with `cache=True` or the [`Caching`][pydantic_ai.capabilities.Caching] capability; setting `cache=False` says it was left off on purpose, which isn't reported.
+
+A request that the provider paused and resumed, such as an Anthropic `pause_turn` continuation, is one model request whose usage sums every segment's, so it is judged by its final segment, whose prompt carries the whole prefix. A response whose cache reads may be summed over a native tool's internal model calls, such as web search, is still judged, but doesn't raise the established prefix or re-arm the event, since its total isn't a prefix the next request can read back.
+
+The established prefix is tracked per [conversation](message-history.md#correlating-runs-with-run_id-and-conversation_id), not per run, so a run that continues a conversation via `message_history` (including history that was serialized and loaded back) is judged against what the previous run cached. That is where a moved prefix most often shows: the first request of the next turn re-sends the prefix the previous turn cached, and anything that rewrote history in between — a history processor that compacts or clears tool results, a memory or todo write — makes it miss. (Provider-native compaction is recognized by its `CompactionPart` and classified `compacted`.) The marks are kept in the process's memory: a conversation's are forgotten once it has been idle for longer than any provider keeps a cache (24 hours), or when more than 4,096 conversations have been active more recently.
+
+Model switches never register as collapses: the established prefix is tracked per provider, endpoint, and model, so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] failover starts a fresh mark, and switching back is judged against the original one.
+
+The retention window is the one the request's settings ask for, such as the unified `cache` setting, `anthropic_cache='1h'` or [`openai_prompt_cache_retention='24h'`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] on models before GPT-5.6, as resolved by [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention], or else the provider's documented [`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]. Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] TTLs extend it; when there is no known retention, collapses stay `unknown` even if cache points carry TTLs.
+
+To surface the same collapses as Python warnings during development and in CI, use Pydantic AI Harness's [Warn On Cache Busts](harness/warn-on-cache-busts.md) capability: it shares this detector and classification, and warns on `unexpected` and `unknown` collapses.
 
 ### Emitted metrics
 
@@ -275,7 +324,9 @@ Each metric point carries the `gen_ai.provider.name` (and legacy `gen_ai.system`
 
 By default, model request spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes, while agent run spans use `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`.
 
-This avoids double-counting in observability backends that aggregate usage attributes across parent and child spans, since agent run spans report the sum of their child model request spans' usage.
+This avoids double-counting in observability backends that aggregate usage attributes across parent and child spans, since an agent run span reports the sum of its own model request spans' usage.
+
+An agent run span reports what that run spent. A run that [delegates to another agent](multi-agent-applications.md#agent-delegation) does not include the delegate's tokens, whether or not the delegate is instrumented: if it is, its own run span reports them. So the agent run spans in a trace can be added up as they are — the total matches the sum of the `gen_ai.usage.*` attributes on the model request spans underneath them.
 
 !!! note "Custom namespace"
     The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.
@@ -350,7 +401,14 @@ Builds on version 5 by giving tool results the message role the [GenAI semantic 
 - Old (v2-5): a tool result is a `tool_call_response` part inside a `{"role": "user"}` message
 - New (v6): it moves to a `{"role": "tool"}` message
 
-This applies to tool returns and to retries that answer a tool call. A retry that answers nothing — output validation, a `ModelRetry` from a validator — stays on `user`, which is the role it reaches the model as. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
+This applies to tool returns and to retries that answer a tool call. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
+
+Pydantic AI's own [retry feedback](retries.md#feedback-that-belongs-to-no-tool-call) — a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], the retry that answers no tool call — moves on the same version, for the same reason:
+
+- Old (v2-5): a text part inside a `{"role": "user"}` message, whatever its `retry.cause`
+- New (v6): it takes the voice the part reaches the model in — a `{"role": "system"}` message for a `'no_output'` cause, and the `{"role": "user"}` message it was already on for a `'validation_error'` or `'model_retry'`
+
+That move shows up on `pydantic_ai.all_messages`, which records the stored message history. A model request span's `gen_ai.input.messages` records the history as sent, and by then the part has been translated into the prompt part its `retry.cause` calls for, so that attribute reads the same at every version. A history recorded before this part existed carries these parts too — a stored [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is [translated as it loads](retries.md#feedback-that-belongs-to-no-tool-call) — so only an instance your own code still holds records itself, and a tool-less one stays on `user`.
 
 ---
 
@@ -370,7 +428,7 @@ instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
 )
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -387,7 +445,7 @@ from pydantic_ai.capabilities import Instrumentation
 
 instrumentation_settings = InstrumentationSettings(include_binary_content=False)
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -396,7 +454,7 @@ Agent.instrument_all(instrumentation_settings)
 
 For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from telemetry while preserving the structural information needed for debugging and monitoring.
 
-When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run and tool spans keep only their type, since their message and stack trace can quote that content.
+When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run, model request, model request attempt and tool spans keep only their type, since their message and stack trace can quote that content. It doesn't apply to [run metadata](agent.md#run-metadata), spans of your own, or request and response bodies captured by [`instrument_httpx(capture_all=True)`](#monitoring-http-requests).
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai import Agent
@@ -405,7 +463,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_content=False)
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -423,12 +481,53 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_model_request_parameters=False)
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
 
 The `gen_ai.tool.definitions` attribute (tool name, description, and parameters) is emitted regardless of this setting, so observability platforms that read the available tools from it are unaffected.
+
+### Decision model spans
+
+A [decision model][pydantic_ai.models.decision.DecisionModel], such as [TypeSafe's Jev](models/typesafe.md), answers typed questions about the conversation instead of generating text. With more than one route on offer, such as a union `output_type` or tools, one request asks which route the text calls for, and asks the fields of every route it can fill beside it. When those questions would cost more than a second request, the route is picked first and its fields are filled in a second request instead. The model request span shows the agent-level request and response, so each request gets a `decide {model}` span of its own underneath it, recording exactly what was asked and answered.
+
+A `decide` span is only emitted inside an instrumented model request, and only for a request that is actually sent: when there is one route left and nothing to fill in, the model takes it without asking, and there is no span. Under [durable execution](durable_execution/overview.md), it sits inside the engine's step, task or activity span for the model request. With Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) to carry the trace into the activity, and the agent's own instrumentation (`Agent.instrument_all()`, or an `Instrumentation` capability on the agent) to say how to record it.
+
+| Attribute | Value |
+|-----------|-------|
+| `gen_ai.operation.name` | `decide` |
+| `gen_ai.provider.name`, `gen_ai.request.model`, `server.address`, ... | The same model attributes as the model request span |
+| `gen_ai.response.model` | The model that answered |
+| `gen_ai.response.id` | The provider's ID for the request, when it returns one |
+| `pydantic_ai.decision.thresholds` | The thresholds applied: `{"boolean": ...}` for `decision_boolean_threshold`, plus `"route"` for `decision_route_threshold` when it's set |
+| `pydantic_ai.decision.usage.input_tokens`, `pydantic_ai.decision.usage.output_tokens` | This request's usage |
+| `pydantic_ai.decision.questions` | The questions as sent: `{name: {"type": ..., "instructions": ..., "criteria": ...}}`, where `type` is `noul` (yes/no), `choice` or `score` |
+| `pydantic_ai.decision.state` | The state built for the backend: the text being judged, or a JSON object that adds the conversation's `history`. A backend that takes the conversation natively, such as [OpenAI Decisions](models/openai.md#decisions-api), is sent the messages instead, which the model request span records |
+| `pydantic_ai.decision.answers` | The answers as received: `{"type": "noul", "noul": ...}` for a yes/no, whose `noul` is the probability of yes, `{"type": "choice", "choice": ..., "confidence": ..., "probabilities": {...}}` for a pick, and `{"type": "score", "score": ..., "confidence": ..., "probabilities": {...}, "legend": {...}}` for a rubric |
+| `pydantic_ai.decision.route` | When the request fills a route picked by an earlier request, or the one route left, that route's label |
+| `pydantic_ai.decision.confidence` | When the request asks field questions and their answers are used, each question's confidence as Pydantic AI derived it after applying `decision_boolean_threshold`, keyed like the questions and answers. Each option of a `list` or mapping gets its own entry under `field.option`, where `provider_details['confidence']` on the response gives the field the least sure of its options. A `float` field that asks for a probability has no entry, since the probability is the answer |
+| `pydantic_ai.decision.route_question` | When the request asks which route to take, the key of that question: `route` |
+| `pydantic_ai.decision.route_options` | When the request asks which route to take, the labels of the routes offered, in order, as a JSON array |
+| `pydantic_ai.decision.route_questions` | When the request asks routes' fields beside the route question, the keys of each route's questions, by the route's label: `{"Refund": ["Refund.reason", "Refund.full_refund"], ...}` |
+
+Questions and answers share their keys, so an answer can be matched to the question it answers. A field's question is keyed by the field's name, a nested model's fields as `outer.inner`, and each option of a `list` or of a mapping from options to `bool` as `field.option`, since the model is asked about each option separately. A field asked beside the route question is keyed under its route's label, as `Refund.reason`. The question that picks between routes is keyed by `pydantic_ai.decision.route_question`, and its options are the labels in `pydantic_ai.decision.route_options`. A label and a nested field's name can both contain dots, so use `pydantic_ai.decision.route_questions` to tell which route a question belongs to, rather than splitting its key.
+
+Every route attribute names a route by its [label](models/decision.md#routes-which-thing-to-do), the name the route question offered it under: an output type's class name such as `Refund`, `None` for the `None` member of a union, or a tool's or output function's name. These are the names `provider_details['route']` uses on the response, whose `choice` and `offered` match the route question's answer and `pydantic_ai.decision.route_options`.
+
+The route the model picks is the route the step takes, unless the step can't take it. A pick less likely than `decision_route_threshold` raises [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute], and a picked route whose fields the model can't fill raises [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute], both before any request to fill it. Both are [`DecisionHandOff`][pydantic_ai.models.decision.DecisionHandOff]s. Either is recorded on the `decide` span that asked the route question, as an error with an `exception` event that carries the picked route's label as `pydantic_ai.decision.route`. With a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] behind the decision model, the model behind it takes the step, and the model request span ends without an error, so the `decide` span is where the hand-off shows. Without one, the model request span records the same error.
+
+The fields asked beside the route question are asked before it's known which route will be picked. Only the picked route's answers are used: `pydantic_ai.decision.confidence` covers only its questions, and the other routes' answers were discarded. A route picked in one request and filled in the next gets a second `decide` span beside the first, whose `route` is the first span's pick.
+
+With [`include_content=False`](#excluding-prompts-and-completions), strings are left out and numbers are kept:
+
+- `pydantic_ai.decision.state` is left out.
+- `pydantic_ai.decision.questions` keeps only each question's `type`, since the instructions and criteria are your own words.
+- `pydantic_ai.decision.answers` keeps only each answer's `type` and its numbers: a yes/no's `noul`, a pick's `confidence`, and a rubric's `score`, `confidence` and `probabilities`, which are keyed by level number. A pick's `choice` and its `probabilities`, keyed by option, and a rubric's `legend` are left out, since options and level descriptions can quote the text being judged. The answer to the route question keeps its `choice` and `probabilities` too, since its options are route labels, but only under the labels the request offered: anything else the backend answered is left out.
+
+Question keys, route labels, and the option names a question key carries for one option of a `list` or mapping are identifiers from your schema, the names of your fields, output types, tools and options, so they're always recorded, in the keys of `pydantic_ai.decision.questions`, `pydantic_ai.decision.answers` and `pydantic_ai.decision.confidence`, and in the route attributes. That includes the options of a [`Choices`][pydantic_ai.output.Choices] set built at run time, which reach the model in the schema just as a `Literal` does.
+
+Usage is recorded under `pydantic_ai.decision.usage.*` rather than `gen_ai.usage.*`, and no metrics are recorded for `decide` spans: the model request span above them already reports the total of its `decide` spans' usage, and a backend that adds up usage across spans would count it twice.
 
 ### Adding Custom Metadata
 
@@ -438,6 +537,6 @@ See the [usage and metadata example in the agents guide](agent.md#run-metadata) 
 
 ### The first-run banner
 
-Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's shown only where someone is there to read it: when `stderr` is a terminal, or when a coding agent is running the process and reads back what it writes. It's never shown when instrumentation is configured, under `pytest`, or when `CI` is set to any value. To turn it off entirely, set `PYDANTIC_AI_NO_BANNER` to any value in the environment, or set `pydantic_ai.BANNER_ENABLED = False` before the first agent run.
+Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's shown only where someone is there to read it: when `stderr` is a terminal, or when a coding agent is running the process and reads back what it writes. It's never shown when instrumentation is configured, under `pytest`, or when `CI` is set to any value. It's also not shown for a run that an installed package (code in `site-packages`) starts by calling the agent itself, so a library or platform built on Pydantic AI doesn't show it to its own users. The next run your own code starts still gets it, as does a run that a [UI adapter](ui/overview.md) streams to your web app. To turn it off entirely, set `PYDANTIC_AI_NO_BANNER` to any value in the environment, or set `pydantic_ai.BANNER_ENABLED = False` before the first agent run.
 
 Coding agents are recognized by the environment variables they set for the purpose. That list is best-effort and will always be behind, so a harness it doesn't recognize — including one built on Pydantic AI — can set `AI_AGENT` (or `AGENT`) to be treated the same way, naming itself in the value.

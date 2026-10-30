@@ -1,0 +1,8 @@
+// `BrowserUse` needs `browser-use`, which the workspace lock excludes (`exclude-dependencies`), so the
+// root Pyright run leaves it out. The `harness browser-use` CI job installs it and runs
+// `pyright -p tests/harness/browser_use` against these paths with the root settings.
+{
+  "extends": "../../../pyproject.toml",
+  "include": [".", "../../../src/pydantic_ai_harness/pydantic_ai_harness/browser_use"],
+  "exclude": []
+}

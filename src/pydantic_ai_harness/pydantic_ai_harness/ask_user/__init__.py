@@ -1,0 +1,40 @@
+"""Let the model ask the user multiple-choice questions mid-run; you supply the answerer."""
+
+from pydantic_ai_harness.ask_user._capability import AskUser
+from pydantic_ai_harness.ask_user._events import ASK_USER_EVENTS, AskUserAnsweredEvent, AskUserRequestedEvent
+from pydantic_ai_harness.ask_user._toolset import DECLINED, TIMED_OUT, AskUserToolset, ask_user_result
+from pydantic_ai_harness.ask_user._types import (
+    MAX_QUESTIONS,
+    TOOL_NAME,
+    Answerer,
+    AnyAnswerer,
+    AskUserAnswer,
+    AskUserRequest,
+    AskUserResponse,
+    ContextAnswerer,
+    Question,
+    QuestionOption,
+    check_response,
+)
+
+__all__ = [
+    'ASK_USER_EVENTS',
+    'Answerer',
+    'AnyAnswerer',
+    'AskUser',
+    'AskUserAnswer',
+    'AskUserAnsweredEvent',
+    'AskUserRequest',
+    'AskUserRequestedEvent',
+    'AskUserResponse',
+    'AskUserToolset',
+    'ContextAnswerer',
+    'DECLINED',
+    'MAX_QUESTIONS',
+    'Question',
+    'QuestionOption',
+    'TIMED_OUT',
+    'TOOL_NAME',
+    'ask_user_result',
+    'check_response',
+]

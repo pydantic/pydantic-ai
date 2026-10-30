@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="672" viewBox="0 0 880 672" role="img" aria-labelledby="t d">
+<title id="t">Playwright Browser: the model drives a real browser</title>
+<desc id="d">The model drives a real Chromium browser itself, one tool call per action, using the eighteen tools PlaywrightBrowser adds, such as navigate, snapshot, click and type_text. Chromium starts on the first browser call and closes when the run ends. Every request passes an egress guard that enforces allowed_domains and refuses private addresses. Each tool returns the page text, trimmed to a token budget, or a screenshot as image content.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="671" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Playwright Browser: the model drives a real browser</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">The model decides every action and calls one typed tool per step. Chromium runs for the length of the agent run, and an</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">egress guard decides which requests may leave it.</text>
+<text x="228" y="186.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">one tool call per action:</text>
+<rect x="228" y="200" width="74.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="265.1" y="216.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">navigate</text>
+<rect x="309.1" y="200" width="74.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="346.2" y="216.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">snapshot</text>
+<rect x="390.2" y="200" width="53.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="416.8" y="216.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">click</text>
+<rect x="450.3" y="200" width="81.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="490.9" y="216.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">type_text</text>
+<rect x="228" y="231" width="81.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="268.6" y="247.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">press_key</text>
+<rect x="316.1" y="231" width="109.2" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="370.7" y="247.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">select_option</text>
+<rect x="432.3" y="231" width="53.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="458.9" y="247.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">hover</text>
+<rect x="492.4" y="231" width="74.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="529.5" y="247.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">wait_for</text>
+<rect x="228" y="262" width="88.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="272.1" y="278.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">screenshot</text>
+<rect x="323.1" y="262" width="74.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="360.2" y="278.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">get_text</text>
+<rect x="404.3" y="262" width="60.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="434.3" y="278.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">scroll</text>
+<rect x="471.4" y="262" width="67.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="504.9" y="278.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">go_back</text>
+<rect x="228" y="293" width="88.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="272.1" y="309.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">go_forward</text>
+<rect x="323.1" y="293" width="88.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="367.2" y="309.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">execute_js</text>
+<rect x="418.3" y="293" width="130.2" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="483.4" y="309.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">console_messages</text>
+<rect x="228" y="324" width="46.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="251" y="340.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">tabs</text>
+<rect x="281.1" y="324" width="144.3" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="353.2" y="340.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">handle_next_dialog</text>
+<rect x="432.3" y="324" width="130.2" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="497.4" y="340.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">network_requests</text>
+<text x="228" y="378" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">snapshot returns the accessibility tree with aria-ref</text>
+<text x="228" y="395" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">handles; click and type_text take a handle, a CSS selector, or</text>
+<text x="228" y="412.1" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">x,y coordinates</text>
+<rect x="212" y="140" width="372" height="294.1" rx="14" fill="none" stroke="#B417B7" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="226" y="132" width="176.9" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="233" y="144" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">PLAYWRIGHTBROWSER</text>
+<rect x="32" y="164" width="112" height="36" rx="18" fill="#092224"/>
+<text x="88" y="187" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="32" y="234" width="112" height="108" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="88" y="257.3" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">instructions</text>
+<text x="88" y="276.1" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">when to reach</text>
+<text x="88" y="292.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">for the browser</text>
+<text x="88" y="309.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">instead of</text>
+<text x="88" y="325.8" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">search or fetch</text>
+<line x1="88" y1="232" x2="88" y2="202" stroke="#B417B7" stroke-width="1.6" marker-end="url(#al)"/>
+<line x1="148" y1="176" x2="209" y2="176" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="209" y1="188" x2="148" y2="188" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<rect x="640" y="140" width="208" height="84" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="652" y="168.1" font-size="13.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Chromium</text>
+<text x="652" y="187.3" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">starts on the first browser call</text>
+<text x="652" y="203.9" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">and closes when the run ends</text>
+<line x1="680" y1="226" x2="680" y2="251" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="640" y="254" width="208" height="118" rx="10" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.4"/>
+<text x="652" y="274.1" font-size="13" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">egress guard</text>
+<text x="652" y="293.2" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">allowed_domains bounds</text>
+<text x="652" y="309.7" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">navigation and data requests;</text>
+<text x="652" y="326.3" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">block_private_addresses refuses</text>
+<text x="652" y="342.9" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">loopback, private and metadata</text>
+<text x="652" y="359.4" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">addresses</text>
+<line x1="680" y1="374" x2="680" y2="399" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="640" y="402" width="208" height="36" rx="10" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.4"/>
+<text x="744" y="423.9" font-size="12.5" fill="#55726A" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">allowed sites on the web</text>
+<line x1="588" y1="182" x2="636" y2="182" stroke="#0E9C86" stroke-width="1.6" marker-end="url(#aa)"/>
+<text letter-spacing="1.3" x="32" y="478" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WHAT EACH TOOL RETURNS</text>
+<rect x="32" y="494" width="816" height="32" rx="8" fill="#FFFFFF" stroke="#092224" stroke-width="1.3"/>
+<text x="44" y="514.5" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">page text</text>
+<text x="123.9" y="514.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">after each action, trimmed to max_content_tokens (4000), iframe text included</text>
+<rect x="32" y="534" width="816" height="32" rx="8" fill="#FFFFFF" stroke="#092224" stroke-width="1.3"/>
+<text x="44" y="554.5" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">screenshot</text>
+<text x="131.2" y="554.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the PNG as image content, so a vision model sees the image itself</text>
+<rect x="32" y="574" width="816" height="32" rx="8" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.3"/>
+<text x="44" y="594.5" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">refused request</text>
+<text x="167.8" y="594.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">aborted before it leaves; the page bounces to about:blank and network_requests shows why</text>
+<rect x="32" y="625" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="636" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="625" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="636" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by PlaywrightBrowser</text>
+<rect x="313.5" y="625" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="333.5" y="636" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">browser process</text>
+<rect x="453.7" y="625" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="473.7" y="636" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">returned to the model</text>
+<rect x="615.4" y="625" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="635.4" y="636" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">egress guard</text>
+</svg>

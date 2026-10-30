@@ -3,26 +3,39 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, cast, get_args, overload
-from uuid import uuid4
+from typing import TYPE_CHECKING, Any, Literal, assert_never, cast, get_args, overload
+from uuid import UUID, uuid4
 
-from typing_extensions import assert_never
+import httpx2
 
-from .. import UnexpectedModelBehavior, _utils, usage
+from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
+from .._context_size import mark_context_input_tokens
+from .._gateway_cost import fill_gateway_header_cost
 from .._run_context import RunContext
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
+    UserError,
+)
 from ..messages import (
+    ERROR_OUTCOMES,
     BinaryContent,
     CachePoint,
+    Citation,
+    CitationSource,
     CompactionPart,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     FilePart,
     FileUrl,
     FinishReason,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -30,21 +43,22 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
+    _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import (
+    SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
     CodeExecutionTool,
     FileSearchTool,
@@ -53,7 +67,7 @@ from ..native_tools import (
     WebSearchTool,
 )
 from ..output import OutputObjectDefinition
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.google import (
     GOOGLE_THINKING_LEVEL_SCALE,
     GOOGLE_THINKING_LEVELS,
@@ -67,14 +81,19 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
 )
+from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from google.genai import Client, errors
@@ -102,8 +121,10 @@ try:
         GenerateContentResponse,
         GenerationConfigDict,
         GoogleSearchDict,
+        GroundingChunk,
         GroundingMetadata,
         HttpOptionsDict,
+        HttpRetryOptions,
         ImageConfigDict,
         MediaResolution,
         Modality,
@@ -112,6 +133,7 @@ try:
         Part,
         PartDict,
         SafetySettingDict,
+        Segment,
         ServiceTier as _GoogleSDKServiceTier,
         ThinkingConfigDict,
         ToolCall,
@@ -131,9 +153,13 @@ except ImportError as _import_error:
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
 
+if TYPE_CHECKING:
+    from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, EncodedBatchRequest
+
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
 
+_MEDIA_PROCESSING_TOOL_NAME = 'media_processing'
 _TOOL_TYPE_TO_NATIVE_TOOL_NAME: dict[ToolType, str] = {
     ToolType.GOOGLE_SEARCH_WEB: WebSearchTool.kind,
     ToolType.URL_CONTEXT: WebFetchTool.kind,
@@ -159,12 +185,14 @@ LatestGoogleModelNames = Literal[
     'gemini-3.1-flash-image',
     'gemini-3.1-flash-image-preview',
     'gemini-3.1-flash-lite',
+    'gemini-3.1-flash-lite-image',
     'gemini-3.1-pro-preview',
     'gemini-3.5-flash',
     'gemini-3.5-flash-lite',
     'gemini-3.6-flash',
     'gemini-3.7-flash',
     'gemini-3.8-flash',
+    'gemini-4-argon',
 ]
 """Latest Gemini models."""
 
@@ -183,6 +211,9 @@ _FINISH_REASON_MAP: dict[str, FinishReason | None] = {
     GoogleFinishReason.FINISH_REASON_UNSPECIFIED.value: None,
     GoogleFinishReason.STOP.value: 'stop',
     GoogleFinishReason.MAX_TOKENS.value: 'length',
+    # Long decode: the per-request output cap was reached with budget left. google-genai continues such a response in
+    # another request, so this only shows when it couldn't (no continuation token).
+    GoogleFinishReason.CONTINUATION.value: 'length',
     GoogleFinishReason.SAFETY.value: 'content_filter',
     GoogleFinishReason.RECITATION.value: 'content_filter',
     GoogleFinishReason.LANGUAGE.value: 'error',
@@ -256,9 +287,11 @@ class GoogleModelSettings(ModelSettings, total=False):
     """
 
     google_labels: dict[str, str]
-    """User-defined metadata to break down billed charges. Only supported by the Vertex AI API.
+    """User-defined metadata attached to the request.
 
-    See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
+    On Vertex AI, labels break down billed charges; see the [Vertex AI docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls).
+    The Gemini API accepts them from `google-genai` 2.26.0; earlier versions raise `ValueError` before sending the request.
+    See the [Gemini API reference](https://ai.google.dev/api/generate-content) for label requirements.
     """
 
     google_video_resolution: MediaResolution
@@ -399,28 +432,66 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
     return 'pt_then_on_demand'
 
 
-def _map_api_error(e: errors.APIError, model_name: str, model_id_namespace: str = 'google') -> ModelAPIError:
-    """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
+def _map_api_error(
+    e: errors.APIError | httpx2.TransportError, model_name: str, model_id_namespace: str = 'google'
+) -> ModelAPIError:
+    """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
+    if isinstance(e, httpx2.TransportError):
+        # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
+        timeout = isinstance(e, httpx2.TimeoutException)
+        return _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout)
     if (status_code := e.code) >= 400:
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        details = e.details  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        suggested_model_id = None
-        if _utils.is_str_dict(details) and _utils.is_str_dict(error := details.get('error')):
-            message = error.get('message')
-            if (
-                error.get('status') == 'NOT_FOUND'
-                and isinstance(message, str)
-                and message.startswith(f'models/{model_name} is not found ')
-            ):
-                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        return ModelHTTPError(
+        # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
+        response_status = getattr(e.response, 'status_code', None)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        return _http_error(
+            model_name,
+            model_id_namespace,
             status_code=status_code,
-            model_name=model_name,
+            status=e.status if isinstance(e.status, str) else None,
+            message=e.message,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
             headers=headers,
-            suggested_model_id=suggested_model_id,
+            in_stream=isinstance(response_status, int) and response_status < 400,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
+
+
+def _http_error(
+    model_name: str,
+    model_id_namespace: str,
+    *,
+    status_code: int,
+    status: str | None,
+    message: str | None,
+    body: object,
+    headers: dict[str, str] | None = None,
+    in_stream: bool = False,
+) -> ModelHTTPError:
+    """The error for a Gemini API error response with `body`, which a batch also reports for a failed request."""
+    suggested_model_id = None
+    if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
+        suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    reason = _model_errors.google_error_reason(body)
+    category = _model_errors.google_status_category(status, message, reason)
+    return ModelHTTPError.for_category(
+        category or _model_errors.http_status_category(status_code, message),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        suggested_model_id=suggested_model_id,
+        provider_error_code=status,
+        in_stream=in_stream,
+    )
+
+
+@contextmanager
+def _map_api_errors(model_name: str, model_id_namespace: str) -> Generator[None]:
+    try:
+        yield
+    except (errors.APIError, httpx2.TransportError) as e:
+        raise _map_api_error(e, model_name, model_id_namespace) from e
 
 
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:
@@ -448,11 +519,6 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
     assert_never(service_tier)  # pragma: no cover
 
 
-_GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
-    level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
-}
-
-
 def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
     """Normalize unified thinking effort to a Gemini thinking level."""
     level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
@@ -460,17 +526,54 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
         'low': 'LOW',
         'medium': 'MEDIUM',
         'high': 'HIGH',
-        'xhigh': 'HIGH',  # Gemini has no `xhigh`; map it to the highest level.
+        # Gemini has nothing above `HIGH`; map the higher levels to it.
+        'xhigh': 'HIGH',
+        'max': 'HIGH',
     }
     return level_by_effort[thinking]
 
 
-def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
-    """Map unified thinking to the closest thinking level the model supports.
+_GEMINI_2_5_PRO_MIN_THINKING_BUDGET = 128
+"""The smallest `thinking_budget` Gemini 2.5 Pro accepts, as it can't turn thinking off.
 
-    Snaps to the nearest supported level on the `MINIMAL < LOW < MEDIUM < HIGH` scale;
-    equidistant levels round down to the cheaper one.
+See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
+"""
+
+_GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
+    level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
+}
+
+
+def _snap_thinking_level(
+    level: GoogleThinkingLevel, levels: frozenset[GoogleThinkingLevel] | None
+) -> GoogleThinkingLevel:
+    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH` scale.
+
+    Equidistant levels round down to the cheaper one. `None` means the model takes the whole scale, so
+    the level passes through. Shared with the Live path, which differs only in where its level set
+    comes from.
     """
+    if levels is None:
+        return level
+    if not levels:
+        raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
+    if unknown := levels - GOOGLE_THINKING_LEVELS:
+        raise UserError(
+            f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
+            f'expected a subset of {sorted(GOOGLE_THINKING_LEVELS)!r}'
+        )
+    requested = _GOOGLE_THINKING_LEVEL_ORDER[level]
+    return min(
+        levels,
+        key=lambda candidate: (
+            abs(_GOOGLE_THINKING_LEVEL_ORDER[candidate] - requested),
+            _GOOGLE_THINKING_LEVEL_ORDER[candidate],
+        ),
+    )
+
+
+def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
+    """Map unified thinking to the closest thinking level the model supports."""
     levels = profile.get('google_thinking_levels')
     if levels is None:
         # Sparse profile without a level set: fall back to the boolean floor flag.
@@ -479,21 +582,18 @@ def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleMode
             if profile.get('google_supports_minimal_thinking_level', True)
             else GOOGLE_THINKING_LEVELS - {'MINIMAL'}
         )
-    if not levels:
-        raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
-    if unknown := levels - GOOGLE_THINKING_LEVELS:
-        raise UserError(
-            f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
-            f'expected a subset of {sorted(GOOGLE_THINKING_LEVELS)!r}'
-        )
-    requested = _GOOGLE_THINKING_LEVEL_ORDER[_thinking_effort_to_level(thinking)]
-    return min(
-        levels,
-        key=lambda level: (
-            abs(_GOOGLE_THINKING_LEVEL_ORDER[level] - requested),
-            _GOOGLE_THINKING_LEVEL_ORDER[level],
-        ),
-    )
+    return _snap_thinking_level(_thinking_effort_to_level(thinking), levels)
+
+
+def _batch_module():
+    """The batch module, imported on first use.
+
+    It relies on private `google-genai` converters, so an SDK release that moves one breaks only batch calls, not
+    `GoogleModel` as a whole.
+    """
+    from . import _google_batch
+
+    return _google_batch
 
 
 @dataclass(init=False)
@@ -505,6 +605,8 @@ class GoogleModel(Model[Client]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    unsupported_settings = frozenset({'extra_body', 'logit_bias', 'parallel_tool_calls'})
 
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
@@ -569,37 +671,105 @@ class GoogleModel(Model[Client]):
 
     @property
     def _matching_provider_names(self) -> frozenset[str]:
+        # The `UploadedFile.provider_name`s `_validate_uploaded_file` accepts. Files are stateful, so this stays a
+        # name set rather than going through `accepts_stateless_artifacts`, which decides which thought signatures
+        # and native tool parts are replayed.
         # Keyed on the transport, because the pre-v2 names this set exists to accept were themselves
         # transport-derived: `GoogleProvider.name` used to return `google-vertex`/`google-gla` off the
         # client. The union with `self.system` is load-bearing, not cosmetic — a Vertex-backed
         # `GoogleProvider` stamps `provider_name='google'`, which the Google Cloud set does not contain,
-        # so without it this model would reject its own history. Both consumers depend on this set:
-        # `_content_model_response` replays thinking signatures and native tool parts through it, and
-        # `_validate_uploaded_file` checks `UploadedFile.provider_name` against it.
+        # so without it this model would reject its own files.
         if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES or self.system in _GEMINI_API_PROVIDER_NAMES:
             names = _GOOGLE_CLOUD_PROVIDER_NAMES if self._is_google_cloud else _GEMINI_API_PROVIDER_NAMES
             return names | {self.system}
         # A provider outside both families has no pre-v2 alias to accept, so it only matches itself.
         return frozenset({self.system})
 
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Set `google_supports_batch_api` by the client's transport, before the user's `profile=` applies.
+
+        Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
+        """
+        return merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
+
     @cached_property
     def profile(self) -> GoogleModelProfile:
-        return cast(GoogleModelProfile, super().profile)
+        """The model profile.
+
+        When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
+        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the full scale. A
+        `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
+
+        On Vertex AI, `gemini-3.1-pro-preview` can turn thinking off with `thinking_budget=0`, so it isn't
+        marked always-on there and gets `google_disables_thinking_with_zero_budget`, unless the provider or
+        the `profile=` argument already set that flag.
+
+        `ImageGenerationTool` is only supported when `supports_image_output` is true, so a text model
+        falls back to the local tool an `ImageGeneration` capability provides.
+        """
+        profile: GoogleModelProfile = cast(GoogleModelProfile, super().profile)
+        if not profile.get('supports_image_output', False):
+            native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {ImageGenerationTool}
+            profile = {**profile, 'supported_native_tools': native_tools}
+        # Google documents only `minimal` and `high` for this model on both APIs, but the Gemini API
+        # alone enforces that: verified live 2026-09-30, the Gemini API 400s `LOW` and `MEDIUM` for this
+        # id and its `-preview`, while Vertex (`global`, `us`, `eu`) accepts them. So the level set
+        # follows the client's transport, which `google_model_profile` can't see from the model name.
+        # https://ai.google.dev/gemini-api/docs/image-generation
+        # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+        if (
+            self._model_name.startswith('gemini-3.1-flash-image')
+            and 'google_thinking_levels' not in profile
+            and not self._is_google_cloud
+        ):
+            return {**profile, 'google_thinking_levels': frozenset(('MINIMAL', 'HIGH'))}
+        # Google documents Gemini 3 Pro as unable to turn thinking off, and the Gemini API 400s
+        # `thinking_budget=0` for it, but Vertex (`global`) accepts it and returns no thoughts: verified live
+        # 2026-10-23 on `gemini-3.1-pro-preview` and its `-customtools` variant, 8 of 8 reasoning prompts.
+        if (
+            self._model_name.startswith('gemini-3.1-pro-preview')
+            and 'google_disables_thinking_with_zero_budget' not in profile
+            and self._is_google_cloud
+        ):
+            return {**profile, 'google_disables_thinking_with_zero_budget': True, 'thinking_always_enabled': False}
+        return profile
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of native tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return all of `native_tool`'s restricting settings, as Gemini's native tools apply none of them."""
+        return native_tool.restricting_settings
+
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        # Ignore optional infrastructure native tools (e.g. auto-injected `ToolSearchTool`) —
-        # they're dropped by `Model.prepare_request` when inert and shouldn't trigger the
-        # "native tool + output tools" path.
-        user_native_tools = [t for t in model_request_parameters.native_tools if not t.optional]
+        # Check before base validation so a text model points at an image model, not the generic error.
         if (
-            user_native_tools
+            not self.profile.get('supports_image_output', False)
+            and any(
+                isinstance(t, ImageGenerationTool) and not t.optional for t in model_request_parameters.native_tools
+            )
+            and not any(t.unless_native == 'image_generation' for t in model_request_parameters.function_tools)
+        ):
+            raise UserError(
+                f'`ImageGenerationTool` is not supported by model {self.model_name!r}. '
+                "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
+            )
+        # Count only native tools this model supports, including the settings set on them.
+        # `Model.prepare_request` swaps an unsupported one for its local fallback, drops it when
+        # optional, or rejects it, so it never reaches the wire beside output tools. A supported one
+        # is sent even when optional.
+        supported_native_tools = tuple(self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS))
+        sent_native_tools = [
+            t
+            for t in model_request_parameters.native_tools
+            if isinstance(t, supported_native_tools) and not self.unsupported_native_tool_settings(t)
+        ]
+        if (
+            sent_native_tools
             and model_request_parameters.output_tools
             and not self.profile.get('google_supports_tool_combination', False)
         ):
@@ -627,7 +797,54 @@ class GoogleModel(Model[Client]):
         )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, False, model_settings, model_request_parameters)
-        return self._process_response(response)
+        return self._process_response(response, model_request_parameters)
+
+    @property
+    def batch_max_requests(self) -> int | None:
+        return _batch_module().MAX_BATCH_REQUESTS if self.profile.get('google_supports_batch_api', False) else None
+
+    @property
+    def batch_max_bytes(self) -> int | None:
+        return None if self.batch_max_requests is None else _batch_module().MAX_BATCH_BYTES
+
+    def _no_batch_api_message(self) -> str:
+        if not self._is_google_cloud:
+            return super()._no_batch_api_message()
+        return (
+            f'`GoogleModel` {self.model_name!r} has no batch API on Google Cloud, whose batch prediction jobs read '
+            'from Cloud Storage or BigQuery: batch it through the Gemini API, with the `google:` provider.'
+        )
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        return _batch_module().request_size(request)
+
+    def _batch_credential(self) -> str:
+        return _batch_module().batch_credential(self)
+
+    def _batch_unlisted_status(self, batch: Batch) -> BatchResultStatus | None:
+        return _batch_module().unlisted_status(batch)
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        return await _batch_module().batch_encode(self, request)
+
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_create(self, requests)
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_status(self, batch)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_results(self, batch)
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_cancel(self, batch)
+
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        return _batch_module().batch_decode(self, result, request)
 
     async def count_tokens(
         self,
@@ -656,7 +873,7 @@ class GoogleModel(Model[Client]):
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             # The Vertex `countTokens` endpoint accepts native/server-side tools (e.g. Google Search grounding), so we
             # forward `tools` as-is to mirror the real request for an accurate count. This intentionally differs from
-            # `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects them (https://github.com/pydantic/pydantic-ai/issues/5704);
+            # `AnthropicModel.count_tokens`, which strips the native tools Anthropic's count endpoints reject or aren't verified to accept (https://github.com/pydantic/pydantic-ai/issues/5704);
             # don't copy that strip here.
             config.update(
                 system_instruction=generation_config.get('system_instruction'),
@@ -678,11 +895,15 @@ class GoogleModel(Model[Client]):
                 ),
             )
 
-        response = await self.client.aio.models.count_tokens(
-            model=self._model_name,
-            contents=contents,
-            config=config,
-        )
+        try:
+            with map_decode_errors(self._model_name, errors.UnknownApiResponseError):
+                response = await self.client.aio.models.count_tokens(
+                    model=self._model_name,
+                    contents=contents,
+                    config=config,
+                )
+        except errors.APIError as e:
+            raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if response.total_tokens is None:
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Total tokens missing from Gemini response', str(response)
@@ -782,10 +1003,6 @@ class GoogleModel(Model[Client]):
                     file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
                     tools.append(ToolDict(file_search=file_search_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
-                    if not self.profile.get('supports_image_output', False):
-                        raise UserError(
-                            "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
-                        )
                     image_config = self._build_image_config(tool)
                 else:  # pragma: no cover
                     raise UserError(
@@ -854,9 +1071,9 @@ class GoogleModel(Model[Client]):
         # `include_server_side_tool_invocations` is required on Gemini 3+ when any built-in (server-side)
         # tool is combined with function calling; pre-Gemini-3 models reject the field ('Tool call context
         # circulation is not enabled'). ImageGenerationTool runs through `image_config` and is excluded.
-        # The field is a Gemini Developer API (ML Dev) only parameter: the google-genai SDK's Vertex
-        # converter (`_ToolConfig_to_vertex`) raises `ValueError` when it is present, so skip it for
-        # Google Cloud (Vertex) even on Gemini 3+ models.
+        # Google Cloud (Vertex) doesn't support the field on any model: its API ignores it and keeps
+        # reporting server-side tool use only through grounding metadata, and the google-genai SDK's Vertex
+        # converter (`_ToolConfig_to_vertex`) raises `ValueError` when it is present, so it's skipped there.
         emits_tool_call_invocations = any(
             isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool, CodeExecutionTool))
             for t in model_request_parameters.native_tools
@@ -911,9 +1128,38 @@ class GoogleModel(Model[Client]):
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
-            return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
-        except errors.APIError as e:
+            with map_decode_errors(self._model_name, errors.UnknownApiResponseError):
+                return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
+        except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
+
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # An explicit thinking config replaces the unified one in `_translate_thinking`.
+        return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
+
+    def _build_http_options(self, model_settings: GoogleModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
+        """The per-request HTTP options: headers, plus the `timeout` and `max_retries` settings."""
+        http_options: HttpOptionsDict = {'headers': headers}
+        if (timeout := model_settings.get('timeout')) is not None:
+            if isinstance(timeout, int | float):
+                http_options['timeout'] = int(1000 * timeout)
+            else:
+                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+        if (max_retries := model_settings.get('max_retries')) is not None:
+            # Per-request `retry_options` replace the client's outright, so carry over everything but the count.
+            client_retry_options = (
+                self.client._api_client._http_options.retry_options  # pyright: ignore[reportPrivateUsage]
+                or HttpRetryOptions()
+            )
+            http_options['retry_options'] = {
+                'attempts': max_retries + 1,
+                'initial_delay': client_retry_options.initial_delay,
+                'max_delay': client_retry_options.max_delay,
+                'exp_base': client_retry_options.exp_base,
+                'jitter': client_retry_options.jitter,
+                'http_status_codes': client_retry_options.http_status_codes,
+            }
+        return http_options
 
     def _translate_thinking(
         self,
@@ -927,28 +1173,39 @@ class GoogleModel(Model[Client]):
         if thinking is None:
             return None
         profile = self.profile
+        supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
-            if profile.get('google_supports_thinking_level', False):
-                # Gemini represents `thinking=False` as its lowest supported thinking level.
-                return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
-            return ThinkingConfigDict(thinking_budget=0)
-        if profile.get('google_supports_thinking_level', False):
-            if thinking is True:
-                return ThinkingConfigDict(include_thoughts=True)
-            return ThinkingConfigDict(
-                include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
-            )
-        else:
+            if not supports_thinking_level:
+                # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
+                # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
+                if profile.get('thinking_always_enabled', False):
+                    return ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET)
+                return ThinkingConfigDict(thinking_budget=0)
+            if profile.get('google_disables_thinking_with_zero_budget', False):
+                return ThinkingConfigDict(thinking_budget=0)
+            # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
+            return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
+
+        if not supports_thinking_level:
+            # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             budget_map: dict[ThinkingEffort, int] = {
-                'minimal': 128,  # minimum for Gemini 2.5 Pro
+                'minimal': _GEMINI_2_5_PRO_MIN_THINKING_BUDGET,
                 'low': 2048,
                 'medium': 8192,
                 'high': 24576,
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
+                'max': 24576,
             }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+
+        # Default Gemini 3+ behaviour uses thinking_level
+        if thinking is True:
+            return ThinkingConfigDict(include_thoughts=True)
+        return ThinkingConfigDict(
+            include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
+        )
 
     async def _build_content_and_config(
         self,
@@ -1001,12 +1258,7 @@ class GoogleModel(Model[Client]):
         else:
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
-        http_options: HttpOptionsDict = {'headers': headers}
-        if (timeout := model_settings.get('timeout')) is not None:
-            if isinstance(timeout, int | float):
-                http_options['timeout'] = int(1000 * timeout)
-            else:
-                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+        http_options = self._build_http_options(model_settings, headers)
 
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)
@@ -1049,7 +1301,9 @@ class GoogleModel(Model[Client]):
 
         return contents, config
 
-    def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
+    def _process_response(
+        self, response: GenerateContentResponse, model_request_parameters: ModelRequestParameters
+    ) -> ModelResponse:
         candidate = response.candidates[0] if response.candidates else None
 
         provider_response_id = response.response_id
@@ -1098,10 +1352,17 @@ class GoogleModel(Model[Client]):
             provider_details['avg_logprobs'] = candidate.avg_logprobs
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
+        web_search_queries, returned_web_source = _grounding_searches(response)
+        _set_web_search_usage(
+            usage,
+            web_search_queries,
+            returned_web_source,
+            billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
+        )
         grounding_metadata = candidate.grounding_metadata if candidate else None
         url_context_metadata = candidate.url_context_metadata if candidate else None
 
-        return _process_response_from_parts(
+        model_response = _process_response_from_parts(
             parts,
             grounding_metadata,
             response.model_version or self._model_name,
@@ -1112,7 +1373,15 @@ class GoogleModel(Model[Client]):
             provider_details=provider_details or None,
             finish_reason=finish_reason,
             url_context_metadata=url_context_metadata,
+            file_search_enabled=_file_search_enabled(model_request_parameters),
         )
+        model_response.canonical_system = self._canonical_system_stamp
+        if (initial_input_tokens := _initial_input_tokens(response)) is not None:
+            mark_context_input_tokens(model_response, initial_input_tokens)
+        # google-genai drops the Pydantic AI Gateway's cost from `usage_metadata`, but keeps its response header.
+        if response.sdk_http_response:
+            fill_gateway_header_cost(model_response, response.sdk_http_response.headers)
+        return model_response
 
     async def _process_streamed_response(
         self, response: AsyncIterator[GenerateContentResponse], model_request_parameters: ModelRequestParameters
@@ -1125,13 +1394,14 @@ class GoogleModel(Model[Client]):
         # iterator is first advanced, so API errors surface here rather than in
         # `_generate_content`'s try/except and need the same mapping.
         try:
-            first_chunk = await peekable_response.peek()
-        except errors.APIError as e:
+            with map_decode_errors(self._model_name, errors.UnknownApiResponseError):
+                first_chunk = await peekable_response.peek()
+        except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
-        return GeminiStreamedResponse(
+        streamed_response = GeminiStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
@@ -1139,14 +1409,21 @@ class GoogleModel(Model[Client]):
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
+            _web_search_billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
         )
+        streamed_response.canonical_system = self._canonical_system_stamp
+        return streamed_response
 
     async def _map_messages(  # noqa: C901
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
-        supports_tool_combination = self.profile.get('google_supports_tool_combination', False)
+        # Google Cloud (Vertex) has no `tool_call`/`tool_response` parts (the SDK raises on them), so native tool
+        # parts from Gemini API history are dropped there, like they are on models without tool combination.
+        supports_tool_combination = self.profile.get('google_supports_tool_combination', False) and not (
+            self._is_google_cloud
+        )
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 
@@ -1158,7 +1435,7 @@ class GoogleModel(Model[Client]):
                 # of the attribution the framing exists to give it.
                 tool_return_media: list[PartDict] = []
 
-                for part in m.parts:
+                for part in _sendable_request_parts(m.parts):
                     if isinstance(part, SystemPromptPart):
                         system_parts.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
@@ -1167,21 +1444,10 @@ class GoogleModel(Model[Client]):
                         function_response_part, framed_media = await self._map_tool_return(part)
                         message_parts.append(function_response_part)
                         tool_return_media.extend(framed_media)
-                    elif isinstance(part, RetryPromptPart):
-                        if part.tool_name is None:
-                            message_parts.append({'text': part.model_response()})
-                        else:
-                            message_parts.append(
-                                {
-                                    'function_response': {
-                                        'name': part.tool_name,
-                                        'response': {'error': part.model_response()},
-                                        'id': part.tool_call_id,
-                                    }
-                                }
-                            )
-                    elif isinstance(part, ToolAvailabilityDeltaPart):
-                        raise _unsynthesized_tool_availability_delta_error()
+                    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                        raise _unprojected_instruction_delta_error()
+                    elif isinstance(part, _UnpreparedPart):
+                        raise _unprepared_part_error(part)
                     elif isinstance(part, SpeechPart):  # pragma: no cover
                         # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                         raise _unconverted_speech_part_error()
@@ -1221,7 +1487,7 @@ class GoogleModel(Model[Client]):
                     contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
                 maybe_content = _content_model_response(
-                    m, self._matching_provider_names, supports_tool_combination=supports_tool_combination
+                    m, self.accepts_stateless_artifacts, supports_tool_combination=supports_tool_combination
                 )
                 if maybe_content:
                     contents.append(maybe_content)
@@ -1267,7 +1533,7 @@ class GoogleModel(Model[Client]):
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.extend([{'text': open_tag}, file_part, {'text': close_tag}])
 
-        if part.outcome == 'failed':
+        if part.outcome in ERROR_OUTCOMES:
             # Google's function-response schema prescribes an `error` key (mirroring the `output` key
             # used for success) for reporting a failed tool call, so this is Gemini's native error
             # channel, not the generic `{"error": ...}` wrapper other providers fall back to — hence
@@ -1356,6 +1622,9 @@ class GoogleModel(Model[Client]):
             vendor_metadata = dict(file.vendor_metadata)  # copy to avoid mutating user dict
             if 'media_resolution' in vendor_metadata:
                 part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
+            if 'media_processing' in vendor_metadata:
+                # Processing mode is independent of the source, including YouTube's native URI route.
+                part_dict['media_processing'] = vendor_metadata.pop('media_processing')
             # The remaining keys map to `video_metadata`, which only applies to video parts.
             if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
                 part_dict['video_metadata'] = VideoMetadataDict(**vendor_metadata)
@@ -1410,6 +1679,12 @@ class GoogleModel(Model[Client]):
 
 
 @dataclass
+class _GoogleStreamTextRun:
+    part_id: UUID
+    content: str = ''
+
+
+@dataclass
 class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
 
@@ -1419,17 +1694,26 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_id_namespace: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
+    _web_search_billed_per_prompt: bool = False
     _timestamp: datetime = field(default_factory=_utils.now_utc)
-    _file_search_tool_call_id: str | None = field(default=None, init=False)
+    _usage_received: bool | None = field(default=False, init=False)
+    _file_search_tool_call_ids: list[str] = field(default_factory=list[str], init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
+    _media_processing_tool_call_id: str | None = field(default=None, init=False)
+    _media_processing_tool_call_vendor_id: UUID | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
-    # Empty file_search returns whose contexts are still to arrive in `grounding_metadata` (see
-    # `_fill_empty_file_search_return_content`). Each is reserved in the parts manager keyed by its
-    # `tool_call_id`, with its `PartStartEvent` deferred until it's filled — or until the stream ends.
+    # Streamed text is split across chunks, while grounding offsets count from the start of the whole text.
+    # Each run of text that becomes one `TextPart` is kept so the grounding citations can be placed on it.
+    _text_runs: list[_GoogleStreamTextRun] = field(default_factory=list[_GoogleStreamTextRun], init=False)
+    _continue_text_run: bool = field(default=False, init=False)
+    # Returns to fill from the grounding metadata that arrives on the final chunk: empty file_search returns (see
+    # `_fill_empty_file_search_return_content`) and the last web_search return so far (see
+    # `_fill_web_search_return_sources`). Each is reserved by `_reserve_part`.
     _pending_file_search_returns: list[NativeToolReturnPart] = field(
         default_factory=list[NativeToolReturnPart], init=False
     )
+    _pending_web_search_return: NativeToolReturnPart | None = field(default=None, init=False)
 
     async def close_stream(self) -> None:
         await self._response.aclose()
@@ -1437,9 +1721,36 @@ class GeminiStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
             self.provider_details = {'timestamp': self._provider_timestamp}
+        grounding_metadata: GroundingMetadata | None = None
+        # google-genai streams a long decode's continuation requests as one stream, each request's chunks under its own
+        # `response_id`. The first text or thinking of a new request starts a new part, as in the unary response, which
+        # the SDK merges from each request's parts.
+        new_request_vendor_part_id: UUID | None = None
+        # A continuation token checkpoints the output up to and including its chunk. When a stream drops after a
+        # checkpoint, google-genai resumes from that token without retracting the chunks it already yielded after it,
+        # so the resumed request would repeat them. Live Argon streams carry a token on every chunk from the first
+        # checkpoint on, except a request's final `STOP` chunk (2026-10-09), so this hasn't been seen.
+        uncheckpointed_output = False
         try:
-            async for chunk in self._response:
-                self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
+            async for chunk in MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
+                self._add_usage(
+                    _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage),
+                    reported=chunk.usage_metadata is not None,
+                    cumulative=True,
+                )
+                if (initial_input_tokens := _initial_input_tokens(chunk)) is not None:
+                    mark_context_input_tokens(self, initial_input_tokens)
+                # Grounding is counted from each chunk alone, and `web_searches` isn't carried forward like the token
+                # fields in `_usage_metadata_as_usage`: Gemini sends all grounding metadata once, on the final chunk,
+                # with the last `usage_metadata`. Seen in every grounded stream cassette and in live streams on
+                # Gemini 3, 3.1 Pro and 2.5, with and without server-side tool invocations (2026-09-30).
+                web_search_queries, returned_web_source = _grounding_searches(chunk)
+                _set_web_search_usage(
+                    self._usage,
+                    web_search_queries,
+                    returned_web_source,
+                    billed_per_prompt=self._web_search_billed_per_prompt,
+                )
 
                 if (
                     chunk.sdk_http_response
@@ -1478,7 +1789,19 @@ class GeminiStreamedResponse(StreamedResponse):
                 candidate = chunk.candidates[0]
 
                 if chunk.response_id:  # pragma: no branch
+                    if self.provider_response_id not in (None, chunk.response_id):
+                        if uncheckpointed_output:
+                            raise ModelAPIError(
+                                self._model_name,
+                                'The stream was interrupted after output that no continuation token covers, '
+                                'and `google-genai` resumed it, which would repeat that output.',
+                            )
+                        new_request_vendor_part_id = uuid4()
                     self.provider_response_id = chunk.response_id
+                if candidate.continuation_token:
+                    uncheckpointed_output = False
+                elif candidate.content and candidate.content.parts:
+                    uncheckpointed_output = True
 
                 raw_finish_reason = candidate.finish_reason
                 if raw_finish_reason and not self._has_content_filter:
@@ -1494,18 +1817,8 @@ class GeminiStreamedResponse(StreamedResponse):
 
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason.value)
 
-                # Google streams the grounding metadata (including the web search queries and results)
-                # _after_ the text that was generated using it, so it would show up out of order in the stream,
-                # and cause issues with the logic that doesn't consider text ahead of built-in tool calls as output.
-                # If that gets fixed (or we have a workaround), we can uncomment this:
-                # web_search_call, web_search_return = _map_grounding_metadata(
-                #     candidate.grounding_metadata, self.provider_name
-                # )
-                # if web_search_call and web_search_return:
-                #     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_search_call)
-                #     yield self._parts_manager.handle_part(
-                #         vendor_part_id=uuid4(), part=web_search_return
-                #     )
+                if candidate.grounding_metadata is not None:
+                    grounding_metadata = candidate.grounding_metadata
 
                 # URL context metadata (for WebFetchTool) is streamed in the first chunk, before the text,
                 # so we can safely yield it here.
@@ -1545,25 +1858,36 @@ class GeminiStreamedResponse(StreamedResponse):
                         thought_signature = base64.b64encode(part.thought_signature).decode('utf-8')
                         provider_details = {'thought_signature': thought_signature}
 
+                    if part.text is not None and len(part.text) == 0 and not provider_details:
+                        continue
+                    # A new request's first text starts a new part, like any text after a non-text part.
+                    is_text = part.text is not None and not part.thought
+                    if is_text and (not self._continue_text_run or new_request_vendor_part_id is not None):
+                        self._text_runs.append(_GoogleStreamTextRun(part_id=uuid4()))
+                    # Parts that make no part of their own, such as function responses, leave the text run going.
+                    if is_text or not (_is_signature_only_part(part) or part.function_response is not None):
+                        self._continue_text_run = is_text
+
                     if part.text is not None:
-                        if len(part.text) == 0 and not provider_details:
-                            continue
                         if part.thought:
                             for event in self._parts_manager.handle_thinking_delta(
-                                vendor_part_id=None,
+                                vendor_part_id=new_request_vendor_part_id,
                                 content=part.text,
                                 provider_name=self.provider_name if provider_details else None,
                                 provider_details=provider_details,
                             ):
                                 yield event
                         else:
+                            text_run = self._text_runs[-1]
+                            text_run.content += part.text
                             for event in self._parts_manager.handle_text_delta(
-                                vendor_part_id=None,
+                                vendor_part_id=text_run.part_id,
                                 content=part.text,
                                 provider_name=self.provider_name if provider_details else None,
                                 provider_details=provider_details,
                             ):
                                 yield event
+                        new_request_vendor_part_id = None
                     elif part.function_call:
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=uuid4(),
@@ -1596,18 +1920,42 @@ class GeminiStreamedResponse(StreamedResponse):
                     elif part.tool_call:
                         tool_call_part = _map_tool_call(part.tool_call, self.provider_name)
                         tool_call_part.provider_details = provider_details
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
+                        tool_call_vendor_id = uuid4()
+                        if tool_call_part.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+                            self._media_processing_tool_call_id = tool_call_part.tool_call_id
+                            self._media_processing_tool_call_vendor_id = (
+                                tool_call_vendor_id if part.tool_call.id is None else None
+                            )
+                        yield self._parts_manager.handle_part(vendor_part_id=tool_call_vendor_id, part=tool_call_part)
                     elif part.tool_response:
                         tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
                         tool_response_part.provider_details = provider_details
-                        if tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
-                            # Reserve the part's slot but defer its `PartStartEvent` until it's filled below,
-                            # so consumers see a single populated file_search result rather than an empty one
-                            # followed by a filled duplicate.
+                        if tool_response_part.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+                            if part.tool_response.id is None and self._media_processing_tool_call_id is not None:
+                                tool_response_part.tool_call_id = self._media_processing_tool_call_id
+                            elif self._media_processing_tool_call_vendor_id is not None:
+                                # The response can supply an ID omitted by the call; notify stream consumers too.
+                                event = self._parts_manager.handle_tool_call_delta(
+                                    vendor_part_id=self._media_processing_tool_call_vendor_id,
+                                    tool_call_id=tool_response_part.tool_call_id,
+                                )
+                                assert event is not None
+                                yield event
+                            self._media_processing_tool_call_id = None
+                            self._media_processing_tool_call_vendor_id = None
+                            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
+                        elif tool_response_part.tool_name == WebSearchTool.kind:
+                            # Only the response's last web_search return gets the sources, so an earlier one is
+                            # complete once another arrives.
+                            if (previous := self._pending_web_search_return) is not None:
+                                yield self._parts_manager.handle_part(
+                                    vendor_part_id=previous.tool_call_id, part=previous
+                                )
+                            self._pending_web_search_return = tool_response_part
+                            self._reserve_part(tool_response_part)
+                        elif tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
                             self._pending_file_search_returns.append(tool_response_part)
-                            self._parts_manager.handle_part(
-                                vendor_part_id=tool_response_part.tool_call_id, part=tool_response_part
-                            )
+                            self._reserve_part(tool_response_part)
                         else:
                             yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
                     elif part.executable_code is not None:
@@ -1618,65 +1966,45 @@ class GeminiStreamedResponse(StreamedResponse):
                         part = self._map_code_execution_result(part.code_execution_result)
                         part.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
+                    elif _is_signature_only_part(part):
+                        # See the signature-only media-processing comment in `_process_part`.
+                        continue
                     else:
-                        assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
+                        assert part.function_response is not None, f'Unexpected part: {part}'
 
-                # Grounding metadata is attached to the final text chunk, so
-                # we emit the `NativeToolReturnPart` after the text delta so
-                # that the delta is properly added to the same `TextPart` as earlier chunks
-                if not self._has_tool_invocations:
-                    file_search_part = self._handle_file_search_grounding_metadata_streaming(
-                        candidate.grounding_metadata
-                    )
-                    if file_search_part is not None:
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
-                elif self._pending_file_search_returns:
-                    # Fill every reserved file_search return from the (aggregate) `grounding_metadata`,
-                    # matching the non-streaming path, and emit each filled part's deferred `PartStartEvent`
-                    # under its reserved slot. This relies on the grounding arriving on a chunk that also
-                    # carries a text part (as Gemini does today) so the `candidate.content.parts` guard above
-                    # doesn't `continue` past it; on a hypothetical part-less grounding chunk the fill would be
-                    # deferred to the end-of-stream flush below, surfacing the return with empty content.
-                    still_pending: list[NativeToolReturnPart] = []
-                    for pending in self._pending_file_search_returns:
-                        _fill_empty_file_search_return_content(pending, candidate.grounding_metadata)
-                        if pending.content is None:
-                            still_pending.append(pending)
-                        else:
-                            yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
-                    self._pending_file_search_returns = still_pending
-
-            # Grounding never arrived (or carried no retrieved contexts) for these reserved returns: emit
-            # their deferred `PartStartEvent`s with empty content, so streaming consumers still see every
-            # part present in the final response.
+            # Gemini sends the grounding metadata once, on the final chunk, after the text it grounds.
+            grounding_citations = _map_citations(
+                [Part(text=text_run.content) for text_run in self._text_runs], grounding_metadata
+            )
+            for index, (citations, citations_details) in grounding_citations.items():
+                for event in self._parts_manager.handle_text_delta(
+                    vendor_part_id=self._text_runs[index].part_id,
+                    content='',
+                    provider_name=self.provider_name,
+                    provider_details=citations_details,
+                    citations=citations,
+                ):
+                    yield event
             for pending in self._pending_file_search_returns:
+                _fill_empty_file_search_return_content(pending, grounding_metadata)
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
-            self._pending_file_search_returns = []
-        except errors.APIError as e:
+            if (pending := self._pending_web_search_return) is not None:
+                _fill_web_search_return_sources(pending, grounding_metadata)
+                yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
+            if not self._has_tool_invocations:
+                for part in _map_grounding_metadata_after_text(
+                    grounding_metadata, self.provider_name, self._file_search_tool_call_ids
+                ):
+                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
+        except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._model_id_namespace) from e
 
-    def _handle_file_search_grounding_metadata_streaming(
-        self, grounding_metadata: GroundingMetadata | None
-    ) -> NativeToolReturnPart | None:
-        """Handle file search grounding metadata for streaming responses.
+    def _reserve_part(self, part: NativeToolReturnPart) -> None:
+        """Reserve the part's slot, but defer its `PartStartEvent` until it's complete.
 
-        Returns a NativeToolReturnPart if file search results are available in the grounding metadata.
+        This way consumers see a single complete result rather than an incomplete one followed by a filled duplicate.
         """
-        if not self._file_search_tool_call_id or not grounding_metadata:
-            return None
-
-        grounding_chunks = grounding_metadata.grounding_chunks
-        retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
-        if retrieved_contexts:  # pragma: no branch
-            part = NativeToolReturnPart(
-                provider_name=self.provider_name,
-                tool_name=FileSearchTool.kind,
-                tool_call_id=self._file_search_tool_call_id,
-                content=retrieved_contexts,
-            )
-            self._file_search_tool_call_id = None
-            return part
-        return None  # pragma: no cover
+        self._parts_manager.handle_part(vendor_part_id=part.tool_call_id, part=part)
 
     def _map_code_execution_result(self, code_execution_result: CodeExecutionResult) -> NativeToolReturnPart:
         """Map code execution result to a NativeToolReturnPart using instance state."""
@@ -1684,42 +2012,17 @@ class GeminiStreamedResponse(StreamedResponse):
         return _map_code_execution_result(code_execution_result, self.provider_name, self._code_execution_tool_call_id)
 
     def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> ModelResponsePart:
-        """Handle executable code for streaming responses.
-
-        Returns a NativeToolCallPart for file search or code execution.
-        Sets self._code_execution_tool_call_id or self._file_search_tool_call_id as appropriate.
-        """
-        code = executable_code.code
-        has_file_search_tool = any(
-            isinstance(tool, FileSearchTool) for tool in self.model_request_parameters.native_tools
+        """Map executable code to a file search or code execution call, and remember its id for the return."""
+        part = _map_executable_code_part(
+            executable_code,
+            self.provider_name,
+            file_search_enabled=_file_search_enabled(self.model_request_parameters),
         )
-
-        if code and has_file_search_tool and (file_search_query := self._extract_file_search_query(code)):
-            self._file_search_tool_call_id = _utils.generate_tool_call_id()
-            return NativeToolCallPart(
-                provider_name=self.provider_name,
-                tool_name=FileSearchTool.kind,
-                tool_call_id=self._file_search_tool_call_id,
-                args={'query': file_search_query},
-            )
-
-        self._code_execution_tool_call_id = _utils.generate_tool_call_id()
-        return _map_executable_code(executable_code, self.provider_name, self._code_execution_tool_call_id)
-
-    def _extract_file_search_query(self, code: str) -> str | None:
-        """Extract the query from file_search.query() executable code.
-
-        Handles escaped quotes in the query string.
-
-        Example: 'print(file_search.query(query="what is the capital of France?"))'
-        Returns: 'what is the capital of France?'
-        """
-        match = _FILE_SEARCH_QUERY_PATTERN.search(code)
-        if match:
-            query = match.group(2)
-            query = query.replace('\\\\', '\\').replace('\\"', '"').replace("\\'", "'")
-            return query
-        return None  # pragma: no cover
+        if part.tool_name == FileSearchTool.kind:
+            self._file_search_tool_call_ids.append(part.tool_call_id)
+        else:
+            self._code_execution_tool_call_id = part.tool_call_id
+        return part
 
     @property
     def model_name(self) -> GoogleModelName:
@@ -1743,11 +2046,13 @@ class GeminiStreamedResponse(StreamedResponse):
 
 
 def _content_model_response(
-    m: ModelResponse, accepted_provider_names: frozenset[str], *, supports_tool_combination: bool = False
+    m: ModelResponse, accepts: _StatelessArtifactPredicate, *, supports_tool_combination: bool = False
 ) -> ContentDict | None:
-    # `accepted_provider_names` includes both the current provider's `name` and any pre-v2 aliases
-    # (e.g. `google-cloud` + `google-vertex`) so history replayed from before the v2 rename still
-    # routes its thinking signatures and native tool parts back to this provider.
+    # `accepts` is `GoogleModel.accepts_stateless_artifacts`: thought signatures, and the native tool parts that
+    # carry them, only go back to the transport that issued them, as the Gemini API and Google Cloud reject each
+    # other's even though both providers can be named `google`. It also accepts the pre-v2 names (`google-gla`,
+    # `google-vertex`), so history from before the v2 rename still routes them back.
+    response_accepted = accepts(m, None)
     parts: list[PartDict] = []
     # Thought signature emitted by a `ThinkingPart`, to be carried over to the *next* part.
     pending_thinking_signature: str | None = None
@@ -1757,7 +2062,7 @@ def _content_model_response(
     needs_function_call_signature = True
 
     for item in m.parts:
-        item_signature = _decode_inline_thought_signature(item, m, accepted_provider_names)
+        item_signature = _decode_inline_thought_signature(item, m, accepts, response_accepted=response_accepted)
         if item_signature is None and pending_thinking_signature is not None:
             item_signature = base64.b64decode(pending_thinking_signature)
         pending_thinking_signature = None
@@ -1769,7 +2074,7 @@ def _content_model_response(
         elif isinstance(item, TextPart):
             part = _attach_signature({'text': item.content}, item_signature)
         elif isinstance(item, ThinkingPart):
-            if item.provider_name in accepted_provider_names and item.signature:
+            if item.signature and accepts(m, item):
                 # The signature attaches to the _next_ part, not the thinking part itself.
                 pending_thinking_signature = item.signature
             if item.content:
@@ -1778,11 +2083,11 @@ def _content_model_response(
                 part = None
         elif isinstance(item, NativeToolCallPart):
             part = _native_tool_call_part_dict(
-                item, accepted_provider_names, item_signature, supports_tool_combination=supports_tool_combination
+                item, accepts(m, item), item_signature, supports_tool_combination=supports_tool_combination
             )
         elif isinstance(item, NativeToolReturnPart):
             part = _native_tool_return_part_dict(
-                item, accepted_provider_names, item_signature, supports_tool_combination=supports_tool_combination
+                item, accepts(m, item), item_signature, supports_tool_combination=supports_tool_combination
             )
         elif isinstance(item, FilePart):
             inline_data_dict: BlobDict = {'data': item.content.data, 'mime_type': item.content.media_type}
@@ -1805,20 +2110,21 @@ def _content_model_response(
 
 
 def _decode_inline_thought_signature(
-    item: ModelResponsePart, m: ModelResponse, accepted_provider_names: frozenset[str]
+    item: ModelResponsePart, m: ModelResponse, accepts: _StatelessArtifactPredicate, *, response_accepted: bool
 ) -> bytes | None:
     """Decode the thought signature stored on `item.provider_details`, if any.
 
     Returns the raw signature bytes ready to embed in a `PartDict`, or `None` if no signature
-    applies (either missing, or the response originated from a different provider).
+    applies (either missing, or issued by a transport this model can't send it back to).
+    A part without a `provider_name` of its own is judged by its response (`response_accepted`).
     """
     if not item.provider_details:
         return None
-    if m.provider_name not in accepted_provider_names and item.provider_name not in accepted_provider_names:
+    if not response_accepted and not accepts(m, item):
         return None
     raw = item.provider_details.get('thought_signature')
     if not raw:
-        return None  # pragma: no cover
+        return None
     return base64.b64decode(raw)
 
 
@@ -1837,21 +2143,27 @@ def _function_call_part_dict(item: ToolCallPart, signature: bytes | None, *, nee
         # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs and
         # https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures#using-rest-or-manual-handling
         # the documented dummy `skip_thought_signature_validator` works for both Gemini API and Google Cloud.
+        # It's also what a signature from the other transport is replaced with: both reject each other's, and
+        # both reject a first function call without one (verified live, 2026-10-27).
         part['thought_signature'] = b'skip_thought_signature_validator'
     return part
 
 
 def _native_tool_call_part_dict(
     item: NativeToolCallPart,
-    accepted_provider_names: frozenset[str],
+    accepted: bool,
     signature: bytes | None,
     *,
     supports_tool_combination: bool,
 ) -> PartDict | None:
-    if item.provider_name not in accepted_provider_names:
+    if not accepted:
         return None
     if item.tool_name == CodeExecutionTool.kind:
         return _attach_signature({'executable_code': cast(ExecutableCodeDict, item.args_as_dict())}, signature)
+    if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+        # Gemini rejects replayed media-processing steps with HTTP 400; follow-ups with the original video reprocess it.
+        # TODO: Remove after full-replay rechecks succeed: https://github.com/pydantic/pydantic-ai/issues/10226
+        return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
@@ -1865,24 +2177,30 @@ def _native_tool_call_part_dict(
 
 def _native_tool_return_part_dict(
     item: NativeToolReturnPart,
-    accepted_provider_names: frozenset[str],
+    accepted: bool,
     signature: bytes | None,
     *,
     supports_tool_combination: bool,
 ) -> PartDict | None:
-    if item.provider_name not in accepted_provider_names:
+    if not accepted:
         return None
     if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
         return _attach_signature(
             {'code_execution_result': cast(CodeExecutionResultDict, item.content)},  # pyright: ignore[reportUnknownMemberType]
             signature,
         )
+    if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+        # See the media-processing call-side comment above.
+        return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
     if not _can_echo_server_side_tool_part(item.tool_call_id, supports_tool_combination=supports_tool_combination):
         return None
     response: dict[str, Any] = item.content if _utils.is_str_dict(item.content) else {'result': item.content}
+    if item.tool_name == WebSearchTool.kind:
+        # Added from the grounding metadata by `_fill_web_search_return_sources`; Gemini didn't send it.
+        response = {key: value for key, value in response.items() if key != 'sources'}
     part: PartDict = {
         'tool_response': {'id': item.tool_call_id, 'tool_type': tool_type, 'response': response},
     }
@@ -1896,7 +2214,7 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
 
     1. The model doesn't support tool combination (pre-Gemini-3) — those models never emit
        `tool_call`/`tool_response` parts and reject them in request bodies.
-    2. The `tool_call_id` was synthesized by pydantic-ai (the `pyd_ai_` prefix from
+    2. The `tool_call_id` was synthesized by pydantic-ai (the `TOOL_CALL_ID_PREFIX` prefix from
        [`generate_tool_call_id`][pydantic_ai._utils.generate_tool_call_id]) — i.e. the part was
        reconstructed from `grounding_metadata` / `url_context_metadata` and never had a real
        Google id. Gemini rejects unknown ids, so message histories built before this round-trip
@@ -1904,11 +2222,11 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
     """
     if not supports_tool_combination:
         return False
-    return not tool_call_id.startswith('pyd_ai_')
+    return not tool_call_id.startswith(_utils.TOOL_CALL_ID_PREFIX)
 
 
 def _process_part(
-    part: Part, code_execution_tool_call_id: str | None, provider_name: str
+    part: Part, code_execution_tool_call_id: str | None, provider_name: str, *, file_search_enabled: bool = False
 ) -> tuple[ModelResponsePart | None, str | None]:
     """Process a Google Part and return the corresponding ModelResponsePart.
 
@@ -1925,8 +2243,9 @@ def _process_part(
         provider_details = {'thought_signature': thought_signature}
 
     if part.executable_code is not None:
-        code_execution_tool_call_id = _utils.generate_tool_call_id()
-        item = _map_executable_code(part.executable_code, provider_name, code_execution_tool_call_id)
+        item = _map_executable_code_part(part.executable_code, provider_name, file_search_enabled=file_search_enabled)
+        if item.tool_name == CodeExecutionTool.kind:
+            code_execution_tool_call_id = item.tool_call_id
     elif part.code_execution_result is not None:
         assert code_execution_tool_call_id is not None
         item = _map_code_execution_result(part.code_execution_result, provider_name, code_execution_tool_call_id)
@@ -1953,7 +2272,11 @@ def _process_part(
         assert data and mime_type, 'Inline data must have data and mime type'
         content = BinaryContent(data=data, media_type=mime_type)
         item = FilePart(content=BinaryContent.narrow_type(content))
-    else:  # pragma: no cover
+    elif _is_signature_only_part(part):
+        # Vertex AI reports agentic media-processing steps as signature-only parts. There is nothing to
+        # show, and both backends reject them when replayed ("Invalid thought signature").
+        return None, code_execution_tool_call_id
+    else:
         raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 
     if provider_details:
@@ -1961,6 +2284,133 @@ def _process_part(
         item.provider_name = provider_name
 
     return item, code_execution_tool_call_id
+
+
+def _character_index(text: str, byte_index: int) -> int | None:
+    """Convert a Gemini UTF-8 byte offset to a Python string index."""
+    encoded = text.encode()
+    if not 0 <= byte_index <= len(encoded):
+        return None
+    try:
+        return len(encoded[:byte_index].decode())
+    except UnicodeDecodeError:
+        return None
+
+
+def _segment_anchor(text: str, segment: Segment, byte_offset: int = 0) -> ContentCitationAnchor | None:
+    """Return the anchor of a segment's offsets in `text`, if they select the segment text Google reports for them."""
+    start = _character_index(text, (segment.start_index or 0) - byte_offset)
+    end = _character_index(text, (segment.end_index or 0) - byte_offset)
+    if start is not None and end is not None and start < end and text[start:end] == segment.text:
+        return ContentCitationAnchor(start=start, end=end)
+    return None
+
+
+def _locate_grounding_segment(
+    parts: Sequence[Part], segment: Segment
+) -> tuple[int | None, ContentCitationAnchor | None]:
+    """Return the index of the text part a grounding segment belongs to, and its anchor in that part."""
+    # Grounding supports the answer, so thought parts are never cited.
+    text_parts = {index: part.text for index, part in enumerate(parts) if part.text and not part.thought}
+    if (index := segment.part_index) is not None and index in text_parts:
+        if anchor := _segment_anchor(text_parts[index], segment):
+            return index, anchor
+    else:
+        # Without a part index, the offsets count across all the text parts joined together.
+        byte_offset = 0
+        for index, text in text_parts.items():
+            if anchor := _segment_anchor(text, segment, byte_offset):
+                return index, anchor
+            byte_offset += len(text.encode())
+
+    part_index = None
+    if (index := segment.part_index) is not None and index in text_parts:
+        if segment.text is None or segment.text in text_parts[index]:
+            part_index = index
+    if part_index is None and segment.text is not None:
+        candidates = [index for index, text in text_parts.items() if segment.text in text]
+        if len(candidates) == 1:
+            part_index = candidates[0]
+    if part_index is None and len(text_parts) == 1:
+        part_index = next(iter(text_parts))
+    if part_index is None or not segment.text:
+        return part_index, None
+    # The offsets don't select the segment text, which Google sometimes reports a byte off. The text itself still
+    # anchors the citation when it occurs only once in the part.
+    text = text_parts[part_index]
+    start = text.find(segment.text)
+    if start != -1 and text.find(segment.text, start + 1) == -1:
+        return part_index, ContentCitationAnchor(start=start, end=start + len(segment.text))
+    return part_index, None
+
+
+def _map_citation_source(chunk: GroundingChunk) -> CitationSource | None:
+    if (web := chunk.web) and web.uri:
+        return WebCitationSource(url=web.uri, title=web.title)
+    if (maps := chunk.maps) and maps.uri:
+        return WebCitationSource(url=maps.uri, title=maps.title, excerpts=[maps.text] if maps.text else [])
+    if (image := chunk.image) and image.source_uri:
+        return WebCitationSource(url=image.source_uri, title=image.title)
+    if context := chunk.retrieved_context:
+        excerpts = list(
+            dict.fromkeys(
+                text for text in (context.text, context.rag_chunk.text if context.rag_chunk else None) if text
+            )
+        )
+        if any((context.document_name, context.title, excerpts)):
+            return DocumentCitationSource(document_id=context.document_name, title=context.title, excerpts=excerpts)
+    return None
+
+
+def _map_citations(
+    parts: Sequence[Part], grounding_metadata: GroundingMetadata | None
+) -> dict[int, tuple[list[Citation], dict[str, Any]]]:
+    """Map grounding supports to the citations and raw citation data of the text part each one belongs to."""
+    if not grounding_metadata or not grounding_metadata.grounding_supports:
+        return {}
+
+    chunks = grounding_metadata.grounding_chunks or []
+    citations_by_part: dict[int, tuple[list[Citation], dict[str, Any]]] = {}
+    for support in grounding_metadata.grounding_supports:
+        segment = support.segment
+        if segment is None or segment.end_index is None:
+            continue
+        part_index, anchor = _locate_grounding_segment(parts, segment)
+        if part_index is None:
+            continue
+
+        support_chunks = [
+            chunks[index] if 0 <= index < len(chunks) else None for index in support.grounding_chunk_indices or []
+        ]
+        sources = [source for chunk in support_chunks if chunk and (source := _map_citation_source(chunk))]
+        if sources:
+            citations, provider_details = citations_by_part.setdefault(part_index, ([], {'citations': []}))
+            citations.append(Citation(sources=sources, anchor=anchor))
+            # Supports refer to the response's chunks by index, so the raw data keeps the chunks it refers to, in the
+            # order of `grounding_chunk_indices` and `confidence_scores`.
+            provider_details['citations'].append(
+                {
+                    **support.model_dump(mode='json', exclude_none=True),
+                    'grounding_chunks': [
+                        chunk.model_dump(mode='json', exclude_none=True) if chunk else None for chunk in support_chunks
+                    ],
+                }
+            )
+    return citations_by_part
+
+
+def _is_signature_only_part(part: Part) -> bool:
+    """Whether a part carries a thought signature and no other provider content."""
+    return bool(part.thought_signature) and part.model_dump(exclude_none=True).keys() == {'thought_signature'}
+
+
+def _set_grounding_citations(
+    part: TextPart, citations: tuple[list[Citation], dict[str, Any]] | None, provider_name: str
+) -> None:
+    if citations is not None:
+        part.citations, citations_details = citations
+        part.provider_details = {**(part.provider_details or {}), **citations_details}
+        part.provider_name = provider_name
 
 
 def _process_response_from_parts(
@@ -1974,32 +2424,59 @@ def _process_response_from_parts(
     provider_details: dict[str, Any] | None = None,
     finish_reason: FinishReason | None = None,
     url_context_metadata: UrlContextMetadata | None = None,
+    file_search_enabled: bool = False,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
-
-    if not _has_native_tool_invocations(parts):
-        web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
-        if web_search_call and web_search_return:
-            items.append(web_search_call)
-            items.append(web_search_return)
-
-        file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
-        if file_search_call and file_search_return:
-            items.append(file_search_call)
-            items.append(file_search_return)
+    has_native_tool_invocations = _has_native_tool_invocations(parts)
+    if not has_native_tool_invocations:
+        # URL context metadata comes before the text, also when streaming.
         web_fetch_call, web_fetch_return = _map_url_context_metadata(url_context_metadata, provider_name)
         if web_fetch_call and web_fetch_return:
             items.append(web_fetch_call)
             items.append(web_fetch_return)
 
-    item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
-    for part in parts:
-        item, code_execution_tool_call_id = _process_part(part, code_execution_tool_call_id, provider_name)
-        if item is not None:
-            if isinstance(item, NativeToolReturnPart):
+    media_processing_tool_call_id: str | None = None
+    media_processing_tool_call_without_id: NativeToolCallPart | None = None
+    file_search_tool_call_ids: list[str] = []
+    last_web_search_return: NativeToolReturnPart | None = None
+    grounding_citations = _map_citations(parts, grounding_metadata)
+    for part_index, part in enumerate(parts):
+        item, code_execution_tool_call_id = _process_part(
+            part, code_execution_tool_call_id, provider_name, file_search_enabled=file_search_enabled
+        )
+        if item is None:
+            continue
+        if isinstance(item, TextPart):
+            _set_grounding_citations(item, grounding_citations.get(part_index), provider_name)
+        elif isinstance(item, NativeToolReturnPart):
+            if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+                if (
+                    part.tool_response is not None
+                    and part.tool_response.id is None
+                    and media_processing_tool_call_id is not None
+                ):
+                    item.tool_call_id = media_processing_tool_call_id
+                elif media_processing_tool_call_without_id is not None:
+                    media_processing_tool_call_without_id.tool_call_id = item.tool_call_id
+                media_processing_tool_call_id = None
+                media_processing_tool_call_without_id = None
+            elif item.tool_name == WebSearchTool.kind:
+                last_web_search_return = item
+            else:
                 _fill_empty_file_search_return_content(item, grounding_metadata)
-            items.append(item)
+        elif isinstance(item, NativeToolCallPart) and item.tool_name == FileSearchTool.kind:
+            file_search_tool_call_ids.append(item.tool_call_id)
+        elif isinstance(item, NativeToolCallPart) and item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+            assert part.tool_call is not None
+            media_processing_tool_call_id = item.tool_call_id
+            media_processing_tool_call_without_id = item if part.tool_call.id is None else None
+        items.append(item)
+
+    if last_web_search_return is not None:
+        _fill_web_search_return_sources(last_web_search_return, grounding_metadata)
+    if not has_native_tool_invocations:
+        items.extend(_map_grounding_metadata_after_text(grounding_metadata, provider_name, file_search_tool_call_ids))
 
     return ModelResponse(
         parts=items,
@@ -2020,9 +2497,20 @@ def _has_native_tool_invocations(parts: list[Part]) -> bool:
     metadata-based reconstruction (`_map_grounding_metadata`, `_map_url_context_metadata`,
     `_map_file_search_grounding_metadata`) must be skipped — otherwise we emit duplicate
     `NativeToolCallPart`/`NativeToolReturnPart` pairs for the same tool invocation.
-    See https://ai.google.dev/api/caching#ToolConfig.
+    Agentic media-processing steps don't count: they arrive alongside the metadata for other tools, not
+    instead of it. See https://ai.google.dev/api/caching#ToolConfig.
     """
-    return any(p.tool_call or p.tool_response for p in parts)
+    return any((tool := p.tool_call or p.tool_response) and not _is_media_processing_step(tool) for p in parts)
+
+
+def _is_media_processing_step(tool: ToolCall | ToolResponse) -> bool:
+    """Whether a `tool_call`/`tool_response` is an agentic media-processing step.
+
+    Gemini omits `tool_type` on these steps and sends only an id; every other server-side tool sets
+    `tool_type`. The SDK also defines `ToolType.MEDIA_PROCESSING` for them, so accept both shapes.
+    """
+    payload = tool.args if isinstance(tool, ToolCall) else tool.response
+    return tool.tool_type == ToolType.MEDIA_PROCESSING or (tool.tool_type is None and not payload)
 
 
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:
@@ -2045,7 +2533,7 @@ def _metadata_as_usage(
 ) -> usage.RequestUsage:
     metadata = response.usage_metadata
     if metadata is None:
-        return existing_usage or usage.RequestUsage()
+        return existing_usage or usage.RequestUsage(unmeasured_requests=1)
     return _usage_metadata_as_usage(
         prompt_token_count=metadata.prompt_token_count,
         output_token_count=metadata.candidates_token_count,
@@ -2062,6 +2550,48 @@ def _metadata_as_usage(
         provider_url=provider_url,
         existing_usage=existing_usage,
     )
+
+
+def _initial_input_tokens(response: GenerateContentResponse) -> int | None:
+    """The first request's prompt tokens of a long decode google-genai continued in more requests, else `None`.
+
+    The SDK sums usage over the requests, so `prompt_token_count` re-counts the output of every request but the last.
+    `initial_prompt_token_count` is the first request's, and falls back to `prompt_token_count`, so the two differ only
+    once a request has been continued. A stream's chunks carry the usage summed so far.
+    """
+    usage_metadata = response.usage_metadata
+    if usage_metadata is None or usage_metadata.initial_prompt_token_count == usage_metadata.prompt_token_count:
+        return None
+    return usage_metadata.initial_prompt_token_count
+
+
+def _grounding_searches(response: GenerateContentResponse) -> tuple[set[str], bool]:
+    """Return the unique non-empty Google Search grounding queries and whether any web source came back."""
+    grounding = [c.grounding_metadata for c in response.candidates or [] if c.grounding_metadata is not None]
+    queries = {query for g in grounding for query in g.web_search_queries or [] if query.strip()}
+    returned_web_source = any(chunk.web and chunk.web.uri for g in grounding for chunk in g.grounding_chunks or [])
+    return queries, returned_web_source
+
+
+def _set_web_search_usage(
+    request_usage: usage.RequestUsage, queries: set[str], returned_web_source: bool, *, billed_per_prompt: bool
+) -> None:
+    """Record Google Search grounding on `request_usage` as the count Google bills.
+
+    Gemini 3 bills each unique non-empty query; Gemini 2.5 and older bill once per grounded prompt, and only when it
+    returned a web source. See https://ai.google.dev/gemini-api/docs/google-search#pricing and
+    https://cloud.google.com/vertex-ai/generative-ai/pricing. genai-prices can't extract either from the raw payload,
+    so the billed count is set as first-class `web_searches` and the query count as a `web_search_requests` detail.
+    """
+    if not queries:
+        return
+    request_usage.details['web_search_requests'] = len(queries)
+    if billed_per_prompt:
+        web_searches = 1 if returned_web_source else 0
+    else:
+        web_searches = len(queries)
+    if web_searches:
+        request_usage.web_searches = web_searches  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def _usage_metadata_as_usage(
@@ -2089,6 +2619,21 @@ def _usage_metadata_as_usage(
     [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
     speaks the generate-content field names, so a Live caller translates before handing it over.
     """
+    if not any(
+        (
+            prompt_token_count,
+            output_token_count,
+            cached_content_token_count,
+            thoughts_token_count,
+            tool_use_prompt_token_count,
+            prompt_tokens_details,
+            cache_tokens_details,
+            output_tokens_details,
+            tool_use_prompt_tokens_details,
+        )
+    ):
+        return existing_usage or usage.RequestUsage()
+
     details: dict[str, int] = {}
     if cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count
@@ -2155,6 +2700,34 @@ def _map_executable_code(executable_code: ExecutableCode, provider_name: str, to
     return part
 
 
+def _map_executable_code_part(
+    executable_code: ExecutableCode, provider_name: str, *, file_search_enabled: bool
+) -> NativeToolCallPart:
+    """Map `executable_code` to a code execution call, or to a file search call if it runs `file_search.query()`.
+
+    Without server-side tool invocation parts (Gemini 2.5, and Google Cloud on every model), Gemini shows its file
+    search as `print(file_search.query(query=...))` code, whose results arrive in the grounding metadata.
+    """
+    tool_call_id = _utils.generate_tool_call_id()
+    if (
+        file_search_enabled
+        and executable_code.code
+        and (match := _FILE_SEARCH_QUERY_PATTERN.search(executable_code.code))
+    ):
+        query = match.group(2).replace('\\\\', '\\').replace('\\"', '"').replace("\\'", "'")
+        return NativeToolCallPart(
+            provider_name=provider_name,
+            tool_name=FileSearchTool.kind,
+            tool_call_id=tool_call_id,
+            args={'query': query},
+        )
+    return _map_executable_code(executable_code, provider_name, tool_call_id)
+
+
+def _file_search_enabled(model_request_parameters: ModelRequestParameters) -> bool:
+    return any(isinstance(tool, FileSearchTool) for tool in model_request_parameters.native_tools)
+
+
 def _map_code_execution_result(
     code_execution_result: CodeExecutionResult, provider_name: str, tool_call_id: str
 ) -> NativeToolReturnPart:
@@ -2166,8 +2739,11 @@ def _map_code_execution_result(
     )
 
 
-def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
-    if tool_type is None:  # pragma: no cover
+def _resolve_native_tool_name(tool: ToolCall | ToolResponse) -> str:
+    if _is_media_processing_step(tool):
+        return _MEDIA_PROCESSING_TOOL_NAME
+    tool_type = tool.tool_type
+    if tool_type is None:
         raise UnexpectedModelBehavior('Missing tool_type on native tool part')
     tool_name = _TOOL_TYPE_TO_NATIVE_TOOL_NAME.get(tool_type)
     if tool_name is None:  # pragma: no cover
@@ -2178,7 +2754,7 @@ def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
 def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPart:
     return NativeToolCallPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(tool_call.tool_type),
+        tool_name=_resolve_native_tool_name(tool_call),
         tool_call_id=tool_call.id or _utils.generate_tool_call_id(),
         args=tool_call.args,
     )
@@ -2187,10 +2763,52 @@ def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPar
 def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> NativeToolReturnPart:
     return NativeToolReturnPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(tool_response.tool_type),
+        tool_name=_resolve_native_tool_name(tool_response),
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
         content=tool_response.response,
     )
+
+
+def _map_grounding_metadata_after_text(
+    grounding_metadata: GroundingMetadata | None, provider_name: str, file_search_tool_call_ids: list[str]
+) -> list[ModelResponsePart]:
+    """Build the file and web search parts from the grounding metadata, without server-side tool invocation parts.
+
+    Gemini sends the grounding metadata once, on the final chunk, after the text it grounds, so these parts come
+    after the text in both streamed and complete responses. `file_search_tool_call_ids` are the ids of the calls that
+    Gemini's `file_search.query()` executable code was mapped to, which only need their returns. Like the empty
+    `tool_response`s on Gemini 3 (see `_fill_empty_file_search_return_content`), each gets all retrieved contexts.
+    """
+    parts: list[ModelResponsePart] = []
+    if not file_search_tool_call_ids:
+        file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
+        if file_search_call and file_search_return:
+            parts += [file_search_call, file_search_return]
+    for tool_call_id in file_search_tool_call_ids:
+        if file_search_return := _file_search_return_from_grounding_metadata(
+            grounding_metadata, provider_name, tool_call_id
+        ):
+            parts.append(file_search_return)
+    web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
+    if web_search_call and web_search_return:
+        parts += [web_search_call, web_search_return]
+    return parts
+
+
+def _web_search_sources(grounding_metadata: GroundingMetadata | None) -> list[dict[str, Any]]:
+    grounding_chunks = grounding_metadata.grounding_chunks if grounding_metadata else None
+    return [chunk.web.model_dump(mode='json') for chunk in grounding_chunks or [] if chunk.web]
+
+
+def _fill_web_search_return_sources(item: NativeToolReturnPart, grounding_metadata: GroundingMetadata | None) -> None:
+    """Add the web sources from the grounding metadata to the web_search return's content, as `sources`.
+
+    The grounding metadata covers the whole response and doesn't say which search found which source, so they all go
+    on the response's last web_search return. They're removed again when the return is sent back to Gemini.
+    """
+    if sources := _web_search_sources(grounding_metadata):
+        content = item.content if _utils.is_str_dict(item.content) else {}
+        item.content = {**content, 'sources': sources}
 
 
 def _map_grounding_metadata(
@@ -2209,9 +2827,7 @@ def _map_grounding_metadata(
                 provider_name=provider_name,
                 tool_name=WebSearchTool.kind,
                 tool_call_id=tool_call_id,
-                content=[chunk.web.model_dump(mode='json') for chunk in grounding_chunks if chunk.web]
-                if (grounding_chunks := grounding_metadata.grounding_chunks)
-                else None,
+                content=_web_search_sources(grounding_metadata) if grounding_metadata.grounding_chunks else None,
             ),
         )
     else:
@@ -2234,16 +2850,6 @@ def _extract_file_search_retrieved_contexts(
         context_dict: dict[str, Any] = chunk.retrieved_context.model_dump(
             mode='json', exclude_none=True, by_alias=False
         )
-        # The SDK type may not define file_search_store yet, but model_dump includes it.
-        # Check both snake_case and camelCase since the field name varies.
-        file_search_store = context_dict.get('file_search_store')
-        if file_search_store is None:  # pragma: lax no cover
-            context_dict_with_aliases: dict[str, Any] = chunk.retrieved_context.model_dump(
-                mode='json', exclude_none=True, by_alias=True
-            )
-            file_search_store = context_dict_with_aliases.get('fileSearchStore')
-        if file_search_store is not None:  # pragma: lax no cover
-            context_dict['file_search_store'] = file_search_store
         retrieved_contexts.append(context_dict)
     return retrieved_contexts
 
@@ -2267,18 +2873,27 @@ def _fill_empty_file_search_return_content(
         item.content = retrieved_contexts
 
 
+def _file_search_return_from_grounding_metadata(
+    grounding_metadata: GroundingMetadata | None, provider_name: str, tool_call_id: str
+) -> NativeToolReturnPart | None:
+    grounding_chunks = grounding_metadata.grounding_chunks if grounding_metadata else None
+    if retrieved_contexts := _extract_file_search_retrieved_contexts(grounding_chunks):
+        return NativeToolReturnPart(
+            provider_name=provider_name,
+            tool_name=FileSearchTool.kind,
+            tool_call_id=tool_call_id,
+            content=retrieved_contexts,
+        )
+    return None
+
+
 def _map_file_search_grounding_metadata(
     grounding_metadata: GroundingMetadata | None, provider_name: str
 ) -> tuple[NativeToolCallPart, NativeToolReturnPart] | tuple[None, None]:
-    if not grounding_metadata or not (grounding_chunks := grounding_metadata.grounding_chunks):
-        return None, None
-
-    retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
-
-    if not retrieved_contexts:
-        return None, None
-
     tool_call_id = _utils.generate_tool_call_id()
+    file_search_return = _file_search_return_from_grounding_metadata(grounding_metadata, provider_name, tool_call_id)
+    if file_search_return is None:
+        return None, None
     return (
         NativeToolCallPart(
             provider_name=provider_name,
@@ -2286,12 +2901,7 @@ def _map_file_search_grounding_metadata(
             tool_call_id=tool_call_id,
             args={},
         ),
-        NativeToolReturnPart(
-            provider_name=provider_name,
-            tool_name=FileSearchTool.kind,
-            tool_call_id=tool_call_id,
-            content=retrieved_contexts,
-        ),
+        file_search_return,
     )
 
 

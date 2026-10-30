@@ -1,3 +1,7 @@
+---
+description: "Migrate Pydantic AI V1 code to V2: a lookup table of renamed and removed APIs, packaging changes and default behavior changes, alongside the full Upgrade Guide."
+---
+
 # V1 → V2 Migration Map
 
 A lookup index for upgrading from Pydantic AI V1 to V2: find the V1 name you have in your code, read off the V2 name to replace it with.
@@ -18,6 +22,9 @@ Most V1 `Agent(...)` arguments that configured behavior moved onto [capabilities
 | `Agent(history_processors=...)` | `Agent(capabilities=[ProcessHistory(...)])` |
 | `Agent(instrument=...)`, `Agent.from_spec(instrument=...)`, `Agent.from_file(instrument=...)`, `AgentSpec.instrument` | `Agent(capabilities=[Instrumentation(...)])` |
 | `Agent(mcp_servers=[...])` | `Agent(toolsets=[...])` |
+| `Agent(output_retries=N)`, `Agent(tool_retries=N)` | `Agent(retries={'output': N})`, `Agent(retries={'tools': N})` ([`AgentRetries`][pydantic_ai.agent.AgentRetries]); a bare `retries=N` sets both budgets |
+| `output_retries=N` on `run()`/`run_sync()`/`run_stream()`/`iter()`/`override()` | `retries={'output': N}` on the same methods |
+| `output_retries:` / `tool_retries:` in an [agent spec](agent-spec.md) | `retries:`, an integer or a mapping with `output` and `tools` keys |
 | `Agent(prepare_tools=...)` | `Agent(capabilities=[PrepareTools(...)])` |
 | `Agent.run_mcp_servers()` | `async with agent:` |
 | `Agent.sequential_tool_calls()` | `Agent.parallel_tool_call_execution_mode('sequential')` |
@@ -128,7 +135,7 @@ The serialized `part_kind` wire values and the old field names' validation alias
 
 | V1 | V2 |
 | --- | --- |
-| `result.usage()`, `result.timestamp()` | `result.usage`, `result.timestamp` (properties) |
+| `result.usage()`, `result.timestamp()` | `result.usage`, `result.timestamp` (properties); `result.usage()` still works, with a deprecation warning, until V3 |
 | `stream.get()` | `stream.response` |
 | `StreamedRunResult.stream` | [`stream_output`][pydantic_ai.result.StreamedRunResult.stream_output] |
 | `StreamedRunResult.stream_structured` | [`stream_response`][pydantic_ai.result.StreamedRunResult.stream_response] |

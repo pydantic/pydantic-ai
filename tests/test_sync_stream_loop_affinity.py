@@ -182,7 +182,6 @@ def test_sync_entry_points_keep_async_client_on_one_event_loop(
         asyncio.get_event_loop().run_until_complete(client.close())
 
 
-@pytest.mark.anyio
 async def test_async_run_and_stream_share_one_event_loop(
     allow_model_requests: None,
     anthropic_loop_bound_transport: _LoopBoundTransport,

@@ -14,12 +14,29 @@ import dataclasses
 import importlib
 import inspect
 import pkgutil
+from typing import Any
 
 import pytest
 from coverage import Coverage
 
 import pydantic_ai
 from pydantic_ai.models import StreamedResponse
+
+
+def _constructor_parameters(cls: type) -> list[inspect.Parameter]:
+    """The parameters a caller may pass to `cls(...)`.
+
+    Normally read off the class itself, which resolves construction through whichever of `__new__`
+    and `__init__` defines it. A `__new__` that adds nothing to construction breaks that reading:
+    `@deprecated` installs one that `functools.wraps` the `__new__` it replaces, so for a class that
+    had none of its own, `inspect.signature` follows the wrapper down to `object.__new__` and reports
+    `(*args, **kwargs)` -- every deprecated class reads as taking arbitrarily many positional
+    arguments whatever its fields are. When the class's own `__new__` unwraps to `object.__new__`,
+    read `__init__` instead, minus its `self`: that is where the signature came from before.
+    """
+    if '__new__' in cls.__dict__ and inspect.unwrap(cls.__new__) is object.__new__:
+        return list(inspect.signature(cls.__init__).parameters.values())[1:]
+    return list(inspect.signature(cls).parameters.values())
 
 
 def _takes_two_positional_arguments(cls: type) -> bool | None:
@@ -30,7 +47,7 @@ def _takes_two_positional_arguments(cls: type) -> bool | None:
     private attribute is needed to tell them apart.
     """
     try:
-        parameters = inspect.signature(cls).parameters.values()
+        parameters = _constructor_parameters(cls)
     except (TypeError, ValueError):
         return None
     positional = 0
@@ -44,7 +61,9 @@ def _takes_two_positional_arguments(cls: type) -> bool | None:
     return positional >= 2
 
 
-@pytest.fixture
+# Module-scoped: walking imports every `pydantic_ai` module, provider SDKs included, which is shared setup rather than
+# the test's own cost (see "Test cost" in `tests/AGENTS.md`).
+@pytest.fixture(scope='module')
 def public_dataclasses() -> dict[str, list[str]]:
     coverage = Coverage.current()
     # Coverage has no public API for pausing and resuming an active collector.
@@ -102,4 +121,16 @@ def public_dataclasses() -> dict[str, list[str]]:
         return {'offenders': sorted(offenders), 'skipped': sorted(skipped), 'unreadable': sorted(unreadable)}
     finally:
         if collector is not None:
+            # Pausing frees the tracer's `sys.monitoring` tool id (the default core on Python 3.12+),
+            # dropping the per-code-object events it had installed. Resuming reinstalls them lazily,
+            # but only for code objects the tracer hasn't seen yet, so every function that already
+            # ran stays unmonitored for the rest of the process: lines it reaches for the first time
+            # after the walk are silently reported as uncovered. Dropping the tracer's per-code cache
+            # makes it re-arm each code object on its next call. Cleared before resuming, while the
+            # tracer is still detached: clearing afterwards could drop an entry a callback had just
+            # installed, and coverage's line callback looks entries up without a fallback.
+            for tracer in collector.tracers:
+                code_infos: dict[int, Any] | None = getattr(tracer, 'code_infos', None)
+                if code_infos is not None:
+                    code_infos.clear()
             collector.resume()

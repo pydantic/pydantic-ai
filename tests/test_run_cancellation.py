@@ -20,12 +20,14 @@ trigger.
 from __future__ import annotations as _annotations
 
 import asyncio
+import gc
 import pickle
-import sys
 import threading
-from collections.abc import AsyncIterable
-from datetime import timezone
-from typing import Any
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import UTC
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -43,20 +45,23 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._cancel import RunCancellation
-from pydantic_ai._utils import BaseExceptionGroup
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai._utils import BaseExceptionGroup, get_event_loop
+from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapModelRequestHandler, WrapRunHandler
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    FunctionToolResultEvent,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRun, AgentRunResult
 from pydantic_ai.tools import RunContext
@@ -65,28 +70,124 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsNow, IsStr
 
-pytestmark = pytest.mark.anyio
-
 READINESS_WAIT_TIMEOUT = 5
 
-requires_task_cancelling = pytest.mark.skipif(
-    sys.version_info < (3, 11), reason='the backstop needs `Task.cancelling()` (Python 3.11+)'
-)
+
+def _parallel_sibling_tools_agent(*, raise_first: bool) -> tuple[Agent[None, str], asyncio.Event]:
+    """An agent whose first-emitted tool waits until its sibling task has completed."""
+    fast_finished = asyncio.Event()
+    first_blocked = asyncio.Event()
+
+    def call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('first_tool', {}, tool_call_id='call_first'),
+                ToolCallPart('fast_tool', {}, tool_call_id='call_fast'),
+            ]
+        )
+
+    async def stream_call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {
+            0: DeltaToolCall(name='first_tool', json_args='{}', tool_call_id='call_first'),
+            1: DeltaToolCall(name='fast_tool', json_args='{}', tool_call_id='call_fast'),
+        }
+
+    agent = Agent(FunctionModel(call_tools, stream_function=stream_call_tools))
+
+    @agent.tool_plain
+    async def first_tool() -> str:
+        await fast_finished.wait()
+        if raise_first:
+            raise RuntimeError('first tool failed')
+        first_blocked.set()
+        await asyncio.Event().wait()
+        return 'never reached'  # pragma: no cover
+
+    @agent.tool_plain
+    async def fast_tool() -> str:
+        # Release `first_tool` only once this tool's task is done, so the completed return is
+        # deterministically sitting in a finished task when the sibling raises or blocks.
+        task = asyncio.current_task()
+        assert task is not None
+        task.add_done_callback(lambda _: fast_finished.set())
+        return 'fast result'
+
+    return agent, first_blocked
+
+
+def _assert_interrupted_fast_result(message: ModelMessage) -> None:
+    assert message == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='fast_tool',
+                    content='fast result',
+                    tool_call_id='call_fast',
+                    timestamp=IsNow(tz=UTC),
+                )
+            ],
+            timestamp=IsNow(tz=UTC),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+            state='interrupted',
+        )
+    )
+
+
+@pytest.mark.parametrize('mode', ['parallel', 'parallel_ordered_events'])
+async def test_sibling_exception_keeps_completed_tool_result(
+    mode: Literal['parallel', 'parallel_ordered_events'],
+) -> None:
+    """A completed tool's return survives in the interrupted request when an earlier-emitted sibling raises."""
+    agent, _ = _parallel_sibling_tools_agent(raise_first=True)
+
+    with capture_run_messages() as messages, agent.parallel_tool_call_execution_mode(mode):
+        with pytest.raises(RuntimeError, match='first tool failed'):
+            await agent.run('go')
+
+    _assert_interrupted_fast_result(messages[-1])
+
+
+@pytest.mark.parametrize('mode', ['parallel', 'parallel_ordered_events'])
+async def test_external_cancellation_keeps_completed_tool_result(
+    mode: Literal['parallel', 'parallel_ordered_events'],
+) -> None:
+    """A completed tool's return survives in the interrupted request when the run is cancelled mid-segment."""
+    agent, first_blocked = _parallel_sibling_tools_agent(raise_first=False)
+
+    with capture_run_messages() as messages, agent.parallel_tool_call_execution_mode(mode):
+        run_task = asyncio.create_task(agent.run('go'))
+        await asyncio.wait_for(first_blocked.wait(), timeout=READINESS_WAIT_TIMEOUT)
+        run_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await run_task
+
+    _assert_interrupted_fast_result(messages[-1])
+
+
+async def test_parallel_ordered_sibling_exception_does_not_emit_later_result_event() -> None:
+    """Keeping the completed return doesn't add a result event: ordered settlement stops at the first exception."""
+    agent, _ = _parallel_sibling_tools_agent(raise_first=True)
+    seen_events: list[object] = []
+
+    with agent.parallel_tool_call_execution_mode('parallel_ordered_events'):
+        with pytest.raises(RuntimeError, match='first tool failed'):
+            async with agent.run_stream_events('go') as events:
+                async for event in events:
+                    seen_events.append(event)
+
+    assert seen_events
+    assert not any(isinstance(event, FunctionToolResultEvent) for event in seen_events)
 
 
 def _task_cancelling(task: asyncio.Task[Any]) -> int:
-    if sys.version_info < (3, 11):  # pragma: lax no cover
-        return 0
     return task.cancelling()
 
 
 def _task_uncancel(task: asyncio.Task[Any]) -> None:
-    if sys.version_info < (3, 11):  # pragma: lax no cover
-        return
     task.uncancel()
 
 
-@requires_task_cancelling
 async def test_swallowing_event_stream_handler_run_still_cancels():
     """An `event_stream_handler` that catches `CancelledError` must not absorb the run's cancellation.
 
@@ -118,7 +219,6 @@ async def test_swallowing_event_stream_handler_run_still_cancels():
     assert [type(m).__name__ for m in messages] == ['ModelRequest', 'ModelResponse']
 
 
-@requires_task_cancelling
 async def test_after_run_hook_cannot_convert_external_cancel_to_success():
     """An `after_run` hook that absorbs the cancellation must not let the run finalize as a
     success: the backstop fires before the result is stored."""
@@ -136,11 +236,15 @@ async def test_after_run_hook_cannot_convert_external_cancel_to_success():
     agent = Agent(TestModel(), capabilities=[SwallowInAfterRun()])
 
     task = asyncio.create_task(agent.run('hello'))
-    await asyncio.wait_for(in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    # Order on the hook rather than a wall-clock deadline, which a stalled CI worker can overrun before
+    # the run gets that far. A run that ends without reaching the hook fails here instead of hanging.
+    hook_reached = asyncio.create_task(in_flight.wait())
+    await asyncio.wait({hook_reached, task}, return_when=asyncio.FIRST_COMPLETED)
+    assert in_flight.is_set(), task
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+        await task
 
 
 async def test_consumed_cancellation_is_not_a_false_positive():
@@ -421,8 +525,8 @@ async def test_tool_cancels_run_and_history_is_resumable():
     assert messages == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -433,7 +537,8 @@ async def test_tool_cancels_run_and_history_is_resumable():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:model_func:',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='function:function:model_func:',
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -443,10 +548,10 @@ async def test_tool_cancels_run_and_history_is_resumable():
                         tool_name='fast_tool',
                         content='fast result',
                         tool_call_id='call_fast',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -467,19 +572,19 @@ async def test_tool_cancels_run_and_history_is_resumable():
                     tool_name='fast_tool',
                     content='fast result',
                     tool_call_id='call_fast',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                 ),
                 ToolReturnPart(
                     tool_name='cancelling_tool',
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_slow',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     outcome='interrupted',
                 ),
-                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=UTC)),
             ],
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
         )
     )
 
@@ -532,8 +637,8 @@ async def test_cancel_during_only_tool_call_is_resumable():
     assert messages == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -541,13 +646,14 @@ async def test_cancel_during_only_tool_call_is_resumable():
                 parts=[ToolCallPart(tool_name='in_flight_tool', args={}, tool_call_id='call_only')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:model_func:',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='function:function:model_func:',
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -565,12 +671,12 @@ async def test_cancel_during_only_tool_call_is_resumable():
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_only',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     outcome='interrupted',
                 ),
-                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=UTC)),
             ],
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
         )
     )
 
@@ -597,11 +703,11 @@ async def test_cancel_during_only_tool_call_is_resumable_without_a_new_prompt():
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_only',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     outcome='interrupted',
                 )
             ],
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             run_id=IsStr(),
             conversation_id=IsStr(),
         )
@@ -654,7 +760,6 @@ async def test_iter_cancellation_is_typed_only_after_context_exit():
     assert seen_inside
 
 
-@requires_task_cancelling
 async def test_iter_swallowed_cancellation_is_quiet_abandonment():
     """Leaving `agent.iter()` normally after swallowing its cancellation cleans task state."""
     agent = Agent(TestModel())
@@ -672,7 +777,6 @@ async def test_iter_swallowed_cancellation_is_quiet_abandonment():
     assert _task_cancelling(task) == 0
 
 
-@requires_task_cancelling
 async def test_cancel_followed_by_other_error_releases_cancellation():
     """A run that ends with a non-cancellation error after `cancel()` was issued must release the
     issued cancellation: leaking it would spuriously cancel unrelated later work on the task."""
@@ -691,7 +795,6 @@ async def test_cancel_followed_by_other_error_releases_cancellation():
     assert _task_cancelling(task) == 0
 
 
-@requires_task_cancelling
 async def test_iter_reasserts_swallowed_cancellation_before_next_node():
     """A swallowed first-party cancellation stops iteration before another model call."""
     model_calls: list[None] = []
@@ -715,7 +818,6 @@ async def test_iter_reasserts_swallowed_cancellation_before_next_node():
     assert len(model_calls) == 1
 
 
-@requires_task_cancelling
 async def test_external_cancel_uncancelled_by_caller_completes_run():
     """A caller that catches an external cancellation inside the `async for` body and calls
     `Task.uncancel()` — asyncio's sanctioned suppression — gets a completed run, without the
@@ -746,7 +848,6 @@ async def test_external_cancel_uncancelled_by_caller_completes_run():
     assert model_calls == [None]
 
 
-@requires_task_cancelling
 async def test_run_cancellation_tracks_issuances_per_task():
     """A controller unit test pins the task-rebind window that the public API cannot trigger
     deterministically."""
@@ -813,7 +914,6 @@ async def test_run_cancellation_tracks_issuances_per_task():
     assert a_state == [(True, 0), (False, 1)]
 
 
-@requires_task_cancelling
 async def test_threadsafe_cancel_delivery_after_finish_is_noop():
     """A `cancel()` marshalled from another thread whose queued delivery lands after `finish()`
     must not cancel the (former) owner task."""
@@ -857,7 +957,6 @@ async def test_release_issued_on_finished_task_is_noop():
     done_cancellation.release_issued()  # clearing an already-empty controller is a no-op
 
 
-@requires_task_cancelling
 async def test_cancel_before_bind_delivers_on_bind():
     """A cancellation requested before any task is bound is delivered as soon as one binds — a controller
     unit test because the public API can't trigger it deterministically."""
@@ -880,7 +979,6 @@ async def test_cancel_before_bind_delivers_on_bind():
     await rebound_task
 
 
-@requires_task_cancelling
 async def test_swallowed_and_uncancelled_request_redelivers_on_rebind():
     """A request whose cancellation was swallowed and `uncancel()`ed is redelivered when the task rebinds — a
     controller unit test because the public API can't trigger it deterministically."""
@@ -954,9 +1052,7 @@ async def test_external_cancellation_is_never_translated():
 
 
 async def test_task_cancel_of_run_carries_run_cancelled():
-    """On 3.11+ the attached `CancelledError` instance itself crosses `await task`; on 3.10
-    asyncio recreates it but chains the original via `__context__`, which `from_cancellation()`
-    traverses — so the state is recoverable on all supported versions."""
+    """The attached `CancelledError` instance carries run state across `await task`."""
     started = asyncio.Event()
     agent = Agent(TestModel())
 
@@ -978,8 +1074,8 @@ async def test_task_cancel_of_run_carries_run_cancelled():
     assert cancelled.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -987,14 +1083,15 @@ async def test_task_cancel_of_run_carries_run_cancelled():
                 parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='pyd_ai_tool_call_id__slow_tool')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='test:test',
+                timestamp=IsNow(tz=UTC),
                 provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -1037,12 +1134,236 @@ async def test_direct_await_cancellation_carries_run_cancelled_on_all_versions()
     assert cancelled.run_id is not None
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason='`asyncio.timeout()` needs Python 3.11+')
+@contextmanager
+def _interrupt_sync_run_once(started: asyncio.Event) -> Generator[None]:
+    """Simulate Ctrl-C reaching the caller of a sync method once `started` is set.
+
+    The `loop.run_until_complete()` call that is driving the loop when `started` is set raises
+    `KeyboardInterrupt`, as Python's default `SIGINT` handler would; earlier calls (e.g. entering a
+    sync stream) complete normally, and later calls (the interrupt cleanup) run normally. Patching
+    the loop keeps this in-process: a real signal can't be timed reliably from a test.
+    """
+    loop = get_event_loop()
+    real_run_until_complete = loop.run_until_complete
+    started_waiter = loop.create_task(started.wait())
+
+    def interrupt_once(future: Any) -> Any:
+        if started_waiter.done():
+            return real_run_until_complete(future)
+        future = asyncio.ensure_future(future, loop=loop)
+        real_run_until_complete(
+            asyncio.wait([future, started_waiter], timeout=READINESS_WAIT_TIMEOUT, return_when=asyncio.FIRST_COMPLETED)
+        )
+        if started_waiter.done():
+            raise KeyboardInterrupt
+        assert future.done(), 'the run neither finished nor set `started` in time'
+        return future.result()
+
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(loop, 'run_until_complete', interrupt_once)
+            yield
+    finally:
+        started_waiter.cancel()
+
+
+def _fast_then_slow_tool_agent(started: asyncio.Event) -> Agent[None, str]:
+    """An agent that completes `fast_tool` and then suspends in `slow_tool`, setting `started`."""
+
+    def call_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_returns = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+        return ModelResponse(parts=[ToolCallPart(['fast_tool', 'slow_tool'][tool_returns])])
+
+    async def stream_tool_calls(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        (part,) = call_tools(messages, info).parts
+        assert isinstance(part, ToolCallPart)
+        yield {0: DeltaToolCall(name=part.tool_name)}
+
+    agent = Agent(FunctionModel(call_tools, stream_function=stream_tool_calls))
+
+    @agent.tool_plain
+    def fast_tool() -> str:
+        return 'fast done'
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError  # pragma: no cover
+
+    return agent
+
+
+def _context_chain(exc: BaseException) -> list[BaseException]:
+    """The exceptions reached by following `__context__` from `exc`, stopping at a repeat."""
+    chain: list[BaseException] = []
+    node = exc.__context__
+    while node is not None and all(node is not seen for seen in chain):
+        chain.append(node)
+        node = node.__context__
+    return chain
+
+
+def _tool_returns(cancelled: RunCancelled) -> list[Any]:
+    return [
+        part.content
+        for message in cancelled.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+
+
+def test_run_sync_keyboard_interrupt_carries_run_state():
+    """Ctrl-C during `run_sync()` carries the run state, like `asyncio.run(agent.run())` does.
+
+    The interrupt cancels the run's task, whose `CancelledError` carries the state; it is chained
+    to the re-raised `KeyboardInterrupt` as a suppressed `__context__`, so the traceback is unchanged.
+    """
+    started = asyncio.Event()
+    agent = _fast_then_slow_tool_agent(started)
+
+    with _interrupt_sync_run_once(started), pytest.raises(KeyboardInterrupt) as exc_info:
+        agent.run_sync('go')
+
+    assert exc_info.value.__suppress_context__
+    assert all(node is not exc_info.value for node in _context_chain(exc_info.value))  # no cycle back to it
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert _tool_returns(cancelled) == ['fast done']
+
+
+def test_run_sync_keyboard_interrupt_preserves_nested_cleanup_errors():
+    """Ctrl-C keeps nested event-loop cleanup errors without cycling back to the interrupt."""
+    started = asyncio.Event()
+    cleanup_error = ValueError('event loop cleanup failed')
+    final_error = RuntimeError('cleanup recovery failed')
+    agent = _fast_then_slow_tool_agent(started)
+    loop = get_event_loop()
+    tasks_before = asyncio.all_tasks(loop)
+
+    with _interrupt_sync_run_once(started), pytest.MonkeyPatch.context() as mp:
+        run_until_complete = loop.run_until_complete
+
+        def failing_cleanup(future: Any) -> Any:
+            try:
+                return run_until_complete(future)
+            except asyncio.CancelledError:
+                try:
+                    raise cleanup_error
+                except ValueError:
+                    raise final_error
+
+        mp.setattr(loop, 'run_until_complete', failing_cleanup)
+        with pytest.raises(KeyboardInterrupt) as exc_info:
+            agent.run_sync('go')
+
+    chain = _context_chain(exc_info.value)
+    assert chain[:2] == [final_error, cleanup_error]
+    assert len(chain) == 3
+    assert isinstance(chain[2], asyncio.CancelledError)
+    assert chain[2].__context__ is None
+    assert exc_info.value.__suppress_context__
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert _tool_returns(cancelled) == ['fast done']
+    assert asyncio.all_tasks(loop) == tasks_before
+
+
+def test_run_stream_sync_keyboard_interrupt_before_final_result_carries_run_state():
+    """Ctrl-C while `run_stream_sync()` runs tools before finding the final result carries the run state."""
+    started = asyncio.Event()
+    agent = _fast_then_slow_tool_agent(started)
+
+    with _interrupt_sync_run_once(started), pytest.raises(KeyboardInterrupt) as exc_info:
+        with agent.run_stream_sync('go') as result:
+            result.get_output()  # pragma: no cover
+
+    assert exc_info.value.__suppress_context__
+    assert all(node is not exc_info.value for node in _context_chain(exc_info.value))  # no cycle back to it
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert _tool_returns(cancelled) == ['fast done']
+
+
+def test_run_stream_sync_keyboard_interrupt_while_streaming_output_carries_run_state():
+    """Ctrl-C while `run_stream_sync()` streams the final output carries the run state.
+
+    The interrupt tears the stream down by passing the `KeyboardInterrupt` itself into the run's
+    `__aexit__`, so the run attaches its state to that exception rather than to a `CancelledError`.
+    """
+    started = asyncio.Event()
+
+    async def stream_text_after_tool(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
+        if not any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield {0: DeltaToolCall(name='fast_tool')}
+            return
+        yield 'partial '
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError  # pragma: no cover
+
+    agent = Agent(FunctionModel(stream_function=stream_text_after_tool))
+
+    @agent.tool_plain
+    def fast_tool() -> str:
+        return 'fast done'
+
+    with _interrupt_sync_run_once(started), pytest.raises(KeyboardInterrupt) as exc_info:
+        with agent.run_stream_sync('go') as result:
+            result.get_output()
+
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert cancelled.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='fast_tool', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=50),
+                model_name='function::stream_text_after_tool',
+                model_id='function:function::stream_text_after_tool',
+                timestamp=IsNow(tz=UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='fast_tool',
+                        content='fast done',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=UTC),
+                    )
+                ],
+                timestamp=IsNow(tz=UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='partial ')],
+                usage=RequestUsage(input_tokens=50, output_tokens=1),
+                model_name='function::stream_text_after_tool',
+                model_id='function:function::stream_text_after_tool',
+                timestamp=IsNow(tz=UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
 async def test_from_cancellation_through_asyncio_timeout():
     started = asyncio.Event()
     agent = Agent(TestModel())
-    # `Any` because `asyncio.Timeout` doesn't exist on Pyright's 3.10 target.
-    timeout_scope: list[Any] = []
+    timeout_scope: list[asyncio.Timeout] = []
 
     @agent.tool_plain
     async def slow_tool() -> str:
@@ -1054,8 +1375,7 @@ async def test_from_cancellation_through_asyncio_timeout():
         return 'slow'  # pragma: no cover
 
     with pytest.raises(TimeoutError) as exc_info:
-        # This test is version-gated, but Pyright targets the package's Python 3.10 minimum.
-        async with asyncio.timeout(READINESS_WAIT_TIMEOUT) as scope:  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT) as scope:
             timeout_scope.append(scope)
             await agent.run('go')
 
@@ -1065,7 +1385,6 @@ async def test_from_cancellation_through_asyncio_timeout():
     assert started.is_set()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason='`asyncio.timeout()` needs Python 3.11+')
 async def test_first_party_cancel_inside_asyncio_timeout_leaves_scope_intact():
     """A first-party cancellation consumes only its own cancellation: an enclosing
     `asyncio.timeout()` neither trips into `TimeoutError` nor inherits a stray
@@ -1085,13 +1404,12 @@ async def test_first_party_cancel_inside_asyncio_timeout_leaves_scope_intact():
     baseline = _task_cancelling(task)
 
     with pytest.raises(RunCancelled):
-        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
             await agent.run('go')
 
     assert _task_cancelling(task) == baseline
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason='`asyncio.TaskGroup` needs Python 3.11+')
 async def test_first_party_cancel_inside_task_group_is_application_error():
     """Inside a `TaskGroup`, a first-party cancellation surfaces as an ordinary application error
     (`RunCancelled` inside the group's `ExceptionGroup`), not as a cleanly-cancelled child.
@@ -1110,8 +1428,8 @@ async def test_first_party_cancel_inside_task_group_is_application_error():
         return 'never reached'  # pragma: no cover
 
     with pytest.raises(BaseExceptionGroup) as exc_info:
-        async with asyncio.TaskGroup() as tg:  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
-            tg.create_task(agent.run('go'))  # pyright: ignore[reportUnknownMemberType]
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(agent.run('go'))
 
     assert [type(exc) for exc in exc_info.value.exceptions] == [RunCancelled]
 
@@ -1169,7 +1487,6 @@ async def test_iter_external_cancel_carries_run_cancelled():
     assert cancelled.usage.requests == 1
 
 
-@requires_task_cancelling
 async def test_external_cancellation_wins_race_with_first_party_cancel():
     """When `cancel()` and an external `task.cancel()` race, the external cancellation wins and
     propagates as `CancelledError`."""
@@ -1200,7 +1517,6 @@ async def test_external_cancellation_wins_race_with_first_party_cancel():
         await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
 
 
-@requires_task_cancelling
 async def test_external_cancellation_wins_when_it_arrives_first():
     """An external cancellation delivered before `cancel()` still wins the race."""
     started = asyncio.Event()
@@ -1287,9 +1603,6 @@ async def test_run_stream_events_cancel_from_sibling_task():
             await asyncio.wait_for(consumer, timeout=READINESS_WAIT_TIMEOUT)
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 11), reason='`CancelledError` instance preservation across `await task` needs Python 3.11+'
-)
 async def test_run_stream_events_external_cancel_of_consumer():
     """Externally cancelling the consumer task keeps standard `CancelledError` semantics, but the
     run state rides along for `from_cancellation()` and the handle stays accessible post-cancel."""
@@ -1764,7 +2077,6 @@ async def test_cancel_during_blocked_before_run_is_delivered():
     assert exc_info.value.all_messages() == []  # cancelled before any model request
 
 
-@requires_task_cancelling
 async def test_first_party_cancel_swallowed_by_after_run_is_typed():
     """A first-party cancellation absorbed by `after_run` is typed at the outer funnel."""
 
@@ -1783,10 +2095,51 @@ async def test_first_party_cancel_swallowed_by_after_run_is_typed():
         await agent.run('go')
 
 
-# Blocking *external*-cancel recovery relies on the backstop, which is a no-op on Python 3.10.
-@pytest.mark.parametrize('first_party', [True, pytest.param(False, marks=requires_task_cancelling)])
+async def test_first_party_cancel_uncancelled_by_after_run_is_typed():
+    """A first-party request remains terminal after a hook clears the owning task's cancellation count."""
+    task = asyncio.current_task()
+    assert task is not None
+
+    class UncancelInAfterRun(AbstractCapability):
+        async def after_run(self, ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult:
+            ctx.cancel()
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                task.uncancel()
+            return result
+
+    agent = Agent(TestModel(), capabilities=[UncancelInAfterRun()])
+
+    with pytest.raises(RunCancelled):
+        await agent.run('go')
+
+
+async def test_uncancelled_request_does_not_leak_after_hook_error():
+    """A hook error after clearing cancellation leaves the caller task's counter unchanged."""
+    task = asyncio.current_task()
+    assert task is not None
+    baseline = task.cancelling()
+
+    class FailAfterUncancel(AbstractCapability):
+        async def after_run(self, ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult:
+            ctx.cancel()
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                task.uncancel()
+            raise ValueError('hook failed')
+
+    agent = Agent(TestModel(), capabilities=[FailAfterUncancel()])
+
+    with pytest.raises(ValueError, match='hook failed'):
+        await agent.run('go')
+    assert task.cancelling() == baseline
+
+
+@pytest.mark.parametrize('first_party', [True, False])
 async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
-    """`wrap_run` and `on_run_error` may observe cancellation but cannot recover it."""
+    """`on_run_error` and `wrap_run` both observe cancellation, but neither can recover it."""
     started = asyncio.Event()
     observed: list[str] = []
 
@@ -1818,7 +2171,7 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
             runs.append(agent_run)
             async for _node in agent_run:
                 pass
-        assert agent_run.result is not None  # pragma: no cover
+        assert agent_run.result is not None  # pragma: lax no cover
         return agent_run.result  # pragma: no cover
 
     task = asyncio.create_task(drive())
@@ -1833,7 +2186,371 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
     with pytest.raises(expected_exception):
         await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
 
-    assert observed == ['wrap_run', 'on_run_error']
+    assert observed == ['on_run_error', 'wrap_run']
+
+
+@dataclass
+class _WrapRunCleanup(AbstractCapability[None]):
+    """Cleanup in `wrap_run` that starts once its handler returns or raises, and finishes once `permitted` is set."""
+
+    shielded: bool
+    started: anyio.Event = field(default_factory=anyio.Event)
+    permitted: anyio.Event = field(default_factory=anyio.Event)
+    finished: anyio.Event = field(default_factory=anyio.Event)
+    run_errors: list[BaseException] = field(default_factory=list[BaseException])
+
+    async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+        try:
+            return await handler()
+        finally:
+            with anyio.CancelScope(shield=self.shielded):
+                self.started.set()
+                await self.permitted.wait()
+                self.finished.set()
+
+    async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[object]:
+        self.run_errors.append(error)
+        raise error
+
+
+async def _permit_cleanup(cleanup: _WrapRunCleanup) -> None:
+    await cleanup.started.wait()
+    # Leave the teardown a few loop cycles in which a cancelled scope could reach the cleanup.
+    for _ in range(3):
+        await anyio.lowlevel.checkpoint()
+    cleanup.permitted.set()
+
+
+@pytest.mark.parametrize('shielded', [True, False])
+async def test_iter_break_in_cancelled_scope_cancels_wrap_run_cleanup_like_the_scope(shielded: bool):
+    """Breaking out of `iter()` inside a cancelled `anyio` scope lets `wrap_run` cleanup finish only if it shields it."""
+    cleanup = _WrapRunCleanup(shielded=shielded)
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[cleanup])
+    # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(_permit_cleanup, cleanup)
+            with anyio.CancelScope() as scope:
+                async with agent.iter('go') as agent_run:
+                    async for _node in agent_run:
+                        scope.cancel()
+                        break
+
+    assert cleanup.finished.is_set() is shielded
+
+
+@pytest.mark.parametrize('shielded', [True, False])
+async def test_run_cancelled_by_anyio_scope_reaches_on_run_error_and_cancels_wrap_run_cleanup_like_the_scope(
+    shielded: bool,
+):
+    """An `anyio` scope cancelling `run()` reaches `on_run_error`, and lets `wrap_run` cleanup finish only if it shields it."""
+    request_started = anyio.Event()
+
+    async def block(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        request_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError  # pragma: no cover
+
+    cleanup = _WrapRunCleanup(shielded=shielded)
+    agent = Agent(FunctionModel(block), deps_type=type(None), capabilities=[cleanup])
+    scope = anyio.CancelScope()
+
+    async def cancel_during_request() -> None:
+        await request_started.wait()
+        scope.cancel()
+        await _permit_cleanup(cleanup)
+
+    # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(cancel_during_request)
+            with scope:
+                await agent.run('go')
+
+    assert scope.cancelled_caught
+    assert ([type(error) for error in cleanup.run_errors], cleanup.finished.is_set()) == (
+        [asyncio.CancelledError],
+        shielded,
+    )
+
+
+@pytest.mark.parametrize('shielded', [True, False])
+async def test_anyio_scope_cancelled_during_wrap_run_cleanup_cancels_it_like_the_scope(shielded: bool):
+    """An `anyio` scope cancelled while `wrap_run` cleans up after a completed run lets shielded cleanup finish only."""
+    cleanup = _WrapRunCleanup(shielded=shielded)
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[cleanup])
+    scope = anyio.CancelScope()
+
+    async def cancel_during_cleanup() -> None:
+        await cleanup.started.wait()
+        scope.cancel()
+        await _permit_cleanup(cleanup)
+
+    # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(cancel_during_cleanup)
+            with scope:
+                await agent.run('go')
+
+    assert scope.cancelled_caught
+    assert (cleanup.run_errors, cleanup.finished.is_set()) == ([], shielded)
+
+
+@dataclass
+class _CleanUpOnCancel(AbstractCapability[None]):
+    """Post-run work in `wrap_run` that waits until it's cancelled, then cleanup that finishes once `permitted` is set."""
+
+    shielded: bool = False
+    post_run_started: anyio.Event = field(default_factory=anyio.Event)
+    cleanup_started: anyio.Event = field(default_factory=anyio.Event)
+    permitted: anyio.Event = field(default_factory=anyio.Event)
+    finished: anyio.Event = field(default_factory=anyio.Event)
+    cancel_args: tuple[object, ...] | None = None
+
+    async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+        result = await handler()
+        try:
+            self.post_run_started.set()
+            await anyio.Event().wait()
+        except asyncio.CancelledError as exc:
+            self.cancel_args = exc.args
+            with anyio.CancelScope(shield=self.shielded):
+                self.cleanup_started.set()
+                await self.permitted.wait()
+                self.finished.set()
+            raise
+        return result  # pragma: no cover
+
+
+async def test_native_cancel_during_wrap_run_cleanup_is_delivered_once():
+    """A native cancellation landing while `wrap_run` cleans up reaches it once, with its message, so cleanup after
+    catching it finishes."""
+    cleanup = _CleanUpOnCancel()
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[cleanup])
+    task = asyncio.create_task(agent.run('go'))
+    await asyncio.wait_for(cleanup.post_run_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel('shutting down')
+    # Leave the teardown a few loop cycles in which a second cancellation could reach the cleanup.
+    for _ in range(3):
+        await anyio.lowlevel.checkpoint()
+    cleanup.permitted.set()
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    with pytest.raises(asyncio.CancelledError):
+        task.result()
+    assert (cleanup.cancel_args, cleanup.finished.is_set()) == (('shutting down',), True)
+
+
+@pytest.mark.parametrize('react', ['raise', 'return'])
+async def test_native_cancel_after_anyio_scope_cancel_reaches_shielded_wrap_run_cleanup(
+    react: Literal['raise', 'return'],
+):
+    """A native cancellation landing in `wrap_run`'s shielded cleanup after an `anyio` scope cancelled the run is passed
+    on: an error the cleanup raises escapes the scope, and so does the cancellation if the cleanup absorbs it."""
+    post_run_started = anyio.Event()
+    cleanup_started = anyio.Event()
+
+    class CleanupError(Exception):
+        pass
+
+    class CleanUpUnderShield(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+            result = await handler()
+            try:
+                post_run_started.set()
+                await anyio.Event().wait()
+                raise AssertionError  # pragma: no cover
+            except asyncio.CancelledError:
+                with anyio.CancelScope(shield=True):
+                    cleanup_started.set()
+                    try:
+                        await anyio.Event().wait()
+                    except asyncio.CancelledError:
+                        if react == 'raise':
+                            raise CleanupError from None
+                return result
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[CleanUpUnderShield()])
+    scope = anyio.CancelScope()
+
+    async def run_in_scope() -> None:
+        with scope:
+            await agent.run('go')
+
+    task = asyncio.create_task(run_in_scope())
+    await asyncio.wait_for(post_run_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    scope.cancel()
+    await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel('shutting down')
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    with pytest.raises(CleanupError if react == 'raise' else asyncio.CancelledError):
+        task.result()
+    assert not scope.cancelled_caught
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_native_cancel_after_hook_returned_reaches_caller_with_its_message(stream: bool):
+    """A native cancellation that lands after `wrap_run` or `wrap_model_request` returned, before the run resumes,
+    never reached the hook, so the caller gets it with its message, as from a plain `await`."""
+    returning = asyncio.Event()
+
+    class SignalOnRunReturn(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+            result = await handler()
+            returning.set()
+            return result
+
+    class SignalOnRequestReturn(AbstractCapability[None]):
+        async def wrap_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            response = await handler(request_context)
+            returning.set()
+            return response
+
+    capability = SignalOnRequestReturn() if stream else SignalOnRunReturn()
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[capability])
+
+    async def drive() -> None:
+        if stream:
+            async with agent.run_stream('go') as result:
+                await result.get_output()
+        else:
+            await agent.run('go')
+
+    task = asyncio.create_task(drive())
+    # Not `asyncio.wait_for`, which on Python 3.11 waits in a task of its own whose extra loop iterations let the run
+    # resume before the cancellation lands.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        await returning.wait()
+    task.cancel('shutting down')
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        task.result()
+    assert exc_info.value.args == ('shutting down',)
+
+
+@pytest.mark.parametrize('shielded', [True, False])
+async def test_anyio_scope_cancelled_after_native_cancel_cancels_wrap_run_cleanup_like_the_scope(shielded: bool):
+    """An `anyio` scope cancelled while `wrap_run` cleans up after a native cancellation still lets shielded cleanup
+    finish only, and the native cancellation still propagates past the scope."""
+    cleanup = _CleanUpOnCancel(shielded=shielded)
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[cleanup])
+    scope = anyio.CancelScope()
+
+    async def run_in_scope() -> None:
+        with scope:
+            await agent.run('go')
+
+    task = asyncio.create_task(run_in_scope())
+    await asyncio.wait_for(cleanup.post_run_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    await asyncio.wait_for(cleanup.cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    scope.cancel()
+    # Leave the teardown a few loop cycles in which the cancelled scope could reach the cleanup.
+    for _ in range(3):
+        await anyio.lowlevel.checkpoint()
+    cleanup.permitted.set()
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    assert (task.cancelled(), scope.cancelled_caught, cleanup.finished.is_set()) == (True, False, shielded)
+
+
+async def test_tool_timeout_reaches_nested_run_error_hook(monkeypatch: pytest.MonkeyPatch):
+    """A tool's `timeout=` that cancels a nested `run()` still reaches the nested agent's `@hooks.on.run_error`."""
+    # The nested model request moves the loop's clock past the deadline, so the deadline can't pass during the nested
+    # run's startup, before there's an `on_run_error` to reach, unless the startup stalls for the whole timeout.
+    timeout = READINESS_WAIT_TIMEOUT
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    clock_offset = 0
+    monkeypatch.setattr(loop, 'time', lambda: real_time() + clock_offset)
+
+    hooks = Hooks[None]()
+    run_errors: list[BaseException] = []
+
+    @hooks.on.run_error
+    async def record_error(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[object]:
+        run_errors.append(error)
+        raise error
+
+    async def block(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal clock_offset
+        clock_offset = timeout
+        await asyncio.Event().wait()
+        raise AssertionError  # pragma: no cover
+
+    sub_agent = Agent(FunctionModel(block), deps_type=type(None), capabilities=[hooks])
+
+    def delegate_once(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('delegate', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(delegate_once))
+
+    @agent.tool_plain(timeout=timeout)
+    async def delegate() -> str:
+        result = await sub_agent.run('go', deps=None)
+        return result.output  # pragma: no cover
+
+    async with asyncio.timeout(2 * READINESS_WAIT_TIMEOUT):
+        result = await agent.run('go')
+
+    assert result.output == 'done'
+    assert [type(error) for error in run_errors] == [asyncio.CancelledError]
+
+
+async def test_iter_break_teardown_propagates_external_cancellation():
+    """Cancelling the task while `wrap_run` cleans up after a `break` out of `iter()` must still cancel it."""
+    cleanup_started = anyio.Event()
+
+    class PendingCleanup(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+            try:
+                return await handler()
+            finally:
+                cleanup_started.set()
+                await anyio.Event().wait()
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[PendingCleanup()])
+
+    async def drive() -> None:
+        async with agent.iter('go') as agent_run:
+            async for _node in agent_run:
+                break
+
+    task = asyncio.create_task(drive())
+    await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    with pytest.raises(asyncio.CancelledError):
+        task.result()
+
+
+@pytest.mark.usefixtures('young_gc')
+async def test_iter_early_exit_discards_wrap_run_cleanup_failure():
+    """A failure in `wrap_run` cleanup after leaving `iter()` early has no result to surface on, so it's discarded."""
+
+    class FailingCleanup(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+            try:
+                return await handler()
+            finally:
+                raise RuntimeError('cleanup failed')
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[FailingCleanup()])
+    async with agent.iter('go') as agent_run:
+        await anext(agent_run)
+
+    assert agent_run.result is None
+    # A task failure no one retrieved is reported to the event loop's exception handler when the task is collected, and
+    # the anyio pytest runner's handler re-raises it after the test.
+    gc.collect()
 
 
 async def test_cancel_after_completion_is_a_noop():
@@ -1985,26 +2702,122 @@ async def test_cancel_outside_a_run_raises_user_error():
         ctx.cancel()
 
 
-@pytest.mark.skipif(sys.version_info >= (3, 11), reason='pins the documented degraded behavior on Python 3.10')
-async def test_absorbed_cancellation_completes_on_py310():  # pragma: lax no cover
-    """On Python 3.10 there is no `Task.cancelling()`, so an absorbed external cancellation
-    cannot be detected: the run completes normally. This pins the documented best-effort
-    behavior; it flips to `CancelledError` on 3.11+."""
-    in_flight = asyncio.Event()
+@dataclass
+class _RecordWrapRun(AbstractCapability[None]):
+    """Records what `wrap_run`'s `handler()` raised, and when its cleanup finishes."""
 
-    async def handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
+    events: list[str]
+
+    async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         try:
-            async for _event in events:
-                in_flight.set()
-                await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            pass
+            return await handler()
+        except BaseException as exc:
+            self.events.append(f'wrap_run: {type(exc).__name__}')
+            raise
+        finally:
+            await asyncio.sleep(0)
+            self.events.append('wrap_run: cleanup done')
 
-    agent = Agent(TestModel())
 
-    task = asyncio.create_task(agent.run('hello', event_stream_handler=handler))
-    await asyncio.wait_for(in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
+async def test_closing_generator_that_owns_iter_run_drains_wrap_run():
+    """Closing an async generator suspended inside `agent.iter()` unwinds the run like a `break`: `wrap_run` is
+    cancelled and its cleanup finishes before `aclose()` returns, and the run is not finalized.
 
-    task.cancel()
-    result = await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
-    assert result.output == 'success (no tool calls)'
+    https://github.com/pydantic/pydantic-ai/issues/10249
+    """
+
+    async def stream_hello(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+
+    events: list[str] = []
+    agent = Agent(
+        FunctionModel(stream_function=stream_hello), deps_type=type(None), capabilities=[_RecordWrapRun(events)]
+    )
+    runs: list[AgentRun[None, str]] = []
+
+    async def first_stream_event() -> AsyncGenerator[AgentStreamEvent]:
+        async with agent.iter('Hello') as run:
+            runs.append(run)
+            user_prompt = run.next_node
+            assert Agent.is_user_prompt_node(user_prompt)
+            node = await run.next(user_prompt)
+            assert Agent.is_model_request_node(node)
+            async with node.stream(run.ctx) as stream:
+                yield await anext(aiter(stream))
+
+    generator = first_stream_event()
+    assert isinstance(await anext(generator), PartStartEvent)
+    await generator.aclose()
+    events.append('closed')
+
+    assert events == ['wrap_run: CancelledError', 'wrap_run: cleanup done', 'closed']
+    assert runs[0].result is None
+
+
+async def test_generator_exit_raised_in_iter_body_propagates_unchanged():
+    """A `GeneratorExit` raised inside `agent.iter()` propagates as raised, after `wrap_run` is drained."""
+    events: list[str] = []
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[_RecordWrapRun(events)])
+    runs: list[AgentRun[None, str]] = []
+    generator_exit = GeneratorExit('closing')
+
+    with pytest.raises(GeneratorExit) as exc_info:
+        async with agent.iter('Hello') as run:
+            runs.append(run)
+            raise generator_exit
+
+    assert exc_info.value is generator_exit
+    assert events == ['wrap_run: CancelledError', 'wrap_run: cleanup done']
+    assert runs[0].result is None
+
+
+async def test_handler_called_again_after_shutdown_cancel_skips_on_run_error():
+    """A `wrap_run` that calls `handler()` again after the shutdown cancellation gets the `GeneratorExit` back,
+    and `on_run_error` never sees it."""
+    events: list[str] = []
+
+    class CallHandlerAgain(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+            try:
+                return await handler()
+            except asyncio.CancelledError:
+                try:
+                    return await handler()
+                except GeneratorExit:
+                    events.append('handler: GeneratorExit')
+                    raise
+
+        async def on_run_error(  # pragma: no cover
+            self, ctx: RunContext[None], *, error: BaseException
+        ) -> AgentRunResult[Any]:
+            events.append('on_run_error')
+            raise error
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[CallHandlerAgain()])
+    generator_exit = GeneratorExit('closing')
+
+    with pytest.raises(GeneratorExit) as exc_info:
+        async with agent.iter('Hello'):
+            raise generator_exit
+
+    assert exc_info.value is generator_exit
+    assert events == ['handler: GeneratorExit']
+
+
+def test_keyboard_interrupt_raised_in_iter_body_propagates_from_the_caller():
+    """A `KeyboardInterrupt` raised inside `agent.iter()` propagates from the task driving the run.
+
+    `wrap_run` is cancelled rather than handed the interrupt: re-raised in its own task, asyncio would raise it out of
+    the event loop while the caller is still unwinding.
+    """
+    events: list[str] = []
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[_RecordWrapRun(events)])
+
+    async def interrupted_run() -> None:
+        async with agent.iter('Hello'):
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        asyncio.run(interrupted_run())
+
+    assert events == ['wrap_run: CancelledError', 'wrap_run: cleanup done']

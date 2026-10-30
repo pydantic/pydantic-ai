@@ -19,16 +19,26 @@ every probe aborts before a response. For the same reason it doesn't use the `re
 that records only path, body and headers on a live transport, while `timeout` is observable only in
 `Request.extensions` and the probe needs a `MockTransport` to fail the call without a network.
 
-`tool_choice` and `thinking` are excluded and stay hand-maintained, for different reasons:
+`citations`, `tool_choice`, and `thinking` are excluded and stay hand-maintained, for different reasons:
+
+- `citations` changes only requests that contain an inline document or Web Fetch tool, while this harness
+  deliberately uses one plain text request for every model. The provider-specific tests assert the request shapes
+  for Anthropic, Bedrock, and xAI.
 
 - `tool_choice` reaches every adapter through `resolve_tool_choice`, and the adapters that cannot
   express a named subset honor it by *filtering the tool list* instead (Cohere, Mistral). A payload
   diff therefore cannot tell "sent `tool_choice`" from "dropped tools", and no single probe value
   stands in for a field whose value space spans a scalar, a list of names, and `ToolOrOutput`.
 - `thinking` is gated per model *name*, not per model class: `Model.prepare_request` only forwards it
-  when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model (Cohere,
-  Mistral's magistral) supports it while sending nothing at all. "Payload unchanged" is therefore not
+  when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model with no
+  effort setting (Mistral's dated magistral ids) supports it while sending nothing at all. "Payload unchanged" is therefore not
   evidence of non-support, which is exactly what this harness reads it as.
+- `cache` is excluded for the same reason as `thinking`: it is gated per model name via
+  `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
+  which warns instead) supports it while sending nothing at all.
+
+`max_retries` leaves the request it governs unchanged and changes only how many times it is sent, so it
+has its own probe at the end of this file, which answers with a retryable error and counts the attempts.
 
 That per-model-name gating bounds this file generally: each class is probed at ONE representative
 model, chosen to exercise the class's full capability, so an entry whose support varies by model
@@ -46,18 +56,22 @@ import pkgutil
 import re
 import textwrap
 import types
+import warnings
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, cast
+from pathlib import Path
+from typing import Any, Literal, cast
 
 import httpx
 import httpx2
 import pytest
 
-from pydantic_ai import models
+from pydantic_ai import UnsupportedSettingWarning, models
 from pydantic_ai.direct import model_request
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models.system_one import SystemOneModel
+from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -71,6 +85,7 @@ with try_import() as openai_available:
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.snowflake import SnowflakeModel
     from pydantic_ai.models.zai import ZaiModel
@@ -80,16 +95,21 @@ with try_import() as openai_available:
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTCredentials, OpenAIChatGPTProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.zai import ZaiProvider
 
 with try_import() as anthropic_available:
+    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicVertex
+
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as google_available:
+    from google.genai.types import HttpRetryOptions
+
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -98,6 +118,9 @@ with try_import() as groq_available:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as mistral_available:
+    from mistralai.client import Mistral
+    from mistralai.client.utils import BackoffStrategy, RetryConfig as MistralRetryConfig
+
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.providers.mistral import MistralProvider
 
@@ -130,11 +153,21 @@ with try_import() as mcp_available:
 
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
-pytestmark = pytest.mark.anyio
+with try_import() as typesafe_available:
+    from pydantic_ai.models.typesafe import TypeSafeModel
+    from pydantic_ai.providers.typesafe import TypeSafeProvider
 
 
-HAND_MAINTAINED = frozenset({'tool_choice', 'thinking'})
+WARNED_SETTINGS = frozenset(
+    {'timeout', 'max_retries', 'stop_sequences', 'parallel_tool_calls', 'extra_headers', 'extra_body'}
+)
+"""The settings a model warns with `UnsupportedSettingWarning` about ignoring, rather than ignoring silently."""
+
+HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
+
+ATTEMPT_COUNTED = frozenset({'max_retries'})
+"""Fields that change how many times a request is sent rather than what it carries; see `RETRY_CASES`."""
 
 PROBE_VALUES: dict[str, tuple[object, ...]] = {
     'max_tokens': (1234567,),
@@ -142,6 +175,7 @@ PROBE_VALUES: dict[str, tuple[object, ...]] = {
     'top_p': (0.234567,),
     'top_k': (4242,),
     'timeout': (987.654,),
+    'request_timeout': (876.543,),
     'parallel_tool_calls': (False, True),
     'seed': (424242,),
     'presence_penalty': (0.345678,),
@@ -258,17 +292,68 @@ class Recorder:
         return self.payloads[0] if self.payloads else None
 
 
-async def run_probe_request(model: Model, settings: ModelSettings) -> None:
+@dataclass(frozen=True)
+class Observed:
+    """What a probed model says about the settings it ignores, next to what its wire shows."""
+
+    unsupported: frozenset[str]
+    """The settings the model declares it ignores."""
+    warned: frozenset[str]
+    """The settings an `UnsupportedSettingWarning` named while the request was made."""
+    warning_messages: tuple[str, ...]
+    """Every warning message recorded while the request was made.
+
+    Warnings other than `UnsupportedSettingWarning` are recorded only when the caller's filters let them through: the
+    suite's `error` filter makes one abort the request instead.
+    """
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    payload: str | None
+    """The canonical payload the model sent, or `None` when it sent nothing."""
+    observed: Observed
+
+
+_WARNED_SETTING = re.compile(r'^The `(\w+)` setting is not supported')
+
+
+async def _observe(model: Model, request: Awaitable[object]) -> Observed:
+    """Await `request`, swallowing its inevitable failure, and record the warnings it emits.
+
+    Recording `UnsupportedSettingWarning`s instead of letting the suite's `filterwarnings = error` raise them lets the
+    request still reach the wire, so a probe sees both what the model sends and what it warns about.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always', UnsupportedSettingWarning)
+        try:
+            await request
+        except Exception:
+            pass
+    warned = {
+        match.group(1)
+        for warning in caught
+        if issubclass(warning.category, UnsupportedSettingWarning)
+        and (match := _WARNED_SETTING.match(str(warning.message)))
+    }
+    return Observed(
+        unsupported=model._unsupported_settings(),  # pyright: ignore[reportPrivateUsage]
+        warned=frozenset(warned),
+        warning_messages=tuple(str(warning.message) for warning in caught),
+    )
+
+
+async def run_probe_request(model: Model, settings: ModelSettings) -> Observed:
     """Make the one request the recorder is there to capture, swallowing its inevitable failure."""
-    try:
-        await model_request(
+    return await _observe(
+        model,
+        model_request(
             model,
             [ModelRequest.user_text_prompt('probe')],
             model_settings=settings,
             model_request_parameters=ModelRequestParameters(function_tools=[PROBE_TOOL]),
-        )
-    except Exception:
-        pass
+        ),
+    )
 
 
 HTTP_VOLATILE = frozenset(
@@ -294,8 +379,8 @@ BEDROCK_VOLATILE = HTTP_VOLATILE | {
     'amz-sdk-request',
 }
 
-Probe = Callable[[ModelSettings], Awaitable[str | None]]
-"""Takes the settings to probe with, returns the canonical payload the model sent (or `None`)."""
+Probe = Callable[[ModelSettings], Awaitable[ProbeResult]]
+"""Takes the settings to probe with, returns the canonical payload the model sent (or `None`) and what it declared."""
 
 
 def _request_payload(
@@ -327,7 +412,7 @@ def _request_payload(
 def http_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
     """Probe any model whose provider takes the preferred HTTPX2 `http_client`, recording the whole request."""
 
-    async def probe(settings: ModelSettings) -> str | None:
+    async def probe(settings: ModelSettings) -> ProbeResult:
         recorder = Recorder()
 
         def handle(request: httpx2.Request) -> httpx2.Response:
@@ -339,10 +424,10 @@ def http_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
 
         client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
         try:
-            await run_probe_request(build(client), settings)
+            observed = await run_probe_request(build(client), settings)
         finally:
             await client.aclose()
-        return recorder.first
+        return ProbeResult(recorder.first, observed)
 
     return probe
 
@@ -354,7 +439,7 @@ def legacy_http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
     the migration warnings the migrated providers raise applies here.
     """
 
-    async def probe(settings: ModelSettings) -> str | None:
+    async def probe(settings: ModelSettings) -> ProbeResult:
         recorder = Recorder()
 
         def handle(request: httpx.Request) -> httpx.Response:
@@ -366,58 +451,77 @@ def legacy_http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         try:
-            await run_probe_request(build(client), settings)
+            observed = await run_probe_request(build(client), settings)
         finally:
             await client.aclose()
-        return recorder.first
+        return ProbeResult(recorder.first, observed)
 
     return probe
 
 
-async def bedrock_probe(settings: ModelSettings) -> str | None:
+def botocore_probe(build: Callable[[], BedrockConverseModel]) -> Probe:
     """Probe Bedrock through botocore's `before-send` event — there is no httpx client to inject."""
-    recorder = Recorder()
-    model = BedrockConverseModel(
+
+    async def probe(settings: ModelSettings) -> ProbeResult:
+        recorder = Recorder()
+        model = build()
+
+        def handle(request: Any, **_: Any) -> None:
+            body = request.body
+            recorder.record(
+                {
+                    'body': body.decode('utf8', 'replace') if isinstance(body, bytes) else str(body),
+                    'headers': sorted(
+                        f'{k}:{v}' for k, v in request.headers.items() if k.lower() not in BEDROCK_VOLATILE
+                    ),
+                }
+            )
+            raise ProbeAborted
+
+        for operation in ('Converse', 'ConverseStream'):
+            model.client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', handle)
+        observed = await run_probe_request(model, settings)
+        return ProbeResult(recorder.first, observed)
+
+    return probe
+
+
+bedrock_probe = botocore_probe(
+    lambda: BedrockConverseModel(
         'anthropic.claude-sonnet-4-5-20250929-v1:0',
         provider=BedrockProvider(aws_access_key_id=PROBE_KEY, aws_secret_access_key=PROBE_KEY, region_name='us-east-1'),
     )
-
-    def handle(request: Any, **_: Any) -> None:
-        body = request.body
-        recorder.record(
-            {
-                'body': body.decode('utf8', 'replace') if isinstance(body, bytes) else str(body),
-                'headers': sorted(f'{k}:{v}' for k, v in request.headers.items() if k.lower() not in BEDROCK_VOLATILE),
-            }
-        )
-        raise ProbeAborted
-
-    for operation in ('Converse', 'ConverseStream'):
-        model.client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', handle)
-    await run_probe_request(model, settings)
-    return recorder.first
+)
 
 
-async def huggingface_probe(settings: ModelSettings) -> str | None:
+async def huggingface_probe(settings: ModelSettings) -> ProbeResult:
     """Probe HuggingFace at the SDK call — its provider rejects `http_client` outright."""
     recorder = MockHuggingFace(completions=[ProbeAborted()])
     model = HuggingFaceModel(
         'probe-model',
         provider=HuggingFaceProvider(api_key=PROBE_KEY, hf_client=cast(AsyncInferenceClient, recorder)),
     )
-    await run_probe_request(model, settings)
-    return canonical(recorder.chat_completion_kwargs[0]) if recorder.chat_completion_kwargs else None
+    observed = await run_probe_request(model, settings)
+    return ProbeResult(
+        canonical(recorder.chat_completion_kwargs[0]) if recorder.chat_completion_kwargs else None, observed
+    )
 
 
-async def xai_probe(settings: ModelSettings) -> str | None:
+def xai_sdk_probe(build: Callable[[AsyncXaiClient], Model]) -> Probe:
     """Probe xAI at the SDK call — its transport is gRPC, so there is no HTTP request to read."""
-    recorder = MockXai(responses=[ProbeAborted()])
-    model = XaiModel('grok-4', provider=XaiProvider(xai_client=cast(AsyncXaiClient, recorder)))
-    await run_probe_request(model, settings)
-    return canonical(recorder.chat_create_kwargs[0]) if recorder.chat_create_kwargs else None
+
+    async def probe(settings: ModelSettings) -> ProbeResult:
+        recorder = MockXai(responses=[ProbeAborted()])
+        observed = await run_probe_request(build(cast(AsyncXaiClient, recorder)), settings)
+        return ProbeResult(canonical(recorder.chat_create_kwargs[0]) if recorder.chat_create_kwargs else None, observed)
+
+    return probe
 
 
-async def mcp_sampling_probe(settings: ModelSettings) -> str | None:
+xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4', provider=XaiProvider(xai_client=client)))
+
+
+async def mcp_sampling_probe(settings: ModelSettings) -> ProbeResult:
     """Probe MCP sampling at the session call — the payload is an MCP message, not an HTTP request."""
     recorder = Recorder()
 
@@ -427,8 +531,53 @@ async def mcp_sampling_probe(settings: ModelSettings) -> str | None:
             raise ProbeAborted
 
     model = MCPSamplingModel(session=cast(ServerSession, _Session()))
-    await run_probe_request(model, settings)
-    return recorder.first
+    observed = await run_probe_request(model, settings)
+    return ProbeResult(recorder.first, observed)
+
+
+def decision_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
+    """Probe a decision model with the one request shape it accepts.
+
+    A decision model answers an output tool and refuses function tools before any request is sent, so the shared
+    `run_probe_request`, which carries `PROBE_TOOL` and no output tool, would never reach the wire.
+    """
+
+    async def probe(settings: ModelSettings) -> ProbeResult:
+        recorder = Recorder()
+
+        def handle(request: httpx2.Request) -> httpx2.Response:
+            request.read()
+            recorder.record(
+                _request_payload(request.content, request.headers.items(), request.extensions.get('timeout'))
+            )
+            return httpx2.Response(400, json={'error': {'message': 'probe', 'type': 'probe'}})
+
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+        try:
+            observed = await run_decision_probe_request(build(client), settings)
+        finally:
+            await client.aclose()
+        return ProbeResult(recorder.first, observed)
+
+    return probe
+
+
+async def run_decision_probe_request(model: Model, settings: ModelSettings) -> Observed:
+    """Make a decision model's one request, swallowing its inevitable failure like `run_probe_request`."""
+    output_tool = ToolDefinition(
+        name='final_result', parameters_json_schema={'type': 'object', 'properties': {'ok': {'type': 'boolean'}}}
+    )
+    return await _observe(
+        model,
+        model_request(
+            model,
+            [ModelRequest.user_text_prompt('probe')],
+            model_settings=settings,
+            model_request_parameters=ModelRequestParameters(
+                output_mode='tool', output_tools=[output_tool], allow_text_output=False
+            ),
+        ),
+    )
 
 
 def _needs(available: Callable[[], bool], package: str) -> tuple[pytest.MarkDecorator, ...]:
@@ -449,6 +598,8 @@ class Case:
     names: tuple[str, ...]
     probe: Probe
     marks: tuple[pytest.MarkDecorator, ...] = ()
+    holds_without_sending: frozenset[str] = frozenset()
+    """Settings the model doesn't send but doesn't declare it ignores either, because its output can't break them."""
 
 
 def _openai_chat(client: httpx2.AsyncClient) -> Model:
@@ -457,6 +608,18 @@ def _openai_chat(client: httpx2.AsyncClient) -> Model:
 
 def _openai_responses(client: httpx2.AsyncClient) -> Model:
     return OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
+
+
+def _openai_chatgpt(client: httpx2.AsyncClient) -> Model:
+    return OpenAIResponsesModel(
+        'gpt-6.1-sol',
+        provider=OpenAIChatGPTProvider(
+            credentials=OpenAIChatGPTCredentials(
+                client_id='probe', access_token=PROBE_KEY, refresh_token=PROBE_KEY, scope='chatgpt.tokens.use.direct'
+            ),
+            http_client=client,
+        ),
+    )
 
 
 def _openai_codex(client: httpx2.AsyncClient) -> Model:
@@ -538,6 +701,23 @@ def _google(client: httpx2.AsyncClient) -> Model:
     return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _typesafe(client: httpx2.AsyncClient) -> Model:
+    return TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key=PROBE_KEY, http_client=client))
+
+
+def _system_one(client: httpx2.AsyncClient) -> Model:
+    return SystemOneModel(
+        'clm-latest', provider=SystemOneProvider(base_url='http://localhost:8700', http_client=client)
+    )
+
+
+def _openai_decisions(client: httpx2.AsyncClient) -> Model:
+    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
+
+
+DECISION_HOLDS_WITHOUT_SENDING = frozenset({'max_tokens', 'stop_sequences', 'parallel_tool_calls'})
+"""A decision model writes no text and makes at most one tool call, so these hold whether or not they're sent."""
+
 CASES = [
     Case(
         'OpenAIChatModel',
@@ -552,6 +732,13 @@ CASES = [
         'OpenAICodexModel',
         ('OpenAI Codex',),
         http_probe(_openai_codex),
+        _needs(openai_available, 'openai') + (pytest.mark.filterwarnings('ignore:Sampling parameters.*:UserWarning'),),
+    ),
+    # ChatGPT plan usage runs on `OpenAIResponsesModel`, so it is probed as its own case.
+    Case(
+        'OpenAIResponsesModel (ChatGPT plan usage)',
+        ('OpenAI ChatGPT',),
+        http_probe(_openai_chatgpt),
         _needs(openai_available, 'openai') + (pytest.mark.filterwarnings('ignore:Sampling parameters.*:UserWarning'),),
     ),
     Case('CerebrasModel', ('Cerebras',), http_probe(_cerebras), _needs(openai_available, 'openai')),
@@ -582,6 +769,21 @@ CASES = [
     Case('HuggingFaceModel', ('HuggingFace',), huggingface_probe, _needs(huggingface_available, 'huggingface')),
     Case('XaiModel', ('xAI',), xai_probe, _needs(xai_available, 'xai')),
     Case('MCPSamplingModel', ('MCP Sampling',), mcp_sampling_probe, _needs(mcp_available, 'mcp')),
+    Case(
+        'TypeSafeModel',
+        ('TypeSafe',),
+        decision_probe(_typesafe),
+        _needs(typesafe_available, 'typesafe-sdk'),
+        DECISION_HOLDS_WITHOUT_SENDING,
+    ),
+    Case('SystemOneModel', ('System One',), decision_probe(_system_one), (), DECISION_HOLDS_WITHOUT_SENDING),
+    Case(
+        'OpenAIDecisionsModel',
+        ('OpenAI Decisions',),
+        decision_probe(_openai_decisions),
+        _needs(openai_available, 'openai'),
+        DECISION_HOLDS_WITHOUT_SENDING,
+    ),
 ]
 
 
@@ -592,35 +794,38 @@ DOCUMENTED_NAMES = {name for names in SUPPORTED_BY_LISTS.values() for name in na
 PROBED_NAMES = {name for case in CASES for name in case.names}
 
 
-async def _forwarded_fields(case: Case, baseline: str) -> set[str]:
-    """The fields whose presence changes what `case` puts on the wire."""
+async def _forwarded_fields(case: Case, baseline: str) -> tuple[set[str], set[str]]:
+    """The fields whose presence changes what `case` puts on the wire, and those it warned about ignoring."""
     forwarded: set[str] = set()
+    warned: set[str] = set()
     for field_name, values in PROBE_VALUES.items():
         for value in values:
             settings: ModelSettings = {field_name: value}  # pyright: ignore[reportAssignmentType]
-            payload = await case.probe(settings)
+            result = await case.probe(settings)
             # A probe that recorded nothing means the request died before the recorder ran; scoring
             # that as "not forwarded" would let a harness failure quietly agree with a stale list.
-            assert payload is not None, f'{case.id} sent no request while probing {field_name}'
-            if payload != baseline:
+            assert result.payload is not None, f'{case.id} sent no request while probing {field_name}'
+            warned |= result.observed.warned
+            if result.payload != baseline:
                 forwarded.add(field_name)
                 break
-    return forwarded
+    return forwarded, warned
 
 
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in CASES])
 async def test_supported_by_lists_match_the_wire(case: Case, allow_model_requests: None):
     """Every `Supported by:` list names exactly the models that send the field."""
-    baseline = await case.probe({})
+    baseline_result = await case.probe({})
+    baseline = baseline_result.payload
     assert baseline is not None, f'{case.id} sent nothing for the probe to record'
     # Without this, a request that varies between identical calls makes every field differ from the
     # baseline, and the whole matrix reads as "forwarded" instead of failing.
-    assert await case.probe({}) == baseline, (
+    assert (await case.probe({})).payload == baseline, (
         f'{case.id} builds a different request for identical settings, so the probe cannot separate a '
         f'forwarded field from noise'
     )
 
-    forwarded = await _forwarded_fields(case, baseline)
+    forwarded, warned = await _forwarded_fields(case, baseline)
     documented = {name for name in PROBE_VALUES if set(SUPPORTED_BY_LISTS[name]) & set(case.names)}
 
     assert forwarded == documented, (
@@ -629,10 +834,26 @@ async def test_supported_by_lists_match_the_wire(case: Case, allow_model_request
         f'  does not send, but {case.names} is listed on: {sorted(documented - forwarded)}'
     )
 
+    # The model's own declaration of what it ignores, which drives `UnsupportedSettingWarning`, has to agree with
+    # the lists, and so with the wire. `max_retries` is pinned to the wire by `RETRY_CASES` instead.
+    undocumented = {
+        name
+        for name in [*PROBE_VALUES, *ATTEMPT_COUNTED]
+        if name != 'request_timeout' and not set(SUPPORTED_BY_LISTS[name]) & set(case.names)
+    }
+    unsupported = baseline_result.observed.unsupported
+    assert unsupported == undocumented - case.holds_without_sending, (
+        f'{case.id} declares it ignores {sorted(unsupported)}, but its `Supported by:` lists leave out '
+        f'{sorted(undocumented - case.holds_without_sending)}'
+    )
+
+    warned |= (await case.probe({'max_retries': 0})).observed.warned
+    assert warned == unsupported & WARNED_SETTINGS
+
 
 def test_hand_maintained_fields_are_the_only_unprobed_ones():
     """Every field is either probed above or explicitly hand-maintained — none silently unchecked."""
-    assert set(SUPPORTED_BY_LISTS) == set(PROBE_VALUES) | HAND_MAINTAINED
+    assert set(SUPPORTED_BY_LISTS) == set(PROBE_VALUES) | HAND_MAINTAINED | ATTEMPT_COUNTED
 
 
 def test_every_documented_name_is_probed():
@@ -643,7 +864,15 @@ def test_every_documented_name_is_probed():
 
 
 _NOT_API_BACKED = frozenset(
-    {'WrapperModel', 'InstrumentedModel', 'ConcurrencyLimitedModel', 'FallbackModel', 'FunctionModel', 'TestModel'}
+    {
+        'WrapperModel',
+        'InstrumentedModel',
+        'ConcurrencyLimitedModel',
+        'FallbackModel',
+        'FunctionModel',
+        'TestModel',
+        'BatchedModel',
+    }
 )
 """Model classes that wrap or stand in for another model, so they have no wire of their own to probe."""
 
@@ -665,12 +894,12 @@ def test_every_api_backed_model_class_is_probed():
         except ImportError:  # pragma: lax no cover
             continue  # an optional provider SDK isn't installed; its classes can't be probed either
         for name, obj in vars(module).items():
-            # A subscripted generic (`dict[str, Any]`) passes `isinstance(_, type)` on Python 3.10 and
-            # then makes `issubclass` raise, so both it and anything merely imported into the module
-            # are screened out before the base-class question is asked.
             if not isinstance(obj, type) or isinstance(obj, types.GenericAlias):
                 continue
-            if obj.__module__ == module_info.name and issubclass(obj, Model):
+            if obj.__module__ != module_info.name or not issubclass(obj, Model):
+                continue
+            # An abstract base such as `DecisionModel` has no wire of its own; its concrete subclasses are probed.
+            if not inspect.isabstract(cast('type[Model[Any]]', obj)):
                 discovered.add(name)
 
     unprobed = discovered - _NOT_API_BACKED - {case.id for case in CASES}
@@ -693,3 +922,259 @@ def test_no_caveat_describes_a_different_setting():
         if referenced in fields and referenced != field_name
     }
     assert not misplaced, f'caveats describing another setting: {sorted(misplaced)}'
+
+
+# `max_retries` leaves every request it governs byte-identical, so the payload diff above can't see it.
+# Instead, each model below is answered with a retryable error, and the probe counts how many times the
+# SDK sends the request: with no setting, with `max_retries=0`, and with `max_retries=1`.
+
+RETRYABLE_STATUS = 503
+RETRY_NOW_HEADERS = {'retry-after-ms': '1', 'retry-after': '0.001'}
+"""Ask for a 1ms wait, so the SDKs that honor these headers retry without a real backoff."""
+
+
+async def _count_attempts(
+    build: Callable[[Any], Model],
+    settings: ModelSettings,
+    *,
+    legacy_http: bool = False,
+    decision: bool = False,
+    status: int = RETRYABLE_STATUS,
+) -> int:
+    """How many times the model's SDK sends one request that keeps failing with `status`."""
+    attempts = 0
+
+    def handle(request: Any) -> Any:
+        nonlocal attempts
+        attempts += 1
+        response_class = httpx.Response if legacy_http else httpx2.Response
+        return response_class(status, json={'error': {'message': 'probe', 'type': 'probe'}}, headers=RETRY_NOW_HEADERS)
+
+    client: Any = (
+        httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        if legacy_http
+        else httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+    )
+    try:
+        model = build(client)
+        await (run_decision_probe_request if decision else run_probe_request)(model, settings)
+    finally:
+        await client.aclose()
+    return attempts
+
+
+def _google_with_client_retries(client: httpx2.AsyncClient) -> Model:
+    """Google makes no retries by default; give the provider some, retrying a status Google wouldn't by itself."""
+    retry_options = HttpRetryOptions(attempts=4, initial_delay=0.001, max_delay=0.001, http_status_codes=[418])
+    return GoogleModel(
+        'gemini-2.5-flash',
+        provider=GoogleProvider(api_key=PROBE_KEY, http_client=client, retry_options=retry_options),
+    )
+
+
+def _mistral_with_client_retries(client: httpx2.AsyncClient) -> Model:
+    """Mistral makes no retries by default; give the client a `retry_config` bounded by elapsed time."""
+    retry_config = MistralRetryConfig('backoff', BackoffStrategy(1, 1, 1.0, 50), retry_connection_errors=True)
+    mistral = Mistral(api_key=PROBE_KEY, async_client=client, retry_config=retry_config)
+    return MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mistral))
+
+
+def _anthropic_bedrock(client: httpx2.AsyncClient) -> Model:
+    bedrock = AsyncAnthropicBedrock(
+        aws_access_key=PROBE_KEY, aws_secret_key=PROBE_KEY, aws_region='us-east-1', http_client=client
+    )
+    return AnthropicModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=AnthropicProvider(anthropic_client=bedrock)
+    )
+
+
+def _anthropic_vertex(client: httpx2.AsyncClient) -> Model:
+    vertex = AsyncAnthropicVertex(project_id='probe', region='us-east5', access_token=PROBE_KEY, http_client=client)
+    return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=vertex))
+
+
+Attempts = int | Literal['several']
+"""A count, or `'several'` for a retry config bounded by elapsed time rather than by count."""
+
+
+def _no_backoff(response: object, retries: int) -> float:
+    return 0
+
+
+@dataclass(frozen=True)
+class RetryCase:
+    """One model, the `Supported by:` names that cover it, and the attempts it makes with each `max_retries`."""
+
+    id: str
+    names: tuple[str, ...]
+    build: Callable[[Any], Model]
+    attempts: tuple[Attempts, Attempts, Attempts]
+    """Attempts with no setting, with `max_retries=0`, and with `max_retries=1`."""
+    legacy_http: bool = False
+    decision: bool = False
+    status: int = RETRYABLE_STATUS
+    instant_backoff: tuple[tuple[str, object], ...] = ()
+    """SDK internals to patch where the SDK would otherwise wait a second or more between attempts."""
+    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+    @property
+    def forwards_max_retries(self) -> bool:
+        default, *overridden = self.attempts
+        return any(attempts != default for attempts in overridden)
+
+
+_OPENAI = _needs(openai_available, 'openai')
+RETRY_CASES = [
+    RetryCase('OpenAIChatModel', ('OpenAI',), _openai_chat, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OpenAIResponsesModel', ('OpenAI',), _openai_responses, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OpenAICodexModel', ('OpenAI Codex',), _openai_codex, (3, 1, 2), marks=_OPENAI),
+    RetryCase(
+        'OpenAIResponsesModel (ChatGPT plan usage)', ('OpenAI ChatGPT',), _openai_chatgpt, (3, 1, 2), marks=_OPENAI
+    ),
+    RetryCase('CerebrasModel', ('Cerebras',), _cerebras, (3, 1, 2), marks=_OPENAI),
+    RetryCase('CrusoeModel', ('Crusoe',), _crusoe, (3, 1, 2), marks=_OPENAI),
+    RetryCase('GitHubCopilotModel', ('GitHub Copilot',), _github_copilot, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OllamaModel', ('Ollama',), _ollama, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OpenRouterModel', ('OpenRouter',), _openrouter, (3, 1, 2), marks=_OPENAI),
+    RetryCase('SnowflakeModel', ('Snowflake',), _snowflake, (3, 1, 2), marks=_OPENAI),
+    RetryCase('ZaiModel', ('Z.AI',), _zai, (3, 1, 2), marks=_OPENAI),
+    RetryCase('BedrockMantleChatModel', ('Bedrock Mantle',), _bedrock_mantle_chat, (3, 1, 2), marks=_OPENAI),
+    RetryCase('BedrockMantleResponsesModel', ('Bedrock Mantle',), _bedrock_mantle_responses, (3, 1, 2), marks=_OPENAI),
+    RetryCase(
+        'OpenAIDecisionsModel', ('OpenAI Decisions',), _openai_decisions, (3, 1, 2), decision=True, marks=_OPENAI
+    ),
+    RetryCase('AnthropicModel', ('Anthropic',), _anthropic, (3, 1, 2), marks=_needs(anthropic_available, 'anthropic')),
+    # A copy of `AsyncAnthropicBedrock` builds its own HTTP client unless handed this one, which would send the
+    # retries past the mock transport; `AsyncAnthropicVertex` has to keep its region and project.
+    RetryCase(
+        'AnthropicModel[bedrock]',
+        ('Anthropic',),
+        _anthropic_bedrock,
+        (3, 1, 2),
+        # `AsyncAnthropicBedrock` signs requests with botocore, which comes with the `bedrock` extra.
+        marks=_needs(anthropic_available, 'anthropic') + _needs(bedrock_available, 'bedrock'),
+    ),
+    RetryCase(
+        'AnthropicModel[vertex]',
+        ('Anthropic',),
+        _anthropic_vertex,
+        (3, 1, 2),
+        marks=_needs(anthropic_available, 'anthropic'),
+    ),
+    RetryCase('GroqModel', ('Groq',), _groq, (3, 1, 2), legacy_http=True, marks=_needs(groq_available, 'groq')),
+    # Cohere ignores a sub-second `Retry-After` and backs off for a second or more instead.
+    RetryCase(
+        'CohereModel',
+        ('Cohere',),
+        _cohere,
+        (3, 1, 2),
+        legacy_http=True,
+        instant_backoff=(('cohere.core.http_client._retry_timeout', _no_backoff),),
+        marks=_needs(cohere_available, 'cohere'),
+    ),
+    # Without the provider's `retry_options`, the SDK's default delays apply, starting at a second.
+    RetryCase(
+        'GoogleModel',
+        ('Google',),
+        _google,
+        (1, 1, 2),
+        instant_backoff=(('google.genai._api_client._RETRY_MAX_DELAY', 0.001),),
+        marks=_needs(google_available, 'google'),
+    ),
+    # The per-request retry options keep the provider's delays and its status codes: 418 is retried at all only
+    # because the provider's `retry_options` say so.
+    RetryCase(
+        'GoogleModel[retry_options]',
+        ('Google',),
+        _google_with_client_retries,
+        (4, 1, 2),
+        status=418,
+        marks=_needs(google_available, 'google'),
+    ),
+    RetryCase('MistralModel', ('Mistral',), _mistral, (1, 1, 1), marks=_needs(mistral_available, 'mistral')),
+    # Mistral bounds retries by elapsed time, so the count can only be set to `0`; `1` keeps the client's config.
+    RetryCase(
+        'MistralModel[retry_config]',
+        ('Mistral',),
+        _mistral_with_client_retries,
+        ('several', 1, 'several'),
+        marks=_needs(mistral_available, 'mistral'),
+    ),
+    RetryCase(
+        'TypeSafeModel',
+        ('TypeSafe',),
+        _typesafe,
+        (3, 1, 2),
+        decision=True,
+        marks=_needs(typesafe_available, 'typesafe-sdk'),
+    ),
+    RetryCase('SystemOneModel', ('System One',), _system_one, (1, 1, 1), decision=True),
+]
+"""Every model reached over a mockable HTTP client.
+
+Bedrock and xAI retry inside botocore and a gRPC channel, which no per-request option reaches.
+"""
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in RETRY_CASES])
+async def test_max_retries_sets_how_many_attempts_the_sdk_makes(
+    case: RetryCase, allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    for target, value in case.instant_backoff:
+        monkeypatch.setattr(target, value)
+
+    attempts: list[Attempts] = []
+    variants: tuple[ModelSettings, ...] = ({}, {'max_retries': 0}, {'max_retries': 1})
+    for settings in variants:
+        count = await _count_attempts(
+            case.build,
+            settings,
+            legacy_http=case.legacy_http,
+            decision=case.decision,
+            status=case.status,
+        )
+        attempts.append('several' if count > 1 and 'several' in case.attempts else count)
+
+    assert tuple(attempts) == case.attempts
+
+
+def test_max_retries_supported_by_list_matches_the_attempts():
+    """`max_retries` is listed for exactly the models whose attempt count it changes."""
+    forwarded = {name for case in RETRY_CASES if case.forwards_max_retries for name in case.names}
+    assert set(SUPPORTED_BY_LISTS['max_retries']) == forwarded
+
+
+@pytest.mark.skipif(not anthropic_available() or not bedrock_available(), reason='anthropic or bedrock not installed')
+async def test_max_retries_keeps_the_bedrock_client_aws_profile(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """`AsyncAnthropicBedrock.with_options()` drops `aws_profile`, so the retrying copy must be handed it back."""
+    credentials = tmp_path / 'credentials'
+    credentials.write_text('[probe-profile]\naws_access_key_id = AKIAPROBEPROFILE\naws_secret_access_key = probe\n')
+    monkeypatch.setenv('AWS_SHARED_CREDENTIALS_FILE', str(credentials))
+    monkeypatch.setenv('AWS_CONFIG_FILE', str(tmp_path / 'config'))
+    monkeypatch.setenv('AWS_EC2_METADATA_DISABLED', 'true')
+    for name in (
+        'AWS_ACCESS_KEY_ID',
+        'AWS_SECRET_ACCESS_KEY',
+        'AWS_SESSION_TOKEN',
+        'AWS_PROFILE',
+        'AWS_BEARER_TOKEN_BEDROCK',
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    authorizations: list[str] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        authorizations.append(request.headers['authorization'])
+        return httpx2.Response(RETRYABLE_STATUS, json={'message': 'probe'}, headers=RETRY_NOW_HEADERS)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
+        bedrock = AsyncAnthropicBedrock(aws_profile='probe-profile', aws_region='us-east-1', http_client=client)
+        model = AnthropicModel(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=AnthropicProvider(anthropic_client=bedrock)
+        )
+        await run_probe_request(model, {'max_retries': 1})
+
+    assert len(authorizations) == 2
+    assert all('Credential=AKIAPROBEPROFILE/' in authorization for authorization in authorizations)

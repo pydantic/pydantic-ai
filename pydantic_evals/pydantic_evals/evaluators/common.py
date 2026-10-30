@@ -227,6 +227,9 @@ class LLMJudge(Evaluator[object, object, object]):
 
     If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
     overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+
+    A judge whose profile has `supports_text_output=False` returns only the typed pass/fail verdict. Its reason is
+    unavailable, and its score is `1.0` for pass or `0.0` for fail.
     """
 
     rubric: str
@@ -243,28 +246,46 @@ class LLMJudge(Evaluator[object, object, object]):
     ) -> EvaluatorOutput:
         if self.include_input:
             if self.include_expected_output:
-                from .llm_as_a_judge import judge_input_output_expected
+                from .llm_as_a_judge import _judge_input_output_expected  # pyright: ignore[reportPrivateUsage]
 
-                grading_output = await judge_input_output_expected(
-                    ctx.inputs, ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+                grading_output = await _judge_input_output_expected(
+                    ctx.inputs,
+                    ctx.output,
+                    ctx.expected_output,
+                    self.rubric,
+                    self.model,
+                    self.model_settings,
+                    allow_reasonless=True,
                 )
             else:
-                from .llm_as_a_judge import judge_input_output
+                from .llm_as_a_judge import _judge_input_output  # pyright: ignore[reportPrivateUsage]
 
-                grading_output = await judge_input_output(
-                    ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
+                grading_output = await _judge_input_output(
+                    ctx.inputs,
+                    ctx.output,
+                    self.rubric,
+                    self.model,
+                    self.model_settings,
+                    allow_reasonless=True,
                 )
         else:
             if self.include_expected_output:
-                from .llm_as_a_judge import judge_output_expected
+                from .llm_as_a_judge import _judge_output_expected  # pyright: ignore[reportPrivateUsage]
 
-                grading_output = await judge_output_expected(
-                    ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+                grading_output = await _judge_output_expected(
+                    ctx.output,
+                    ctx.expected_output,
+                    self.rubric,
+                    self.model,
+                    self.model_settings,
+                    allow_reasonless=True,
                 )
             else:
-                from .llm_as_a_judge import judge_output
+                from .llm_as_a_judge import _judge_output  # pyright: ignore[reportPrivateUsage]
 
-                grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
+                grading_output = await _judge_output(
+                    ctx.output, self.rubric, self.model, self.model_settings, allow_reasonless=True
+                )
 
         output: dict[str, EvaluationScalar | EvaluationReason] = {}
         include_both = self.score is not False and self.assertion is not False
@@ -297,6 +318,9 @@ class GEval(Evaluator[object, object, object]):
     If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
     overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
 
+    A judge whose profile has `supports_text_output=False` returns the same integer score scale without a reason;
+    its `score_range` may contain at most 20 levels.
+
     !!! note "Simplified G-Eval"
         The paper computes a probability-weighted expectation over score tokens using log-probs.
         We ask the model for a direct integer score instead, trading some correlation with human
@@ -318,9 +342,9 @@ class GEval(Evaluator[object, object, object]):
             raise ValueError('`evaluation_steps` must contain at least one step')
 
     async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
-        from .llm_as_a_judge import judge_g_eval
+        from .llm_as_a_judge import _judge_g_eval  # pyright: ignore[reportPrivateUsage]
 
-        g_eval_output = await judge_g_eval(
+        g_eval_output = await _judge_g_eval(
             ctx.output,
             self.criteria,
             self.evaluation_steps,
@@ -328,6 +352,7 @@ class GEval(Evaluator[object, object, object]):
             inputs=ctx.inputs if self.include_input else None,
             model=self.model,
             model_settings=self.model_settings,
+            allow_reasonless=True,
         )
         return EvaluationReason(value=g_eval_output.score, reason=g_eval_output.reason)
 

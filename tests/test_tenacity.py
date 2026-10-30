@@ -1,9 +1,8 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import AsyncMock, Mock
@@ -41,6 +40,15 @@ ignore_deprecation = pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.P
 
 class TestHTTPX2TenacityTransport:
     """`httpx2` retry transports use the same Tenacity configuration as their `httpx` predecessors."""
+
+    def test_default_wrapped_transports_use_pydantic_ai_pool_limits(self, transport_limits: list[httpx2.Limits]):
+        """Without `wrapped`, each transport sends through one with the pool limits of Pydantic AI's own clients."""
+        sync_transport = HTTPX2TenacityTransport(config=RetryConfig())
+        async_transport = AsyncHTTPX2TenacityTransport(config=RetryConfig())
+
+        assert isinstance(sync_transport.wrapped, httpx2.HTTPTransport)
+        assert isinstance(async_transport.wrapped, httpx2.AsyncHTTPTransport)
+        assert transport_limits == [httpx2.Limits(max_connections=1000, max_keepalive_connections=100)] * 2
 
     def test_sync_transport_passes_response_without_validator_and_closes_wrapped_transport(self):
         request = httpx2.Request('GET', 'https://example.com')
@@ -589,13 +597,38 @@ class TestWaitRetryAfter:
         assert result == 60.0
         fallback.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ('headers', 'max_wait', 'expected'),
+        [
+            pytest.param({'retry-after-ms': '1500'}, 300, 1.5, id='ms-only'),
+            pytest.param({'retry-after-ms': '1500', 'retry-after': '2'}, 300, 1.5, id='ms-preferred'),
+            pytest.param({'retry-after-ms': '90000'}, 60, 60.0, id='ms-capped'),
+            pytest.param({'retry-after-ms': 'invalid', 'retry-after': '2'}, 300, 2.0, id='invalid-ms-falls-through'),
+        ],
+    )
+    def test_retry_after_ms(self, headers: dict[str, str], max_wait: float, expected: float):
+        """`retry-after-ms`, as OpenAI and Anthropic send it, takes precedence over `Retry-After` like in their SDKs."""
+        fallback = Mock(return_value=8.0)
+        wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=max_wait)
+
+        request = httpx2.Request('POST', 'https://api.openai.com/v1/chat/completions')
+        response = httpx2.Response(429, headers=headers, request=request)
+        http_error = httpx2.HTTPStatusError('Rate limited', request=request, response=response)
+
+        retry_state = Mock(spec=RetryCallState)
+        retry_state.outcome = Mock()
+        retry_state.outcome.exception.return_value = http_error
+
+        assert wait_func(retry_state) == expected
+        fallback.assert_not_called()
+
     def test_retry_after_http_date_format(self):
         """Test parsing Retry-After header in HTTP date format."""
         fallback = Mock()
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
 
         # Create a future date (30 seconds from now)
-        future_time = datetime.now(timezone.utc).timestamp() + 30
+        future_time = datetime.now(UTC).timestamp() + 30
         http_date = formatdate(future_time, usegmt=True)
 
         # Create HTTP status error with Retry-After in HTTP date format
@@ -617,7 +650,7 @@ class TestWaitRetryAfter:
 
     def test_retry_after_asctime_date_format(self):
         """Asctime `Retry-After` dates are parsed locally without a provider request."""
-        retry_time = datetime(2095, 11, 6, 8, 49, 37, tzinfo=timezone.utc)
+        retry_time = datetime(2095, 11, 6, 8, 49, 37, tzinfo=UTC)
         request = httpx2.Request('GET', 'https://example.com')
         response = httpx2.Response(
             429,
@@ -631,9 +664,9 @@ class TestWaitRetryAfter:
 
         wait_func = wait_retry_after(fallback_strategy=wait_fixed(1), max_wait=float('inf'))
 
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         wait_seconds = wait_func(retry_state)
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         assert (retry_time - after).total_seconds() <= wait_seconds <= (retry_time - before).total_seconds()
 
@@ -643,7 +676,7 @@ class TestWaitRetryAfter:
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
 
         # Create a past date
-        past_time = datetime.now(timezone.utc).timestamp() - 30
+        past_time = datetime.now(UTC).timestamp() - 30
         http_date = formatdate(past_time, usegmt=True)
 
         # Create HTTP status error with Retry-After in HTTP date format
@@ -668,7 +701,7 @@ class TestWaitRetryAfter:
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=60)
 
         # Create a future date (120 seconds from now, > max_wait)
-        future_time = datetime.now(timezone.utc).timestamp() + 120
+        future_time = datetime.now(UTC).timestamp() + 120
         http_date = formatdate(future_time, usegmt=True)
 
         # Create HTTP status error with Retry-After in HTTP date format
@@ -687,7 +720,7 @@ class TestWaitRetryAfter:
         assert result == 60.0  # Capped at max_wait
         fallback.assert_not_called()
 
-    @pytest.mark.parametrize('retry_after', ['invalid-value', '-1'])
+    @pytest.mark.parametrize('retry_after', ['invalid-value', '-1', 'Wed, 21 Oct 999999999999 07:28:00 GMT'])
     def test_invalid_retry_after_uses_fallback(self, retry_after: str):
         """Invalid `Retry-After` values fall back locally without a provider request."""
         fallback = Mock(return_value=4.0)
@@ -773,7 +806,7 @@ class TestIntegration:
         mock_transport = AsyncMock(spec=httpx.AsyncBaseTransport)
         mock_response_fail = Mock(spec=httpx.Response)
         mock_response_fail.status_code = 429
-        mock_response_fail.headers = {'retry-after': '1'}
+        mock_response_fail.headers = {'retry-after': '2'}
         mock_response_success = Mock(spec=httpx.Response)
         mock_response_success.status_code = 200
 
@@ -787,26 +820,29 @@ class TestIntegration:
             if response.status_code == 429:
                 raise httpx.HTTPStatusError('Rate limited', request=request, response=response)
 
+        sleep_calls: list[float] = []
+
+        async def sleep(seconds: int | float) -> None:
+            sleep_calls.append(float(seconds))
+
         config = RetryConfig(
             retry=retry_if_exception_type(httpx.HTTPStatusError),
             wait=wait_retry_after(max_wait=5),  # Short max_wait for tests
             stop=stop_after_attempt(3),
+            sleep=sleep,
             reraise=True,
         )
         transport = AsyncTenacityTransport(config, mock_transport, validate_response)
 
         request = httpx.Request('GET', 'https://example.com')
 
-        # Time the request to ensure retry-after wait was respected
-        start_time = asyncio.get_running_loop().time()
         result = await transport.handle_async_request(request)
-        end_time = asyncio.get_running_loop().time()
 
         assert result is mock_response_success
         assert mock_transport.handle_async_request.call_count == 2
         assert validation_calls == [429, 200]  # First call failed, second succeeded
-        # Should have waited approximately 1 second (allow some tolerance)
-        assert 0.8 <= (end_time - start_time) <= 2.0
+        # The header's 2 s, not the 1 s the exponential fallback would wait first.
+        assert sleep_calls == [2.0]
 
     def test_sync_transport_with_wait_retry_after(self):
         """Test TenacityTransport with wait_retry_after strategy."""

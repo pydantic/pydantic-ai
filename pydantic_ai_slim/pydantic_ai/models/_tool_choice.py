@@ -1,10 +1,9 @@
 import warnings
-from typing import Literal
-
-from typing_extensions import assert_never
+from typing import Literal, assert_never
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 
 ResolvedToolChoice = Literal['none', 'auto', 'required'] | tuple[Literal['auto', 'required'], set[str]]
@@ -18,8 +17,8 @@ def resolve_tool_choice(  # noqa: C901
 
     Pydantic AI distinguishes between function tools (e.g. user-registered via @agent.tool)
     and output tools (framework-internal for structured output). The user-facing
-    `tool_choice` setting controls function tools only - this function resolves that
-    into a canonical form that providers can use, incorporating output tools as needed.
+    `tool_choice` setting controls which tools the model may call, and this function resolves
+    that into a canonical form that providers can use.
 
     Args:
         model_settings: Optional settings containing the tool_choice value.
@@ -31,7 +30,8 @@ def resolve_tool_choice(  # noqa: C901
         - `'none'` / `[]`: Disables function tools. If output tools exist, returns them with
             appropriate mode. Otherwise returns `'none'`.
         - `'required'`: Requires function tool use. Raises if no function tools are defined.
-        - `list[str]`: Restricts to specified tools with `'required'` mode. Validates tool names.
+        - `list[str]`: Restricts to the specified function and/or output tools with `'required'` mode,
+            so the model must call one of them. Validates tool names against all known tools.
         - `ToolOrOutput`: Combines specified function tools with all output tools.
             Returns `'auto'` mode if direct output is allowed, otherwise `'required'`.
 
@@ -61,8 +61,10 @@ def resolve_tool_choice(  # noqa: C901
         # Named for the `ToolVisibility` literal it filters on rather than the looser "hidden":
         # only `'withheld'` names are absent from the wire. A `'deferred'` declaration sits in the
         # `tools` collection and a `'via_history'` definition travels on the tool-addition channel,
-        # and OpenAI honors `tool_choice` forcing for both, so neither is withheld here — though
-        # prose elsewhere would call all three "hidden from the model".
+        # so neither is withheld here — though prose elsewhere would call all three "hidden from the
+        # model". Making a chosen name acceptable to the provider is the adapter's job: one whose
+        # provider rejects a `tool_choice` naming a tool-addition definition redeclares it, as
+        # `OpenAIResponsesModel._build_responses_request_params` does.
         withheld_tool_names = {
             tool.name
             for tool in model_request_parameters.function_tools
@@ -183,3 +185,48 @@ def resolve_tool_choice(  # noqa: C901
         return (mode, allowed_tools)
     else:
         assert_never(function_tool_choice)
+
+
+FORCING_UNSUPPORTED_REASON = "This model does not support forcing tool use. Use `tool_choice='auto'` instead."
+
+
+def tool_forcing_unavailable_reason(profile: ModelProfile, *, thinking: bool, thinking_remedy: str) -> str | None:
+    """Why a forced tool choice can't be sent to this model for this request, or `None` if it can.
+
+    `thinking_remedy` tells the user how to turn thinking off with this model's settings.
+    """
+    if not profile.get('supports_forced_tool_choice', True):
+        return FORCING_UNSUPPORTED_REASON
+    if thinking and not profile.get('supports_forced_tool_choice_with_thinking', True):
+        return (
+            f'This model does not support forcing tool use while thinking is enabled. '
+            f"{thinking_remedy}, or use `tool_choice='auto'`."
+        )
+    return None
+
+
+def support_tool_forcing(
+    model_name: str,
+    model_settings: ModelSettings | None,
+    unavailable_reason: str | None,
+    *,
+    disables_thinking: bool = False,
+) -> bool:
+    """Whether to send a forced tool choice, given why it can't be sent (if it can't).
+
+    A forced choice Pydantic AI resolved itself (such as an output tool's) falls back to an unforced one;
+    an explicit forcing `tool_choice` raises a `UserError` with the reason instead. Where forcing would stop
+    the request from thinking (`disables_thinking`), a resolved forced choice falls back too, while an explicit
+    one is still sent.
+    """
+    explicit_choice = (model_settings or {}).get('tool_choice')
+    # `ToolOrOutput` and `[]` only resolve to a forced choice when the output type rules out direct output, so like
+    # an output tool's forcing, they fall back rather than raising.
+    explicit_forcing = explicit_choice == 'required' or (isinstance(explicit_choice, list) and bool(explicit_choice))
+    if unavailable_reason is not None:
+        if explicit_forcing:
+            raise UserError(
+                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. {unavailable_reason}'
+            )
+        return False
+    return explicit_forcing or not disables_thinking

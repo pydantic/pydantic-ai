@@ -1,3 +1,7 @@
+---
+description: "Add human-in-the-loop tool approval to Pydantic AI agents, or hand tool calls to a frontend or background worker, and resume the run with the results."
+---
+
 # Deferred Tools
 
 There are a few scenarios where the model should be able to call a tool that should not or cannot be executed during the same agent run inside the same Python process:
@@ -57,7 +61,7 @@ async def handle_deferred(
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
 )
 
@@ -105,7 +109,7 @@ To require approval for calls to tools provided by a [toolset](toolsets.md) (lik
 
 When the model calls a tool that requires approval, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with an `approvals` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID.
 
-Once you've gathered the user's approvals or denials, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with an `approvals` dictionary that maps each tool call ID to a boolean, a [`ToolApproved`][pydantic_ai.tools.ToolApproved] object (with optional `override_args`), or a [`ToolDenied`][pydantic_ai.tools.ToolDenied] object (with an optional custom `message` to provide to the model). You can also provide a `metadata` dictionary on `DeferredToolResults` that maps each tool call ID to a dictionary of metadata that will be available in the tool's [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata] attribute. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
+Once you've gathered the user's approvals or denials, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with an `approvals` dictionary that maps each tool call ID to a boolean, a [`ToolApproved`][pydantic_ai.tools.ToolApproved] object (with optional `override_args`), or a [`ToolDenied`][pydantic_ai.tools.ToolDenied] object (with an optional custom `message` to provide to the model). You can also provide a `metadata` dictionary on `DeferredToolResults` that maps each tool call ID to a dictionary of metadata that will be available in the tool's [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata] attribute. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md) or its [conversation](#pausing-a-conversation), which also keeps the requests for when the answers come later.
 
 Here's an example that shows how to require approval for all file deletions, and for updates of specific protected files:
 
@@ -119,7 +123,7 @@ from pydantic_ai import (
     ToolDenied,
 )
 
-agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+agent = Agent('{{ openai:medium }}', output_type=[str, DeferredToolRequests])
 
 PROTECTED_FILES = {'.env'}
 
@@ -220,10 +224,9 @@ print(result.all_messages())
                 tool_call_id='update_file_dotenv',
             ),
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.00040425'), input_tokens=63, output_tokens=21
-        ),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.000336'), input_tokens=63, output_tokens=21),
+        model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -273,10 +276,9 @@ print(result.all_messages())
                 tool_call_id='update_file_backup',
             )
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.0005845'), input_tokens=86, output_tokens=31
-        ),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.000482'), input_tokens=86, output_tokens=31),
+        model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -300,10 +302,9 @@ print(result.all_messages())
                 content="Here's what I've done:\n- Attempted to delete __init__.py, but deletion is not allowed.\n- Updated README.md with: Hello, world!\n- Cleared .env (set to empty).\n- Created a backup at README.md.bak containing: Hello, world!\n\nIf you want a different backup name or format (e.g., timestamped like README_2025-11-24.bak), let me know."
             )
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.00140875'), input_tokens=93, output_tokens=89
-        ),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.001076'), input_tokens=93, output_tokens=89),
+        model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -333,7 +334,7 @@ If a tool is always executed externally and its definition is provided to your c
 
 When the model calls an external tool, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID.
 
-Once the tool call results are ready, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or an exception in case the tool call failed: a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] if the model should [try again](tools-advanced.md#tool-retries), or a [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] if the failure should be reported to the model as a [failed result](tools-advanced.md#tool-failed) (without consuming the tool's retry budget) so it can decide how to proceed. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
+Once the tool call results are ready, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or an exception in case the tool call failed: a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] if the model should [try again](tools-advanced.md#tool-retries), or a [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] if the failure should be reported to the model as a [failed result](tools-advanced.md#tool-failed) (without consuming the tool's retry budget) so it can decide how to proceed. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md) or its [conversation](#pausing-a-conversation), which also keeps the requests for when the answers come later.
 
 Here's an example that shows how to move a task that takes a while to complete to the background and return the result to the model once the task is complete:
 
@@ -363,7 +364,7 @@ async def calculate_answer_task(task_id: str, question: str) -> TaskResult:
     return TaskResult(task_id=task_id, result=42)
 
 
-agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+agent = Agent('{{ openai:medium }}', output_type=[str, DeferredToolRequests])
 
 tasks: list[asyncio.Task[TaskResult]] = []
 
@@ -442,9 +443,10 @@ async def main():
                 )
             ],
             usage=RequestUsage(
-                cost=Decimal('0.00029225'), input_tokens=63, output_tokens=13
+                cost=Decimal('0.000256'), input_tokens=63, output_tokens=13
             ),
-            model_name='gpt-5.2',
+            model_name='{{ openai:medium.name }}',
+            model_id='{{ openai:medium }}',
             timestamp=datetime.datetime(...),
             run_id='...',
             conversation_id='...',
@@ -469,9 +471,10 @@ async def main():
                 )
             ],
             usage=RequestUsage(
-                cost=Decimal('0.000504'), input_tokens=64, output_tokens=28
+                cost=Decimal('0.000408'), input_tokens=64, output_tokens=28
             ),
-            model_name='gpt-5.2',
+            model_name='{{ openai:medium.name }}',
+            model_id='{{ openai:medium }}',
             timestamp=datetime.datetime(...),
             run_id='...',
             conversation_id='...',
@@ -485,6 +488,62 @@ async def main():
 3. In reality, this would typically happen in a separate process that polls for the task status or is notified when all pending tasks are complete.
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+## Pausing a conversation
+
+A run that ends with [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] has paused its conversation: the next run can't go on until the calls are answered, and the answers often come later — a reviewer approves the refund tomorrow, a job finishes on another machine. The run's [`conversation`][pydantic_ai.agent.AgentRunResult.conversation] keeps the requests as [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests], so the conversation you store is everything you need to resume.
+
+That matters because the requests can't be rebuilt from the messages. The history shows which calls are unanswered, but not which need approval and which an external result, or the metadata a tool attached when it deferred. Store the conversation, and those travel with it:
+
+```python {title="pausing_a_conversation.py"}
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    ConversationTypeAdapter,
+    DeferredToolRequests,
+    RunContext,
+)
+
+agent = Agent('{{ openai:medium }}', output_type=[str, DeferredToolRequests])
+
+
+@agent.tool
+def update_file(ctx: RunContext, path: str, content: str) -> str:
+    if path == '.env' and not ctx.tool_call_approved:
+        raise ApprovalRequired(metadata={'reason': 'protected'})
+    return f'File {path!r} updated: {content!r}'
+
+
+@agent.tool_plain(requires_approval=True)
+def delete_file(path: str) -> str:
+    return f'File {path!r} deleted'
+
+
+result = agent.run_sync('Delete `__init__.py`, write `Hello, world!` to `README.md`, and clear `.env`')
+stored = ConversationTypeAdapter.dump_json(result.conversation)  # (1)!
+
+conversation = ConversationTypeAdapter.validate_json(stored)  # (2)!
+requests = conversation.deferred_tool_requests
+assert requests is not None
+print(requests.metadata)
+#> {'update_file_dotenv': {'reason': 'protected'}}
+
+results = requests.build_results(approvals={'update_file_dotenv': True, 'delete_file': False})  # (3)!
+result = agent.run_sync(
+    'Now create a backup of README.md',
+    conversation=conversation,
+    deferred_tool_results=results,
+)
+print(result.conversation.deferred_tool_requests)  # (4)!
+#> None
+```
+
+1. Store the paused conversation, for example keyed by `result.conversation_id`.
+2. Later — in another request, once someone has reviewed the pending calls — load it back.
+3. [`build_results`][pydantic_ai.tools.DeferredToolRequests.build_results] checks each answer against the request it answers, so a stale or mistyped tool call ID fails here rather than in the run.
+4. The run finished, so the conversation it hands back isn't waiting on anything.
+
+_(This example is complete, it can be run "as is")_
 
 ## Observing deferred tool calls in a stream
 

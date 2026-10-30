@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import errno
 import importlib.util
 import os
 import signal
 import sys
+import sysconfig
 import threading
 from collections.abc import Callable
 from importlib import metadata
 from io import StringIO
 from typing import Any
 
+import anyio
 import pytest
 from pydantic import BaseModel
 
@@ -17,17 +20,26 @@ import pydantic_ai
 import pydantic_ai._display as _display
 from pydantic_ai import Agent, ModelMessage, ModelRequest, UserPromptPart, __version__
 from pydantic_ai.agent import _registered_capability_count  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
 from ._inline_snapshot import snapshot
+from .conftest import try_import
 from .continuation_utils import ScriptedContinuationModel, scripted_response
+
+with try_import() as imports_successful:
+    # What it takes to build a terminal of a known width, which only a POSIX platform has.
+    import fcntl
+    import struct
+    import termios
 
 _find_spec = importlib.util.find_spec
 
 
 _CODING_AGENTS = _display._CODING_AGENTS  # pyright: ignore[reportPrivateUsage]
+_MIN_TEXT_WIDTH = _display._MIN_TEXT_WIDTH  # pyright: ignore[reportPrivateUsage]
+_MIN_WIDTH_FOR_LOGO = _display._MIN_WIDTH_FOR_LOGO  # pyright: ignore[reportPrivateUsage]
 
 
 def _agent_env_vars_in_scope() -> set[str]:
@@ -69,6 +81,9 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     def find_spec_without_harness(name: str) -> object | None:
         return None if name == 'pydantic_ai_harness' else _find_spec(name)
 
+    def uvx_not_found(_command: str) -> None:
+        return None
+
     # Process-wide state has to be reset so each test starts at its first run.
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
     pydantic_ai.BANNER_ENABLED = True
@@ -77,11 +92,15 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     # This suite is the one place a test run may show a banner, and the only place that decides
     # whether an agent is watching — the agent running the suite doesn't get to answer that.
     monkeypatch.delenv('PYTEST_VERSION', raising=False)
+    # Left in place, the width of the pane the suite happens to run in would decide the layout.
+    monkeypatch.delenv('COLUMNS', raising=False)
     for agent_var in _agent_env_vars_in_scope():
         monkeypatch.delenv(agent_var, raising=False)
     # Colour is asserted on its own; everywhere else it would only obscure what's being asserted.
     monkeypatch.setenv('NO_COLOR', '1')
     monkeypatch.setattr(importlib.util, 'find_spec', find_spec_without_harness)
+    # Runtime callers detect `uvx`, but rendering tests must not inspect the test machine's PATH.
+    monkeypatch.setattr(_display.shutil, 'which', uvx_not_found)
     yield
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
     pydantic_ai.BANNER_ENABLED = True
@@ -99,6 +118,7 @@ def render(monkeypatch: pytest.MonkeyPatch) -> Callable[..., str]:
             'output_type': str,
             'tools': 2,
             'capabilities': 0,
+            'logfire_cli_available': True,
             'color': False,
         }
         kwargs.update(overrides)
@@ -138,7 +158,7 @@ def test_render_banner(render: Callable[..., str]):
      /   \\       agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
    /___.___\\
   /    |    \\    observability: off — see every model and tool call live, with cost
-/      |      \\    set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md
+/      |      \\    set it up free with Pydantic Logfire: uvx logfire-cli wizard --task pydantic-ai
 `---.._|_..---'    or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel
 
                  goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
@@ -153,7 +173,7 @@ def test_render_banner_for_an_unnamed_agent(render: Callable[..., str]):
      /   \\       model: openai:gpt-5.6-sol • output: list[str] • tools: 2 • capabilities: 3
    /___.___\\
   /    |    \\    observability: off — see every model and tool call live, with cost
-/      |      \\    set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md
+/      |      \\    set it up free with Pydantic Logfire: uvx logfire-cli wizard --task pydantic-ai
 `---.._|_..---'    or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel
 
                  goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
@@ -247,20 +267,136 @@ def test_render_banner_leaves_out_a_tool_count_the_caller_could_not_take(render:
     assert 'tools' not in banner
 
 
-def test_the_observability_links_each_survive_on_one_line():
-    """A URL `textwrap` splits stops being clickable, which is the only reason it's in the banner."""
-    lines = _display._observability_lines()  # pyright: ignore[reportPrivateUsage]
+@pytest.mark.parametrize(
+    ('logfire_cli_available', 'logfire_destination', 'expected_urls'),
+    [
+        (True, 'uvx logfire-cli wizard --task pydantic-ai', ['https://pydantic.dev/docs/ai/logfire/#otel']),
+        (
+            False,
+            'https://pydantic.dev/ai-setup.md',
+            ['https://pydantic.dev/ai-setup.md', 'https://pydantic.dev/docs/ai/logfire/#otel'],
+        ),
+    ],
+)
+def test_the_observability_links_and_command_each_survive_on_one_line(
+    render: Callable[..., str], logfire_cli_available: bool, logfire_destination: str, expected_urls: list[str]
+):
+    """The command must stay pasteable and the URL clickable at every supported width."""
+    lines = _display._observability_lines(  # pyright: ignore[reportPrivateUsage]
+        _MIN_TEXT_WIDTH, logfire_cli_available=logfire_cli_available
+    )
     urls = [word for line in lines for word in line.split() if word.startswith('http')]
 
-    assert urls == snapshot(['https://pydantic.dev/ai-setup.md', 'https://pydantic.dev/docs/ai/logfire/#otel'])
-    # One line per link: a wrapped URL would leave its tail on a line of its own.
-    assert [line for line in lines if 'http' in line] == snapshot(
-        [
-            '  set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md',
-            '  or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel',
-        ]
-    )
-    assert max(map(len, lines)) <= _display._TEXT_WIDTH  # pyright: ignore[reportPrivateUsage]
+    assert urls == expected_urls
+    assert max(map(len, lines)) <= _MIN_TEXT_WIDTH
+    # Whole, on one line, at every width the banner lays itself out for — which is the whole job of
+    # a floor under the text column measured from the copy rather than written down beside it. When
+    # a destination continues the sentence on its own line, the extra indent keeps it visually
+    # attached to that sentence.
+    for width in range(_MIN_TEXT_WIDTH, 121):
+        rendered = render(width=width, logfire_cli_available=logfire_cli_available).splitlines()
+        for copyable in [logfire_destination, *urls]:
+            assert sum(copyable in line for line in rendered) == 1, f'{copyable} was broken at {width} columns'
+
+        text_width, _ = _display._columns(width)  # pyright: ignore[reportPrivateUsage]
+        observability_lines = _display._observability_lines(  # pyright: ignore[reportPrivateUsage]
+            text_width, logfire_cli_available=logfire_cli_available
+        )
+        for copyable in [logfire_destination, *urls]:
+            copyable_line = next(line for line in observability_lines if copyable in line)
+            if copyable_line.strip() == copyable:
+                assert copyable_line == f'    {copyable}'
+
+
+@pytest.mark.parametrize(
+    ('uvx_path', 'expected'),
+    [('/usr/bin/uvx', 'uvx logfire-cli wizard --task pydantic-ai'), (None, 'https://pydantic.dev/ai-setup.md')],
+)
+def test_display_banner_detects_uvx(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, uvx_path: str | None, expected: str
+):
+    def which(_command: str) -> str | None:
+        return uvx_path
+
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setattr(_display.shutil, 'which', which)
+
+    display_banner()
+
+    assert expected in stderr.getvalue()
+
+
+def test_the_narrowest_widths_the_banner_lays_itself_out_in():
+    """Pinned so that rewording a line into a longer one shows up as the cost in room that it is."""
+    assert (_MIN_TEXT_WIDTH, _MIN_WIDTH_FOR_LOGO) == snapshot((46, 63))
+
+
+def test_render_banner_wraps_the_text_column_to_a_narrow_terminal(render: Callable[..., str]):
+    """80 columns is what a split `tmux` pane leaves, and the logo stays where it is beside it."""
+    banner = render(width=80)
+
+    assert banner == snapshot("""\
+                 HEADING
+
+                 agent: support_agent • model: openai:gpt-5.6-sol • tools: 2
+      / \\          capabilities: 0
+     /   \\
+   /___.___\\     observability: off — see every model and tool call live, with
+  /    |    \\      cost
+/      |      \\    set it up free with Pydantic Logfire:
+`---.._|_..---'      uvx logfire-cli wizard --task pydantic-ai
+                   or use any OpenTelemetry backend:
+                     https://pydantic.dev/docs/ai/logfire/#otel
+
+                 goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
+""")
+    assert max(map(len, banner.splitlines())) <= 80
+
+
+def test_render_banner_drops_the_logo_for_a_terminal_with_no_room_for_both(render: Callable[..., str]):
+    """Under the floor the words get the whole width: the logo is what the reader can spare."""
+    banner = render(width=_MIN_WIDTH_FOR_LOGO - 1)
+
+    assert banner == snapshot("""\
+HEADING
+
+agent: support_agent • model: openai:gpt-5.6-sol • tools: 2
+  capabilities: 0
+
+observability: off — see every model and tool call live, with
+  cost
+  set it up free with Pydantic Logfire:
+    uvx logfire-cli wizard --task pydantic-ai
+  or use any OpenTelemetry backend:
+    https://pydantic.dev/docs/ai/logfire/#otel
+
+goes away once observability is on — or
+  PYDANTIC_AI_NO_BANNER=1\
+""")
+    assert _display._LOGO_LINES[-1] not in banner  # pyright: ignore[reportPrivateUsage]
+    assert max(map(len, banner.splitlines())) <= _MIN_WIDTH_FOR_LOGO - 1
+
+
+def test_no_banner_line_outruns_the_terminal_it_was_rendered_for(render: Callable[..., str]):
+    """The one thing every width has to deliver: nothing for the terminal itself to break.
+
+    A line the terminal wraps drops its tail in column zero, straight through the logo — which is
+    what a banner laid out to a width the user doesn't have does at every size but that one.
+    """
+    for width in range(_MIN_TEXT_WIDTH, 121):
+        banner = render(
+            width=width,
+            name='the-agent-that-has-a-rather-long-name',
+            model='bedrock:us.anthropic.claude-fable-5-20260101-v1:0',
+            output_type=list[str],
+            capabilities=3,
+        )
+        assert max(map(len, banner.splitlines())) <= width, f'overflowed at {width} columns'
+
+
+def test_a_terminal_wider_than_the_banner_has_anything_to_say_reads_the_same(render: Callable[..., str]):
+    """Growing the column doesn't grow the copy, so nobody with room to spare sees a change."""
+    assert render(width=200) == render(width=120)
 
 
 def test_render_banner_colors_the_logo_and_identity(monkeypatch: pytest.MonkeyPatch, render: Callable[..., str]):
@@ -467,6 +603,81 @@ def test_the_banner_an_agent_reads_is_the_one_a_person_would_have(monkeypatch: p
     assert for_an_agent.getvalue() == for_a_terminal.getvalue()
 
 
+def test_the_banner_is_laid_out_for_the_terminal_it_is_written_to(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """`COLUMNS` is the override `shutil` and `rich` both honour, so the banner honours it too."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setenv('COLUMNS', '70')
+
+    display_banner()
+
+    assert max(map(len, stderr.getvalue().splitlines())) <= 70
+
+
+@pytest.mark.parametrize('columns', ['²', '⅓', '', '0', 'eighty', '-1', ' 70 '])
+def test_a_columns_that_is_not_a_width_costs_only_the_measurement(
+    columns: str, monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+):
+    """`'²'.isdigit()` is True and `int('²')` is not, and the banner is what a raise here would cost.
+
+    A failed measurement lands in the `except` around the whole display, so the user would lose the
+    banner outright over a `COLUMNS` nobody can read — rather than get it at the default width.
+    """
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setenv('COLUMNS', columns)
+
+    display_banner()
+
+    assert 'agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0' in stderr.getvalue()
+
+
+@pytest.mark.skipif(not imports_successful(), reason='pseudo-terminals are POSIX-only')
+def test_the_banner_asks_the_terminal_itself_how_wide_it_is(monkeypatch: pytest.MonkeyPatch):
+    """`COLUMNS` is unset in most shells, so the size has to come from the terminal on the far end.
+
+    The one that matters for a `tmux` pane: nothing in the environment says how wide it is, and the
+    banner has to ask the stream it's writing to rather than assume the width it was designed for.
+    """
+    reader, terminal = os.openpty()
+    try:
+        with open(terminal, 'w', encoding='utf-8') as stderr:
+            fcntl.ioctl(stderr, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 70, 0, 0))
+            monkeypatch.setattr(sys, 'stderr', stderr)
+            display_banner()
+
+        chunks: list[bytes] = []
+        while True:
+            try:
+                chunk = os.read(reader, 1 << 16)
+            except OSError as e:
+                if e.errno != errno.EIO:
+                    raise
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+        output = b''.join(chunks).decode()
+    finally:
+        os.close(reader)
+
+    # Laid out for the pane it was written to, rather than for the 100 columns nobody promised.
+    assert max(map(len, output.splitlines())) <= 70
+    assert _display._LOGO_LINES[-1] in output  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_banner_with_no_terminal_to_measure_keeps_the_width_it_was_designed_for(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A pipe has no width to report, and the banner guesses at neither a narrow one nor a wide one."""
+    stderr = StringIO()
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setenv('AI_AGENT', 'some-harness')
+
+    display_banner()
+
+    # A narrower layout would have wrapped this, and a wider one would have taken the next line up.
+    assert 'agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0' in stderr.getvalue()
+
+
 def test_an_agent_is_not_written_the_colour_codes_a_terminal_gets(monkeypatch: pytest.MonkeyPatch):
     """A pipe renders none of them, so they'd reach the agent — and the user reading along — raw."""
     monkeypatch.delenv('NO_COLOR')
@@ -506,6 +717,12 @@ def test_the_fork_handler_hands_back_a_lock_nobody_holds():
 
 
 @pytest.mark.skipif(not hasattr(os, 'fork'), reason='fork is POSIX-only')
+# Forking while another thread holds the lock is the scenario under test. Python 3.12+ warns about forking a
+# multithreaded process; from 3.15, `os.fork()` raises that warning under this suite's `error` filter instead
+# of swallowing it.
+@pytest.mark.filterwarnings(
+    'ignore:This process .* is multi-threaded, use of fork\\(\\) may lead to deadlocks:DeprecationWarning'
+)
 def test_a_banner_does_not_hang_a_process_forked_mid_claim():
     """`fork` clones one thread, so a lock another was holding is held forever in the child.
 
@@ -639,6 +856,133 @@ def test_banner_is_shown_by_agent_run(monkeypatch: pytest.MonkeyPatch, stderr: T
     assert 'agent: support_agent • model: test:test • tools: 0 • capabilities: 0' in stderr.getvalue()
 
 
+_LIBRARY_FILE = '/venv/lib/python3.13/site-packages/some_library/runner.py'
+
+_RUN_SYNC_SOURCE = 'def run(agent):\n    return agent.run_sync("hello")\n'
+_RUN_SOURCE = 'async def run(agent):\n    return await agent.run("hello")\n'
+_WAIT_FOR_SOURCE = 'import asyncio\nasync def run(agent):\n    return await asyncio.wait_for(agent.run("hello"), 10)\n'
+_STREAM_EVENTS_SOURCE = (
+    'async def run(agent):\n'
+    '    async with agent.run_stream_events("hello") as events:\n'
+    '        async for _ in events:\n'
+    '            pass\n'
+)
+
+
+def _compiled_as(source: str, filename: str, module: str = 'some_library.runner') -> dict[str, Any]:
+    """The namespace of `source` compiled as if it were `module` living at `filename`, like an installed package."""
+    namespace: dict[str, Any] = {'__name__': module}
+    exec(compile(source, filename, 'exec'), namespace)
+    return namespace
+
+
+@pytest.mark.parametrize(
+    'filename',
+    [
+        _LIBRARY_FILE,
+        '/usr/lib/python3/dist-packages/some_library/runner.py',
+        # A system Python keeps `site-packages` inside its standard library directory.
+        os.path.join(sysconfig.get_paths()['stdlib'], 'site-packages', 'some_library', 'runner.py'),
+    ],
+)
+def test_banner_is_not_shown_for_a_run_an_installed_package_started(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, filename: str
+):
+    """A library or platform runs agents for its own users, who didn't ask for the banner."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    agent = Agent(TestModel(), name='support_agent')
+
+    _compiled_as(_RUN_SYNC_SOURCE, filename)['run'](agent)
+    assert stderr.getvalue() == ''
+
+    # The claim is left for the user's own agent.
+    agent.run_sync('hello')
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
+@pytest.mark.parametrize(
+    'source',
+    [
+        pytest.param(_RUN_SOURCE, id='run'),
+        # `wait_for` awaits the run in a coroutine of its own, which is part of the caller's chain.
+        pytest.param(
+            _WAIT_FOR_SOURCE,
+            id='wait_for',
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 12),
+                reason="Before 3.12, `wait_for` runs the run in a task of its own, which keeps today's banner",
+            ),
+        ),
+        # `run_stream_events()` runs the agent in its own task, so the caller's stack is read before it starts.
+        pytest.param(_STREAM_EVENTS_SOURCE, id='run_stream_events'),
+    ],
+)
+async def test_banner_is_not_shown_for_an_async_run_an_installed_package_started(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, source: str
+):
+    """An installed package's coroutine starting a run is on the same stack as the run, like a sync caller."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+
+    await _compiled_as(source, _LIBRARY_FILE)['run'](Agent(TestModel()))
+
+    assert stderr.getvalue() == ''
+    assert _display.banner_pending() is True
+
+
+async def test_banner_is_shown_for_a_run_a_ui_adapter_streams_to_an_installed_server(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+):
+    """The web framework pulling a UI adapter's stream is installed, but the app serving it is the user's."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    adapter = _compiled_as(_STREAM_EVENTS_SOURCE, 'pydantic_ai/ui/some_adapter.py', 'pydantic_ai.ui.some_adapter')
+    server = _compiled_as(
+        'async def respond(stream, agent):\n    await stream(agent)\n',
+        '/venv/lib/python3.13/site-packages/some_server/responses.py',
+        'some_server.responses',
+    )
+
+    await server['respond'](adapter['run'], Agent(TestModel(), name='support_agent'))
+
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
+def test_banner_is_shown_for_a_run_whose_starter_is_past_an_event_loop(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+):
+    """Below a loop the frames are whoever drives it, like `uvicorn` serving the user's app, so the banner stays."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    server = _compiled_as(
+        'import asyncio\ndef serve(coroutine):\n    return asyncio.run(coroutine)\n',
+        '/venv/lib/python3.13/site-packages/some_server/loop.py',
+        'some_server.loop',
+    )
+
+    server['serve'](Agent(TestModel(), name='support_agent').run('hello'))
+
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
+async def test_banner_is_shown_for_a_run_an_anyio_task_group_starts(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """`anyio` runs a task through a frame of its own, which is installed, but the user started the run."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(Agent(TestModel(), name='support_agent').run, 'hello')
+
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
+def test_banner_is_shown_for_a_run_on_its_own_thread(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """Nothing but `threading` sits above a thread's run, which says nothing about who started it."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    thread = threading.Thread(target=Agent(TestModel(), name='support_agent').run_sync, args=('hello',))
+
+    thread.start()
+    thread.join()
+
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
 def test_banner_counts_every_tool_the_model_is_offered(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
     """Tools reach an agent by more routes than `@agent.tool`, and the run resolves all of them."""
 
@@ -753,6 +1097,15 @@ def test_instrumented_agent_run_is_silent(monkeypatch: pytest.MonkeyPatch, stder
     agent.instrument = True
 
     agent.run_sync('hello')
+
+    assert stderr.getvalue() == ''
+
+
+def test_run_instrumented_by_an_explicit_capability_is_silent(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """The banner defers to the `Instrumentation` capability that instruments the run, not just `instrument`."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+
+    Agent(TestModel()).run_sync('hello', capabilities=[Instrumentation()])
 
     assert stderr.getvalue() == ''
 

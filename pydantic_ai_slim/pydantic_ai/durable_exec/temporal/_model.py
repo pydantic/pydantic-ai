@@ -12,10 +12,11 @@ from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ModelMessage, ModelResponse, models
-from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._instrumentation import model_request_telemetry_url_ids
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelResponsePart, repair_messages
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     Model,
@@ -25,12 +26,13 @@ from pydantic_ai.models import (
     parse_model_id,
 )
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from .._utils import managed_model_scope
+from .._utils import managed_model_scope, reject_serving_wrapper
 from ._activity_execution import execute_activity
 from ._durability import (
     IMAGE_OUTPUT_UNSUPPORTED_MESSAGE,
@@ -38,6 +40,7 @@ from ._durability import (
 )
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import model_response_payload_errors
+from ._transports import restore_telemetry_mcp_url_ids
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -100,6 +103,13 @@ class TemporalModel(WrapperModel):
         self._agent = agent
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
+            restore_telemetry_mcp_url_ids(
+                params.model_request_parameters,
+                params.telemetry_mcp_url_ids,
+                params.telemetry_mcp_url_toolset_ids,
+                params.telemetry_mcp_url_tool_names,
+                self._agent,
+            )
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -123,6 +133,13 @@ class TemporalModel(WrapperModel):
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
+            restore_telemetry_mcp_url_ids(
+                params.model_request_parameters,
+                params.telemetry_mcp_url_ids,
+                params.telemetry_mcp_url_toolset_ids,
+                params.telemetry_mcp_url_tool_names,
+                self._agent,
+            )
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -186,6 +203,15 @@ class TemporalModel(WrapperModel):
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.request_activity, self.request_stream_activity, self.cancel_suspended_response_activity]
 
+    def _refresh_http_client(self) -> None:
+        """Leave the wrapped models' HTTP clients alone.
+
+        Activities send the requests from the worker's event loop, not the workflow's.
+        """
+
+    def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
+        return reject_serving_wrapper(self, wrap, 'TemporalAgent', 'TemporalDurability')
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -216,6 +242,9 @@ class TemporalModel(WrapperModel):
                         messages=messages,
                         model_settings=cast(dict[str, Any] | None, model_settings),
                         model_request_parameters=model_request_parameters,
+                        telemetry_mcp_url_ids=model_request_telemetry_url_ids(model_request_parameters),
+                        telemetry_mcp_url_toolset_ids=model_request_parameters._telemetry_mcp_url_toolset_ids,  # pyright: ignore[reportPrivateUsage]
+                        telemetry_mcp_url_tool_names=model_request_parameters._telemetry_mcp_url_tool_names,  # pyright: ignore[reportPrivateUsage]
                         serialized_run_context=serialized_run_context,
                         model_id=model_id,
                     ),
@@ -262,6 +291,9 @@ class TemporalModel(WrapperModel):
                         messages=messages,
                         model_settings=cast(dict[str, Any] | None, model_settings),
                         model_request_parameters=model_request_parameters,
+                        telemetry_mcp_url_ids=model_request_telemetry_url_ids(model_request_parameters),
+                        telemetry_mcp_url_toolset_ids=model_request_parameters._telemetry_mcp_url_toolset_ids,  # pyright: ignore[reportPrivateUsage]
+                        telemetry_mcp_url_tool_names=model_request_parameters._telemetry_mcp_url_tool_names,  # pyright: ignore[reportPrivateUsage]
                         serialized_run_context=serialized_run_context,
                         model_id=model_id,
                     ),
@@ -388,6 +420,39 @@ class TemporalModel(WrapperModel):
         return current.system
 
     @property
+    def canonical_system(self) -> str:
+        """The currently active model's, like `system`; an unregistered model ID's provider name."""
+        current = self._current_model()
+        return self.system if isinstance(current, str) else current.canonical_system
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        """The currently active model's, like `system`; none for an unregistered model ID."""
+        current = self._current_model()
+        return frozenset() if isinstance(current, str) else current.compatible_systems
+
+    def accepts_stateless_artifacts(self, response: ModelResponse, part: ModelResponsePart | None = None) -> bool:
+        """The currently active model's answer, like `system`."""
+        current = self._current_model()
+        if isinstance(current, str):
+            # No model to ask, so judge by the provider name in the ID, as `Model` does.
+            return models.Model.accepts_stateless_artifacts(self, response, part)
+        return current.accepts_stateless_artifacts(response, part)
+
+    def accepts_server_state(self, response: ModelResponse) -> bool:
+        """The currently active model's answer, like `system`."""
+        current = self._current_model()
+        if isinstance(current, str):
+            # No model to ask, and the wrapped model's provider isn't the one the ID selects: judge by name alone,
+            # as `Model` does for a model without a provider.
+            return response.provider_name == self.system
+        return current.accepts_server_state(response)
+
+    def _model_for_response(self, response: ModelResponse) -> models.Model:
+        current = self._current_model()
+        return self if isinstance(current, str) else current._model_for_response(response)
+
+    @property
     def model_id(self) -> str:
         """Get the ID of the currently active model, rather than the default one's."""
         current = self._current_model()
@@ -429,6 +494,18 @@ class TemporalModel(WrapperModel):
             # A raw model ID carries no URL, and the default model's would name the wrong server.
             return None
         return current.base_url
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Report the native tool settings the currently active model can't apply.
+
+        A raw model string has no model class to ask, so this reports none, like `profile` reports the
+        string's inferred profile without intersecting it with the class's `supported_native_tools()`. The
+        activity resolves the concrete model, whose own `prepare_request` then rejects or swaps the tool.
+        """
+        current = self._current_model()
+        if isinstance(current, str):
+            return frozenset()
+        return current.unsupported_native_tool_settings(native_tool)
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         current = self._current_model()
@@ -495,7 +572,7 @@ class TemporalModel(WrapperModel):
         prepared = model_for_request.prepare_messages(params.messages, params.model_request_parameters)
         if prepared is params.messages:
             return prepared
-        return _clean_message_history(prepared, repair_last_response=True)
+        return repair_messages(prepared, repair_last_response=True)
 
     def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
         """Resolve a model ID to a Model instance.

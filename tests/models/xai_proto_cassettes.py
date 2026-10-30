@@ -1,7 +1,7 @@
 """Proto cassette utilities for xAI SDK (gRPC) tests.
 
 Why this exists:
-- `pytest-recording`/VCR only records HTTP. The xAI SDK uses gRPC, so VCR can't record/replay model calls.
+- The HTTP cassettes only record HTTP. The xAI SDK uses gRPC, so they can't record/replay model calls.
 - However, xAI responses are protobuf messages. We can serialize them and store them in YAML cassettes.
 
 This is intentionally minimal for now:
@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, TypeAlias, cast
 
+from ..cassette_utils import load_cassette_yaml
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -144,7 +145,7 @@ def _truthy_env(name: str) -> bool:
 
 
 def _normalize_record_mode(mode: str | None) -> ProtoCassetteRecordMode | None:
-    """Normalize pytest-recording/VCR-ish record modes to a small supported set.
+    """Normalize cassetter/VCR-ish record modes to a small supported set.
 
     Notes:
     - VCR uses: `none`, `once`, `new_episodes`, `all`
@@ -204,7 +205,7 @@ class XaiProtoCassette:
 
     @classmethod
     def load(cls, path: Path) -> XaiProtoCassette:
-        data = yaml.safe_load(path.read_text(encoding='utf-8'))
+        data = load_cassette_yaml(path.read_text(encoding='utf-8'))
 
         interactions: list[Interaction] = []
         for item in data.get('interactions', []):
@@ -386,6 +387,8 @@ class XaiProtoCassetteClient:
     cassette: XaiProtoCassette
     # Index into the ordered interactions list.
     interaction_idx: int = 0
+    # The `messages` each `chat.create()` was called with, as the code built them; see `get_sent_request_messages`.
+    sent_messages: list[list[chat_pb2.Message]] = field(default_factory=list[list['chat_pb2.Message']])
 
     @classmethod
     def from_path(cls, path: Path) -> XaiProtoCassetteClient:
@@ -437,7 +440,8 @@ class XaiProtoCassetteClient:
     def collections(self) -> Any:
         return _CassetteCollectionsStub(self)
 
-    def _chat_create(self, *_args: Any, **_kwargs: Any) -> _CassetteChatInstance:
+    def _chat_create(self, *_args: Any, **kwargs: Any) -> _CassetteChatInstance:
+        self.sent_messages.append(list(kwargs.get('messages', [])))
         expected_type = self.peek_interaction_type()
         return _CassetteChatInstance(self, expected_type)
 
@@ -529,6 +533,7 @@ class XaiProtoCassetteHybridClient:
     include_debug_json: bool = False
     interaction_idx: int = 0
     dirty: bool = False
+    sent_messages: list[list[chat_pb2.Message]] = field(default_factory=list[list['chat_pb2.Message']])
 
     def _can_replay(self) -> bool:
         """Check if there are more recorded interactions to replay."""
@@ -579,6 +584,7 @@ class XaiProtoCassetteHybridClient:
         )
 
     def _chat_create(self, *args: Any, **kwargs: Any) -> Any:
+        self.sent_messages.append(list(kwargs.get('messages', [])))
         inner_chat = self._inner.chat.create(*args, **kwargs)
         include_debug_json = self.include_debug_json
         client = self
@@ -736,6 +742,7 @@ class XaiProtoRecorder:
     _inner: AsyncClient
     cassette: XaiProtoCassette = field(default_factory=XaiProtoCassette)
     include_debug_json: bool = False
+    sent_messages: list[list[chat_pb2.Message]] = field(default_factory=list[list['chat_pb2.Message']])
 
     @property
     def client(self) -> Any:
@@ -765,6 +772,7 @@ class XaiProtoRecorder:
         self.cassette.dump(path)
 
     def _chat_create(self, *args: Any, **kwargs: Any) -> Any:
+        self.sent_messages.append(list(kwargs.get('messages', [])))
         inner_chat = self._inner.chat.create(*args, **kwargs)
         recorder = self
         include_debug_json = recorder.include_debug_json
@@ -1138,6 +1146,20 @@ def get_recorded_request_messages(async_client: AsyncClient) -> list[list[dict[s
             proto.ParseFromString(interaction.request_raw)
             requests.append([MessageToDict(m, preserving_proto_field_name=True) for m in proto.messages])
     return requests
+
+
+def get_sent_request_messages(async_client: AsyncClient) -> list[list[dict[str, Any]]]:
+    """Return the `messages` of each chat request the code built, as dicts, in replay and record mode alike.
+
+    Unlike `get_recorded_request_messages`, which reads the requests frozen in the cassette, this reads what
+    `XaiModel` passed to `chat.create()` in this run, so a test fails if the code stops sending what it asserts.
+    """
+    if not isinstance(async_client, (XaiProtoCassetteClient, XaiProtoRecorder, XaiProtoCassetteHybridClient)):
+        raise RuntimeError('Not a cassette-backed xAI client')  # pragma: no cover
+    return [
+        [MessageToDict(m, preserving_proto_field_name=True) for m in messages]
+        for messages in async_client.sent_messages
+    ]
 
 
 def xai_sdk_available() -> bool:

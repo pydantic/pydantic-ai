@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent function tools for LLM tool calling with @agent.tool, validating arguments from type hints and using docstrings as descriptions."
+---
+
 # Function Tools
 
 Function tools provide a mechanism for models to perform actions and retrieve extra information to help them generate a response.
@@ -34,7 +38,7 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'google:gemini-3-flash-preview',  # (1)!
+    '{{ google:medium }}',  # (1)!
     deps_type=str,  # (2)!
     instructions=(
         "You're a dice game, you should roll the die and see if the number "
@@ -95,8 +99,9 @@ print(dice_result.all_messages())
                 tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000033'), input_tokens=54, output_tokens=2),
-        model_name='gemini-3-flash-preview',
+        usage=RequestUsage(cost=Decimal('0.0000480'), input_tokens=54, output_tokens=2),
+        model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -121,8 +126,11 @@ print(dice_result.all_messages())
                 tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.0000395'), input_tokens=55, output_tokens=4),
-        model_name='gemini-3-flash-preview',
+        usage=RequestUsage(
+            cost=Decimal('0.00005625'), input_tokens=55, output_tokens=4
+        ),
+        model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -147,8 +155,9 @@ print(dice_result.all_messages())
                 content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000064'), input_tokens=56, output_tokens=12),
-        model_name='gemini-3-flash-preview',
+        usage=RequestUsage(cost=Decimal('0.000087'), input_tokens=56, output_tokens=12),
+        model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -220,13 +229,13 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 agent_a = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     deps_type=str,
     tools=[roll_dice, get_player_name],  # (1)!
     instructions=instructions,
 )
 agent_b = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     deps_type=str,
     tools=[  # (2)!
         Tool(roll_dice, takes_ctx=False),
@@ -346,6 +355,7 @@ test_model = TestModel()
 result = agent.run_sync('hello', model=test_model)
 print(result.output)
 #> {"foobar":"x=0 y='a' z=3.14"}
+assert test_model.last_model_request_parameters is not None
 print(test_model.last_model_request_parameters.function_tools)
 """
 [
@@ -369,6 +379,123 @@ print(test_model.last_model_request_parameters.function_tools)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+### Docstrings {#docstrings}
+
+A docstring written under a parameter, a field, or an enum member is the natural place to say what it means,
+but not every one of them reaches the model:
+
+| Written under | Describes | Sent to the model |
+| --- | --- | --- |
+| a tool or [output function](output.md#output-functions) | that tool | always |
+| an `Args:` entry in its docstring | that parameter | always |
+| a class used as a parameter or [output type](output.md) | that object | always |
+| a field of a `dataclass` or `TypedDict` | that field | as a function's parameter |
+| a field of a Pydantic model or `pydantic.dataclasses.dataclass` | that field | with `use_attribute_docstrings` on the class |
+| an `Enum` member | that option | with [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] |
+
+The schema Pydantic AI builds from a function signature — a tool or an output function — turns on Pydantic's
+[`use_attribute_docstrings`](https://docs.pydantic.dev/latest/api/config/#pydantic.config.ConfigDict.use_attribute_docstrings),
+and that reaches every type below it that doesn't bring a config of its own, at any depth. A Pydantic model and
+a `pydantic.dataclasses.dataclass` do bring one, which wins, so they ignore it — for their own fields and for
+anything nested inside them. Set it on the class itself to opt in wherever it's used, including as an
+[output type](output.md), which is built from the type rather than from a signature and so never inherits it:
+
+```python {title="attribute_docstrings.py"}
+from pydantic import BaseModel
+
+
+class Ticket(BaseModel, use_attribute_docstrings=True):
+    """A support ticket."""
+
+    subject: str
+    """One line summarising the problem."""
+```
+
+A description written as `Field(description=...)` needs no config and takes precedence over the docstring.
+
+#### Enum options {#enum-options}
+
+An `Enum` parameter reaches the model as the list of its values, which says what the options are but not what
+they mean. Mix [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] into the enum to send the
+docstring written under each member as that option's description. Such an enum renders as `anyOf` of `const`
+values instead of a plain `enum` list:
+
+```python {title="enum_options.py"}
+from enum import StrEnum
+
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    UseEnumMemberDocstrings,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+class Urgency(UseEnumMemberDocstrings, StrEnum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+agent = Agent()
+
+
+@agent.tool_plain
+def set_urgency(urgency: Urgency) -> str:
+    """Set the urgency of the ticket."""
+    return f'Urgency set to {urgency.value}.'
+
+
+def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    print(info.function_tools[0].parameters_json_schema)
+    """
+    {
+        '$defs': {
+            'Urgency': {
+                'anyOf': [
+                    {'const': 'low', 'description': 'Can wait a week.'},
+                    {'const': 'high', 'description': 'Needs attention today.'},
+                ],
+                'description': 'How urgent the ticket is.',
+                'title': 'Urgency',
+                'type': 'string',
+            }
+        },
+        'additionalProperties': False,
+        'properties': {'urgency': {'$ref': '#/$defs/Urgency'}},
+        'required': ['urgency'],
+        'type': 'object',
+    }
+    """
+    return ModelResponse(parts=[TextPart('done')])
+
+
+agent.run_sync('hello', model=FunctionModel(print_schema))
+```
+
+_(This example is complete, it can be run "as is")_
+
+`Enum` is the one case that needs a mix-in rather than a config flag: it has no `model_config` to carry one, and
+cannot carry a plain class attribute either — annotated or not, any assigned value becomes a member — so a base
+class is the only marker left. Without it the docstrings are ignored and the schema is exactly the one Pydantic
+generates on its own, so opting an enum in is the only thing that changes what a model sees.
+
+Members without a docstring keep a bare `const`, and a docstring under an alias (`urgent = 'high'` beside
+`high = 'high'`) describes the option it was written for. A `Literal` has nowhere to write a docstring, so it is
+unaffected.
+
+Wherever Pydantic AI describes an opted-in enum to a model — a tool parameter, an [output type](output.md), or a
+field of a model of your own — the descriptions come along.
+
+The docstrings are read from the enum's source, so an enum built at run time has none. When the options
+themselves are only known once the run is under way, use [`Choices()`](output.md#choices), which describes a
+mapping built where you build it and emits exactly this `anyOf`-of-`const`s schema.
 
 
 !!! tip "Debugging Tool Calls"

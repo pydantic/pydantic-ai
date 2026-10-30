@@ -40,7 +40,7 @@ with try_import() as logfire_import_successful:
     from logfire.testing import CaptureLogfire
 
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
@@ -542,3 +542,24 @@ def test_case_groups_with_failures():
     assert len(group.runs) == 1
     assert len(group.failures) == 1
     assert group.failures[0].error_message == 'something went wrong'
+
+
+@needs_logfire
+async def test_repeat_test_case_name_is_shared(capfire: CaptureLogfire):
+    """Every run of a repeated case carries the case's own name as its OTel `test.case.name`."""
+
+    async def task(inputs: str) -> str:
+        return inputs
+
+    dataset = Dataset[str, str, None](name='suite', cases=[Case(name='case1', inputs='a')])
+    await dataset.evaluate(task, repeat=2, progress=False)
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    [experiment_span] = [s for s in spans if s['name'] == 'evaluate {name}']
+    assert experiment_span['attributes']['test.suite.name'] == 'suite'
+    case_spans = sorted(
+        (s['attributes'] for s in spans if s['name'] == 'case: {case_name}'), key=lambda a: a['case_name']
+    )
+    assert [(a['case_name'], a['test.case.name']) for a in case_spans] == snapshot(
+        [('case1 [1/2]', 'case1'), ('case1 [2/2]', 'case1')]
+    )

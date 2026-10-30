@@ -12,7 +12,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -39,7 +38,9 @@ def test_model_profile_returns_openai_compatible_profile(mocker: MockerFixture):
     provider = LiteLLMProvider(api_key='test-key')
 
     mock_profile: dict[str, object] = {'supports_tools': True}
-    mock_openai_profile = mocker.patch('pydantic_ai.providers.litellm.openai_model_profile', return_value=mock_profile)
+    mock_openai_profile = mocker.patch(
+        'pydantic_ai.providers.openai_compatible.openai_model_profile', return_value=mock_profile
+    )
 
     profile = provider.model_profile('gpt-3.5-turbo')
 
@@ -58,18 +59,34 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
 
     # Mock all profile functions
     mock_profiles = {
-        'openai': mocker.patch('pydantic_ai.providers.litellm.openai_model_profile', return_value=mock_profile),
-        'anthropic': mocker.patch('pydantic_ai.providers.litellm.anthropic_model_profile', return_value=mock_profile),
-        'google': mocker.patch('pydantic_ai.providers.litellm.google_model_profile', return_value=mock_profile),
-        'meta': mocker.patch('pydantic_ai.providers.litellm.meta_model_profile', return_value=mock_profile),
-        'mistral': mocker.patch('pydantic_ai.providers.litellm.mistral_model_profile', return_value=mock_profile),
-        'cohere': mocker.patch('pydantic_ai.providers.litellm.cohere_model_profile', return_value=mock_profile),
-        'amazon': mocker.patch('pydantic_ai.providers.litellm.amazon_model_profile', return_value=mock_profile),
-        'deepseek': mocker.patch('pydantic_ai.providers.litellm.deepseek_model_profile', return_value=mock_profile),
-        'groq': mocker.patch('pydantic_ai.providers.litellm.groq_model_profile', return_value=mock_profile),
-        'grok': mocker.patch('pydantic_ai.providers.litellm.grok_model_profile', return_value=mock_profile),
-        'moonshotai': mocker.patch('pydantic_ai.providers.litellm.moonshotai_model_profile', return_value=mock_profile),
-        'qwen': mocker.patch('pydantic_ai.providers.litellm.qwen_model_profile', return_value=mock_profile),
+        'openai': mocker.patch(
+            'pydantic_ai.providers.openai_compatible.openai_model_profile', return_value=mock_profile
+        ),
+        'anthropic': mocker.patch(
+            'pydantic_ai.providers.openai_compatible.anthropic_model_profile', return_value=mock_profile
+        ),
+        'google': mocker.patch(
+            'pydantic_ai.providers.openai_compatible.google_model_profile', return_value=mock_profile
+        ),
+        'meta': mocker.patch('pydantic_ai.providers.openai_compatible.meta_model_profile', return_value=mock_profile),
+        'mistral': mocker.patch(
+            'pydantic_ai.providers.openai_compatible.mistral_model_profile', return_value=mock_profile
+        ),
+        'cohere': mocker.patch(
+            'pydantic_ai.providers.openai_compatible.cohere_model_profile', return_value=mock_profile
+        ),
+        'amazon': mocker.patch(
+            'pydantic_ai.providers.openai_compatible.amazon_model_profile', return_value=mock_profile
+        ),
+        'deepseek': mocker.patch(
+            'pydantic_ai.providers.openai_compatible.deepseek_model_profile', return_value=mock_profile
+        ),
+        'groq': mocker.patch('pydantic_ai.providers.openai_compatible.groq_model_profile', return_value=mock_profile),
+        'grok': mocker.patch('pydantic_ai.providers.openai_compatible.grok_model_profile', return_value=mock_profile),
+        'moonshotai': mocker.patch(
+            'pydantic_ai.providers.openai_compatible.moonshotai_model_profile', return_value=mock_profile
+        ),
+        'qwen': mocker.patch('pydantic_ai.providers.openai_compatible.qwen_model_profile', return_value=mock_profile),
     }
 
     # Test models without provider prefix (should use openai profile)
@@ -115,6 +132,8 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
         mock_profiles[expected_profile].reset_mock()
 
     # Test unknown provider prefix (should fall back to openai)
+    # The Mistral cases above also consult the OpenAI fallback underneath the Mistral profile.
+    mock_profiles['openai'].reset_mock()
     provider.model_profile('unknown-provider/some-model')
     mock_profiles['openai'].assert_called_once_with('unknown-provider/some-model')
 

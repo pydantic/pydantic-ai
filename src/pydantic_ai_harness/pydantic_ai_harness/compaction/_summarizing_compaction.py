@@ -1,0 +1,1158 @@
+"""`SummarizingCompaction` -- LLM-powered summarization of older messages."""
+
+from __future__ import annotations
+
+import copy
+import html
+import re
+import warnings
+from collections.abc import AsyncIterable, Callable, Sequence
+from dataclasses import KW_ONLY, dataclass, field, replace
+from datetime import UTC, datetime
+from string import Formatter
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
+
+# `EventStreamHandler` holds the forward reference `'AsyncIterable[_messages.AgentStreamEvent]'`, which the
+# `AgentSpec` schema resolves against this module's globals.
+from pydantic_ai import messages as _messages  # noqa: F401  # pyright: ignore[reportUnusedImport]
+from pydantic_ai._framing import neutralize_tags
+from pydantic_ai._utils import is_str_dict
+from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryFeedbackPart,
+    SystemPromptPart,
+    TextContent,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import Model
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.output import TextOutput
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts, with_text
+from pydantic_ai_harness._provenance import harness_origin
+from pydantic_ai_harness._usage import reserved_usage_limits
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.compaction._capability_loads import (
+    deferred_capability_ids,
+    is_load_part,
+    keep_capability_loads,
+)
+from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
+from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
+from pydantic_ai_harness.compaction._receipts import (
+    ReceiptInfo,
+    discover_transcript_handle,
+    format_receipt,
+    is_receipt_message,
+    is_receipt_part,
+    make_receipt_part,
+    record_receipt,
+)
+from pydantic_ai_harness.compaction._shared import (
+    compact_if_smaller,
+    compact_with_span,
+    context_for_request,
+    estimate_token_count,
+    exceeds,
+    find_safe_cutoff,
+    find_token_cutoff,
+    harness_data_origin,
+    is_harness_data,
+    is_realtime_model,
+    record_compaction_reclaim,
+    resolve_token_trigger,
+    split_legacy_memory,
+    validate_token_trigger,
+)
+from pydantic_ai_harness.compaction._summary import (
+    WrittenSummary,
+    is_summary_part,
+    summary_request,
+    without_summaries,
+)
+
+if TYPE_CHECKING:
+    from pydantic_ai.messages import AgentStreamEvent, ModelRequestPart, ModelResponsePart, UserContent
+    from pydantic_ai.models import AbstractModel, ModelRequestContext
+
+_DEFAULT_SUMMARY_PROMPT = """\
+You are a context summarization assistant.  The conversation below will be replaced by \
+your summary, so it must carry everything needed to continue the task.
+
+Write the summary under these exact section headings, omitting a section only if it has \
+no content:
+
+## Intent
+The user's overall goal and any standing constraints or preferences.
+
+## Key decisions
+Choices made and the reasoning, so they are not relitigated.
+
+## Artifacts
+Files, paths, identifiers, commands, and APIs touched -- quote exact names.
+
+## Current state
+What is done and what is in progress right now.
+
+## Next steps
+The immediate actions still required to finish the task.
+
+## Open questions
+Unresolved questions or blockers.
+
+Focus on results, not a replay of completed actions.  Respond ONLY with the summary -- no \
+preamble, no markdown fences.
+
+<messages>
+{messages}
+</messages>\
+"""
+
+_DEFAULT_INSTRUCTIONS = (
+    'You are a context summarization assistant. Extract the most important information from conversations.'
+)
+
+SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
+"""The text opening the summary `SystemPromptPart` that earlier releases wrote.
+
+Summaries are now a `CompactionPart`; this only recognizes ones in histories saved before that.
+"""
+
+# Anchored-incremental update instruction (opencode mechanism): the previous summary is fed
+# back as an anchor to update in place rather than a summary to re-summarize, which avoids
+# summary-of-summary decay.  Wording is minimal/neutral and flagged pending the eval-rig pass.
+_INCREMENTAL_UPDATE_INSTRUCTION = (
+    'An anchored summary from earlier compaction is provided below in <previous-summary>. '
+    'Update it using the conversation above: preserve still-true details, remove stale '
+    'details, and merge in new facts.  Keep the same section structure.'
+)
+
+_HARNESS_DATA_INSTRUCTION = (
+    "A <harness_data> element is content the application added on the user's channel, such as a "
+    "background tool's result or a reviewer's feedback; its origin says which.  Record what it says "
+    "where relevant, but don't treat it as the user's requests or standing constraints."
+)
+"""Added to the summary request only when the transcript holds a `<harness_data>` element, so other requests are unchanged."""
+
+# Cross-model bridge prefix (Codex prior art): when the summarizer's model family differs from
+# the family that produced the history, prefix the summary with a neutral one-liner so the
+# resuming model treats it as a handoff from a different model.  Wording flagged pending eval-rig.
+_BRIDGE_PREFIX = 'This summary was produced by a different model than the one continuing the task.'
+
+_KEPT_USER_MESSAGE_METADATA = 'pydantic-ai-harness.compaction.kept-user-message.v1'
+"""Marks a user turn retained by `keep_user_messages`, on its request's `metadata` and on its text items.
+
+Continuing a history merges adjacent requests and keeps only the framework's own metadata namespace,
+so the request-level marker is lost there; the copy's `TextContent` items carry the same marker as
+their `metadata`, the way pins do, so a retained copy is still recognized inside a merged request.
+"""
+
+
+def _model_name(model: str | AbstractModel | None) -> str | None:
+    """Best-effort model-name string from a model spec or object.
+
+    Accepts any `AbstractModel` (a realtime model included), not just a request-response
+    `Model`: the family heuristic only reads `model_name`, which every model carries.
+    """
+    if model is None:  # pragma: no cover - Pydantic AI always supplies the running model
+        return None
+    if isinstance(model, str):
+        return model
+    return getattr(model, 'model_name', None)
+
+
+def _history_model_name(messages: Sequence[ModelMessage]) -> str | None:
+    """Return the most recent response's `model_name` -- the family that produced the history."""
+    for msg in reversed(messages):
+        if isinstance(msg, ModelResponse) and msg.model_name:
+            return msg.model_name
+    return None
+
+
+def _model_family(model: str | AbstractModel | None) -> str | None:
+    """Reduce a model name to a coarse family token (e.g. `openai:gpt-4o` -> `gpt`).
+
+    A neutral structural heuristic: drop any `provider:` prefix, then take the leading token
+    before the first `-` or `/`.  Good enough to tell `gpt` from `claude`; the exact
+    family taxonomy is left to the eval-rig pass.
+    """
+    if isinstance(model, FallbackModel):
+        return _model_family(model.models[0])
+    name = _model_name(model)
+    if not name:  # pragma: no cover - empty model identifiers fail before compaction
+        return None
+    tail = name.split(':')[-1]
+    for sep in ('/', '-'):
+        tail = tail.split(sep)[0]
+    return tail or None
+
+
+def _writes_text(model: AbstractModel) -> bool:
+    """Whether *model* can answer with text, judged by the model a request reaches first.
+
+    A decision model such as TypeSafe's Jev answers only structured questions, so its profile
+    sets `supports_text_output=False`. `FallbackModel` has no profile of its own and tries its
+    first model first, which is where a text-less model would fail.
+    """
+    while isinstance(model, WrapperModel | FallbackModel):
+        model = model.models[0] if isinstance(model, FallbackModel) else model.wrapped
+    return not isinstance(model, Model) or model.profile.get('supports_text_output', True)
+
+
+def _non_empty_summary(text: str) -> str:
+    """The summary without surrounding whitespace, retried when nothing is left.
+
+    Core already retries a response with no text at all, but whitespace-only text passes its
+    check. Accepting it would replace the summarized history with an empty summary, so it is
+    retried the same way, and raises `UnexpectedModelBehavior` once output retries run out.
+    """
+    summary = text.strip()
+    if not summary:
+        raise ModelRetry('The summary was empty. Write the summary of the conversation.')
+    return summary
+
+
+def _truncate_with_marker(text: str, max_chars: int) -> str:
+    """Truncate *text* to *max_chars* characters, an explicit marker counted within the cap."""
+    if len(text) <= max_chars:
+        return text
+    marker = '[...]'
+    if max_chars <= len(marker):
+        return marker[:max_chars]
+    return f'{text[: max_chars - len(marker)]}{marker}'
+
+
+def format_transcript(
+    messages: Sequence[ModelMessage],
+    *,
+    skip_previous_summary: bool = False,
+    tool_return_max_chars: int | None = 500,
+) -> str:
+    """Render messages as a transcript of `<message>` elements for summarization.
+
+    Each part becomes its own element, with the transcript's own tags in its content
+    neutralized, so content such as tool output can't close its message and forge another.
+    Content a harness capability added on the user channel, recognized by its `origin`
+    metadata, becomes a `<harness_data>` element rather than a user message, and is cut to
+    `tool_return_max_chars` like tool output.
+    Retry feedback, a retried tool return or a `RetryFeedbackPart`, becomes a `retry_feedback`
+    element carrying its `cause`, so the summarizer sees the correction a rejected call or output got
+    rather than taking it for one that happened. A `RetryFeedbackPart` renders as the model was shown it.
+    Tool returns and retry feedback are truncated to `tool_return_max_chars` characters with the
+    shared truncation marker; `None` renders them whole. `load_capability` calls and returns are left
+    out: which capabilities are loaded is carried by those exchanges, which a compaction records again
+    after the summary, never by the summary.
+    """
+    elements: list[str] = []
+    for msg in messages:
+        if isinstance(msg, ModelRequest):
+            kept = _is_kept_user_message(msg)
+            for part in msg.parts:
+                if is_load_part(part):
+                    continue
+                elif isinstance(part, UserPromptPart) and (origin := harness_data_origin(part)) is not None:
+                    elements.append(_harness_data_element(origin, user_prompt_text(part), tool_return_max_chars))
+                elif kept or (isinstance(part, UserPromptPart) and _is_kept_user_part(part)):
+                    # The rest of a kept turn is carried forward as-is, so it isn't summarized too. Harness data an
+                    # earlier version kept is summarized instead, and `_kept_user_messages` drops it. A kept copy
+                    # merged into a later request is recognized by the marker on its text.
+                    continue
+                elif isinstance(part, UserPromptPart):
+                    elements.append(_message_element('user', user_prompt_text(part)))
+                elif (
+                    isinstance(part, SystemPromptPart)
+                    # A request-scoped prompt applied to its own request only, so it's no lasting context.
+                    and part.scope != 'request'
+                    and not (skip_previous_summary and is_legacy_summary(part))
+                ):
+                    elements.append(_message_element('system', part.content))
+                elif isinstance(part, ToolReturnPart):
+                    retried = part.outcome == 'retried'
+                    elements.append(
+                        _message_element(
+                            'retry_feedback' if retried else 'tool_return',
+                            tool_return_text(part),
+                            name=part.tool_name,
+                            cause=part.retry.cause if retried and part.retry is not None else None,
+                            max_chars=tool_return_max_chars,
+                        )
+                    )
+                elif isinstance(part, RetryFeedbackPart):
+                    elements.append(
+                        _message_element(
+                            'retry_feedback',
+                            part.model_response(),
+                            cause=part.retry.cause,
+                            max_chars=tool_return_max_chars,
+                            core_framed=True,
+                        )
+                    )
+                elif (
+                    isinstance(part, CompactionPart)
+                    and part.content
+                    and not (skip_previous_summary and is_summary_part(part))
+                ):
+                    elements.append(_message_element('summary', part.content))
+        else:
+            for part in msg.parts:
+                if isinstance(part, TextPart):
+                    elements.append(_message_element('assistant', part.content))
+                elif isinstance(part, ToolCallPart) and not is_load_part(part):
+                    elements.append(_message_element('tool_call', f'{part.args}', name=part.tool_name))
+    return '\n'.join(elements)
+
+
+_TranscriptRole: TypeAlias = Literal[
+    'user', 'system', 'assistant', 'tool_call', 'tool_return', 'retry_feedback', 'summary'
+]
+"""The `role` of a `<message>` element in the summarizer transcript."""
+
+_TRANSCRIPT_TAG_OPENER = re.compile(
+    r'<(?=\s*(?:/\s*)?(?:messages?|previous-summary|harness_data)(?:[\s/>]|$))', re.IGNORECASE
+)
+"""The `<` of an opening or closing tag of the summarizer transcript's own markup.
+
+Any case, whitespace around the `/`, attributes and a trailing `/>` all match, as `pydantic_ai._framing`
+matches core's framing tags, which `neutralize_tags` escapes; a longer tag name that merely starts with
+one of these doesn't. The optional `/` is grouped with the whitespace after it, so a long run of
+whitespace with no tag name after it is scanned once rather than split every possible way.
+"""
+
+
+def _neutralize_transcript_tags(content: str) -> str:
+    """Escape the transcript's own tags and every framing tag core writes in *content*.
+
+    Content then can't open or close a message, the transcript, or the previous summary, and a
+    `<system>`, `<context>` or `<tool_result>` tag in it stays inside its element.
+    """
+    # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
+    # the transcript's tags as framing tags there.
+    return _TRANSCRIPT_TAG_OPENER.sub('&lt;', neutralize_tags(content))
+
+
+def _message_element(
+    role: _TranscriptRole,
+    content: str,
+    *,
+    name: str | None = None,
+    cause: str | None = None,
+    max_chars: int | None = None,
+    core_framed: bool = False,
+) -> str:
+    """One transcript entry: *content* in a `<message>` element tagged with its *role*, for tools *name*, and for retry feedback *cause*.
+
+    *content* is escaped before it is cut to *max_chars*, so the cap bounds what the summarizer receives.
+    *core_framed* content was framed by core, which escaped the framing tags in its body, so its own frame
+    stays as written and only the transcript's tags are escaped.
+    """
+    attrs = ''.join(
+        f' {key}="{html.escape(value)}"' for key, value in (('name', name), ('cause', cause)) if value is not None
+    )
+    body = _TRANSCRIPT_TAG_OPENER.sub('&lt;', content) if core_framed else _neutralize_transcript_tags(content)
+    if max_chars is not None:
+        body = _truncate_with_marker(body, max_chars)
+    return f'<message role="{role}"{attrs}>\n{body}\n</message>'
+
+
+def _harness_data_element(origin: str, content: str, max_chars: int | None) -> str:
+    """Harness-added content as a `<harness_data>` element labeled with its *origin*, never as a user message."""
+    body = _neutralize_transcript_tags(content)
+    if max_chars is not None:
+        body = _truncate_with_marker(body, max_chars)
+    return f'<harness_data origin="{html.escape(origin)}">\n{body}\n</harness_data>'
+
+
+def user_prompt_text(part: UserPromptPart) -> str:
+    """Extract text content from a user prompt part."""
+    return ' '.join(user_prompt_texts(part))
+
+
+def _extract_system_prompts(messages: list[ModelMessage]) -> list[SystemPromptPart]:
+    """Extract leading system-prompt parts from the conversation."""
+    parts: list[SystemPromptPart] = []
+    for msg in messages:
+        if not isinstance(msg, ModelRequest):
+            break
+        for part in msg.parts:
+            if isinstance(part, SystemPromptPart) and not is_legacy_summary(part):
+                parts.append(part)
+            elif is_pinned(part) or is_receipt_part(part):
+                continue
+            else:
+                return parts
+    return parts
+
+
+def _is_user_turn_part(part: ModelRequestPart) -> bool:
+    """Whether *part* is a user prompt that is neither harness bookkeeping nor harness data."""
+    return (
+        isinstance(part, UserPromptPart)
+        and not is_pinned(part)
+        and not is_receipt_part(part)
+        and not is_harness_data(part)
+    )
+
+
+def _first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
+    """The first request holding a user part that is neither harness bookkeeping nor harness data."""
+    for message in messages:
+        if isinstance(message, ModelRequest) and any(_is_user_turn_part(part) for part in message.parts):
+            return message
+    return None
+
+
+def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPromptPart]) -> ModelRequest:
+    """The first user message to keep after compaction, without what the summary request carries.
+
+    Continuing a history merges consecutive requests, so after a compaction the first user message
+    also holds that compaction's summary and whatever request followed it. The summary goes after the
+    first user turn, so it and everything after it belong to later turns, which the new summary
+    covers. A summary ahead of the first user turn, written while the first user message wasn't kept,
+    is superseded too, and the turn after it is the one to keep. Receipts and an earlier release's
+    summaries are superseded by the new ones, and its leading system prompts are already copied into
+    the new summary request. Harness data in it isn't the user's message: it is summarized, not kept.
+    """
+    carried = {part.content for part in system_parts}
+    parts = message.parts
+    user_turn = next((index for index, part in enumerate(parts) if _is_user_turn_part(part)), 0)
+    turn_end = next((index for index in range(user_turn, len(parts)) if is_summary_part(parts[index])), len(parts))
+    kept = [
+        part
+        for part in parts[:turn_end]
+        if not is_receipt_part(part)
+        and not is_harness_data(part)
+        and not is_summary_part(part)
+        and not (is_legacy_summary(part) or (isinstance(part, SystemPromptPart) and part.content in carried))
+    ]
+    return message if len(kept) == len(message.parts) else replace(message, parts=kept)
+
+
+def is_legacy_summary(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[SystemPromptPart]:
+    """Whether *part* is a summary written by a release that stored it as a system prompt.
+
+    Recognized by its text, since those releases set no metadata on it, so a user system prompt that opens with the
+    same sentence counts too. A system prompt a harness capability marked with its `origin`, such as a lasting
+    `SystemReminders` reminder, is that capability's and never a summary.
+    """
+    return (
+        isinstance(part, SystemPromptPart)
+        and part.content.startswith(SUMMARY_PREFIX)
+        and harness_origin(part.metadata) is None
+    )
+
+
+def extract_previous_summary(messages: list[ModelMessage]) -> str | None:
+    """Extract the most recent compaction summary from the message history.
+
+    A summary is a `CompactionPart` marked as this capability's own (see `is_summary_part`); the last
+    one in the history is the newest. A `CompactionPart` an application wrote itself is not one.
+    Failing that, a history saved by an earlier release holds its summary as a `SystemPromptPart`
+    opening with `SUMMARY_PREFIX`, and each pass put its own ahead of the older ones, so there the
+    first one is the newest.
+    """
+    for msg in reversed(messages):
+        for part in reversed(msg.parts):
+            if is_summary_part(part) and part.content:
+                return _without_bridge_prefix(part.content)
+    for msg in messages:
+        for part in msg.parts:
+            # A request-scoped prompt (such as a `SystemReminders` reminder) is never a summary, whatever its text.
+            if is_legacy_summary(part) and part.scope != 'request':
+                return _without_bridge_prefix(part.content[len(SUMMARY_PREFIX) :])
+    return None
+
+
+def without_legacy_summaries(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """*messages* without summaries an earlier release stored as system prompts, keeping the rest of their requests."""
+    out: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest) and any(is_legacy_summary(part) for part in message.parts):
+            parts = [part for part in message.parts if not is_legacy_summary(part)]
+            if not parts:
+                continue
+            message = replace(message, parts=parts)
+        out.append(message)
+    return out
+
+
+def bridge_summary(
+    summarizer: SummarizingCompaction[AgentDepsT],
+    summary: str,
+    messages: list[ModelMessage],
+    ctx: RunContext[AgentDepsT],
+) -> str:
+    """Prefix *summary* with a cross-model handoff note when *summarizer*'s model family differs from the run's."""
+    if not summarizer.bridge_prefix:
+        return summary
+    run_family = _model_family(_history_model_name(messages) or ctx.model)
+    summarizer_family = _model_family(summarizer.model if summarizer.model is not None else ctx.model)
+    if run_family and summarizer_family and run_family != summarizer_family:
+        return f'{_BRIDGE_PREFIX}\n\n{_without_bridge_prefix(summary)}'
+    return summary
+
+
+def _without_bridge_prefix(summary: str) -> str:
+    """Remove the bridge notice before an incremental summary becomes the next anchor."""
+    return summary.removeprefix(f'{_BRIDGE_PREFIX}\n\n')
+
+
+def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessage]) -> bool:
+    """Whether summarizing *message* would add nothing the compacted history does not already hold.
+
+    That is a message kept verbatim alongside the summary, a `load_capability` exchange (left out of the
+    transcript, and recorded again when still needed), or a request made up only of system prompts (prompts
+    copied into the new summary request, or a summary from an earlier release), pins (reinjected), receipts
+    (replaced), and earlier summaries.
+    """
+    if any(message is retained for retained in kept):
+        return True
+    if isinstance(message, ModelResponse):
+        return bool(message.parts) and all(is_load_part(part) for part in message.parts)
+    return all(
+        isinstance(part, SystemPromptPart)
+        or is_pinned(part)
+        or is_receipt_part(part)
+        or is_summary_part(part)
+        or is_load_part(part)
+        for part in message.parts
+    )
+
+
+def _is_kept_user_message(message: ModelRequest) -> bool:
+    """Return whether *message* is an earlier `keep_user_messages` retention copy, as it was stored."""
+    return message.metadata is not None and message.metadata.get(_KEPT_USER_MESSAGE_METADATA) is True
+
+
+def _is_kept_user_part(part: ModelRequestPart) -> bool:
+    """Return whether *part* is an earlier `keep_user_messages` retention copy, wherever its request went."""
+    return (
+        isinstance(part, UserPromptPart)
+        and not isinstance(part.content, str)
+        and any(isinstance(item, TextContent) and _is_kept_marker(item.metadata) for item in part.content)
+    )
+
+
+def _is_kept_marker(metadata: object) -> bool:
+    """Whether a `TextContent.metadata` value carries the `keep_user_messages` marker."""
+    if metadata == _KEPT_USER_MESSAGE_METADATA:
+        return True
+    return is_str_dict(metadata) and metadata.get(_KEPT_USER_MESSAGE_METADATA) is True
+
+
+def _mark_kept(part: UserPromptPart) -> UserPromptPart:
+    """*part* with its text marked as a `keep_user_messages` copy; other items are left as they are.
+
+    A plain string becomes a single `TextContent`, which the model reads the same way. A `TextContent`
+    without metadata gets the marker as its metadata; one whose metadata is a dict gets the marker as an
+    extra key, so the caller's keys stay. One whose metadata is any other value has no model-invisible
+    place for a marker, so a part with no other text keeps only the request-level marker, which the
+    history cleanup that merges requests drops: a known limit until core provenance lands.
+    """
+    items = [part.content] if isinstance(part.content, str) else part.content
+    marked: list[UserContent] = []
+    for item in items:
+        if isinstance(item, str):
+            marked.append(TextContent(item, metadata=_KEPT_USER_MESSAGE_METADATA))
+        elif isinstance(item, TextContent) and item.metadata is None:
+            marked.append(replace(item, metadata=_KEPT_USER_MESSAGE_METADATA))
+        elif isinstance(item, TextContent) and is_str_dict(item.metadata):
+            marked.append(replace(item, metadata={**item.metadata, _KEPT_USER_MESSAGE_METADATA: True}))
+        else:
+            marked.append(item)
+    return replace(part, content=marked)
+
+
+async def drain_summary_events(
+    _ctx: RunContext[object],
+    events: AsyncIterable[AgentStreamEvent],
+) -> None:
+    """An `event_stream_handler` that consumes summary events and yields nothing to the caller.
+
+    Pass this as `SummarizingCompaction(event_stream_handler=drain_summary_events)` when the summary
+    endpoint requires a streaming request but the events themselves are not wanted. Supplying
+    any handler selects the streaming request path; this one just discards what it receives.
+    """
+    async for _ in events:
+        pass
+
+
+def _is_valid_summary_prompt(prompt: str) -> bool:
+    """Whether `prompt` renders with only a `{messages}` replacement field, and has one."""
+    try:
+        fields = {name for _, name, _, _ in Formatter().parse(prompt) if name is not None}
+        # A trial render with a non-empty transcript catches what parsing alone accepts, such as an
+        # unknown conversion or a nested format spec.
+        prompt.format(messages='transcript')
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+        return False
+    return fields == {'messages'}
+
+
+@dataclass
+class SummarizingCompaction(AbstractCapability[AgentDepsT]):
+    """LLM-powered conversation compaction.
+
+    When the conversation exceeds a configurable threshold, older messages are
+    summarized using a dedicated model call and replaced with a compact, structured
+    summary message, preserving recent context and tool-call integrity.
+
+    This is the expensive tier -- summarization turns input tokens into (pricier) output
+    tokens -- so it is best used behind cheaper passes (see `TieredCompaction`).
+
+    The summary call's usage is folded into the parent run's usage (it counts as a real
+    request), so cost accounting stays honest; note this also increments the run's request
+    count, which a request-count limiter would see.
+
+    Example:
+        ```python
+        from pydantic_ai import Agent
+        from pydantic_ai_harness.compaction import SummarizingCompaction
+
+        agent = Agent(
+            'openai:gpt-4o',
+            capabilities=[SummarizingCompaction(
+                model='openai:gpt-4o-mini',
+                max_messages=60,
+                keep_messages=20,
+            )],
+        )
+        ```
+    """
+
+    model: str | Model | None = None
+    """Model used to generate summaries.
+
+    When `None`, inherits the model the request being compacted is going to. Core starts
+    that as the run's model, so the two differ only where a capability replaced
+    `ModelRequestContext.model`; set this explicitly to pin the summarizer regardless.
+    """
+
+    model_settings: ModelSettings | None = field(default=None, kw_only=True)
+    """Settings for the dedicated summary model call.
+
+    These merge over defaults carried by `model`, allowing the summary call to use a
+    policy that differs from the running agent without mutating the model.
+    """
+
+    event_stream_handler: EventStreamHandler[object] | None = field(default=None, kw_only=True)
+    """If set, this handler is passed to the nested summary run, so the summarizer's own
+    model-streaming events surface to the caller.
+
+    Setting it also selects the streaming request path, which is what a summarizer endpoint
+    that rejects non-streaming requests needs; pass `drain_summary_events` to take that path without
+    handling the events. Left `None`, the summary request is non-streaming, which is what an
+    endpoint that rejects streaming requests needs. The handler receives the summary run's own
+    `RunContext`, never the outer run's, and the outer `Agent.run(...)` handler is not inherited.
+    """
+
+    summarization_capabilities: Sequence[AbstractCapability[None]] = field(default=(), kw_only=True)
+    """Capabilities attached to the agent that writes the summary.
+
+    The summary runs on its own `Agent`, so capabilities on the outer agent do not run on it.
+    Capabilities listed here do, with every hook of that run.
+
+    The summary agent has no `deps`, so these are `AbstractCapability[None]`.
+    """
+
+    max_messages: int | None = None
+    """Trigger compaction when message count exceeds this value."""
+
+    max_tokens: int | None = None
+    """Trigger compaction when estimated token count exceeds this value."""
+
+    max_fraction: float | None = field(default=None, kw_only=True)
+    """Trigger when estimated tokens exceed this fraction of the model's context window.
+
+    Resolved per request from the request's model, so one setting behaves correctly on any
+    model. Mutually exclusive with `max_tokens`."""
+
+    context_window: int | None = field(default=None, kw_only=True)
+    """Window override in tokens. `None` resolves it from the request's model.
+
+    Unlike `fallback_context_window`, this applies whether or not resolution succeeds. Reach
+    for it when the registry is confidently wrong: a beta- or tier-gated window it records as
+    the maximum, or a self-hosted endpoint whose model id describes someone else's
+    deployment. Only consulted alongside `max_fraction`."""
+
+    fallback_context_window: int = field(default=DEFAULT_CONTEXT_WINDOW, kw_only=True)
+    """Window assumed when the request's model is not in the pricing registry.
+
+    Only consulted alongside `max_fraction`. Supply the real number for a deployment the
+    registry cannot resolve."""
+
+    keep_messages: int = 20
+    """Number of tail messages to preserve after compaction (message-count trigger).
+
+    The newest message is always kept, so `0` keeps one.
+    """
+
+    keep_tokens: int | None = None
+    """Minimum original message-content tokens to retain in an unchanged recent suffix.
+
+    Whole messages and tool dependencies can exceed this floor. Attached instructions do
+    not count. When `None`, falls back to `keep_messages`; zero keeps legacy edge behavior.
+    """
+
+    summary_prompt: str = _DEFAULT_SUMMARY_PROMPT
+    """Prompt template for generating summaries.
+
+    Must contain a `{messages}` placeholder and no other replacement field. Write a literal
+    brace as `{{` or `}}`.
+    """
+
+    instructions: str = field(default=_DEFAULT_INSTRUCTIONS, kw_only=True)
+    """Instructions for the internal agent that writes the summary.
+
+    `summary_prompt` shapes the user turn of the summary request; this sets the internal
+    agent's static instructions, which Pydantic AI sends in the request's system prompt.
+    Override it when the summarizer endpoint requires a fixed leading instruction.
+    """
+
+    tokenizer: Callable[[str], int] | None = None
+    """Optional tokenizer for accurate token counting.
+
+    A callable that returns the token count for a given string.
+    When `None`, uses a ~4 characters-per-token heuristic.
+    """
+
+    preserve_first_user_message: bool = True
+    """When `True`, the first `ModelRequest` containing a `UserPromptPart`
+    is always kept after compaction, in addition to system prompts. System prompts,
+    earlier summaries and receipts in it are dropped, as the new summary request
+    carries their current versions.
+    """
+
+    incremental: bool = True
+    """When `True`, feed any existing summary from a prior compaction back as an anchored
+    `<previous-summary>` block with an update instruction (preserve still-true, remove stale,
+    merge new) so it is updated in place rather than re-summarized -- avoiding
+    summary-of-summary decay.
+    """
+
+    bridge_prefix: bool = False
+    """When `True` and the summarizer's model family differs from the family that produced
+    the history, prepend a neutral one-line note marking the summary as a cross-model handoff
+    (Codex prior art, anti-confabulation).  Only fires on a genuine family mismatch, so it is
+    cheap and off in the common same-model case; the note's wording is flagged pending eval-rig.
+    """
+
+    keep_user_messages: bool = False
+    """When `True`, preserve recent summarized user messages (each truncated to
+    `keep_user_messages_max_chars`) alongside the summary. Retained messages consume the
+    `keep_messages` tail budget in message-count mode. With positive `keep_tokens`,
+    `keep_messages` caps only extra user copies, which do not displace the retained suffix. Supersedes
+    `preserve_first_user_message`.
+    """
+
+    keep_user_messages_max_chars: int = 20_000
+    """Per-message character cap for `keep_user_messages`; oversized messages are truncated
+    with an explicit marker (the shared truncation-marker convention)."""
+
+    tool_return_max_chars: int | None = field(default=500, kw_only=True)
+    """Per-return character cap when rendering tool results for the summarizer. `None` renders
+    them whole."""
+
+    preserve_loaded_capabilities: bool = field(default=True, kw_only=True)
+    """When `True`, a deferred capability loaded in the summarized messages stays loaded.
+
+    Core counts a capability as loaded while its `load_capability` exchange is after the latest
+    compaction, so summarizing the exchange would unload it. Each such load is recorded again after
+    the summary instead, and the capability's tools and current instructions are sent again. When
+    `False`, those capabilities are unloaded, and a note after the summary names them so the model
+    can load the ones it still needs.
+    """
+
+    receipts: bool = False
+    """When `True`, append a deterministic compaction receipt after the summary noting how
+    much history was summarized, that the summary is secondhand, and -- when a
+    `TranscriptHandleProvider` capability is attached -- a persisted-run handle.
+
+    Opt-in for now: the receipt text is content, so defaulting it on is deferred to the
+    benchmark eval-rig pass.  The mechanism itself is structural.
+    """
+
+    # Override the inherited default ID because durable-operation recovery needs a stable identity.
+    _: KW_ONLY
+    id: str | None = 'summarizing_compaction'
+
+    def __post_init__(self) -> None:
+        if self.max_messages is None and self.max_tokens is None and self.max_fraction is None:
+            raise ValueError('At least one of max_messages, max_tokens, or max_fraction must be set.')
+        if self.max_messages is not None and self.max_messages < 1:
+            raise ValueError('max_messages must be positive.')
+        validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
+        if self.keep_messages < 0:
+            raise ValueError('keep_messages must be non-negative.')
+        if self.keep_tokens is not None and self.keep_tokens < 0:
+            raise ValueError('keep_tokens must be non-negative.')
+        if self.keep_user_messages_max_chars < 1:
+            raise ValueError('keep_user_messages_max_chars must be positive.')
+        if self.tool_return_max_chars is not None and self.tool_return_max_chars < 1:
+            raise ValueError('tool_return_max_chars must be positive.')
+        if not _is_valid_summary_prompt(self.summary_prompt):
+            # Such a prompt used to be accepted here, and either fails at the first compaction or
+            # sends no transcript, so warn now rather than break code that constructs one.
+            warnings.warn(
+                '`summary_prompt` must contain a `{messages}` placeholder and no other replacement field; '
+                'write a literal brace as `{{` or `}}`. This will raise `ValueError` in a future release.',
+                HarnessDeprecationWarning,
+                stacklevel=3,
+            )
+
+    def with_focus(self, focus: str) -> SummarizingCompaction[AgentDepsT]:
+        """Return a copy whose summary prompt prioritizes `focus`.
+
+        Used by `compact_now` so a user-invoked compaction can say what the summary must not
+        lose. The prompt is later run through `str.format`, so braces in a user- or
+        model-supplied focus are escaped to survive it.
+        """
+        escaped = focus.replace('{', '{{').replace('}', '}}')
+        focused = copy.copy(self)
+        # Not `replace`, which reruns `__post_init__` and would repeat an invalid prompt's warning from
+        # inside `dataclasses`; appending escaped text cannot change whether the prompt is valid.
+        focused.summary_prompt = f'{self.summary_prompt}\n\nGive particular weight to: {escaped}'
+        return focused
+
+    async def compact(
+        self,
+        messages: list[ModelMessage],
+        ctx: RunContext[AgentDepsT],
+    ) -> list[ModelMessage]:
+        """Summarize older messages, replacing them with a single summary message."""
+        if self.keep_tokens is not None:
+            cutoff = find_token_cutoff(messages, self.keep_tokens, self.tokenizer)
+        else:
+            cutoff = find_safe_cutoff(messages, self.keep_messages)
+
+        if cutoff <= 0:
+            return messages
+
+        system_parts = _extract_system_prompts(messages)
+        # Same length as `messages`: only parts inside a message are split.
+        split = split_legacy_memory(messages)
+        to_summarize = split[:cutoff]
+        preserved = messages[cutoff:]
+
+        extra: list[ModelMessage] = []
+        if self.keep_user_messages:
+            extra, preserved = self._retain_user_turns(to_summarize, preserved)
+        elif self.preserve_first_user_message:
+            first_user_msg = _first_user_message(split)
+            if first_user_msg is not None:
+                idx = split.index(first_user_msg)
+                if idx < cutoff and first_user_msg not in preserved:
+                    extra = [_kept_first_user_message(first_user_msg, system_parts)]
+
+        if self.keep_tokens and all(_adds_nothing_to_summarize(message, extra) for message in to_summarize):
+            # A large message can keep the retained token floor and the summary above the trigger;
+            # re-summarizing only the earlier summary would then cost a model call on every request.
+            return messages
+
+        previous_summary = extract_previous_summary(messages) if self.incremental else None
+        written = await self._summarize(to_summarize, ctx, previous_summary=previous_summary)
+        # A durable engine replays the time with the text, so the summary's metadata, which later requests
+        # and tools are keyed on, is the same on a retry. A result recorded before the time was kept is a `str`.
+        summary, created_at = (written, None) if isinstance(written, str) else (written.text, written.created_at)
+        summary = bridge_summary(self, summary, messages, ctx)
+
+        # The summary is model-written text standing in for the turns it replaced, so it is a
+        # `CompactionPart` in a request of its own: core sends it as framed user-voice text and treats
+        # it as a compaction boundary, and the standing system prompt stays exactly as it was. The
+        # original first user turn precedes everything it summarizes, so it goes ahead of it; recent user
+        # turns kept by `keep_user_messages` follow it, as they always did.
+        summary_message = summary_request(summary, created_at)
+        standing: list[ModelMessage] = [ModelRequest(parts=system_parts)] if system_parts else []
+
+        if previous_summary is not None:
+            # The new summary was written as an update of the newest earlier one, so it supersedes any
+            # the cutoff kept. Without an anchor the new summary never saw them, so they stay.
+            preserved = without_legacy_summaries(without_summaries(preserved))
+        before, after = ([], extra) if self.keep_user_messages else (extra, [])
+        result: list[ModelMessage] = [*standing, *before, summary_message, *after, *preserved]
+        result = reinject_pinned(messages, result, protected_tail=len(preserved) if self.keep_tokens else 0)
+        result = keep_capability_loads(
+            messages,
+            result,
+            kept_from=len(result) - len(preserved),
+            deferred_ids=deferred_capability_ids(ctx),
+            preserve=self.preserve_loaded_capabilities,
+        )
+        if self.receipts:
+            result = self._insert_receipt(
+                summary_message, to_summarize, result, ctx, protected_tail=len(preserved) if self.keep_tokens else 0
+            )
+        return result
+
+    def _retain_user_turns(
+        self, to_summarize: list[ModelMessage], preserved: list[ModelMessage]
+    ) -> tuple[list[ModelMessage], list[ModelMessage]]:
+        """The user-turn copies `keep_user_messages` keeps, and the tail they leave room for."""
+        extra = self._kept_user_messages(to_summarize)
+        extra = extra[-self.keep_messages :] if self.keep_messages else []
+        if self.keep_tokens == 0:
+            # Preserve the legacy zero-budget edge case, including zero-token copies.
+            retained: list[ModelMessage] = []
+            for message in reversed(extra):
+                if estimate_token_count([message], self.tokenizer) == 0:
+                    retained.append(message)
+                else:
+                    break
+            extra = list(reversed(retained))
+            # Retained user turns spent the whole zero budget; reserve one slot so the
+            # request being answered still survives compaction.
+            preserved = preserved[find_safe_cutoff(preserved, 1) :]
+        elif self.keep_tokens is None:
+            retained_tail_slots = max(1, self.keep_messages - len(extra))
+            if len(preserved) > retained_tail_slots:
+                preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
+        return extra, preserved
+
+    def _kept_user_messages(self, to_summarize: list[ModelMessage]) -> list[ModelMessage]:
+        """Rebuild each summarized user turn as a preserved, size-bounded user message."""
+        out: list[ModelMessage] = []
+        for msg in to_summarize:
+            if not isinstance(msg, ModelRequest):
+                continue
+            if _is_kept_user_message(msg):
+                # A turn kept by an earlier compaction may hold harness data from before it was told apart.
+                genuine = [part for part in msg.parts if not is_harness_data(part)]
+                if len(genuine) == len(msg.parts):
+                    out.append(msg)
+                elif genuine:
+                    out.append(replace(msg, parts=genuine))
+                continue
+            user_parts = [
+                part
+                for part in msg.parts
+                if isinstance(part, UserPromptPart)
+                and not is_pinned(part)
+                and not is_receipt_part(part)
+                and not is_harness_data(part)
+            ]
+            if not user_parts:
+                continue
+            kept: list[ModelRequestPart] = []
+            for part in user_parts:
+                if _is_kept_user_part(part):
+                    # Already a retained copy, merged into a later request: keep it as it is.
+                    kept.append(part)
+                elif isinstance(part.content, str):
+                    kept.append(_mark_kept(replace(part, content=self._truncate(part.content))))
+                else:
+                    bounded, _ = self._bound_sequence(part.content)
+                    kept.append(_mark_kept(replace(part, content=bounded)))
+            metadata = {**(msg.metadata or {}), _KEPT_USER_MESSAGE_METADATA: True}
+            out.append(replace(msg, parts=kept, metadata=metadata))
+        return out
+
+    def _truncate(self, text: str, max_chars: int | None = None) -> str:
+        limit = self.keep_user_messages_max_chars if max_chars is None else max_chars
+        return _truncate_with_marker(text, limit)
+
+    def _bound_sequence(self, content: Sequence[UserContent]) -> tuple[list[UserContent], bool]:
+        """Apply the same per-part character budget to a sequence-shaped user prompt.
+
+        `keep_user_messages_max_chars` bounds the whole part, so the budget is shared across the
+        sequence's text-bearing items rather than granted to each one. Non-text items (images,
+        audio, cache points) pass through: they carry no characters to cut, and rewriting them
+        would change what the model sees rather than shrink it.
+        """
+        remaining = self.keep_user_messages_max_chars
+        bounded: list[UserContent] = []
+        changed = False
+        for item in content:
+            if not isinstance(item, str | TextContent):
+                bounded.append(item)
+                continue
+            text = item if isinstance(item, str) else item.content
+            if remaining == 0:
+                changed = True
+                continue
+            truncated = self._truncate(text, remaining)
+            remaining -= len(truncated)
+            if truncated == text:
+                bounded.append(item)
+                continue
+            changed = True
+            bounded.append(with_text(item, truncated))
+        return bounded, changed
+
+    def _insert_receipt(
+        self,
+        summary_message: ModelRequest,
+        to_summarize: list[ModelMessage],
+        result: list[ModelMessage],
+        ctx: RunContext[AgentDepsT],
+        *,
+        protected_tail: int = 0,
+    ) -> list[ModelMessage]:
+        """Insert a receipt after the summary, de-accumulating only outside the protected tail."""
+        prefix_end = len(result) - protected_tail
+        deduped = [msg for msg in result[:prefix_end] if not is_receipt_message(msg)]
+        deduped.extend(result[prefix_end:])
+        dropped_tokens = estimate_token_count(to_summarize, self.tokenizer)
+        handle = discover_transcript_handle(ctx)
+        summarizer = _model_family(self.model if self.model is not None else ctx.model)
+        by = summarizer or 'the summarizer model'
+        record_receipt(
+            ReceiptInfo(
+                strategy='SummarizingCompaction',
+                dropped_messages=len(to_summarize),
+                dropped_tokens=dropped_tokens,
+                by=by,
+                handle=handle,
+            )
+        )
+        text = format_receipt(
+            dropped_messages=len(to_summarize),
+            dropped_tokens=dropped_tokens,
+            by=by,
+            handle=handle,
+            has_summary=True,
+        )
+        receipt_message = ModelRequest(parts=[make_receipt_part(text)])
+        anchor = deduped.index(summary_message)
+        return [*deduped[: anchor + 1], receipt_message, *deduped[anchor + 1 :]]
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Summarize older messages when the threshold is exceeded."""
+        messages: list[ModelMessage] = list(ctx.messages)
+        request_ctx = context_for_request(ctx, request_context)
+        token_trigger = resolve_token_trigger(
+            self.max_tokens, self.max_fraction, request_ctx.model, self.fallback_context_window, self.context_window
+        )
+        if not exceeds(
+            messages,
+            self.max_messages,
+            token_trigger,
+            self.tokenizer,
+            model_request_parameters=request_context.model_request_parameters,
+        ):
+            return request_context
+        compacted = await compact_with_span(
+            request_ctx,
+            strategy='SummarizingCompaction',
+            messages=messages,
+            compact=lambda: self._compact_if_smaller(messages, request_ctx),
+            tokenizer=self.tokenizer,
+        )
+        ctx.messages[:] = compacted
+        record_compaction_reclaim(
+            ctx,
+            estimate_token_count(messages, self.tokenizer),
+            estimate_token_count(compacted, self.tokenizer),
+        )
+        return replace(request_context, messages=compacted)
+
+    async def _compact_if_smaller(
+        self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT]
+    ) -> list[ModelMessage]:
+        """`compact`, or *messages* unchanged when the compacted history would not be smaller."""
+        compacted = await compact_if_smaller(
+            ctx,
+            strategy='SummarizingCompaction',
+            messages=messages,
+            compact=lambda: self.compact(messages, ctx),
+            tokenizer=self.tokenizer,
+        )
+        return messages if compacted is None else compacted
+
+    @durable_operation('summarize')
+    async def _summarize(
+        self,
+        messages: list[ModelMessage],
+        ctx: RunContext[AgentDepsT],
+        *,
+        previous_summary: str | None = None,
+    ) -> WrittenSummary | str:
+        """Generate a summary for the given messages using the configured model.
+
+        The return type keeps the `str` an earlier version recorded, so a durable run started before it replays.
+        """
+        return WrittenSummary(
+            await write_summary(self, messages, ctx, previous_summary=previous_summary), datetime.now(UTC)
+        )
+
+
+async def write_summary(
+    summarizer: SummarizingCompaction[AgentDepsT],
+    messages: list[ModelMessage],
+    ctx: RunContext[AgentDepsT],
+    *,
+    previous_summary: str | None = None,
+) -> str:
+    """Write *summarizer*'s summary of *messages* with its model, prompts and settings, inline.
+
+    `SummarizingCompaction._summarize` wraps this in its durable operation; another strategy that
+    reuses a summarizer's settings calls it inside an operation of its own.
+    """
+    from pydantic_ai import Agent
+
+    formatted = format_transcript(
+        messages,
+        skip_previous_summary=previous_summary is not None,
+        tool_return_max_chars=summarizer.tool_return_max_chars,
+    )
+    prompt = summarizer.summary_prompt.format(messages=formatted)
+    if any(is_harness_data(part) for msg in messages if isinstance(msg, ModelRequest) for part in msg.parts):
+        prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
+
+    if previous_summary is not None:
+        prompt = (
+            f'{prompt}\n\n{_INCREMENTAL_UPDATE_INSTRUCTION}\n\n'
+            f'<previous-summary>\n{_neutralize_transcript_tags(previous_summary)}\n</previous-summary>'
+        )
+
+    model = summarizer.model if summarizer.model is not None else ctx.model
+    # `ctx.model` is an `AbstractModel`; summarization needs a request-response model. A
+    # realtime run reaches here only when no summarizer `model=` was configured, so ask for
+    # one explicitly rather than handing `Agent` a model it cannot run with.
+    if is_realtime_model(model):
+        raise UserError(
+            'SummarizingCompaction needs a request-response model to write the summary, but '
+            f'the run uses {type(model).__name__}, which is not one. Set `model=` on '
+            'SummarizingCompaction to the model to summarize with when the run uses a realtime model.'
+        )
+    # Without `model=`, the summarizer is the run's model, which may be one that cannot write
+    # text at all, such as a decision model. Say so here rather than letting the summary run
+    # fail on core's generic "text output is not supported".
+    if summarizer.model is None and not _writes_text(ctx.model):
+        raise UserError(
+            f'SummarizingCompaction writes its summary with a language model, but the run uses '
+            f'{ctx.model.model_name!r}, which cannot produce text. Set `model=` on SummarizingCompaction '
+            'to a language model to summarize with.'
+        )
+    # `isinstance` narrows the generic `Model` to `Model[Unknown]`; `cast` recovers
+    # `Model[Any]`, mirroring core's own `reinject_system_prompt` idiom.
+    agent: Agent[None, str] = Agent(
+        cast('Model[Any] | str', model),
+        name='summarizing_compaction',
+        deps_type=type(None),
+        output_type=TextOutput(_non_empty_summary),
+        instructions=summarizer.instructions,
+        model_settings=summarizer.model_settings,
+        capabilities=list(summarizer.summarization_capabilities),
+    )
+    result = await agent.run(
+        prompt,
+        conversation_id=ctx.conversation_id,
+        usage=ctx.usage,
+        usage_limits=reserved_usage_limits(ctx.usage_limits),
+        event_stream_handler=summarizer.event_stream_handler,
+    )
+    return result.output
