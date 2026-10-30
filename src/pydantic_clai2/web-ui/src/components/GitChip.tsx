@@ -254,6 +254,7 @@ function Changes({
   // Only an untouched draft is known to describe other files: typing drops `draftedFor`.
   const stale =
     draftedFor !== null &&
+    text !== '' &&
     selected.length > 0 &&
     (draftedFor.size !== selected.length || selected.some((path) => !draftedFor.has(path)))
   const commit = () =>
