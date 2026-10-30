@@ -206,16 +206,36 @@ class TestRepoContextSymlinkRoots:
             ],
         ).run('go', workspace=LocalWorkspaceBackend(working_dir))
 
-        shared = '<context-file path="../CLAUDE.md">\nshared rules\n</context-file>\n\n'
-        leaf = '<context-file path="AGENTS.md">\npackage rules\n</context-file>'
-        assert len(captured) == 1
-        instructions = captured[0]
-        assert instructions is not None
-        assert (shared if authorized else '') + leaf in instructions
-        assert 'above stop' not in instructions
-        assert 'do not scan the target directory' not in instructions
-        if not authorized:
-            assert 'shared rules' not in instructions
+        if authorized:
+            assert captured == snapshot(
+                [
+                    """\
+<context id="capability:repo_context">
+<context-file path="../CLAUDE.md">
+shared rules
+</context-file>
+
+<context-file path="AGENTS.md">
+package rules
+</context-file>
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+"""
+                ]
+            )
+        else:
+            assert captured == snapshot(
+                [
+                    """\
+<context id="capability:repo_context">
+<context-file path="AGENTS.md">
+package rules
+</context-file>
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+"""
+                ]
+            )
 
     @pytest.mark.parametrize('target_kind', ['sibling', 'prefix', 'chained', 'broken', 'directory'])
     async def test_denies_targets_outside_authorized_root(self, tmp_path: Path, target_kind: str) -> None:
