@@ -25,16 +25,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
-from pydantic import (
-    BaseModel,
-    Field,
-    JsonValue,
-    ModelWrapValidatorHandler,
-    PrivateAttr,
-    TypeAdapter,
-    ValidationError,
-    model_validator,
-)
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
@@ -526,20 +517,10 @@ def _split_content_parts(content: object) -> tuple[object, list[object]]:
 
 
 class _ChatCompletionMessage(chat.ChatCompletionMessage):
-    _non_text_content_parts: list[object] = PrivateAttr(default_factory=list[object])
-
-    @model_validator(mode='wrap')
+    @field_validator('content', mode='before')
     @classmethod
-    def _split_content(
-        cls, data: object, handler: ModelWrapValidatorHandler[_ChatCompletionMessage]
-    ) -> _ChatCompletionMessage:
-        non_text_parts: list[object] = []
-        if _utils.is_str_dict(data) and isinstance(data.get('content'), list):
-            content, non_text_parts = _split_content_parts(data['content'])
-            data = {**data, 'content': content}
-        message = handler(data)
-        message._non_text_content_parts = non_text_parts
-        return message
+    def _join_content_parts(cls, value: object) -> object:
+        return _split_content_parts(value)[0]
 
 
 class _ChatCompletionChoice(chat_completion.Choice):
@@ -1879,6 +1860,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if choice.finish_reason is None:
                 choice.finish_reason = self._missing_finish_reason(choice)
 
+        # Read before validation, which joins a list `content` into its text.
+        _, content_parts = _split_content_parts(response.choices[0].message.content) if response.choices else (None, [])
+
         try:
             response = self._validate_completion(response)
         except ValidationError as e:
@@ -1897,8 +1881,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             provider_details['moderation'] = response.moderation.model_dump()
         if response.service_tier:
             provider_details['service_tier'] = response.service_tier
-        if isinstance(choice.message, _ChatCompletionMessage) and choice.message._non_text_content_parts:
-            provider_details['content_parts'] = choice.message._non_text_content_parts
+        if content_parts:
+            provider_details['content_parts'] = content_parts
 
         # Handle refusal responses (structured output safety filter)
         if choice.message.refusal:
