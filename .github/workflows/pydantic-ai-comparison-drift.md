@@ -26,17 +26,28 @@ network:
   # Competitor docs this workflow re-checks. Kept here, not in the shared allowlist,
   # so only this workflow can reach them.
   allowed:
-    - docs.langchain.com
-    - openai.github.io
-    - adk.dev
-    - docs.crewai.com
-    - docs.agno.com
-    - code.claude.com
-    - mastra.ai
-    - ai-sdk.dev
-    - docs.livekit.io
-    - docs.pipecat.ai
-    - elevenlabs.io
+    - docs.langchain.com # vs-langchain-langgraph
+    - www.langchain.com # vs-langchain-langgraph: LangSmith and LangGraph Platform
+    - openai.github.io # vs-openai-agents-sdk
+    - openai.com # vs-openai-agents-sdk: platform pages
+    - adk.dev # vs-google-adk
+    - google.github.io # vs-google-adk: ADK docs and sources
+    - cloud.google.com # vs-google-adk: Vertex AI Agent Engine
+    - docs.crewai.com # vs-crewai
+    - www.crewai.com # vs-crewai: CrewAI AMP platform
+    - docs.agno.com # vs-agno
+    - www.agno.com # vs-agno: AgentOS platform
+    - code.claude.com # vs-claude-agent-sdk
+    - docs.anthropic.com # vs-claude-agent-sdk: sources
+    - mastra.ai # vs-mastra
+    - ai-sdk.dev # vs-vercel-ai-sdk
+    - vercel.com # vs-vercel-ai-sdk: platform pages
+    - eve.dev # vs-vercel-ai-sdk: Eve, which ships separately from the AI SDK
+    - docs.livekit.io # vs-livekit
+    - livekit.com # vs-livekit: LiveKit Cloud
+    - docs.pipecat.ai # vs-pipecat
+    - elevenlabs.io # vs-livekit and vs-pipecat: the cascaded voice rows
+    # vs-pi: Pi's docs live in earendil-works/pi, read through the GitHub tools.
 safe-outputs:
   footer: false
   activation-comments: false
