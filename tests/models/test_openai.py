@@ -7138,8 +7138,8 @@ async def test_azure_prompt_filter_error_stream(
         with pytest.raises(
             ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"
         ) as exc_info:
-            async with agent.run_stream('bad prompt') as result:
-                await result.get_output()
+            # The error is raised while the stream is being opened, before an `async with` body would run.
+            await agent.run_stream('bad prompt').__aenter__()
 
     assert exc_info.value.body is not None
     assert json.loads(exc_info.value.body)[0]['provider_details'] == {
