@@ -23,7 +23,6 @@ __all__ = ('ModelFallback',)
 
 _SpecFallbackError = Literal[
     'ModelAPIError',
-    'ContentFilterError',
     'ModelHTTPError',
     'ModelRateLimitError',
     'ModelQuotaExceededError',
@@ -37,6 +36,7 @@ _SpecFallbackError = Literal[
     'ModelAuthenticationError',
     'ModelNotFoundError',
     'ModelRequestTimeout',
+    'ContentFilterError',
 ]
 """The exceptions an agent spec can name in `ModelFallback`'s `fallback_on`: every public `ModelAPIError` class, and
 `ContentFilterError`."""
@@ -120,12 +120,13 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         Args:
             models: The models to attempt after the one selected for the request step. When the
                 agent has no model of its own, the first of these is used for the first attempt.
-            fallback_on: Conditions that trigger fallback to the next model. Defaults to any
-                [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], and a refusal: a response the model's
-                content filter ended (`finish_reason='content_filter'`), with or without partial text, which naming
-                [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] stands for, as the error is only
-                raised once a response is accepted. Pass `fallback_on=(ModelAPIError,)` to keep the old behavior: an
-                empty refusal ends the run with `ContentFilterError`, and one with text is the output. Accepts:
+            fallback_on: Conditions that trigger fallback to the next model. Defaults to
+                `(ModelAPIError, ContentFilterError)`: any API error, and any refusal, meaning a response with
+                `finish_reason='content_filter'`, with or without partial text.
+                [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is only raised after a response is
+                accepted, so in `fallback_on` it stands for that response. Pass `fallback_on=(ModelAPIError,)` to
+                accept refusals instead: an empty one ends the run with `ContentFilterError`, and one with text is the
+                output. Accepts:
 
                 - A tuple of exception types: `(ModelRateLimitError, ModelUnavailableError)`
                 - An exception handler (sync or async): `lambda exc: isinstance(exc, MyError)`

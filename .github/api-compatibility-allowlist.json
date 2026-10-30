@@ -1,6 +1,18 @@
 {
   "allowed_breakages": [
     {
+      "against": "v2.63.0",
+      "fingerprint": "c899f363810e6caff10f37ffc738cdeef40a8b9863fd3e231247155935a3f350",
+      "reason": "Adds `CapabilityLoadDeltaPart` to `ModelRequestPart`, the record `RunContext.load_capability` leaves for a capability loaded from code; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10090"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "56230242ad0a14b12479047f6f0642d31f45b628331f2db068f7ea21eacaaf2f",
+      "reason": "Adds `CapabilityLoadDeltaEvent` to `HandleResponseEvent`, emitted when a request records a `CapabilityLoadDeltaPart`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10090"
+    },
+    {
       "against": "v2.62.0",
       "fingerprint": "78216eb81400af46f893b51ddc502505de40494f0e809618b9157955c6e33186",
       "reason": "`SignInRequired` was renamed to `SignInRequiredError` (#11326); the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
@@ -443,6 +455,12 @@
       "fingerprint": "ab788952b39a2021c1a9eb1c2009ddb950f83d8876f0e7624346c8dc3294ea8d",
       "reason": "harness 0.x: adds the 'flagged' value to `SkipReason` for skills an opt-in `Skills(scanner=...)` leaves out; it only appears with a scanner configured, and existing values are unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11470"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "ba357493cc5988982484475597d4666626d566ac71a2317e5e91af3c243c196e",
+      "reason": "`RepoContextSettings.nested_traversal` keeps its type and default; only its `Field` description changed, to describe nested traversal surfacing every directory between the traversed one and the workspace.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11687"
     }
   ],
   "model_name_literals": [

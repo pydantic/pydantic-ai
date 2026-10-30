@@ -246,6 +246,7 @@ with workflow.unsafe.imports_passed_through():
         model,
         web_search_builtin_model,
         web_search_model,
+        workflow_activity_raises,
         workflow_raises,
     )
 
@@ -5295,6 +5296,245 @@ async def test_durability_reprepares_reveal_history_for_different_model(client: 
         if isinstance(part, ToolReturnPart) and part.tool_name == 'cross_model_refund'
     )
     assert tool_return == 'refund available in activity: True'
+
+
+# --- Loading a deferred capability from code with `ctx.load_capability` ---
+
+
+def _code_load_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Opens a case, calls `code_load_invoice` once it's visible, then answers with its result."""
+    returns = {
+        part.tool_name: part.content
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    }
+    if 'code_load_invoice' in returns:
+        return ModelResponse(parts=[TextPart(str(returns['code_load_invoice']))])
+    if 'code_load_invoice' in {tool.name for tool in info.function_tools}:
+        return ModelResponse(parts=[ToolCallPart('code_load_invoice', {}, tool_call_id='invoice')])
+    return ModelResponse(parts=[ToolCallPart('open_case', {}, tool_call_id='open')])
+
+
+def _code_load_billing() -> Capability[None]:
+    billing = Capability[None](
+        id='code-load-billing', description='Billing.', instructions='Quote the invoice.', defer_loading=True
+    )
+
+    @billing.tool_plain
+    def code_load_invoice() -> str:
+        return 'Invoice paid.'
+
+    return billing
+
+
+_code_load_hooks = Hooks[None]()
+
+
+@_code_load_hooks.on.after_tool_execute
+async def _load_billing_after_open_case(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
+) -> Any:
+    if tool_def.name == 'open_case':
+        ctx.load_capability('code-load-billing')
+    return result
+
+
+_code_load_hook_agent = Agent(
+    FunctionModel(_code_load_model),
+    name='code_load_hook_agent',
+    deps_type=type(None),
+    capabilities=[_code_load_billing(), _code_load_hooks, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@_code_load_hook_agent.tool_plain(name='open_case')
+def _code_load_open_case() -> str:
+    return 'Case opened.'
+
+
+@workflow.defn
+class CodeLoadHookWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _code_load_hook_agent.run('Was my invoice paid?')).output
+
+
+async def test_durability_load_capability_from_tool_hook(client: Client):
+    """A tool hook runs in the workflow, so it can load a capability whose tool then runs in an activity, and it replays."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CodeLoadHookWorkflow],
+        plugins=[AgentPlugin(_code_load_hook_agent)],
+    ):
+        handle = await client.start_workflow(
+            CodeLoadHookWorkflow.run, id=CodeLoadHookWorkflow.__name__, task_queue=TASK_QUEUE
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    replay = await Replayer(workflows=[CodeLoadHookWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+
+    assert (output, replay.replay_failure) == ('Invoice paid.', None)
+
+
+_code_load_tool_agent = Agent(
+    FunctionModel(_code_load_model),
+    name='code_load_tool_agent',
+    deps_type=type(None),
+    capabilities=[_code_load_billing(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@_code_load_tool_agent.tool(name='open_case')
+async def _code_load_open_case_and_load(ctx: RunContext[None]) -> str:
+    ctx.load_capability('code-load-billing')
+    return 'Case opened.'  # pragma: no cover
+
+
+@workflow.defn
+class CodeLoadToolWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _code_load_tool_agent.run('Open a billing case.')).output
+
+
+async def test_durability_load_capability_from_tool_raises(client: Client):
+    """A tool runs in an activity, whose recorded result replays without re-running it, so loading from it raises."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CodeLoadToolWorkflow],
+        plugins=[AgentPlugin(_code_load_tool_agent)],
+    ):
+        with workflow_activity_raises(
+            UserError,
+            '`ctx.load_capability()` is not supported inside a durable execution activity, step, or task, whose '
+            'recorded result is replayed without re-running your code. Load the capability from a tool hook such as '
+            '`after_tool_execute` instead.',
+        ):
+            await client.execute_workflow(
+                CodeLoadToolWorkflow.run, id=CodeLoadToolWorkflow.__name__, task_queue=TASK_QUEUE
+            )
+
+
+_load_before_run_hooks = Hooks[None]()
+
+
+@_load_before_run_hooks.on.before_run
+async def _load_billing_before_run(ctx: RunContext[None]) -> None:
+    ctx.load_capability('code-load-billing')
+
+
+_load_before_request_hooks = Hooks[None]()
+
+
+@_load_before_request_hooks.on.before_model_request
+async def _load_billing_before_request(
+    ctx: RunContext[None], request_context: ModelRequestContext
+) -> ModelRequestContext:
+    ctx.load_capability('code-load-billing')
+    return request_context
+
+
+_load_after_request_hooks = Hooks[None]()
+
+
+@_load_after_request_hooks.on.after_model_request
+async def _load_billing_after_request(
+    ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+) -> ModelResponse:
+    if response.tool_calls:
+        ctx.load_capability('code-load-billing')
+    return response
+
+
+_code_load_after_request_agent = Agent(
+    FunctionModel(_code_load_model),
+    name='code_load_after_request_agent',
+    deps_type=type(None),
+    capabilities=[
+        _code_load_billing(),
+        _load_after_request_hooks,
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@_code_load_after_request_agent.tool_plain(name='open_case')
+def _code_load_after_request_open_case() -> str:
+    return 'Case opened.'
+
+
+@workflow.defn
+class CodeLoadAfterRequestWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _code_load_after_request_agent.run('Was my invoice paid?')).output
+
+
+_code_load_before_run_agent = Agent(
+    FunctionModel(_code_load_model),
+    name='code_load_before_run_agent',
+    deps_type=type(None),
+    capabilities=[
+        _code_load_billing(),
+        _load_before_run_hooks,
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+_code_load_before_request_agent = Agent(
+    FunctionModel(_code_load_model),
+    name='code_load_before_request_agent',
+    deps_type=type(None),
+    capabilities=[
+        _code_load_billing(),
+        _load_before_request_hooks,
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class CodeLoadBeforeRunWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _code_load_before_run_agent.run('Was my invoice paid?')).output
+
+
+@workflow.defn
+class CodeLoadBeforeRequestWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _code_load_before_request_agent.run('Was my invoice paid?')).output
+
+
+@pytest.mark.parametrize(
+    'agent, workflow_cls',
+    [
+        (_code_load_before_run_agent, CodeLoadBeforeRunWorkflow),
+        (_code_load_before_request_agent, CodeLoadBeforeRequestWorkflow),
+        (_code_load_after_request_agent, CodeLoadAfterRequestWorkflow),
+    ],
+    ids=['before_run', 'before_model_request', 'after_model_request'],
+)
+async def test_durability_load_capability_from_a_capability_hook(
+    client: Client, agent: Agent[None, str], workflow_cls: type[Any]
+):
+    """Capability hooks run in the workflow, so a load from one takes effect on the request that follows and replays.
+
+    From `before_run` or `before_model_request` that's the first request; from `after_model_request` on the response
+    that opens a case, the next one. Either way the model calls the capability's tool once it has it.
+    """
+    async with Worker(client, task_queue=TASK_QUEUE, workflows=[workflow_cls], plugins=[AgentPlugin(agent)]):
+        handle = await client.start_workflow(workflow_cls.run, id=workflow_cls.__name__, task_queue=TASK_QUEUE)
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    replay = await Replayer(workflows=[workflow_cls], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+
+    assert (output, replay.replay_failure) == ('Invoice paid.', None)
 
 
 # --- Passing image (BinaryImage) input through to a workflow ---

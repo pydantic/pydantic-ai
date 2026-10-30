@@ -2573,7 +2573,7 @@ def test_spec_fallback_on_names_every_public_model_api_error():
         pytest.param(
             {'ModelFallback': {'models': ['working'], 'fallback_on': ['ModelRateLimitError', 'UserError']}},
             '`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes and '
-            "`ContentFilterError`, got ['UserError']. Valid names: ModelAPIError, ContentFilterError, ModelHTTPError, ",
+            "`ContentFilterError`, got ['UserError']. Valid names: ModelAPIError, ModelHTTPError, ",
             id='not-a-model-api-error',
         ),
         pytest.param(
