@@ -1217,6 +1217,50 @@ async def test_continuation_across_transports_follows_storage(
     assert after_http_frame['input'] == [{'role': 'user', 'content': 'after HTTP'}]
 
 
+@pytest.mark.parametrize('same_endpoint', [True, False])
+@pytest.mark.parametrize('previous_response_id', ['auto', 'resp_http'])
+@pytest.mark.parametrize('transport', ['http', 'websocket'])
+async def test_continuation_scopes_automatic_server_state_by_endpoint(
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    http: HTTPResponses,
+    same_endpoint: bool,
+    previous_response_id: str,
+    transport: Literal['http', 'websocket'],
+):
+    """Automatic IDs stay on their endpoint; a caller's concrete seed is kept, as over HTTP."""
+    provider = OpenAIProvider(
+        api_key='test',
+        http_client=http.client,
+        base_url='https://api.openai.com/v1' if same_endpoint else 'https://gateway-a.example/v1',
+    )
+    first = await Agent(OpenAIResponsesModel('gpt-4o', provider=provider)).run('first')
+    settings: OpenAIResponsesModelSettings = {
+        'openai_previous_response_id': previous_response_id,
+        'openai_transport': transport,
+    }
+    agent = Agent(websocket_model(http.provider()), model_settings=settings)
+    async with agent:
+        assert (await agent.run('next', message_history=first.all_messages())).output == (
+            'ready' if transport == 'websocket' else 'from HTTP'
+        )
+
+    frame = sockets.opened[0].sent[0] if transport == 'websocket' else http.bodies[-1]
+    if same_endpoint:
+        assert frame['previous_response_id'] == 'resp_http'
+        assert frame['input'] == [{'role': 'user', 'content': 'next'}]
+    else:
+        if previous_response_id == 'auto':
+            assert 'previous_response_id' not in frame
+        else:
+            assert frame['previous_response_id'] == previous_response_id
+        assert frame['input'] == [
+            {'role': 'user', 'content': 'first'},
+            {'role': 'assistant', 'content': 'from HTTP'},
+            {'role': 'user', 'content': 'next'},
+        ]
+
+
 @pytest.mark.parametrize('setting', ['conversation', 'previous_response'])
 async def test_socket_requests_keep_an_explicit_server_side_state_setting(
     allow_model_requests: None, sockets: SocketHarness, setting: str
