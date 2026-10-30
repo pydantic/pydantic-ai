@@ -30,7 +30,7 @@ class OutputFallbackEvent(CapabilityEvent, namespace='model_fallback', name='out
     """An output-driven switch applied before the next ordinary model request.
 
     Inherited `tool_name` and `tool_call_id` identify the output tool that triggered the switch
-    when `source` is `'output_tool'`. Individual accepted retries are exposed by `after_output_retry`.
+    when `source` is `'output_tool'`. Individual output retries are exposed by `after_output_retry`.
     """
 
     source_model_id: str
@@ -88,9 +88,10 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     A model already attempted this step is skipped, so listing the agent's own model as the first
     candidate is harmless rather than a wasted duplicate attempt.
 
-    Set `output_retry_threshold` to move the next ordinary step to another model after accepted output
-    validation failures. That model receives the validation feedback and remains the starting
-    candidate for this run. Core's output/per-tool retry limits and usage limits still apply.
+    Set `output_retry_threshold` to move the next ordinary step to another model after output
+    validation failures consume allowed retries. That model receives the validation feedback and
+    remains the starting candidate for this run. The agent's output/per-tool retry limits and usage
+    limits still apply.
 
     Each attempt re-runs
     [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
@@ -110,11 +111,11 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     """The models to attempt, in order, after the one selected for the step."""
 
     output_retry_threshold: int | Mapping[str, int] | None
-    """Accepted output retries from a model before the next step moves to the next candidate.
+    """Output retries from a model before the next step moves to the next candidate.
 
     A positive integer applies to every model; a mapping configures thresholds by model ID and
     leaves unlisted models unchanged. `None` disables output-driven switching. The policy does
-    not increase core's retry limits.
+    not increase the agent's retry limits.
     """
 
     _output_model: Model | str | None = field(repr=False)
@@ -167,12 +168,12 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 is, with a `UserWarning`. A stream that fails to open, or whose provider reports
                 an error before its first event, still falls back.
             output_retry_threshold: Move the next ordinary request step to the next candidate after this
-                many accepted output retries from the serving model. A positive integer applies
+                many output retries from the serving model. A positive integer applies
                 to every model. A mapping uses the selection ID, or `Model.model_id` for a model
                 instance, to configure each model independently; unlisted models do not trigger
                 output-driven switching. Stay at the chosen candidate, or
-                later ones, for the rest of this run. `None` keeps request-only fallback. Core's
-                output and per-tool limits remain authoritative; configure them explicitly.
+                later ones, for the rest of this run. `None` keeps request-only fallback. The agent's
+                output and per-tool retry limits still apply; configure them explicitly.
         """
         super().__init__()
         if not models:

@@ -1,11 +1,14 @@
 import pytest
 
-pytest.importorskip('aws_durable_execution_sdk_python')
-
-from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, run_durable
+from tests.conftest import try_import
 from tests.durable_exec._output_fallback import make_agent, make_models
 
-from .conftest import FakeDurableContext
+with try_import() as imports_successful:
+    from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, run_durable
+
+    from .conftest import FakeDurableContext
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='aws-durable-execution-sdk-python not installed')
 
 
 def test_replay_reconstructs_selection() -> None:

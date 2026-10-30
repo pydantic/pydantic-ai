@@ -4,16 +4,20 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip('prefect')
-
-from prefect import flow
-from prefect.settings import PREFECT_LOCAL_STORAGE_PATH, temporary_settings
-
-from pydantic_ai.durable_exec.prefect import PrefectDurability
 from pydantic_ai.messages import ModelResponse
+from tests.conftest import try_import
 from tests.durable_exec._output_fallback import make_agent, make_models
 
-pytestmark = pytest.mark.xdist_group(name='prefect')
+with try_import() as imports_successful:
+    from prefect import flow
+    from prefect.settings import PREFECT_LOCAL_STORAGE_PATH, temporary_settings
+
+    from pydantic_ai.durable_exec.prefect import PrefectDurability
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='prefect not installed'),
+    pytest.mark.xdist_group(name='prefect'),
+]
 
 
 @pytest.mark.parametrize('blockbuster_enabled', [False])

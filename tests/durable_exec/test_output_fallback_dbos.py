@@ -6,17 +6,19 @@ from uuid import uuid4
 
 import pytest
 
-from tests.conftest import detach_dbos_logging
-
-pytest.importorskip('dbos')
-
-from dbos import DBOS, DBOSConfig, SetWorkflowID
-
-from pydantic_ai.durable_exec.dbos import DBOSDurability
 from pydantic_ai.messages import ModelResponse
+from tests.conftest import detach_dbos_logging, try_import
 from tests.durable_exec._output_fallback import make_agent, make_models
 
-pytestmark = pytest.mark.xdist_group(name='dbos')
+with try_import() as imports_successful:
+    from dbos import DBOS, DBOSConfig, SetWorkflowID
+
+    from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='dbos not installed'),
+    pytest.mark.xdist_group(name='dbos'),
+]
 
 
 class Crash(BaseException):

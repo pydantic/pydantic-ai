@@ -925,7 +925,7 @@ Validation and processing hooks receive an `output_context` parameter with [`Out
 
 Output validate and process hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same pattern used in [output functions](../output.md#output-functions) and [output validators](../output.md#output-validator-functions). See [Triggering retries with `ModelRetry`](../hooks.md#triggering-retries-with-modelretry) for the full pattern.
 
-[`after_output_retry`][pydantic_ai.capabilities.AbstractCapability.after_output_retry] is a separate notification after core accepts a retry: `(ctx, *, retry_context: OutputRetryContext) -> None`. It runs inside response processing, before the event stream closes and before the next step's model selection. [`OutputRetryContext`][pydantic_ai.capabilities.OutputRetryContext] carries the rejected response, actual retry metadata, and optional output-tool name/call ID. See [Accepted output retries](../hooks.md#accepted-output-retries) for eligibility, ordering, and failure semantics.
+[`after_output_retry`][pydantic_ai.capabilities.AbstractCapability.after_output_retry] is a separate notification when an output failure consumes an allowed retry: `(ctx, *, retry_context: OutputRetryContext) -> None`. It runs inside response processing, before the event stream closes and before the next step's model selection. [`OutputRetryContext`][pydantic_ai.capabilities.OutputRetryContext] carries the rejected response, actual retry metadata, and optional output-tool name/call ID. See [Accepted output retries](../hooks.md#accepted-output-retries) for eligibility, ordering, and failure semantics.
 
 ### Tool preparation
 

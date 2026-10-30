@@ -336,9 +336,9 @@ class OutputObjectDefinition:
 
 @dataclass(frozen=True, kw_only=True)
 class OutputRetryContext:
-    """An output retry core has accepted, passed to `after_output_retry` capability hooks.
+    """An output failure that consumed an allowed retry, passed to `after_output_retry` hooks.
 
-    This is a notification after enforcement, including when another output in the same response
+    The notification follows retry-limit checks, including when another output in the same response
     succeeds. It does not grant another attempt or change the configured retry limit.
     """
 
@@ -346,7 +346,7 @@ class OutputRetryContext:
     """The rejected response, identifying its actual producer when request fallback served the step."""
 
     retry: RetryInfo[RetryFeedbackCause | ToolRetryCause]
-    """The accepted retry's cause, attempt, and effective budget, including output-tool overrides."""
+    """The retry's cause, attempt, and effective limit, including output-tool overrides."""
 
     tool_name: str | None = None
     """The output tool's name, or `None` for response-level output failures."""

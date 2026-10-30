@@ -1506,11 +1506,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     # --- Output retry notification ---
 
     async def after_output_retry(self, ctx: RunContext[AgentDepsT], *, retry_context: OutputRetryContext) -> None:
-        """Observe an output retry accepted by core, inside response processing.
+        """Observe an output failure that consumes an allowed retry, inside response processing.
 
         Covers schema validation, output functions/validators, and unusable responses. Output-tool
-        retries carry their own effective budget and identity. Several accepted output failures in
-        one response produce several notifications, including failures beside a successful output.
+        retries carry their own effective budget and identity. Several failures in one response can
+        each consume a retry and produce a notification, including failures beside a successful output.
 
         Request-hook and function-tool retries, recovered errors, partial validation, skipped calls,
         cancellation, and terminal retry exhaustion do not notify. Exceptions from this hook stop the

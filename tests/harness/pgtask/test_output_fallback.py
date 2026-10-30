@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 import pytest
 
-pytest.importorskip('pgtask')
-
-from pydantic_ai_harness.pgtask import PGTaskDurability
+from tests.conftest import try_import
 from tests.durable_exec._output_fallback import make_agent, make_models
 
-from ._task import PGTaskDatabase, run_in_task
+with try_import() as imports_successful:
+    from pydantic_ai_harness.pgtask import PGTaskDurability
+
+    from ._task import PGTaskDatabase, run_in_task
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='pgtask not installed')
 
 
 async def test_replay_reconstructs_selection(pgtask_db: PGTaskDatabase) -> None:
