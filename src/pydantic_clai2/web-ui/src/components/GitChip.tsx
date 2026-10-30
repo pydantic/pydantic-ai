@@ -251,11 +251,10 @@ function Changes({
   const [confirmed, setConfirmed] = useState(false)
 
   const selected = paths.filter((path) => chosen.has(path))
-  // A message the user typed is theirs; only an untouched draft is known to describe other files.
+  // Only an untouched draft is known to describe other files: typing drops `draftedFor`.
   const stale =
     draftedFor !== null &&
-    !typed.current &&
-    text !== '' &&
+    selected.length > 0 &&
     (draftedFor.size !== selected.length || selected.some((path) => !draftedFor.has(path)))
   const commit = () =>
     act(async () => {
@@ -330,6 +329,7 @@ function Changes({
                 disabled={busy}
                 onChange={(event) => {
                   typed.current = true
+                  setDraftedFor(null)
                   setText(event.target.value)
                 }}
               />
