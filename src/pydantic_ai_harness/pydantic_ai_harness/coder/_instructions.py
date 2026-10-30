@@ -30,7 +30,8 @@ _NESTED_REPO_FILES = """\
 A subdirectory's instruction files are added to your context the first time you
 read or list something in it.
 """
-"""Only with `RepoContext(nested_traversal=True)`, which `Coder` turns on by default."""
+"""Only with `RepoContext(nested_traversal=True, nested_inject='contents')`, as `Coder` bundles it; a pointer note
+already tells the model to read the file."""
 
 _READING = """\
 Before editing, read the code and data files the task names, and the source you
@@ -86,11 +87,15 @@ readiness is verified; shut them down when no longer needed.
 
 
 def coder_instructions(*, repo_context: bool, nested_instructions: bool, delegate_tool: str | None) -> str:
-    """`Coder`'s default guidance, naming only the instruction files and delegation tool it has."""
+    """`Coder`'s default guidance, naming only the instruction files and delegation tool it has.
+
+    `repo_context` means the walk-up files are loaded at run start; `nested_instructions` means a subdirectory's
+    files are inlined when the model first touches it.
+    """
     sections = [
         _INTRO,
         *([_REPO_FILES] if repo_context else []),
-        *([_NESTED_REPO_FILES] if repo_context and nested_instructions else []),
+        *([_NESTED_REPO_FILES] if nested_instructions else []),
         _READING,
         *([_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []),
         _FINISHING,
