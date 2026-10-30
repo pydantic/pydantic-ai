@@ -293,7 +293,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         raw_path = args.get(self.traversal_path_arg)
         if not isinstance(raw_path, str):
             return result
-        await self._enqueue_context(ctx, await self._resolve_directory(ctx.workspace, raw_path))
+        # The deprecated sniffer can name a directory outside the working directory on purpose, so only the
+        # directories between it and the working directory are confined.
+        await self._enqueue_context(ctx, await self._resolve_directory(ctx.workspace, raw_path), confine_target=False)
         return result
 
     @on_event(FileReadEvent, DirectoryListedEvent)
@@ -312,7 +314,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return
         await self._enqueue_context(ctx, directory)
 
-    async def _enqueue_context(self, ctx: RunContext[AgentDepsT], directory: Path) -> None:
+    async def _enqueue_context(
+        self, ctx: RunContext[AgentDepsT], directory: Path, *, confine_target: bool = True
+    ) -> None:
         """Surface the instruction file of `directory` and of each directory between it and the working directory.
 
         Files are enqueued shallowest first, so the most specific file is the latest one the model reads.
@@ -320,12 +324,12 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         working_dir = await self._working_dir(ctx.workspace)
         real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
         for current in directories_up_to(directory, working_dir):
-            # The traversed directory itself was authorized by the tool, but a symlinked directory in its path
-            # can take a lexical ancestor between it and the working directory outside the project, so each of
-            # those must resolve inside the working directory too.
-            if current != directory and not Path(await ctx.workspace.realpath(str(current))).is_relative_to(
-                real_working_dir
-            ):
+            # The tool authorized the file or directory it touched, not every directory in its lexical path: a
+            # symlinked directory there can take one of them, or the file's own parent, outside the project. So
+            # each must resolve inside the working directory too.
+            if (confine_target or current != directory) and not Path(
+                await ctx.workspace.realpath(str(current))
+            ).is_relative_to(real_working_dir):
                 continue
             await self._enqueue_directory(ctx, current)
 

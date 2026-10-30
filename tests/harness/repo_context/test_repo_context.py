@@ -632,14 +632,26 @@ class TestNestedTraversal:
             ]
         )
 
+    @pytest.mark.parametrize(
+        'via',
+        [
+            pytest.param('directory', id='symlinked-intermediate-directory'),
+            pytest.param('file', id='symlinked-file-whose-parent-resolves-outside'),
+        ],
+    )
     async def test_a_symlink_in_the_path_does_not_surface_files_outside_the_working_directory(
-        self, tmp_path: Path
+        self, tmp_path: Path, via: str
     ) -> None:
         _write(tmp_path / 'AGENTS.md', 'OUTSIDE BODY')
         repo = tmp_path / 'repo'
         _write(repo / 'README.md', 'readme')
         (repo / 'bounce').symlink_to(tmp_path)
-        path = f'bounce/{repo.name}/README.md'
+        if via == 'directory':
+            path = f'bounce/{repo.name}/README.md'
+        else:
+            # The file resolves inside the repo, but its lexical parent `bounce` resolves outside it.
+            (tmp_path / 'link').symlink_to(repo / 'README.md')
+            path = 'bounce/link'
 
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
             if _tool_returns(messages) == 0:
