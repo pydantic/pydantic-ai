@@ -197,8 +197,13 @@ class SessionNamer:
 
     async def _sibling_titles(self, summary: ConversationSummary) -> list[str]:
         """The other unarchived sessions' titles in `summary`'s workspace, newest first."""
-        listing = await self.store.listing(limit=200, archived=False)
-        return [s.title for s in listing if s.workspace == summary.workspace and s.id != summary.id]
+        titles: list[str] = []
+        # Every page: the newest sessions may all be in other workspaces. Summaries are read without transcripts.
+        offset = 0
+        while page := await self.store.listing(limit=200, offset=offset, archived=False):
+            titles += [s.title for s in page if s.workspace == summary.workspace and s.id != summary.id]
+            offset += len(page)
+        return titles
 
 
 def _distinct(title: str, *, taken: set[str]) -> str:

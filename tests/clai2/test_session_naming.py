@@ -382,3 +382,22 @@ async def test_templated_sessions_in_one_workspace_get_titles_that_differ_beyond
     assert 'Web UI Stress Test Round Three' not in prompts[1]
     assert '- Web UI stress test round three\n' in prompts[2]
     assert '- web ui stress test round three (2)\n' in prompts[3]
+
+
+async def test_titles_stay_distinct_behind_many_newer_sessions_elsewhere(tmp_path: Path) -> None:
+    """A workspace's siblings are found however many newer sessions other workspaces have."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    messages = [ModelRequest(parts=[UserPromptPart('fix renderer')])]
+    first = await store.save(summary=ConversationSummary(workspace='/a'), messages=messages)
+    second = await store.save(summary=ConversationSummary(workspace='/a'), messages=messages)
+    for _ in range(200):
+        await store.save(summary=ConversationSummary(workspace='/elsewhere'), messages=[])
+
+    async def generate(prompt: str) -> NamingResult:
+        return NamingResult(name=SessionName(title='Fix renderer'))
+
+    namer, client = SessionNamer(store=store), NamingClient(generate=generate)
+    assert await namer.name(conversation_id=first.id, client=client)
+    assert await namer.name(conversation_id=second.id, client=client)
+    titles = [(await store.get(conversation_id=s.id)).summary.title for s in (first, second)]
+    assert titles == ['Fix renderer', 'Fix renderer (2)']
