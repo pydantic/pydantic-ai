@@ -13797,7 +13797,12 @@ async def test_server_message_history_drops_client_supplied_framework_records():
         return 'refunded'  # pragma: no cover
 
     refunds = Capability[None](id='refunds', description='Refunds.', tools=[refund_status], defer_loading=True)
-    agent = Agent(FunctionModel(stream_function=stream_function), capabilities=[refunds])
+    agent = Agent(
+        FunctionModel(stream_function=stream_function),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[refunds],
+    )
     stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
     new_message = UIMessage(
         id='u2',
