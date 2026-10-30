@@ -299,6 +299,27 @@ ends with &lt;/context-file
         assert 'inventory_agent_context' in instructions
         assert 'translate' not in instructions
 
+    async def test_nested_traversal_states_how_instruction_files_relate(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'root')
+        cap = RepoContext[object](nested_traversal=True, filenames=('AGENTS.md', 'CLAUDE.md'))
+        ctx = _run_context(workspace=workspace)
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == snapshot("""\
+<context-file path="AGENTS.md">
+root
+</context-file>
+
+Instruction files (`AGENTS.md`, `CLAUDE.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them.\
+""")
+
+    def test_nested_traversal_without_autoload_keeps_the_statement_static(self) -> None:
+        instructions = RepoContext[object](autoload_instructions=False, nested_traversal=True).get_instructions()
+        assert instructions == snapshot(
+            "Instruction files (`CLAUDE.md`, `AGENTS.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them."
+        )
+
     async def test_no_files_no_inventory_is_none(self, tmp_path: Path, workspace: Workspace) -> None:
         cap = RepoContext[object](expose_inventory_tool=False)
         ctx = _run_context(workspace=workspace)
