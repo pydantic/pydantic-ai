@@ -10544,8 +10544,8 @@ async def test_parallel_tool_outer_cancellation_only_cancels_pending_tool_tasks(
 async def test_wrap_run_readiness_wait_cancels_wrapper_task_on_outer_cancellation():
     """Outer cancellation while waiting for `wrap_run` readiness should clean up the wrapper task.
 
-    Target boundary: `Agent.iter()` creates `_wrap_task` and `_ready_waiter`, then waits for
-    `asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)`.
+    Target boundary: `Agent.iter()` creates `_wrap.task` and `_ready_waiter`, then waits for
+    `asyncio.wait({_ready_waiter, _wrap.task}, return_when=asyncio.FIRST_COMPLETED)`.
     The test should cancel the parent task while that wait is pending, then assert the
     capability's `wrap_run` cleanup has completed before cancellation returns.
     """
@@ -10581,7 +10581,7 @@ async def test_run_handoff_survives_absorbed_cancellation():
     durable step inside `before_run` can swallow the injected `CancelledError` and return
     normally. `_do_run` then proceeds to `await _run_done`, which the cancelled caller never
     sets on the drain path — so unless the handoff cleanup unblocks it before draining
-    `_wrap_task`, the run task deadlocks forever. Here a `before_run` that absorbs one
+    `_wrap.task`, the run task deadlocks forever. Here a `before_run` that absorbs one
     cancellation simulates that survivor condition without a Temporal dependency.
     """
 
@@ -10622,7 +10622,7 @@ async def test_streaming_handoff_survives_absorbed_cancellation():
     completing — the documented behavior of Temporal's cooperative activity cancellation, as
     routed through `model.request_stream` — `_streaming_handler` is left parked on
     `stream_done.wait()`. Unless the handoff cleanup sets `stream_done` before draining
-    `wrap_task`, the run task deadlocks. `SwallowOneCancelModel` reproduces that at the
+    `wrap.task`, the run task deadlocks. `SwallowOneCancelModel` reproduces that at the
     `request_stream` await boundary.
     """
 

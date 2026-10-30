@@ -398,7 +398,7 @@ To access the Prefect UI, you can either:
 1. Use [Prefect Cloud](https://www.prefect.io/cloud) (managed service)
 2. Run a local [Prefect server](https://docs.prefect.io/v3/how-to-guides/self-hosted/server-cli) with `prefect server start`
 
-You can also use [Pydantic Logfire](../logfire.md) for detailed observability. When using both Prefect and Logfire, you'll get complementary views:
+Run `uvx logfire-cli wizard --task pydantic-ai` once to [set up Pydantic Logfire](../logfire.md#using-logfire) for detailed observability. When using both Prefect and Logfire, you'll get complementary views:
 
 * **Prefect**: Workflow-level orchestration, task status, and retry history
 * **Logfire**: Fine-grained tracing of agent runs, model requests, and tool invocations
