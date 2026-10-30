@@ -1,10 +1,14 @@
 ---
-description: "Find supported model developers, cloud platforms, inference services, gateways and local servers, with setup guides, model selection and fallback configuration."
+description: "Pydantic AI is model-agnostic: switch between OpenAI, Anthropic, Gemini, Amazon Bedrock, Google Vertex AI, Azure OpenAI and local models by changing one string. Find each provider's setup guide, model selection and fallback configuration."
 ---
 
 # Models and Providers
 
 Pydantic AI supports model developers, cloud platforms, inference services, gateways, and local model servers. Find your service below and follow its setup guide for installation, authentication, and supported features.
+
+Pydantic AI is model-agnostic: switch an agent between OpenAI, Anthropic, Gemini, Amazon Bedrock, Google Vertex AI, Azure OpenAI and local models by changing one string, without rewriting the agent. It runs on [Azure OpenAI](azure.md), [Amazon Bedrock](bedrock.md) and [Google Vertex AI](google-cloud.md) with your cloud's own credentials.
+
+To keep an agent running when a provider fails, give it other models to fall back to with the [`ModelFallback`](../capabilities/model-fallback.md) capability: see [Fallback Model](#fallback-model).
 
 ## Provider directory
 
@@ -116,7 +120,7 @@ print(WebSearchTool in profile.get('supported_native_tools', frozenset()))
 The profile also says which kinds of file the model accepts: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input] (narrowed to particular document types by [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types]), [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input]. Each model class turns off what its API can't take, whatever the profile says: [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], for example, reads neither audio nor video, and only PDF and plain-text documents. A file a tool returns that the model can't take is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance), and the [File Understanding](../capabilities/file-understanding.md) capability reads the same flags to decide which files to describe in text first.
 
 `model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so `profile.get('supports_tools')` returns a value. If you supply `profile=` as a callable (or otherwise have a partial profile dict), pass the default as the fallback, `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`), to tolerate missing keys.
-Individual model adapters expose their resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is different: it has no single profile because its candidate models may have different capabilities. Inspect the profile of each model in `fallback_model.models` instead. Don't confuse profiles with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
+Individual model adapters expose their resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is different: it has no single profile because its candidate models may have different capabilities. Inspect the profile of each model in `fallback_model.models` instead. With the [`ModelFallback`](../capabilities/model-fallback.md) capability, each attempt is made with a model of its own, so a capability hook reads the profile of the model serving the attempt from `request_context.model`. Don't confuse profiles with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
 
 The profile also carries the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]: the maximum number of tokens it can handle in a single request, or `None` when unknown. Every model, including a `FallbackModel` and wrappers like [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel], exposes it as [`model.context_window`][pydantic_ai.models.AbstractModel.context_window]; a fallback model reports the smallest window among its candidates, so history that fits it fits whichever candidate answers. Inside a run, [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] reports the fraction in use, or `None` when it cannot be calculated. See [Compact when the context window fills](../message-history.md#compact-when-the-context-window-fills) for an example that handles this case.
 
@@ -432,6 +436,19 @@ print(isinstance(error, ModelHTTPError), isinstance(error, ModelRateLimitError))
 
 ## Fallback Model
 
+To make an agent fall back to other models when a provider fails, add the [`ModelFallback`](../capabilities/model-fallback.md) capability. The agent's model is attempted first, then each of the capability's models in turn, until one succeeds:
+
+```python {title="agent_model_fallback.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ModelFallback
+
+agent = Agent('{{ openai:medium }}', capabilities=[ModelFallback('{{ anthropic:medium }}')])
+```
+
+`ModelFallback` makes each attempt within the agent's own request loop, so capabilities see the model that will serve each attempt and prepare the request for it, each attempt is [batched](../batch.md) on its own model, and under [durable execution](../durable_execution/overview.md) each attempt is a durable model operation of its own. See [Model Fallback](../capabilities/model-fallback.md) for how it works, and [Migrating from `FallbackModel`](../capabilities/model-fallback.md#migrating-from-fallbackmodel) to move an agent over.
+
+The rest of this section covers [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], which remains the way to fall back with [direct model requests](../direct.md) or a standalone model, outside an agent. Its `fallback_on` policies, failed attempts and telemetry work the same way under `ModelFallback`, so the handler examples below apply to both.
+
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
 in sequence until one succeeds. Pydantic AI can switch to the next model when the current model
 raises an exception (like a 4xx/5xx API error) **or** when the response content indicates a semantic
@@ -493,6 +510,7 @@ print(response.all_messages())
         parts=[TextPart(content='The capital of France is Paris.')],
         usage=RequestUsage(cost=Decimal('0.000182'), input_tokens=56, output_tokens=7),
         model_name='{{ anthropic:medium.name }}',
+        model_id='fallback:{{ openai:medium }},{{ anthropic:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -614,8 +632,10 @@ A rejected response was still generated and billed, so its tokens and cost are a
 
 The rejected responses' usage counts when every model fails, too. If it exceeds a limit, [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] is raised with the `FallbackExceptionGroup` as its `__cause__`.
 
+The rejected responses' usage also counts when the request ends another way: a later model raises an error that `fallback_on` doesn't cover, the run is cancelled or times out.
+
 !!! note
-    The rejected responses' usage is not recorded when a later model raises an error that `fallback_on` doesn't cover, or, under [Temporal](../durable_execution/temporal.md), when every model fails: the exception group reaches the workflow without its attempts.
+    Under [durable execution](../durable_execution/overview.md), a `FallbackModel` runs inside the durable model operation, and the error that ends its request reaches the workflow without its attempts, so the usage of the responses it rejected is only recorded when another model answers. [`ModelFallback`](../capabilities/model-fallback.md#durable-execution) makes each attempt a durable operation of its own and records the attempts on the workflow side, so it doesn't have this limitation.
 
 ```python {title="fallback_model_attempts.py"}
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
@@ -744,13 +764,13 @@ print(result.output)
 
 #### Native Tool Failure Example
 
-A more complex use case is when using native tools like web search or URL fetching. For example, Google's [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] may return a successful response with a status indicating the URL fetch failed:
+A more complex use case is when using native tools like web search or URL fetching. For example, Google's native web fetch, enabled with the [`WebFetch`](../capabilities/web-fetch.md) capability, may return a successful response with a status indicating the URL fetch failed. This example uses the [`ModelFallback`](../capabilities/model-fallback.md) capability, which takes the same `fallback_on`:
 
 ```python {title="fallback_on_native_tool.py"}
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import ModelFallback, WebFetch
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.google import GoogleModel
 
 
@@ -772,14 +792,14 @@ def web_fetch_failed(response: ModelResponse) -> bool:
 google_model = GoogleModel('{{ google:medium.name }}')
 anthropic_model = AnthropicModel('{{ anthropic:medium.name }}')
 
-# Auto-detected as response handler via type hint
-fallback_model = FallbackModel(
+agent = Agent(
     google_model,
-    anthropic_model,
-    fallback_on=web_fetch_failed,
+    capabilities=[
+        WebFetch(),
+        # Auto-detected as response handler via type hint
+        ModelFallback(anthropic_model, fallback_on=web_fetch_failed),
+    ],
 )
-
-agent = Agent(fallback_model)
 
 # If Google's web_fetch fails, automatically falls back to Anthropic
 result = agent.run_sync('Summarize https://ai.pydantic.dev')

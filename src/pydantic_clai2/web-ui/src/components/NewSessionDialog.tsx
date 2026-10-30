@@ -7,6 +7,8 @@ interface Place {
   path: string
   label: string
   detail: string
+  /** In a Git checkout, so New worktree… can check out another of its repository. */
+  repo: boolean
 }
 
 function message(error: unknown): string {
@@ -25,6 +27,7 @@ function places(projects: Project[], current?: string): Place[] {
       path: current,
       label: current.split('/').filter(Boolean).pop() ?? current,
       detail: tilde(current),
+      repo: false,
     })
   }
   for (const project of projects) {
@@ -34,13 +37,16 @@ function places(projects: Project[], current?: string): Place[] {
         project.worktrees.length > 1 || worktree.label !== project.name
           ? `${project.name} · ${worktree.label}`
           : project.name
-      found.set(worktree.root, { path: worktree.root, label, detail: tilde(worktree.root) })
+      // Outside Git, a project's key is its folder; in Git, the repository's Git directory.
+      const repo = project.key !== worktree.root
+      found.set(worktree.root, { path: worktree.root, label, detail: tilde(worktree.root), repo })
     }
   }
   return [...found.values()]
 }
 
-/** Where a new session runs: a directory CLAI has sessions in or a worktree of its repository, by default the current one, or any other by its path, completed as it is typed. */
+/** Where a new session runs: a directory CLAI has sessions in or a worktree of its repository, by default the current one,
+ * a new worktree of the highlighted place's repository, or any other directory by its path, completed as it is typed. */
 export function NewSessionDialog({
   current,
   onOpened,
@@ -62,6 +68,13 @@ export function NewSessionDialog({
     [completed, projects, current],
   )
   const [cursor, setCursor] = useState(0)
+  // The place New worktree… checks out another worktree of, while its form shows.
+  const [worktreeOf, setWorktreeOf] = useState<Place | null>(null)
+  const [branch, setBranch] = useState('')
+  const [base, setBase] = useState('')
+  // The worktree a submit made, by what it asked for, so a retry after the session failed to start reuses it.
+  const made = useRef<{ asked: string; root: string } | null>(null)
+  const highlighted = shown[cursor]
   const list = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -96,9 +109,10 @@ export function NewSessionDialog({
     list.current?.focus()
   }, [])
 
-  // Registered once, so a re-render during the key press cannot drop it.
+  // Registered once, so a re-render during the key press cannot drop it. In the New worktree… form, it goes back to the list.
   const close = useRef(onClose)
-  close.current = onClose
+  // Not while its request runs, as Back is disabled then: its outcome belongs to the form.
+  close.current = worktreeOf ? () => !sending && setWorktreeOf(null) : onClose
   useEffect(() => {
     const cancel = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
@@ -111,11 +125,13 @@ export function NewSessionDialog({
     return () => window.removeEventListener('keydown', cancel, true)
   }, [])
 
-  const start = async (path: string) => {
+  /** Start a session in `where`, or in the folder it makes first, as New worktree… does. */
+  const start = async (where: string | (() => Promise<string>)) => {
     if (sending) return
     setSending(true)
     setProblem(null)
     try {
+      const path = typeof where === 'string' ? where : await where()
       const { id } = await api.newSession(path)
       onOpened(id)
       onClose()
@@ -178,42 +194,128 @@ export function NewSessionDialog({
             </button>
           ))}
         </div>
-        <form
-          className="dialog-text"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (typed.trim()) void start(typed.trim())
-          }}
-        >
-          <label className="dialog-label">
-            <span>Another directory</span>
-            <input
-              className={`setting-input ${problem ? 'invalid' : ''}`}
-              spellCheck={false}
-              value={typed}
-              placeholder="/absolute/path/to/a/directory"
-              disabled={sending}
-              onChange={(event) => {
-                setTyped(event.target.value)
-                setProblem(null)
-              }}
-            />
-          </label>
-          {problem && (
-            <p className="setting-error" role="alert">
-              {problem}
-            </p>
-          )}
-          <div className="dialog-actions">
-            <button className="ghost" type="button" onClick={onClose}>
-              Cancel
-            </button>
-            <button className="primary" type="submit" disabled={sending || !typed.trim()}>
-              Start there
-            </button>
-          </div>
-        </form>
-        <p className="dialog-hint">Click a directory, or type an absolute path to find others. Esc goes back.</p>
+        {worktreeOf ? (
+          <form
+            className="dialog-text"
+            aria-label={`New worktree of ${worktreeOf.label}`}
+            onSubmit={(event) => {
+              event.preventDefault()
+              const asked = JSON.stringify([worktreeOf.path, branch.trim(), base.trim()])
+              void start(async () => {
+                if (made.current?.asked !== asked) {
+                  const { root } = await api.addWorktree(worktreeOf.path, branch.trim(), base.trim())
+                  made.current = { asked, root }
+                }
+                return made.current.root
+              })
+            }}
+          >
+            <label className="dialog-label">
+              <span>Branch of the new worktree of {worktreeOf.label}</span>
+              <input
+                className={`setting-input ${problem ? 'invalid' : ''}`}
+                spellCheck={false}
+                autoFocus
+                value={branch}
+                placeholder="Generated, as with clai2 --worktree"
+                disabled={sending}
+                onChange={(event) => {
+                  setBranch(event.target.value)
+                  setProblem(null)
+                }}
+              />
+            </label>
+            <label className="dialog-label">
+              <span>Base</span>
+              <input
+                className={`setting-input ${problem ? 'invalid' : ''}`}
+                spellCheck={false}
+                value={base}
+                placeholder="HEAD"
+                disabled={sending}
+                onChange={(event) => {
+                  setBase(event.target.value)
+                  setProblem(null)
+                }}
+              />
+            </label>
+            {problem && (
+              <p className="setting-error" role="alert">
+                {problem}
+              </p>
+            )}
+            <div className="dialog-actions">
+              <button
+                className="ghost"
+                type="button"
+                disabled={sending}
+                onClick={() => {
+                  setWorktreeOf(null)
+                  setProblem(null)
+                }}
+              >
+                Back
+              </button>
+              <button className="primary" type="submit" disabled={sending}>
+                Create and start
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form
+            className="dialog-text"
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (typed.trim()) void start(typed.trim())
+            }}
+          >
+            <label className="dialog-label">
+              <span>Another directory</span>
+              <input
+                className={`setting-input ${problem ? 'invalid' : ''}`}
+                spellCheck={false}
+                value={typed}
+                placeholder="/absolute/path/to/a/directory"
+                disabled={sending}
+                onChange={(event) => {
+                  setTyped(event.target.value)
+                  setProblem(null)
+                }}
+              />
+            </label>
+            {problem && (
+              <p className="setting-error" role="alert">
+                {problem}
+              </p>
+            )}
+            <div className="dialog-actions">
+              {highlighted?.repo && (
+                <button
+                  className="ghost"
+                  type="button"
+                  disabled={sending}
+                  title={`Check out a new branch of ${highlighted.label} in a worktree, and start there`}
+                  onClick={() => {
+                    setWorktreeOf(highlighted)
+                    setProblem(null)
+                  }}
+                >
+                  New worktree of {highlighted.label}…
+                </button>
+              )}
+              <button className="ghost" type="button" onClick={onClose}>
+                Cancel
+              </button>
+              <button className="primary" type="submit" disabled={sending || !typed.trim()}>
+                Start there
+              </button>
+            </div>
+          </form>
+        )}
+        <p className="dialog-hint">
+          Click a directory, make a new worktree of the highlighted one, or type an absolute path to find others. Esc goes
+          back.
+        </p>
       </div>
     </div>
   )

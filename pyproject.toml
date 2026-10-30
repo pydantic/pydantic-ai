@@ -240,6 +240,10 @@ boxlite = "2026-10-18T01:35:01Z"
 # TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 prefect = "2026-10-21T03:46:00Z"
+# boxd 0.2.20 is the `boxd` floor: it is the first release with `machines.fs`.
+# TODO(adtyavrdhn): Remove after 2026-11-03 23:56 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+boxd = "2026-10-27T23:56:00Z"
 
 [dependency-groups]
 dev = [
@@ -349,6 +353,10 @@ include = [
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
     ".github/scripts/test_check_api_compatibility.py",
+    ".github/scripts/pr_gates.py",
+    ".github/scripts/publish_douwebot_review.py",
+    ".github/scripts/review_gates.py",
+    ".github/scripts/test_pr_gates.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/test_review_lifecycle.py",
@@ -448,6 +456,7 @@ quote-style = "single"
 ".github/scripts/check_api_compatibility.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_check_api_compatibility.py" = ["D"]
+".github/scripts/test_pr_gates.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_review_lifecycle.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
@@ -538,6 +547,7 @@ markers = [
     "e2b_live: runs against a real E2B sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
     "daytona_live: runs against a real Daytona control plane; needs credentials",
+    "boxd_live: runs against a real boxd control plane; needs credentials",
     "smol_live: boots real smolvm VMs; needs a host that can run them",
     "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
     "docker_live: starts real containers; needs a Docker daemon",

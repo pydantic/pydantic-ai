@@ -83,6 +83,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
+    AbstractNativeTool,
     AdvisorTool,
     CodeExecutionTool,
     MCPServerTool,
@@ -208,7 +209,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic._errors import is_expired_container_error
     from pydantic_ai.models.anthropic._response import map_usage
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.profiles.anthropic import anthropic_model_profile
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -896,6 +897,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                     cost=Decimal('0.000044'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -920,6 +922,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                     cost=Decimal('0.000044'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3262,6 +3265,7 @@ async def test_request_stream_fallback_for_high_max_tokens(
                     cost=Decimal('0.000076'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3310,6 +3314,7 @@ async def test_request_structured_response(allow_model_requests: None):
                     cost=Decimal('0.0000224'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3391,6 +3396,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000056'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3431,6 +3437,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000104'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3463,6 +3470,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000224'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3855,6 +3863,7 @@ async def test_stream_structured(allow_model_requests: None):
                     parts=[TextPart(content='FINAL_PAYLOAD')],
                     usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
                     model_name='claude-3-5-haiku-123',
+                    model_id='anthropic:claude-haiku-4-5',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
@@ -4924,6 +4933,7 @@ async def test_anthropic_model_instructions(
                     cost=Decimal('0.000388'),
                 ),
                 model_name='claude-opus-5-5',
+                model_id='anthropic:claude-opus-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -4979,6 +4989,7 @@ This is a simple, practical safety question, so I should give clear step-by-step
                     cost=Decimal('0.008372'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5046,6 +5057,7 @@ I should also include a safety note — something like even knee-deep fast-movin
                     cost=Decimal('0.030544'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5256,6 +5268,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                     cost=Decimal('0.001644'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
+                model_id='anthropic:claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5699,6 +5712,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                     cost=Decimal('0.004548'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
+                model_id='anthropic:claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5769,6 +5783,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                     cost=Decimal('0.003111'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
+                model_id='anthropic:claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5923,6 +5938,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                     cost=Decimal('0.02043875'),
                 ),
                 model_name='gpt-5-2025-08-07',
+                model_id='openai:gpt-5',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5984,6 +6000,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                     cost=Decimal('0.047774'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -6054,6 +6071,7 @@ I should add other practical tips too: staying visible with bright clothing at n
                     cost=Decimal('0.012602'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -7470,6 +7488,7 @@ The page may not be fully up to date, so check a live source like weather.gov or
                     cost=Decimal('0.055228'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -7640,6 +7659,7 @@ Mexico City is at high altitude, so mild days and cool nights are typical. It's 
                     cost=Decimal('0.05243'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -7888,6 +7908,7 @@ The page doesn't state the time it was retrieved, so the "now" reading may be a 
                     cost=Decimal('0.056344'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8543,6 +8564,7 @@ async def test_anthropic_web_fetch_tool(
                     cost=Decimal('0.084032'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8657,6 +8679,7 @@ async def test_anthropic_web_fetch_tool(
                     cost=Decimal('0.084032'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8708,6 +8731,7 @@ The page is about **Pydantic AI**, an agent framework for Python. It mentions se
                     cost=Decimal('0.075198'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8860,6 +8884,7 @@ async def test_anthropic_web_fetch_tool_stream(
                     cost=Decimal('0.083242'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -9448,30 +9473,49 @@ async def test_anthropic_advisor_history_dropped_when_absent():
     assert [b.get('type') for b in blocks] == snapshot(['text'])
 
 
-async def test_anthropic_advisor_history_dropped_for_count_tokens(allow_model_requests: None):
-    """`count_tokens` strips the advisor tool from the wire, so advisor history must be stripped too.
+@pytest.mark.parametrize(
+    'accepts_server_tools,betas,assistant_block_types',
+    [
+        pytest.param(
+            True,
+            ['advisor-tool-2026-03-01'],
+            ['server_tool_use', 'advisor_tool_result', 'text'],
+            id='flag-on',
+        ),
+        pytest.param(False, None, ['text'], id='flag-off'),
+    ],
+)
+async def test_anthropic_advisor_history_on_count_tokens(
+    allow_model_requests: None,
+    accepts_server_tools: bool,
+    betas: list[str] | None,
+    assistant_block_types: list[str],
+):
+    """`count_tokens` keeps the advisor tool and its history blocks together, or drops both.
 
-    The advisor tool is a server tool that `count_tokens` rejects, so `_messages_count_tokens`
-    drops it from the outgoing `tools`. Replaying advisor call/result history blocks without the
-    tool definition would 400, so mapping must run with advisor inactive even though the request
-    params still carry the `AdvisorTool` (which stays active on the real `/v1/messages` request).
+    Where `anthropic_count_tokens_accepts_server_tools` is on, the advisor tool and its call/result
+    blocks reach the count as they reach `/v1/messages`. Where it is off, the tool is dropped, and its
+    history blocks must be dropped with it: replaying them without the tool definition would 400.
+    A mock client, since the flag-off side belongs to clients that can't be recorded here;
+    `test_anthropic_count_tokens_with_advisor_history` records the flag-on side.
     """
     mock_client = cast(AsyncAnthropic, MockAnthropic())
-    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(
+        'claude-sonnet-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        profile=AnthropicModelProfile(anthropic_count_tokens_accepts_server_tools=accepts_server_tools),
+    )
     mrp = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-4-8')])
 
     await m.count_tokens(_advisor_history(m), None, mrp)
 
     count_tokens_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    # The advisor beta header is only added when the advisor tool reaches the wire; its absence
-    # (`betas` stays unset/`Omit`) confirms the tool was stripped from the count-tokens request...
-    assert count_tokens_kwargs.get('betas', OMIT) is OMIT
-    # ...so the advisor history blocks it would otherwise require must be stripped too.
+    assert count_tokens_kwargs.get('betas', OMIT) == (OMIT if betas is None else betas)
     assistant_content = cast(
         list[dict[str, Any]],
         next(msg['content'] for msg in count_tokens_kwargs['messages'] if msg['role'] == 'assistant'),
     )
-    assert [block.get('type') for block in assistant_content] == snapshot(['text'])
+    assert [block.get('type') for block in assistant_content] == assistant_block_types
 
 
 async def test_anthropic_advisor_dangling_call_replayed_when_active():
@@ -9763,6 +9807,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                     cost=Decimal('0.016258'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -9848,6 +9893,7 @@ Pydantic AI builds on Pydantic. It uses Pydantic for type-safe structured output
                     cost=Decimal('0.025486'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10019,6 +10065,7 @@ The project also uses AI-assisted development. It keeps agent guidelines in file
                     cost=Decimal('0.012884'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10249,6 +10296,7 @@ async def test_anthropic_code_execution_tool(
                     cost=Decimal('0.012474'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10312,6 +10360,7 @@ async def test_anthropic_code_execution_tool(
                     cost=Decimal('0.01247'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10412,6 +10461,7 @@ async def test_anthropic_code_execution_tool_stream(
                     cost=Decimal('0.013602'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10684,6 +10734,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                     cost=Decimal('0.000834'),
                 ),
                 model_name='gpt-4.1-2025-04-14',
+                model_id='openai:gpt-4.1',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -10828,6 +10879,7 @@ async def test_anthropic_tool_output(
                     cost=Decimal('0.00116'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10870,6 +10922,7 @@ async def test_anthropic_tool_output(
                     cost=Decimal('0.001704'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10947,6 +11000,7 @@ async def test_anthropic_text_output_function(
                     cost=Decimal('0.001028'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10987,6 +11041,7 @@ async def test_anthropic_text_output_function(
                     cost=Decimal('0.001722'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11065,6 +11120,7 @@ Don't include any text or Markdown fencing before or after.
                     cost=Decimal('0.001228'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11101,6 +11157,7 @@ Don't include any text or Markdown fencing before or after.
                     cost=Decimal('0.001252'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11178,6 +11235,7 @@ Don't include any text or Markdown fencing before or after.
                     cost=Decimal('0.001102'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11516,6 +11574,7 @@ async def test_anthropic_text_editor_code_execution_tool(
                     cost=Decimal('0.020992'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -13710,7 +13769,12 @@ async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: Non
     assert result.input_tokens == 10
 
 
-async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: None):
+async def test_anthropic_count_tokens_keeps_server_tools_but_not_mcp_servers(allow_model_requests: None):
+    """The direct API's `count_tokens` takes the same `tools` as the real request, server tools included.
+
+    The `mcp_servers` param is the one thing left off: the endpoint rejects it with a 400 ("The mcp_servers
+    parameter is not supported on the count_tokens endpoint"), so the count leaves out the MCP server's tools.
+    """
     c = completion_message(
         [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
     )
@@ -13718,7 +13782,12 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(
         m,
-        capabilities=[NativeTool(CodeExecutionTool()), NativeTool(WebFetchTool()), NativeTool(MemoryTool())],
+        capabilities=[
+            NativeTool(CodeExecutionTool()),
+            NativeTool(WebFetchTool()),
+            NativeTool(MemoryTool()),
+            NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')),
+        ],
     )
 
     @agent.tool_plain
@@ -13733,37 +13802,28 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
 
     assert result.output == 'hello world'
     count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
-    # Server-side tools (`code_execution`, `web_fetch`) are dropped from the `count_tokens` payload, but the
-    # client-side `MemoryTool` is kept so the count includes its definition (and beta).
-    assert count_tokens_kwargs['tools'] == [
-        {
-            'name': 'lookup',
-            'description': '',
-            'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-        },
-        {'name': 'memory', 'type': 'memory_20250818'},
-    ]
-    assert count_tokens_kwargs['mcp_servers'] is OMIT
-    assert count_tokens_kwargs['betas'] == ['context-management-2025-06-27']
-    assert {tool['name'] for tool in create_kwargs['tools']} == {'lookup', 'code_execution', 'web_fetch', 'memory'}
-    assert {tool['name']: tool['type'] for tool in create_kwargs['tools'] if 'type' in tool} == {
+    assert count_tokens_kwargs['tools'] == create_kwargs['tools']
+    assert {tool['name']: tool['type'] for tool in count_tokens_kwargs['tools'] if 'type' in tool} == {
         'code_execution': 'code_execution_20260120',
         'web_fetch': 'web_fetch_20260209',
         'memory': 'memory_20250818',
     }
-    assert create_kwargs['betas'] == ['context-management-2025-06-27']
+    assert count_tokens_kwargs['mcp_servers'] is OMIT
+    assert create_kwargs['mcp_servers'] == [{'type': 'url', 'name': 'deepwiki', 'url': 'https://mcp.deepwiki.com/mcp'}]
+    assert count_tokens_kwargs['betas'] == ['context-management-2025-06-27']
+    assert create_kwargs['betas'] == ['context-management-2025-06-27', 'mcp-client-2025-04-04']
 
 
 async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_requests: None):
     """`count_tokens` renders a tool-search replay turn with the same `tool_reference` wire shape
-    as the real `/v1/messages` request, while still omitting the server-side `tool_search_tool_*`
-    entry that the endpoint rejects.
+    and the same `tools` as the real `/v1/messages` request.
 
-    The count path strips server tools from the params it maps messages with, and both paths read
-    the deferred function tools to decide whether a `tool_reference` reveal is legal. Dropping a
-    deferred tool from either would silently re-serialize the history turn as plain text and diverge
-    from the real request. A VCR test wouldn't catch this — the cassette matcher isn't sensitive to
-    the `messages` body.
+    The count path strips other server tools from the params it builds the wire `tools` list with,
+    and both paths read the deferred function tools to decide whether a `tool_reference` reveal is
+    legal. Dropping a deferred tool from either would silently re-serialize the history turn as plain
+    text and diverge from the real request. `test_anthropic_count_tokens_with_tool_search_replay` pins
+    the count payload on the wire; this pins that both payloads come out identical from one history,
+    which a single recorded request can't show.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
     """
@@ -13815,58 +13875,7 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
             'is_error': False,
         }
     )
-
-    # The server-side `tool_search_tool_*` entry is rejected by `count_tokens`, so it's omitted there
-    # but present on the real request.
-    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
-    assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
-
-
-async def test_anthropic_count_tokens_keeps_defer_loading(allow_model_requests: None):
-    """`count_tokens` marks a deferred tool `defer_loading` exactly as the real request does.
-
-    The count path strips server tools from the params it builds the wire `tools` list from, and
-    `defer_loading` is gated on `ToolSearchTool` being present — so counting used to describe a
-    request we never send, with every deferred tool's full schema exposed. That isn't cosmetic: the
-    endpoint honors the flag rather than ignoring it, and a deferred tool whose schema stays hidden
-    counts as its name and description alone. Measured live on `claude-opus-4-8` with one 30-field
-    tool: 440 tokens with the flag, 1761 without.
-
-    The server-side `tool_search_tool_*` entry, the one thing `count_tokens` really does reject,
-    still has to be absent — so this pins both halves against each other.
-    """
-    c = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    params = ModelRequestParameters(
-        function_tools=[
-            ToolDefinition(
-                name='get_exchange_rate',
-                description='Look up an exchange rate.',
-                parameters_json_schema={'type': 'object'},
-                defer_loading=True,
-                with_native=ToolSearchTool.kind,
-            )
-        ],
-        native_tools=[ToolSearchTool()],
-    )
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='What is the USD to EUR rate?')])]
-
-    await m.count_tokens(messages, None, params)
-    await m.request(messages, None, params)
-
-    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
-
-    def deferred_tool(kwargs: dict[str, Any]) -> dict[str, Any]:
-        [tool] = [tool for tool in kwargs['tools'] if tool.get('name') == 'get_exchange_rate']
-        return tool
-
-    assert deferred_tool(count_tokens_kwargs) == deferred_tool(create_kwargs)
-    assert deferred_tool(count_tokens_kwargs)['defer_loading'] is True
-
-    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
-    assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
+    assert count_tokens_kwargs['tools'] == create_kwargs['tools']
 
 
 @pytest.mark.parametrize('capabilities', [None, [ToolSearch()]])
@@ -14729,45 +14738,175 @@ A later <context> element with the same id replaces the earlier one and stays in
 
 
 @pytest.mark.vcr()
-async def test_anthropic_count_tokens_with_native_tools(allow_model_requests: None, anthropic_api_key: str):
-    """`count_tokens` succeeds against the live API when a native/server tool is configured.
+@pytest.mark.parametrize(
+    'native_tool,wire_tool,input_tokens',
+    [
+        pytest.param(
+            WebSearchTool(),
+            {
+                'name': 'web_search',
+                'type': 'web_search_20260209',
+                'max_uses': None,
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'user_location': None,
+            },
+            6070,
+            id='web_search',
+        ),
+        pytest.param(
+            WebFetchTool(),
+            {
+                'name': 'web_fetch',
+                'type': 'web_fetch_20260209',
+                'max_uses': None,
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'citations': None,
+                'max_content_tokens': None,
+            },
+            4656,
+            id='web_fetch',
+        ),
+        pytest.param(
+            CodeExecutionTool(),
+            {'name': 'code_execution', 'type': 'code_execution_20260120'},
+            2970,
+            id='code_execution',
+        ),
+    ],
+)
+async def test_anthropic_count_tokens_with_native_tools(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    native_tool: AbstractNativeTool,
+    wire_tool: dict[str, str | None],
+    input_tokens: int,
+):
+    """`count_tokens` sends a server tool as the real request does, and matches its `input_tokens`.
 
-    Anthropic rejects server tools (e.g. `code_execution`) on the `count_tokens` endpoint with a 400, so
-    the model strips native tools from the `count_tokens` payload. A successful token count proves the
-    native tools were omitted. The recorded request is itself the regression guard: it must NOT contain
-    the `code_execution` entry, so a revert of the fix would send it and break playback.
+    The only function tool is deferred, so the server tool is what keeps the `tools` list legal: the
+    endpoint rejects a list in which every tool is deferred. `max_tokens=1` stops the real request
+    after its first sampling pass, before the model can call the server tool and be sampled again.
 
-    Regression test for https://github.com/pydantic/pydantic-ai/issues/5702
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/11363
     """
-    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
 
-    usage = await m.count_tokens(
-        [ModelRequest.user_text_prompt('What is 2 + 2?')],
-        None,
-        ModelRequestParameters(native_tools=[CodeExecutionTool()]),
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='Look up the exchange rate between two currencies.',
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                    'required': ['base', 'quote'],
+                },
+                defer_loading=True,
+            )
+        ],
+        native_tools=[native_tool],
+    )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is the USD to EUR rate?')]
+    settings: AnthropicModelSettings = {'max_tokens': 1}
+
+    usage = await m.count_tokens(messages, settings, params)
+    response = await m.request(messages, settings, params)
+
+    assert usage.input_tokens == response.usage.input_tokens == input_tokens
+    count_tools = request_capture.body('/v1/messages/count_tokens')['tools']
+    assert count_tools == request_capture.body('/v1/messages')['tools']
+    assert count_tools == [
+        {
+            'name': 'get_exchange_rate',
+            'description': 'Look up the exchange rate between two currencies.',
+            'input_schema': {
+                'type': 'object',
+                'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                'required': ['base', 'quote'],
+            },
+            'defer_loading': True,
+        },
+        wire_tool,
+    ]
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'executor,advisor_model,result_type,input_tokens',
+    [
+        pytest.param('claude-sonnet-5-5', 'claude-opus-5-5', 'advisor_redacted_result', 1278, id='redacted'),
+        pytest.param('claude-haiku-5-5', 'claude-opus-4-8', 'advisor_result', 1237, id='plaintext'),
+    ],
+)
+async def test_anthropic_count_tokens_with_advisor_history(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    executor: str,
+    advisor_model: str,
+    result_type: str,
+    input_tokens: int,
+):
+    """`count_tokens` replays two advisor turns as the real request does, and matches its `input_tokens`.
+
+    The history comes from two runs that each consult the advisor, so it carries two advisor call and
+    result pairs. The count sends the advisor tool and those blocks, with the advisor's own result shape
+    (encrypted for a 5.5 advisor, plaintext for Opus 4.8). `max_tokens=1` stops the real request before
+    the executor can consult the advisor again.
+    """
+    m = anthropic_model(executor, capture=True)
+    advisor = AdvisorTool(model=advisor_model, max_tokens=1024)
+    agent = Agent(m, capabilities=[NativeTool(advisor)])
+    first = await agent.run("What's 2+2? Consult your advisor first.")
+    second = await agent.run(
+        'And what is that plus one? Consult your advisor again.', message_history=first.all_messages()
     )
 
-    assert usage.input_tokens > 0
+    messages = [*second.all_messages(), ModelRequest.user_text_prompt('And that times two?')]
+    params = ModelRequestParameters(native_tools=[advisor])
+    settings: AnthropicModelSettings = {'max_tokens': 1}
+    usage = await m.count_tokens(messages, settings, params)
+    response = await m.request(messages, settings, params)
+
+    assert usage.input_tokens == response.usage.input_tokens == input_tokens
+    count_body = request_capture.body('/v1/messages/count_tokens')
+    request_body = request_capture.bodies('/v1/messages')[-1]
+    assert count_body['tools'] == request_body['tools']
+    assert count_body['messages'] == request_body['messages']
+    result_types = [
+        content.get('type')
+        for block in content_blocks(count_body, 'advisor_tool_result')
+        if isinstance(content := block['content'], dict)
+    ]
+    assert result_types == [result_type, result_type]
 
 
 @pytest.mark.vcr()
 async def test_anthropic_count_tokens_with_tool_search_replay(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """`count_tokens` succeeds against the live API with a `ToolSearchTool` and a tool-search replay history.
 
-    The endpoint rejects the server-side `tool_search_tool_*` entry, so it's omitted from the wire `tools`
-    list, but the replay turn must still serialize as a `tool_reference` block (pointing at a `function_tools`
-    entry, which is not stripped) — exactly as the real `/v1/messages` request does. A successful token count
-    proves the endpoint accepts that payload; the recorded request is the regression guard.
+    The replay turn serializes as a `tool_reference` block pointing at the deferred corpus tool, and the
+    `tool_search_tool_*` entry stays in `tools`, exactly as the real `/v1/messages` request sends them. The
+    payload is read off the wire, so a change to what the code sends fails here instead of replaying.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
     """
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
 
     params = ModelRequestParameters(
         function_tools=[
-            ToolDefinition(name='get_exchange_rate', description='', parameters_json_schema={'type': 'object'})
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='',
+                parameters_json_schema={'type': 'object'},
+                defer_loading=True,
+                with_native=ToolSearchTool.kind,
+            )
         ],
         native_tools=[ToolSearchTool()],
     )
@@ -14790,10 +14929,116 @@ async def test_anthropic_count_tokens_with_tool_search_replay(
     usage = await m.count_tokens(messages, None, params)
 
     assert usage.input_tokens > 0
-    request_body = json.loads(vcr.requests[0].body)
-    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in request_body['tools'])
-    tool_result = request_body['messages'][-1]['content'][0]
-    assert tool_result['content'] == [{'tool_name': 'get_exchange_rate', 'type': 'tool_reference'}]
+    body = request_capture.body('/v1/messages/count_tokens')
+    assert (body['tools'], content_blocks(body, 'tool_result')) == snapshot(
+        (
+            [
+                {
+                    'name': 'get_exchange_rate',
+                    'description': '',
+                    'input_schema': {'type': 'object'},
+                    'defer_loading': True,
+                },
+                {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'},
+            ],
+            [
+                {
+                    'tool_use_id': 'search-1',
+                    'type': 'tool_result',
+                    'content': [{'tool_name': 'get_exchange_rate', 'type': 'tool_reference'}],
+                    'is_error': False,
+                }
+            ],
+        )
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_with_every_tool_deferred(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """`count_tokens` counts a request whose function tools are all deferred, and matches the real request.
+
+    The endpoint rejects a `tools` list in which every tool has `defer_loading`, so the `tool_search_tool_*`
+    entry stays on the count payload, as it does on `/v1/messages`. With it, the count equals the
+    `input_tokens` the real request reports. A run doesn't expose the counted value, so this calls the
+    model directly. `max_tokens=1` stops the real request after its first sampling pass: once the model
+    calls the server-side tool search, Anthropic samples again in the same request and reports the
+    input of both passes.
+
+    The deferred tool keeps `defer_loading` on the count, as on the real request. The endpoint honors the
+    flag, so a count that dropped it would also count the hidden schema.
+    """
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='Look up the exchange rate between two currencies.',
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                    'required': ['base', 'quote'],
+                },
+                defer_loading=True,
+                with_native=ToolSearchTool.kind,
+            )
+        ],
+        native_tools=[ToolSearchTool()],
+    )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is the USD to EUR rate?')]
+    settings: AnthropicModelSettings = {'max_tokens': 1}
+
+    usage = await m.count_tokens(messages, settings, params)
+    response = await m.request(messages, settings, params)
+
+    assert (usage.input_tokens, response.usage.input_tokens) == snapshot((663, 663))
+    count_tools = request_capture.body('/v1/messages/count_tokens')['tools']
+    assert count_tools == request_capture.body('/v1/messages')['tools']
+    assert count_tools == snapshot(
+        [
+            {
+                'name': 'get_exchange_rate',
+                'description': 'Look up the exchange rate between two currencies.',
+                'input_schema': {
+                    'type': 'object',
+                    'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                    'required': ['base', 'quote'],
+                },
+                'defer_loading': True,
+            },
+            {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'},
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_before_request_with_every_tool_deferred(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A run whose tools are all deferred succeeds with `count_tokens_before_request=True`.
+
+    Each count sends the same `tools` as the request it precedes, search entry included, so the endpoint
+    doesn't reject it as a `tools` list in which every tool is deferred.
+    """
+    agent = Agent(anthropic_model('claude-sonnet-5-5', capture=True))
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(base: str, quote: str) -> float:
+        """Look up the exchange rate between two currencies."""
+        return 0.92
+
+    result = await agent.run(
+        'What is the USD to EUR rate? Use your tools.', usage_limits=UsageLimits(count_tokens_before_request=True)
+    )
+
+    assert result.output == snapshot(
+        'The USD to EUR exchange rate is **0.92**. That means 1 US dollar buys about 0.92 euros.'
+    )
+    count_bodies = request_capture.bodies('/v1/messages/count_tokens')
+    create_bodies = request_capture.bodies('/v1/messages')
+    assert [body['tools'] for body in count_bodies] == [body['tools'] for body in create_bodies]
 
 
 @pytest.mark.vcr()
@@ -15407,6 +15652,33 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
     assert completion_kwargs['container'] == 'container_from_history'
 
 
+@pytest.mark.parametrize(
+    'base_url', ['https://gateway-a.example', 'https://gateway-b.example'], ids=['same-endpoint', 'other-endpoint']
+)
+async def test_anthropic_container_from_history_scoped_by_endpoint(allow_model_requests: None, base_url: str):
+    """A code execution container from another endpoint with the same `provider_name` isn't reused.
+
+    https://github.com/pydantic/pydantic-ai/issues/11508
+    """
+    producer_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+        ).model_copy(update={'container': BetaContainer(id='container_a', expires_at=datetime(2025, 1, 1))})
+    )
+    cast(MockAnthropic, producer_client).base_url = 'https://gateway-a.example'
+    producer = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=producer_client)))
+    history = (await producer.run('hello')).all_messages()
+
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    cast(MockAnthropic, mock_client).base_url = base_url
+    agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
+    await agent.run('follow up', message_history=history)
+
+    container = get_mock_chat_completion_kwargs(mock_client)[0].get('container')
+    assert container == ('container_a' if base_url == 'https://gateway-a.example' else OMIT)
+
+
 async def test_anthropic_container_setting_false_ignores_history(allow_model_requests: None):
     """Test that anthropic_container=False ignores container_id from history."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
@@ -15570,6 +15842,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                     cost=Decimal('0.012474'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -15623,6 +15896,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                     cost=Decimal('0.01291'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -15766,6 +16040,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                     cost=Decimal('0.000028'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-sonnet-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -15876,6 +16151,7 @@ async def test_stream_cancel(allow_model_requests: None):
                     input_tokens=5, details={'input_tokens': 5, 'output_tokens': 0}, cost=Decimal('0.000005')
                 ),
                 model_name='claude-haiku-4-5-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -16630,6 +16906,7 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
                     cost=Decimal('0.0000456'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -16961,6 +17238,7 @@ async def test_anthropic_model_retrying_after_empty_response(allow_model_request
                     cost=Decimal('0.0000082'),
                 ),
                 model_name='claude-haiku-5-5',
+                model_id='anthropic:claude-haiku-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',

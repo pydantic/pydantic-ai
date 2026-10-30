@@ -8,10 +8,14 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 | Name | Where | Runs when |
 |------|-------|-----------|
 | `CI Review` | `pydantic-ai-pr-review.md` | when a user with write access or higher **approves** the PR's current head, on applying the **`final-review` label**, or on dispatch, once `CI` has passed on that head. Never in the merge queue. Z.AI Coding Plan engine, submits formal `REQUEST_CHANGES` for verified HIGH or CRITICAL findings, `COMMENT` for incomplete coverage without those findings, and `APPROVE` after complete coverage without them. Same-repo PRs only. |
-| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. Posts inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review for the reviewed head. |
+| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. A trusted publisher posts structured findings as one formal `APPROVE`, `REQUEST_CHANGES`, or incomplete `COMMENT` review. |
 | `douwebot:review-agent-config` | `bots.yml` | one explicit review request for one PR head; the labeling sender must be a `User` with current `write` or `admin` permission. The label is not standing approval. |
 
-`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It requests changes while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It approves after a complete review with no outstanding blocking findings; optional findings may remain. It submits no verdict when the review is incomplete or the PR head changes before publication. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review.
+`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review.
+
+If GitHub rejects inline publication with HTTP 422, retry once with the findings in the review body.
+Recheck the live head before that retry. Preserve the verdict; body findings still prevent a clean approval.
+Cancellation keeps ordinary-label cleanup and ends without a failure notice. Report actual review or publisher failures.
 
 The `douwebot:review-agent-config` label requests one review only from its first `labeled` event. The workflow checks the sender's current repository permission, the event's immutable head against the live PR head, and that the label is still present immediately before Claude starts. API errors, non-`User` senders, reruns, stale heads, and removed labels deny the request. An ordinary `douwebot` event never inherits approval from the label. To retry or approve a new head, a maintainer removes and reapplies the label; do not rerun the old event. The workflow never removes this label automatically because an old run could consume a newer request.
 
@@ -183,6 +187,53 @@ Two consequences of the trigger, both easy to get backwards:
   While the check is merely advisory such a PR shows no guard run and no failing check, so
   it reads as clean. Marking the check **required** is what closes that: a check that never
   ran stays pending and blocks the merge.
+
+# PR metadata gates enforce the merge bar
+
+`pr-gates.yml` checks that a PR adding an API compatibility waiver has the `compatibility impact` label.
+It runs the PR's copy of `pr_gates.py` with a read-only token. The separate `pr-review-gates.yml`
+workflow runs default-branch `review_gates.py` with permission to publish commit statuses, so it
+never executes contribution code with a write token. The workflows have distinct job names because
+GitHub matches required checks by job name, even across workflows and event types.
+
+The review status requires a clean douwebot approval for M/L/XL.
+The status fails until exactly one size label matches the shared PR Bots calculation; changing a label cannot
+lower the computed bar. PR Bots recalculates on open, push and PR edits, including base-branch changes.
+Size S remains a manual policy judgment. Merge groups receive success without reevaluating queue
+members because the review requirements are enforced before admission.
+
+A clean douwebot approval is the latest non-dismissed completed verdict on the current head, with no inline or
+review-body findings on that head, including optional or resolved findings. A clean retry may
+supersede an empty incomplete review, but cannot erase earlier findings. PR Bots uses a read-only
+reviewer and a trusted publisher that binds the result to its run and head. The gate verifies that
+receipt, so `CI Review` cannot stand in for douwebot even though both can use the same bot account.
+Maintainer-authorized protected-configuration reviews satisfy the same rule.
+
+`pr-review-gates-events.yml` observes reviews and inline-comment changes with a read-only token,
+including on forks. Its completion wakes `PR Review Gates`, which also runs on PR edits, pushes,
+reopening, label changes and PR Bots completion. The latter covers writes by `GITHUB_TOKEN`, which
+cannot trigger review or label workflows. The publisher binds each wake-up to the unique open PR
+GitHub reports for its exact head SHA and repository. It ignores titles and artifacts, and a stale
+or ambiguous event cannot write statuses to another head. Fork observers may need contributor approval.
+
+Publication is serialized per PR and marks the douwebot status pending before setup. API errors or
+incomplete data fail closed. After the requirements are met, a new evaluation replaces the previous
+failure through GitHub's latest-per-context commit statuses. Rerun an existing current-head,
+default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
+branch-selectable dispatch to this privileged workflow. Workflows and scripts remain owned in `.github/CODEOWNERS`.
+
+# Code owners approve dependency and CI config changes
+
+`.github/CODEOWNERS` owns every `pyproject.toml` and `uv.lock`, `.github/workflows/`,
+`.github/actions/`, `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and itself. The
+`main` ruleset requires an approving review from a code owner on a PR that changes any of them, and
+dismisses it when a later push changes the diff. GitHub enforces both, so no workflow keeps the
+approval current.
+
+- A PR's author cannot approve it, so an owner's own PR needs another owner. An owner who pushes
+  to someone else's PR can still approve that push.
+- GitHub reads `CODEOWNERS` from the PR's base branch. A PR that edits it is judged by the
+  current owners.
 
 # Agentic workflows (`gh-aw`)
 

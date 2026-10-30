@@ -11,6 +11,8 @@ from pydantic import BaseModel
 
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.durable_exec import BaseDurabilityCapability
+from pydantic_ai.framing import register_tag, wrap
+from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai_harness.planning._events import (
@@ -132,6 +134,39 @@ def render_plan(items: list[PlanItem]) -> str:
     completed = sum(1 for item in items if item.status is TaskStatus.completed)
     lines.append(f'({completed}/{len(items)} completed)')
     return '\n'.join(lines)
+
+
+PLAN_ORIGIN = 'pydantic-ai-harness.planning.plan_reminder.v1'
+"""The `origin` in the `metadata` of a plan the planning tools returned or `Planning` recorded.
+
+A plan tool's `ToolReturnPart` carries `{'origin': PLAN_ORIGIN, 'plan': <framed plan>}`, and a plan `Planning`
+records on the user channel is a `TextContent` with `{'origin': PLAN_ORIGIN}`. `Planning` finds the latest plan in
+the conversation by this metadata, never by text.
+"""
+
+_PLAN_REMINDER_TAG = register_tag('plan_reminder')
+"""The frame the plan is shown in. Registered, so core's own data frames escape it too."""
+
+
+def framed_plan(items: list[PlanItem]) -> str:
+    """The plan rendered in its `<plan_reminder>` frame.
+
+    The steps are written by the model, so the `<` of every opening or closing `plan_reminder` tag and of every other
+    framing tag is escaped as `&lt;`.
+    """
+    return wrap(_PLAN_REMINDER_TAG, f'\n{render_plan(items)}\n')
+
+
+class _PlanReply(str):
+    """A plan tool's reply that ends with the plan it left, so `call_tool` can mark that plan in the tool return."""
+
+    plan: str
+
+    def __new__(cls, message: str, items: list[PlanItem], suffix: str = '') -> _PlanReply:
+        plan = framed_plan(items)
+        reply = super().__new__(cls, f'{message}\n\n{plan}{suffix}')
+        reply.plan = plan
+        return reply
 
 
 def find_item(items: list[PlanItem], item_id: str) -> PlanItem | None:
@@ -518,14 +553,34 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        """Resolve the run's store once for the call, so each durable operation it makes uses that store."""
+        """Run the tool, marking the plan a plan-changing tool returns so `Planning` can find it in the history.
+
+        With durable operations, the run's store is resolved once for the call, so each durable operation it
+        makes uses that store.
+        """
         if self._operations is None:
-            return await super().call_tool(name, tool_args, ctx, tool)
-        token = _TOOL_CALL_STORE.set(await resolve_run_store(ctx, self._capability, self))
-        try:
-            return await super().call_tool(name, tool_args, ctx, tool)
-        finally:
-            _TOOL_CALL_STORE.reset(token)
+            result = await super().call_tool(name, tool_args, ctx, tool)
+        else:
+            token = _TOOL_CALL_STORE.set(await resolve_run_store(ctx, self._capability, self))
+            try:
+                result = await super().call_tool(name, tool_args, ctx, tool)
+            finally:
+                _TOOL_CALL_STORE.reset(token)
+        if isinstance(result, _PlanReply):
+            return ToolReturn(str(result), metadata={'origin': PLAN_ORIGIN, 'plan': result.plan})
+        return result
+
+    def _plan_reply(self, message: str, items: list[PlanItem], suffix: str = '', *, bare_plan: bool = False) -> str:
+        """A plan-changing tool's reply: ending with the framed plan when `Planning` shows the model its plan.
+
+        With `inject=False`, the reply doesn't carry the plan: it's the message, with the bare checklist after it for
+        `write_plan` (`bare_plan`).
+        """
+        if self._capability.inject:
+            return _PlanReply(message, items, suffix)
+        if bare_plan:
+            return f'{message}\n\n{render_plan(items)}{suffix}'
+        return f'{message}{suffix}'
 
     async def _resolve(self, ctx: RunContext[AgentDepsT]) -> PlanStore:
         """The store for this call: through the capability's durable operations inside a tool call.
@@ -607,7 +662,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         await self._emit_changes(ctx, before, after)
         in_progress = sum(1 for item in after if item.status is TaskStatus.in_progress)
         note = '' if in_progress <= 1 else _MULTI_IN_PROGRESS_NOTE
-        return f'Plan updated: {len(after)} step(s).\n\n{render_plan(after)}{note}'
+        return self._plan_reply(f'Plan updated: {len(after)} step(s).', after, note, bare_plan=True)
 
     async def read_plan(self, ctx: RunContext[AgentDepsT]) -> str:
         """Read the current plan."""
@@ -642,8 +697,9 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         store = await self._resolve(ctx)
         before = await store.get_items()
         item = await store.add_item(PlanItem(content=content, active_form=active_form))
-        await self._emit_changes(ctx, before, await store.get_items())
-        return f"Added step '{content}' with id: {item.id}"
+        after = await store.get_items()
+        await self._emit_changes(ctx, before, after)
+        return self._plan_reply(f"Added step '{content}' with id: {item.id}", after)
 
     async def _sync_dependency_blocks(self, store: PlanStore) -> None:
         """Keep dependency-driven `blocked` status in sync after a status change.
@@ -705,7 +761,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         after = await store.get_items()
         stored = await self._stored_status(store, task_id, status)
         await self._emit_changes(ctx, items, after)
-        return f"Updated step '{item.content}' status to '{stored}'."
+        return self._plan_reply(f"Updated step '{item.content}' status to '{stored}'.", after)
 
     async def update_task_statuses(self, ctx: RunContext[AgentDepsT], updates: list[PlanStatusUpdate]) -> str:
         """Update several steps' statuses in one call.
@@ -754,7 +810,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             for item, status in resolved
         ]
         await self._emit_changes(ctx, before, after)
-        return f'Updated {len(resolved)} step(s):\n' + '\n'.join(lines)
+        return self._plan_reply(f'Updated {len(resolved)} step(s):\n' + '\n'.join(lines), after)
 
     async def remove_task(self, ctx: RunContext[AgentDepsT], task_id: str) -> str:
         """Remove a step by id.
@@ -770,9 +826,10 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             return f"Step with id '{task_id}' not found."
         await store.remove_item(task_id)
         subtasks_removed = await self._cleanup_after_removal(store, task_id) if self._subtasks else 0
-        await self._emit_changes(ctx, before, await store.get_items())
+        after = await store.get_items()
+        await self._emit_changes(ctx, before, after)
         extra = f' and {subtasks_removed} subtask(s)' if subtasks_removed else ''
-        return f"Removed step '{item.content}' (id: {task_id}){extra}."
+        return self._plan_reply(f"Removed step '{item.content}' (id: {task_id}){extra}.", after)
 
     async def _cleanup_after_removal(self, store: PlanStore, removed_id: str) -> int:
         """Cascade-remove the deleted step's descendants and drop dangling `depends_on` refs.
@@ -824,8 +881,9 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         if parent is None:
             return f"Parent step with id '{parent_id}' not found."
         item = await store.add_item(PlanItem(content=content, active_form=active_form, parent_id=parent_id))
-        await self._emit_changes(ctx, before, await store.get_items())
-        return f"Added subtask '{content}' with id: {item.id} (parent: {parent_id})"
+        after = await store.get_items()
+        await self._emit_changes(ctx, before, after)
+        return self._plan_reply(f"Added subtask '{content}' with id: {item.id} (parent: {parent_id})", after)
 
     async def set_dependency(self, ctx: RunContext[AgentDepsT], task_id: str, depends_on_id: str) -> str:
         """Make one step depend on another.
@@ -856,17 +914,20 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             and item.status is not TaskStatus.blocked
         ):
             await store.update_item(task_id, depends_on=new_depends_on, status=TaskStatus.blocked)
-            await self._emit_changes(ctx, items, await store.get_items())
-            return (
-                f"Added dependency: '{item.content}' now depends on '{dependency.content}'. Step automatically blocked."
+            after = await store.get_items()
+            await self._emit_changes(ctx, items, after)
+            return self._plan_reply(
+                f"Added dependency: '{item.content}' now depends on '{dependency.content}'. Step automatically blocked.",
+                after,
             )
         await store.update_item(task_id, depends_on=new_depends_on)
         # A step already `blocked` keeps its status above, which leaves it blocked on a
         # prerequisite that may be terminal -- and so excluded from `get_available_tasks`
         # with nothing left to free it. Every other write reconciles; so does this one.
         await self._sync_dependency_blocks(store)
-        await self._emit_changes(ctx, items, await store.get_items())
-        return f"Added dependency: '{item.content}' now depends on '{dependency.content}'."
+        after = await store.get_items()
+        await self._emit_changes(ctx, items, after)
+        return self._plan_reply(f"Added dependency: '{item.content}' now depends on '{dependency.content}'.", after)
 
     async def get_available_tasks(self, ctx: RunContext[AgentDepsT]) -> str:
         """List steps that can be worked on now (no incomplete dependencies)."""

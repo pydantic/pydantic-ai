@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="629" viewBox="0 0 880 629" role="img" aria-labelledby="t d">
+<title id="t">ACP: serve an agent to Zed and other editors</title>
+<desc id="d">An editor such as Zed launches the agent script as a subprocess and talks to it over stdio with ACP JSON-RPC messages. session/new carries the workspace directory, and session_config roots the FileSystem and Shell tools there. session/prompt starts an agent run, and session/update streams its text and tool calls back so the editor shows them as messages and diffs. A tool that requires approval sends session/request_permission and waits as pending until the user allows or rejects it.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="628" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ACP: serve an agent to Zed and other editors</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">run_acp_stdio serves a Pydantic AI agent over the Agent Client Protocol. The editor launches your script and talks to it</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">over stdin and stdout; the adapter maps each message onto the agent&#x27;s run.</text>
+<rect x="32" y="130" width="590" height="117" rx="10" fill="#092224"/>
+<text x="46" y="154" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#F07CF3">def </tspan><tspan fill="#77FFD8">session_config</tspan><tspan fill="#FBFFEA">(session: AcpSession) -&gt; AcpSessionConfig[None]:</tspan></text>
+<text x="46" y="173" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">    workspace = </tspan><tspan fill="#77FFD8">LocalWorkspaceBackend</tspan><tspan fill="#FBFFEA">(session.cwd)</tspan></text>
+<text x="46" y="192" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#F07CF3">    return </tspan><tspan fill="#77FFD8">AcpSessionConfig</tspan><tspan fill="#FBFFEA">(deps=</tspan><tspan fill="#B9A3FF">None</tspan><tspan fill="#FBFFEA">, workspace=workspace,</tspan></text>
+<text x="46" y="211" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">        capabilities=[</tspan><tspan fill="#77FFD8">FileSystem</tspan><tspan fill="#FBFFEA">[</tspan><tspan fill="#B9A3FF">None</tspan><tspan fill="#FBFFEA">](), </tspan><tspan fill="#77FFD8">Shell</tspan><tspan fill="#FBFFEA">[</tspan><tspan fill="#B9A3FF">None</tspan><tspan fill="#FBFFEA">]()])</tspan></text>
+<text x="46" y="230" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#77FFD8">run_acp_stdio_sync</tspan><tspan fill="#FBFFEA">(agent, session_config=session_config)</tspan></text>
+<text letter-spacing="1.3" x="644" y="144" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">SETUP</text>
+<text x="644" y="168" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">The editor runs this script as a</text>
+<text x="644" y="185.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">subprocess, for example from</text>
+<text x="644" y="203.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Zed&#x27;s agent_servers setting.</text>
+<rect x="32" y="281" width="180" height="230" rx="14" fill="none" stroke="#0E9C86" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="46" y="273" width="66.7" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="53" y="285" font-size="11" fill="#0E9C86" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">EDITOR</text>
+<rect x="668" y="281" width="180" height="230" rx="14" fill="none" stroke="#8FA8A3" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="682" y="273" width="161.8" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="689" y="285" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">AGENT SUBPROCESS</text>
+<text letter-spacing="1.3" x="440" y="285" font-size="11" fill="#55726A" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">STDIO, JSON-RPC</text>
+<rect x="44" y="307" width="156" height="46" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="122" y="324.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">new chat</text>
+<text x="122" y="343.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">in the open workspace</text>
+<rect x="680" y="307" width="156" height="46" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="758" y="324.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">session_config</text>
+<text x="758" y="343.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tools rooted at its cwd</text>
+<line x1="202" y1="330" x2="678" y2="330" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="392.4" y="319" width="95.2" height="22" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="440" y="334.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">session/new</text>
+<rect x="44" y="377" width="156" height="46" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="122" y="394.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">chat and diffs</text>
+<text x="122" y="413.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">text streams in</text>
+<rect x="680" y="377" width="156" height="46" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="758" y="394.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">agent.run</text>
+<text x="758" y="413.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model and tools</text>
+<line x1="202" y1="387" x2="678" y2="387" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="678" y1="413" x2="202" y2="413" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<rect x="381.9" y="376" width="116.2" height="22" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="440" y="391.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">session/prompt</text>
+<rect x="381.9" y="402" width="116.2" height="22" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="440" y="417.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">session/update</text>
+<rect x="44" y="447" width="156" height="46" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="122" y="464.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">approval prompt</text>
+<text x="122" y="483.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the user decides</text>
+<rect x="680" y="447" width="156" height="46" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="758" y="464.2" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tool call</text>
+<text x="758" y="483.3" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">pending until allowed</text>
+<line x1="678" y1="457" x2="202" y2="457" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="202" y1="483" x2="678" y2="483" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<rect x="339.8" y="446" width="200.4" height="22" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="440" y="461.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">session/request_permission</text>
+<rect x="390.9" y="472" width="98.3" height="22" rx="6" fill="#FFFFFF" stroke="#8FA8A3" stroke-width="1.2"/>
+<text x="440" y="487.1" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="500" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">allow or reject</text>
+<line x1="122" y1="355" x2="122" y2="375" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="122" y1="425" x2="122" y2="445" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="758" y1="355" x2="758" y2="375" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="758" y1="425" x2="758" y2="445" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<text x="32" y="541" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">acp_filesystem and acp_terminal send read_file, write_file and run_command back through the editor (fs/read_text_file, terminal/create),</text>
+<text x="32" y="558.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">so the agent sees unsaved buffers. session/cancel stops a turn; a session_store adds session/load.</text>
+<rect x="32" y="581.5" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="52" y="592.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the editor</text>
+<rect x="127.3" y="581.5" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="147.3" y="592.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your agent</text>
+<rect x="228.3" y="581.5" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="248.3" y="592.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by the ACP adapter</text>
+</svg>

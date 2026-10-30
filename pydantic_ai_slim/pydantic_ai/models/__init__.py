@@ -134,8 +134,10 @@ from ..messages import (
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
     _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
+    _render_system_prompt_context,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
+    _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _tool_return_text,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
@@ -458,6 +460,8 @@ class ModelRequestParameters:
 class _ModelRequestUsageLedger:
     responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
     attempts: list[ModelRequestAttempt] = field(default_factory=list[ModelRequestAttempt])
+    rejected: list[ModelResponse] = field(default_factory=list[ModelResponse])
+    """The responses in `responses` that a hook rejected to make another attempt."""
 
 
 @dataclass(kw_only=True)
@@ -540,6 +544,24 @@ class ModelRequestContext:
     apart. Read-only from hooks: reassigning it doesn't change how the loop consumes the response.
     """
 
+    attempt: int = 1
+    """Which attempt at this request step is about to run, starting at `1`.
+
+    A step makes more than one attempt when a hook raises
+    [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] — a fallback capability moving to
+    the next model, or a backoff capability re-running the same one. Only
+    [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request],
+    [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] and
+    [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error]
+    can observe a value above `1`; `before_model_request` and `wrap_model_request` run once for the
+    step, before any attempt.
+
+    Distinct from [`RunContext.run_step`][pydantic_ai.tools.RunContext.run_step], which counts
+    request steps: a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] starts a new step (the model
+    sees a retry prompt), while a `RetryModelRequest` stays within this one (the model sees nothing).
+    Read-only from hooks: the loop owns it, and reassigning it doesn't change how many attempts run.
+    """
+
     _usage_response_ledger: _ModelRequestUsageLedger = field(
         default_factory=_ModelRequestUsageLedger, repr=False, compare=False
     )
@@ -560,6 +582,34 @@ class ModelRequestContext:
         `SpendLimits`, which pins this package's exact version.
         """
         return tuple(self._usage_response_ledger.responses)
+
+    @property
+    def _rejected_usage_responses(self) -> tuple[ModelResponse, ...]:
+        """The responses of `_usage_responses` that a hook rejected to make another attempt.
+
+        A response a hook rejected with [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]
+        is a failed attempt, like a response a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]
+        rejected, but its usage was counted at the provider boundary, so it stays in `_usage_responses`.
+
+        Private for now: read by the Pydantic AI Harness's `SpendLimits`, which pins this package's exact version.
+        """
+        return tuple(self._usage_response_ledger.rejected)
+
+    @property
+    def _unrejected_usage_responses(self) -> tuple[ModelResponse, ...]:
+        """The responses of `_usage_responses` that no hook rejected to make another attempt.
+
+        A response a hook rejected with [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]
+        is recorded as a failed [`ModelRequestAttempt`][pydantic_ai.messages.ModelRequestAttempt] with
+        its own span instead, the way a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]
+        records the responses it rejected, so the request's `chat` span doesn't report its usage again.
+
+        Private for now: read by the `Instrumentation` capability.
+        """
+        ledger = self._usage_response_ledger
+        return tuple(
+            response for response in ledger.responses if not any(response is rejected for rejected in ledger.rejected)
+        )
 
     @property
     def _usage_attempts(self) -> tuple[ModelRequestAttempt, ...]:
@@ -1129,8 +1179,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Every model that sends such data back decides with this method, as does the trim that drops history
         before a compaction part, so the two always agree. Data that isn't accepted gets the model's fallback
-        for foreign data, such as thinking rendered as text. Stateful data, such as response, file and
-        container IDs, is only sent back to the same `provider_name`.
+        for foreign data, such as thinking rendered as text. Server-side state, such as response and container
+        IDs, is judged by [`accepts_server_state`][pydantic_ai.models.Model.accepts_server_state] instead.
 
         Args:
             response: The response the part is in.
@@ -1145,6 +1195,28 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             canonical_system=self.canonical_system,
             compatible_systems=self.compatible_systems,
         )
+
+    def accepts_server_state(self, response: ModelResponse) -> bool:
+        """Whether this model can send back the IDs of server-side state created by `response`.
+
+        That's state the API stores and looks up by ID, rather than verifying by its own key: stored responses
+        (`previous_response_id`), output item IDs, conversations and code execution containers. It's accepted
+        when the response has this model's `system` as its `provider_name` and was created at an endpoint this
+        model's provider [`shares_server_state_with`][pydantic_ai.providers.Provider.shares_server_state_with].
+        A response without a `provider_url`, such as one recorded by hand, and a model without a provider are
+        judged by `provider_name` alone. Stateless data has its own check,
+        [`accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts], so a response from
+        another endpoint of the same API still has its encrypted reasoning sent back, without the IDs.
+
+        Uploaded files aren't judged here: the endpoint an
+        [`UploadedFile`][pydantic_ai.messages.UploadedFile] is sent to is the one you pass it to.
+        """
+        if response.provider_name != self.system:
+            return False
+        provider = self.provider
+        if provider is None or response.provider_url is None:
+            return True
+        return provider.shares_server_state_with(response.provider_url)
 
     @property
     def _canonical_system_stamp(self) -> str | None:
@@ -1637,6 +1709,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         instruction baseline or compaction. A change to a loaded deferred capability's block is kept
         until the latest compaction alone, since no baseline restates it.
 
+        Renders each [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] with a `context_id` as the
+        `<context>` element that id names, so a later statement of an appending dynamic system prompt replaces
+        or withdraws the first.
+
         Where the profile's `supports_request_scoped_system_prompts` is `False`, leaves out every
         [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose request has been answered
         and moves the current request's ones to the end of the last request.
@@ -1678,6 +1754,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
             )
 
+        messages = _render_system_prompt_contexts(
+            messages,
+            inline_system=inline_system,
+            # The appending instruction blocks the prefix opens are followed by the sentence already.
+            prefix_states_rule=model_request_parameters is not None
+            and bool(_tagged_append_parts(model_request_parameters.instruction_parts or [])),
+        )
         messages = _project_model_settings_deltas(
             messages,
             keep=self._renders_effort_deltas and self.profile.get('supports_mid_conversation_effort', False),
@@ -4007,6 +4090,66 @@ def _effort_window_baseline(messages: Sequence[ModelMessage]) -> tuple[ThinkingE
 def _without_model_settings_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:  # pyright: ignore[reportUnusedFunction]
     """`messages` without their `ModelSettingsDeltaPart`s, for a request that sends the current effort as its request-level setting."""
     return _project_model_settings_deltas(messages, keep=False)
+
+
+def _render_system_prompt_contexts(
+    messages: list[ModelMessage], *, inline_system: bool, prefix_states_rule: bool
+) -> list[ModelMessage]:
+    """Send each `SystemPromptPart` with a `context_id` as its `<context>` element, which history holds only the content of.
+
+    The first statement of an id in `messages` opens it, and later ones replace or withdraw it. A statement that
+    would open an id without content has nothing to state and is left out.
+
+    The sentence saying that a later element with the same id replaces an earlier one is sent once per request,
+    after the last element opened where the first ones are. The standing system prompt is sent with the instruction
+    prefix, which ends with the sentence itself when it opens an appending instruction block
+    (`prefix_states_rule`), so the standing prompt's elements get it only when the prefix doesn't. When neither
+    states it, the sentence follows the last element opened by the first later request that opens one, and isn't
+    repeated after that. History is append-only, so each statement renders the same on every later request.
+
+    Returns `messages` itself when no part has an id.
+    """
+    if not any(
+        isinstance(part, SystemPromptPart) and part.context_id is not None
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    ):
+        return messages
+    first_request = next(index for index, message in enumerate(messages) if isinstance(message, ModelRequest))
+    opened: set[str] = set()
+    stated = prefix_states_rule
+    rendered: list[ModelMessage] = []
+    for index, message in enumerate(messages):
+        if not isinstance(message, ModelRequest):
+            rendered.append(message)
+            continue
+        parts: list[ModelRequestPart | None] = list(message.parts)
+        # The standing system prompt is sent with the instruction prefix, ahead of the rest of the first request.
+        standing = _standing_system_prompt_count(message) if index == first_request else 0
+        for group in (range(standing), range(standing, len(parts))):
+            statements: list[tuple[int, SystemPromptPart]] = []
+            last_opening: int | None = None
+            for part_index in group:
+                part = message.parts[part_index]
+                if not isinstance(part, SystemPromptPart) or part.context_id is None:
+                    continue
+                if part.context_id not in opened:
+                    if not part.content:
+                        parts[part_index] = None
+                        continue
+                    opened.add(part.context_id)
+                    last_opening = part_index
+                statements.append((part_index, part))
+            states_rule_at = last_opening if not stated else None
+            for part_index, part in statements:
+                content = _render_system_prompt_context(
+                    part, inline_system=inline_system, states_rule=part_index == states_rule_at
+                )
+                parts[part_index] = replace(part, content=content)
+            stated = stated or states_rule_at is not None
+        rendered.append(replace(message, parts=[part for part in parts if part is not None]))
+    return rendered
 
 
 def _has_instruction_state(messages: Iterable[ModelMessage]) -> bool:

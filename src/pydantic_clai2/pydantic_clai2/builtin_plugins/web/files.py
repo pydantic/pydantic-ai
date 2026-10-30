@@ -2,8 +2,10 @@
 
 import heapq
 import os
+import subprocess
 import time
 from collections import defaultdict
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -53,37 +55,54 @@ async def list_paths(folder: Path) -> tuple[str, ...]:
     In a Git checkout they are the files Git tracks or would add, so `.gitignore` applies; elsewhere a walk
     that skips hidden and `SKIPPED` folders. At most `FILE_LIMIT` files either way.
     """
-    try:
-        listed = await anyio.run_process(
-            ['git', '-C', str(folder), 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-            check=False,
-        )
-    except OSError:  # No Git installed.
-        listed = None
-    if listed is not None and listed.returncode == 0:
-        # An unmerged file is listed once per stage.
-        names = dict.fromkeys(name for name in listed.stdout.decode(errors='replace').split('\0') if name)
-        files = list(names)[:FILE_LIMIT]
-    else:
+    files = await _git_files(folder)
+    if files is None:
         files = await to_thread.run_sync(_walk, folder)
     folders = {f'{parent}/': None for name in files for parent in _parents(name)}
     return (*files, *folders)
+
+
+async def _git_files(folder: Path) -> list[str] | None:
+    """The first `FILE_LIMIT` files Git tracks or would add in `folder`, stopping Git there; `None` outside a checkout."""
+    try:
+        process = await anyio.open_process(
+            ['git', '-C', str(folder), 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+            stdin=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:  # No Git installed.
+        return None
+    # In order, once each: an unmerged file is listed once per stage.
+    names: dict[str, None] = {}
+    async with process:
+        assert process.stdout is not None
+        rest = b''
+        async for chunk in process.stdout:
+            *listed, rest = (rest + chunk).split(b'\0')
+            names.update(dict.fromkeys(name.decode(errors='replace') for name in listed))
+            if len(names) >= FILE_LIMIT:
+                # A huge untracked folder, such as a home directory under Git, need not be listed to the end.
+                with suppress(ProcessLookupError):  # Git may have just finished on its own.
+                    process.kill()
+                return list(names)[:FILE_LIMIT]
+    return list(names) if process.returncode == 0 else None
 
 
 def best(paths: tuple[str, ...], query: str) -> list[str]:
     """The best `MATCH_LIMIT` of `paths` for `query`, ignoring case.
 
     A name or path starting with it comes first, then a name holding it, a path holding it, and a path holding
-    its characters in order; within each, shallower and shorter paths first. An empty query lists the top level,
-    and the path typed in full is left out.
+    its characters in order; within each, shallower and shorter paths first. An empty query lists the top level.
+    A file typed in full comes first, as the shortest of its rank; a folder typed in full is left out, for what it
+    holds.
     """
     needle = query.lower()
     ranked: list[tuple[int, int, int, str]] = []
     for path in paths:
         lowered = path.lower()
         name = _name(lowered)
-        if lowered == needle:
-            continue  # Typed in full: nothing left to complete.
+        if lowered == needle and path.endswith('/'):
+            continue  # A folder typed in full: what it holds comes next.
         if lowered.startswith(needle) or name.startswith(needle):
             rank = 0
         elif needle in name:
