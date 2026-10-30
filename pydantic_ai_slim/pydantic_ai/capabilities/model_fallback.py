@@ -98,11 +98,11 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
 
     Set `output_retry_threshold` to move the next ordinary step to another model after output
     validation failures consume allowed retries. That model receives the validation feedback and
-    remains the starting candidate for this run. The next step's settings, tools, and request
-    hooks see the new model. The agent's
-    output/per-tool retry limits and usage limits still apply. An explicit run model, an active
-    model override, or another capability's model selection keeps control for the whole run,
-    disabling output-driven switching while leaving request-level fallback available.
+    remains the starting candidate for this run. The next step's settings, tools, and request hooks
+    see the new model. The agent's output/per-tool retry limits and usage limits still apply. An
+    explicit run model, an active model override, or another capability's model selection keeps
+    control for the whole run, disabling output-driven switching while leaving request-level
+    fallback available.
 
     Each attempt re-runs
     [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
