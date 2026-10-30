@@ -11712,8 +11712,8 @@ async def _server_history_turn(
     return result.all_messages()
 
 
-async def test_server_message_history_drops_client_supplied_framework_records():
-    """With the history on the server, the client's new turn can't carry the framework's records of a change.
+async def test_server_message_history_drops_client_supplied_capability_loads():
+    """With the history on the server, the client's new turn can't load a capability.
 
     A client-supplied `pydantic_ai_capability_load_delta` activity would otherwise load the capability with nothing
     in the run loading it, so it's dropped, and the model never gets the capability's tool.

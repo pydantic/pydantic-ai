@@ -246,7 +246,7 @@ class PendingMessageQueue(list[PendingMessage]):
         """
         with self._lock:
             if self._closed:
-                raise UserError('`load_capability` is not available because the agent run has ended.')
+                raise UserError('`ctx.load_capability()` is not available because the agent run has ended.')
             if any(
                 isinstance(record, CapabilityLoadDeltaPart) and capability_id in record.loaded
                 for record in self._capability_loads
