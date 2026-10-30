@@ -5,7 +5,7 @@ import sys
 import threading
 import warnings
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from copy import copy
@@ -21,8 +21,9 @@ import anyio
 import httpx2
 import pytest
 from _pytest.fixtures import SubRequest
-from dirty_equals import IsPartialDict
+from dirty_equals import IsPartialDict, IsStr
 from httpx import Timeout
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import Unpack
 
@@ -234,6 +235,25 @@ def sent_frames(*cassettes: RealtimeCassette) -> list[Frame]:
     ]
 
 
+def history_projection(messages: Sequence[ModelMessage]) -> list[dict[str, object]]:
+    history: list[dict[str, object]] = []
+    for message in messages:
+        entry: dict[str, object] = {'kind': message.kind, 'parts': [part.part_kind for part in message.parts]}
+        if isinstance(message, ModelResponse):
+            details: dict[str, object] = message.provider_details or {}
+            entry.update(
+                model_id=message.model_id,
+                provider_name=message.provider_name,
+                provider_url=message.provider_url,
+                provider_response_id=message.provider_response_id,
+                transport=details.get('transport'),
+                store=details.get('store'),
+                history_digest=message.history_digest,
+            )
+        history.append(entry)
+    return history
+
+
 class Weather(BaseModel):
     temperature: int
 
@@ -264,20 +284,41 @@ async def test_tool_continuation(allow_model_requests: None, recorded_responses:
     agent = Agent(model, tools=[get_weather], output_type=NativeOutput(Weather), model_settings=settings)
     result = await agent.run('Call get_weather for Paris exactly once, then report its temperature.')
     assert calls == ['Paris']
-    assert result.output == Weather(temperature=18)
+    assert result.output == snapshot(Weather(temperature=18))
     assert result.usage.input_tokens > 0
     assert result.usage.output_tokens > 0
     assert recorded_responses.connections == ['wss://api.openai.com/v1/responses']
 
     messages = result.all_messages()
     responses = [message for message in messages if isinstance(message, ModelResponse)]
-    assert len(responses) == 2
-    assert all(response.provider_response_id for response in responses)
-    # The socket echoes `store`, which decides where a response can be continued from.
-    assert [
-        ((response.provider_details or {}).get('transport'), (response.provider_details or {}).get('store'))
-        for response in responses
-    ] == [('websocket', False), ('websocket', False)]
+    assert history_projection(messages) == snapshot(
+        [
+            {'kind': 'request', 'parts': ['user-prompt']},
+            {
+                'kind': 'response',
+                'parts': ['tool-call'],
+                'model_id': 'openai:gpt-6-astra',
+                'provider_name': 'openai',
+                'provider_url': 'https://api.openai.com/v1/',
+                'provider_response_id': 'resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2',
+                'transport': 'websocket',
+                'store': False,
+                'history_digest': IsStr(regex=r'[0-9a-f]{64}'),
+            },
+            {'kind': 'request', 'parts': ['tool-return']},
+            {
+                'kind': 'response',
+                'parts': ['text'],
+                'model_id': 'openai:gpt-6-astra',
+                'provider_name': 'openai',
+                'provider_url': 'https://api.openai.com/v1/',
+                'provider_response_id': 'resp_0a5264ca68ac88e9016ad238456cf087d2b78412fac356b57f',
+                'transport': 'websocket',
+                'store': False,
+                'history_digest': IsStr(regex=r'[0-9a-f]{64}'),
+            },
+        ]
+    )
     tool_call = next(part for part in responses[0].parts if isinstance(part, ToolCallPart))
     tool_return = next(
         part
@@ -287,23 +328,88 @@ async def test_tool_continuation(allow_model_requests: None, recorded_responses:
         if isinstance(part, ToolReturnPart)
     )
     assert tool_call.tool_call_id == tool_return.tool_call_id
-    sent = sent_frames(recorded_responses.cassette)
-    assert len(sent) == 2
-    assert sent[0]['type'] == 'response.create'
-    assert sent[0]['model'] == 'gpt-6-astra'
-    assert sent[0]['input'] == [
-        {'role': 'user', 'content': 'Call get_weather for Paris exactly once, then report its temperature.'}
-    ]
-    assert 'previous_response_id' not in sent[0]
-    assert sent[1]['previous_response_id'] == responses[0].provider_response_id
-    assert sent[1]['input'] == [{'type': 'function_call_output', 'call_id': tool_call.tool_call_id, 'output': '18'}]
-    assert all(frame['store'] is False for frame in sent)
-    assert all(
-        frame['type'] == 'response.create' and 'stream' not in frame and 'background' not in frame for frame in sent
+    assert sent_frames(recorded_responses.cassette) == snapshot(
+        [
+            {
+                'type': 'response.create',
+                'model': 'gpt-6-astra',
+                'input': [
+                    {'role': 'user', 'content': 'Call get_weather for Paris exactly once, then report its temperature.'}
+                ],
+                'tools': [
+                    {
+                        'name': 'get_weather',
+                        'parameters': {
+                            'additionalProperties': False,
+                            'properties': {'city': {'type': 'string'}},
+                            'required': ['city'],
+                            'type': 'object',
+                        },
+                        'type': 'function',
+                        'description': 'Get the current temperature in Celsius for a city.',
+                        'strict': True,
+                    }
+                ],
+                'tool_choice': 'auto',
+                'reasoning': {'effort': 'low', 'context': 'all_turns'},
+                'text': {
+                    'format': {
+                        'type': 'json_schema',
+                        'name': 'Weather',
+                        'schema': {
+                            'properties': {'temperature': {'type': 'integer'}},
+                            'required': ['temperature'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        },
+                        'strict': True,
+                    }
+                },
+                'store': False,
+                'include': ['reasoning.encrypted_content'],
+            },
+            {
+                'type': 'response.create',
+                'model': 'gpt-6-astra',
+                'input': [{'type': 'function_call_output', 'call_id': 'call_4DslskBQaHKAQfBn0955XDeN', 'output': '18'}],
+                'tools': [
+                    {
+                        'name': 'get_weather',
+                        'parameters': {
+                            'additionalProperties': False,
+                            'properties': {'city': {'type': 'string'}},
+                            'required': ['city'],
+                            'type': 'object',
+                        },
+                        'type': 'function',
+                        'description': 'Get the current temperature in Celsius for a city.',
+                        'strict': True,
+                    }
+                ],
+                'tool_choice': 'auto',
+                'previous_response_id': 'resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2',
+                'reasoning': {'effort': 'low', 'context': 'all_turns'},
+                'text': {
+                    'format': {
+                        'type': 'json_schema',
+                        'name': 'Weather',
+                        'schema': {
+                            'properties': {'temperature': {'type': 'integer'}},
+                            'required': ['temperature'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        },
+                        'strict': True,
+                    }
+                },
+                'store': False,
+                'include': ['reasoning.encrypted_content'],
+                'prompt_cache_options': {
+                    'comparison_response_id': 'resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2'
+                },
+            },
+        ]
     )
-    text_config = sent[0]['text']
-    assert isinstance(text_config, dict)
-    assert text_config['format'] == IsPartialDict(type='json_schema')
 
 
 async def test_streaming_sequential_turns(allow_model_requests: None, recorded_responses: RecordedResponses):
@@ -322,24 +428,60 @@ async def test_streaming_sequential_turns(allow_model_requests: None, recorded_r
         async with agent.run_stream('Reply with the word cobalt.', message_history=history) as second:
             second_output = await second.get_output()
             assert second.usage.output_tokens > 0
+            final_history = second.all_messages()
     assert chunks
-    assert 'amber' in first_output.lower()
-    assert 'cobalt' in second_output.lower()
+    assert (first_output, second_output) == snapshot(('amber', 'cobalt'))
     assert recorded_responses.connections == ['wss://api.openai.com/v1/responses']
-    first_response = history[-1]
-    assert isinstance(first_response, ModelResponse)
-    assert first_response.provider_details is not None
-    assert first_response.provider_details['transport'] == 'websocket'
-    assert first_response.provider_details['store'] is True
-    sent = sent_frames(recorded_responses.cassette)
-    assert len(sent) == 2
-    assert sent[0]['type'] == 'response.create'
-    assert sent[0]['model'] == 'gpt-6.1-sol'
-    assert sent[0]['input'] == [{'role': 'user', 'content': 'Reply with the word amber.'}]
-    assert 'previous_response_id' not in sent[0]
-    assert sent[1]['previous_response_id'] == first_response.provider_response_id
-    assert sent[1]['input'] == [{'role': 'user', 'content': 'Reply with the word cobalt.'}]
-    assert all('store' not in frame for frame in sent)
+    assert history_projection(final_history) == snapshot(
+        [
+            {'kind': 'request', 'parts': ['user-prompt']},
+            {
+                'kind': 'response',
+                'parts': ['text'],
+                'model_id': 'openai:gpt-6.1-sol',
+                'provider_name': 'openai',
+                'provider_url': 'https://api.openai.com/v1/',
+                'provider_response_id': 'resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6',
+                'transport': 'websocket',
+                'store': True,
+                'history_digest': IsStr(regex=r'[0-9a-f]{64}'),
+            },
+            {'kind': 'request', 'parts': ['user-prompt']},
+            {
+                'kind': 'response',
+                'parts': ['text'],
+                'model_id': 'openai:gpt-6.1-sol',
+                'provider_name': 'openai',
+                'provider_url': 'https://api.openai.com/v1/',
+                'provider_response_id': 'resp_00fbb1a41885ddc2006ada91c51d8087d299f6925ce2a0d42b',
+                'transport': 'websocket',
+                'store': True,
+                'history_digest': IsStr(regex=r'[0-9a-f]{64}'),
+            },
+        ]
+    )
+    assert sent_frames(recorded_responses.cassette) == snapshot(
+        [
+            {
+                'type': 'response.create',
+                'model': 'gpt-6.1-sol',
+                'input': [{'role': 'user', 'content': 'Reply with the word amber.'}],
+                'reasoning': {'context': 'all_turns'},
+                'include': ['reasoning.encrypted_content'],
+            },
+            {
+                'type': 'response.create',
+                'model': 'gpt-6.1-sol',
+                'input': [{'role': 'user', 'content': 'Reply with the word cobalt.'}],
+                'previous_response_id': 'resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6',
+                'reasoning': {'context': 'all_turns'},
+                'include': ['reasoning.encrypted_content'],
+                'prompt_cache_options': {
+                    'comparison_response_id': 'resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6'
+                },
+            },
+        ]
+    )
 
 
 async def test_overlapping_runs_continue_on_their_own_lanes(
@@ -366,13 +508,75 @@ async def test_overlapping_runs_continue_on_their_own_lanes(
             second = await agent.run('Reply with the word cobalt.')
             async for _ in chunks:
                 pass
+            first_output = await first.get_output()
             first_history = first.all_messages()
         third = await agent.run('Reply with the word amber again.', message_history=first_history)
         fourth = await agent.run('Reply with the word cobalt again.', message_history=second.all_messages())
 
-    assert 'cobalt' in second.output.lower()
-    assert 'amber' in third.output.lower()
-    assert 'cobalt' in fourth.output.lower()
+    assert (first_output, second.output, third.output, fourth.output) == snapshot(
+        (
+            'one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty thirty-one thirty-two thirty-three thirty-four thirty-five thirty-six thirty-seven thirty-eight thirty-nine forty forty-one forty-two forty-three forty-four forty-five forty-six forty-seven forty-eight forty-nine fifty fifty-one fifty-two fifty-three fifty-four fifty-five fifty-six fifty-seven fifty-eight fifty-nine sixty amber',
+            'cobalt',
+            'amber',
+            'cobalt',
+        )
+    )
+    assert history_projection(third.all_messages()) == snapshot(
+        [
+            {'kind': 'request', 'parts': ['user-prompt']},
+            {
+                'kind': 'response',
+                'parts': ['thinking', 'text'],
+                'model_id': 'openai:gpt-6-astra',
+                'provider_name': 'openai',
+                'provider_url': 'https://api.openai.com/v1/',
+                'provider_response_id': 'resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5',
+                'transport': 'websocket',
+                'store': False,
+                'history_digest': IsStr(regex=r'[0-9a-f]{64}'),
+            },
+            {'kind': 'request', 'parts': ['user-prompt']},
+            {
+                'kind': 'response',
+                'parts': ['text'],
+                'model_id': 'openai:gpt-6-astra',
+                'provider_name': 'openai',
+                'provider_url': 'https://api.openai.com/v1/',
+                'provider_response_id': 'resp_0aedf5a18305044c016ada21e5709887d2aca8453e76a53b37',
+                'transport': 'websocket',
+                'store': False,
+                'history_digest': IsStr(regex=r'[0-9a-f]{64}'),
+            },
+        ]
+    )
+    assert history_projection(fourth.all_messages()) == snapshot(
+        [
+            {'kind': 'request', 'parts': ['user-prompt']},
+            {
+                'kind': 'response',
+                'parts': ['text'],
+                'model_id': 'openai:gpt-6-astra',
+                'provider_name': 'openai',
+                'provider_url': 'https://api.openai.com/v1/',
+                'provider_response_id': 'resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3',
+                'transport': 'websocket',
+                'store': False,
+                'history_digest': IsStr(regex=r'[0-9a-f]{64}'),
+            },
+            {'kind': 'request', 'parts': ['user-prompt']},
+            {
+                'kind': 'response',
+                'parts': ['text'],
+                'model_id': 'openai:gpt-6-astra',
+                'provider_name': 'openai',
+                'provider_url': 'https://api.openai.com/v1/',
+                'provider_response_id': 'resp_0d948b71f38d99ed016ada21e8690087d2bc5cc8823a6ca313',
+                'transport': 'websocket',
+                'store': False,
+                'history_digest': IsStr(regex=r'[0-9a-f]{64}'),
+            },
+        ]
+    )
     assert recorded_responses.connections == ['wss://api.openai.com/v1/responses']
     first_response = first_history[-1]
     second_response = second.all_messages()[-1]
@@ -385,7 +589,57 @@ async def test_overlapping_runs_continue_on_their_own_lanes(
         (None, first_response.provider_response_id),
         ('lane-1', second_response.provider_response_id),
     ]
-    assert sent[2]['input'] == [{'role': 'user', 'content': 'Reply with the word amber again.'}]
+    assert sent == snapshot(
+        [
+            {
+                'type': 'response.create',
+                'model': 'gpt-6-astra',
+                'input': [
+                    {
+                        'role': 'user',
+                        'content': 'Count from one to sixty in words, separated by spaces, then reply with the word amber.',
+                    }
+                ],
+                'reasoning': {'context': 'all_turns'},
+                'store': False,
+                'include': ['reasoning.encrypted_content'],
+            },
+            {
+                'type': 'response.create',
+                'model': 'gpt-6-astra',
+                'input': [{'role': 'user', 'content': 'Reply with the word cobalt.'}],
+                'reasoning': {'context': 'all_turns'},
+                'store': False,
+                'include': ['reasoning.encrypted_content'],
+                'stream_id': 'lane-1',
+            },
+            {
+                'type': 'response.create',
+                'model': 'gpt-6-astra',
+                'input': [{'role': 'user', 'content': 'Reply with the word amber again.'}],
+                'previous_response_id': 'resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5',
+                'reasoning': {'context': 'all_turns'},
+                'store': False,
+                'include': ['reasoning.encrypted_content'],
+                'prompt_cache_options': {
+                    'comparison_response_id': 'resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5'
+                },
+            },
+            {
+                'type': 'response.create',
+                'model': 'gpt-6-astra',
+                'input': [{'role': 'user', 'content': 'Reply with the word cobalt again.'}],
+                'previous_response_id': 'resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3',
+                'reasoning': {'context': 'all_turns'},
+                'store': False,
+                'include': ['reasoning.encrypted_content'],
+                'prompt_cache_options': {
+                    'comparison_response_id': 'resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3'
+                },
+                'stream_id': 'lane-1',
+            },
+        ]
+    )
     # OpenAI echoes a named lane on every event of its responses and omits it on the default lane.
     received_lanes = {frame.data.get('stream_id') for frame in frames if frame.direction == 'received'}
     assert received_lanes == {None, 'lane-1'}
@@ -418,17 +672,67 @@ async def test_cross_socket_continuation_replays_history(
     first = await agent.run('Reply with the word amber.')
     second = await agent.run('Reply with the word cobalt.', message_history=first.all_messages())
 
-    assert 'amber' in first.output.lower()
-    assert 'cobalt' in second.output.lower()
+    assert (first.output, second.output) == snapshot(('amber', 'cobalt'))
+    assert history_projection(second.all_messages()) == snapshot(
+        [
+            {'kind': 'request', 'parts': ['user-prompt']},
+            {
+                'kind': 'response',
+                'parts': ['text'],
+                'model_id': 'openai:gpt-6-astra',
+                'provider_name': 'openai',
+                'provider_url': 'https://api.openai.com/v1/',
+                'provider_response_id': 'resp_08b01eccebc006e2016ad239dff4d087d2bbb37b6399300804',
+                'transport': 'websocket',
+                'store': False,
+                'history_digest': IsStr(regex=r'[0-9a-f]{64}'),
+            },
+            {'kind': 'request', 'parts': ['user-prompt']},
+            {
+                'kind': 'response',
+                'parts': ['text'],
+                'model_id': 'openai:gpt-6-astra',
+                'provider_name': 'openai',
+                'provider_url': 'https://api.openai.com/v1/',
+                'provider_response_id': 'resp_08b01eccebc006e2016ad239e29b8c87d2b18bf99903b80275',
+                'transport': 'websocket',
+                'store': False,
+                'history_digest': IsStr(regex=r'[0-9a-f]{64}'),
+            },
+        ]
+    )
     assert len(recorded_responses.connections) == 2
-    sent = sent_frames(*recorded_responses.cassettes)
-    assert len(sent) == 2
-    assert all(frame['type'] == 'response.create' and 'previous_response_id' not in frame for frame in sent)
-    assert sent[0]['input'] == [{'role': 'user', 'content': 'Reply with the word amber.'}]
-    first_input, second_input = sent[0]['input'], sent[1]['input']
-    assert isinstance(first_input, list) and isinstance(second_input, list)
-    assert len(second_input) > len(first_input)
-    assert 'amber' in str(second_input).lower()
+    assert sent_frames(*recorded_responses.cassettes) == snapshot(
+        [
+            {
+                'type': 'response.create',
+                'model': 'gpt-6-astra',
+                'input': [{'role': 'user', 'content': 'Reply with the word amber.'}],
+                'reasoning': {'context': 'all_turns'},
+                'store': False,
+                'include': ['reasoning.encrypted_content'],
+            },
+            {
+                'type': 'response.create',
+                'model': 'gpt-6-astra',
+                'input': [
+                    {'role': 'user', 'content': 'Reply with the word amber.'},
+                    {
+                        'role': 'assistant',
+                        'id': 'msg_08b01eccebc006e2016ad239e1e03487d2ae6b2a38d5b293f0',
+                        'content': [{'text': 'amber', 'type': 'output_text', 'annotations': []}],
+                        'type': 'message',
+                        'status': 'completed',
+                        'phase': 'final_answer',
+                    },
+                    {'role': 'user', 'content': 'Reply with the word cobalt.'},
+                ],
+                'reasoning': {'context': 'all_turns'},
+                'store': False,
+                'include': ['reasoning.encrypted_content'],
+            },
+        ]
+    )
 
 
 def http_reply(response_id: str, *output: Frame) -> httpx2.Response:

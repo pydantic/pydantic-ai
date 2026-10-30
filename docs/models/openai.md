@@ -666,7 +666,7 @@ In WebSocket mode, these requests use HTTP instead. The warning column refers to
 | The request uses [background mode](#background-mode) or resumes a suspended response. | No |
 | No lane is free, or 16 responses are already running on the socket. | No |
 | The model settings' [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] or SDK client's default headers differ from the socket's handshake headers. | No |
-| The SDK client uses an API key callback, workload identity, Azure AD token provider or HTTP client authentication. HTTP resolves these credentials for each request. | Yes |
+| The SDK client uses an API key callback, workload identity, Azure AD token provider or HTTP client authentication. HTTP resolves these credentials for each request. This applies even when the profile permits WebSockets, including when HTTP authentication is added after the socket opens. | Yes |
 | The profile sets [`openai_responses_supports_websocket`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_websocket] to `False`. | Yes |
 | The OpenAI SDK cannot configure authentication for its socket client, as with Bedrock Mantle's native authentication. | Yes |
 | The WebSocket extra is missing, or the async backend is not asyncio, such as Trio. | Yes |
@@ -676,8 +676,6 @@ An HTTP-level handshake rejection remains an error. Transport failures after a r
 After a failed connection, later requests in the same run or outer agent/model context use HTTP without trying the handshake or warning again. Once that shared lifetime ends, the next run or context tries a socket again.
 
 With instrumentation enabled, WebSocket mode records `pydantic_ai.transport` on each request's `chat` span, or under Temporal, on the model activity span within that trace. Its value is `'websocket'` for a socket request or `'http'` for one sent over HTTP. HTTP-only mode leaves the attribute unset.
-
-Per-request credential checks apply even when the profile permits WebSockets, including when HTTP authentication is added after the socket opens.
 
 The profile flag defaults to `False` for [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] or an `AsyncAzureOpenAI` client, the [Pydantic AI Gateway](../gateway.md), the [`openai-chatgpt`](openai-chatgpt.md) and [`openai-codex`](openai-codex.md) OAuth providers, and [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel]. The OAuth providers add their credentials to HTTP requests only; `OpenAICodexModel` resolves session headers per request.
 
