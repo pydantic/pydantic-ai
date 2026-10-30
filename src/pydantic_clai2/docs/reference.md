@@ -455,29 +455,19 @@ Enable its existing `walk_up` option to read ancestors too:
 /set repo_context.autoload_symlink_roots '["~/agent-context"]'
 ```
 
-`walk_up` defaults to `false`; setting a root does not turn it on.
-With `walk_up=true`, `repo_context.walk_up_root` is the inclusive stop, defaulting to `~` (your home).
-If the root is not an ancestor of the workspace, only the workspace is scanned.
-Files load broadest-first, workspace-last.
+`walk_up` defaults to `false`; setting a root does not turn it on. When enabled,
+it reads ancestors up to `repo_context.walk_up_root`, inclusive (`~`, your home, by default).
+A root outside the workspace's ancestors leaves only the workspace scanned.
+`repo_context.autoload_symlink_roots` defaults to `[]`; set it to a JSON list of directories
+if your instruction files are symlinks into a shared directory.
 
-`repo_context.autoload_symlink_roots` defaults to `[]`, so instruction symlinks resolving outside
-the scanned directory are skipped. Its JSON string list authorizes resolved target directories,
-not additional scan directories. Targets must stay inside a resolved authorized root, including
-through chained symlinks. This affects autoload only, independently of `walk_up`;
-nested traversal and asset inventory are unchanged. The workspace backend must resolve symlinks through `SupportsRealpath` or the `SupportsCommands` command fallback for this opt-in.
-
-Both settings are global user settings in SQLite, not project or plugin JSON options.
-Use absolute paths, `~`, or `~/...`; relative paths, `~other-user`, and environment-variable
-interpolation are not supported. Quote a path containing spaces, for example `/set repo_context.walk_up_root '/srv/My Projects'`.
-Paths are normalized when used, not when saved, and need not exist when saved.
-Changes apply on the next run, not during a running turn, with the usual cross-session `/set` adoption.
-Hosts without CLAI settings, including `open_stock_agent`, keep the home/empty defaults.
-
-External links are labeled by their scanned entry, such as `../AGENTS.md`, whose directory defines scope.
-Same-directory links keep the target name (`CLAUDE.md -> AGENTS.md` is labeled `AGENTS.md`).
-Files are deduplicated by resolved target and content hash.
-These files become agent instructions. Authorize only a narrow trusted CE tooling directory,
-not `/` or your whole home: a repository can select readable targets beneath every authorized root.
+Both settings are user-only, not plugin JSON options; `.clai/settings.json` rejects their fields.
+Use absolute paths, `~`, or `~/...`, not relative paths, `~other-user`, or environment-variable interpolation.
+Quote paths containing spaces, such as `/set repo_context.walk_up_root '/srv/My Projects'`,
+and single-quote the whole JSON list as above. Paths are normalized when used and need not exist when saved.
+Changes apply on the next run, not during a running turn.
+Authorize a directory holding only trusted instructions, not `/` or all of home: repository symlinks can select any readable file beneath it.
+See [Repo Context](../../../docs/harness/repo-context.md#shared-instruction-symlinks) for symlink loading, scope, and backend requirements.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.

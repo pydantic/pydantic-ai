@@ -52,20 +52,18 @@ walk-up. Pass the workspace home path explicitly to walk up to it. For a remote 
 
 #### Shared instruction symlinks
 
-By default, instruction symlinks resolving outside the directory being scanned are skipped.
-To load shared CE files, pass authorized target directories with the keyword-only
-`autoload_symlink_roots` option, for example `RepoContext(autoload_symlink_roots=('/opt/agent-context',))`.
-The default is empty. Each resolved target must be inside a resolved authorized root;
-chained links that escape the roots and sibling-prefix lookalikes are not authorized.
-This opt-in requires a workspace backend implementing `SupportsRealpath` or `SupportsCommands`:
-`Workspace.realpath` uses the backend's realpath method or a command fallback to resolve symlinks.
-Lexical path normalization is insufficient.
+If several repositories symlink their instruction files into a shared directory, authorize that directory
+with `RepoContext(autoload_symlink_roots=('/opt/agent-context',))`. This keyword-only option defaults to
+empty, which skips links outside the directory being scanned. Each resolved target must be inside a
+resolved authorized root. The option only affects autoload: it does not scan the shared directory,
+extend the walk-up, or change inventory or nested traversal. The workspace backend needs native realpath
+support (`SupportsRealpath`) or command execution (`SupportsCommands`) to resolve links; otherwise the run
+raises `UserError`.
 
-The option authorizes instruction entries in directories already scanned by autoload.
-It does not scan the target directories, extend the walk-up, or change asset inventory or nested traversal.
-An external symlink is labeled by its scanned entry, such as `../AGENTS.md`, not by the target's name:
-the entry's directory defines the instruction's scope. Deduplication still uses the resolved target and content hash.
-Same-directory symlinks keep their target-name labels. Broken links and directories are skipped.
+An external link keeps its scanned entry's label, such as `../AGENTS.md`, because that directory defines
+where the instructions apply. Same-directory links keep their target-name labels (`CLAUDE.md -> AGENTS.md`
+is labeled `AGENTS.md`). Files are still deduplicated by resolved target and content hash, and broken links
+and directories are skipped.
 
 ### 2. Asset inventory (off by default)
 
@@ -140,9 +138,9 @@ the same weight as the instructions you write yourself. That is what the strateg
 is for, and it means the working directory and `home_dir` should hold only
 instruction files you would put in your own instructions.
 
-An authorized symlink root trusts the instruction targets beneath it, not just one deployed file.
-Choose a narrow CE tooling directory rather than `/` or your entire home directory.
-A repository can select readable targets beneath an authorized root through its instruction symlinks.
+Authorize a directory containing only trusted instruction files, such as `/opt/agent-context`, rather
+than `/` or your entire home directory. A repository's instruction symlinks can select any readable file
+beneath an authorized root, not just the file you originally linked.
 
 Nested files are different: the model chooses which directories to read, and
 those can include vendored code or a checkout someone else wrote. Their contents

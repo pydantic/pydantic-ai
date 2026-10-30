@@ -114,12 +114,9 @@ def load_project_settings(workspace: Path) -> ProjectSettings:
             raise ValueError(
                 f'declare hooks with the `hooks` key, not as a plugin ({PROJECT_HOOKS} or {HOOKS_FACTORY})'
             )
-        user_only = {'repo_context_walk_up_root', 'repo_context_autoload_symlink_roots'} & raw.keys()
-        if user_only:
-            keys = ', '.join(_SET_KEYS[name] for name in sorted(user_only))
-            raise ValueError(f'{keys} are user-only settings; configure them with `/set`, not in the project file.')
-        if 'worktree_remove_commands' in raw:
-            raise ValueError('`worktree_remove_commands` is user-only and cannot be set in a project file')
+        for name in ('repo_context_walk_up_root', 'repo_context_autoload_symlink_roots', 'worktree_remove_commands'):
+            if name in raw:
+                raise ValueError(f'`{name}` is user-only and cannot be set in a project file')
         overrides = {_SET_KEYS[name]: value for name, value in raw.items() if name in _SET_KEYS}
         resolve_settings(overrides)
     except (OSError, ValueError) as exc:

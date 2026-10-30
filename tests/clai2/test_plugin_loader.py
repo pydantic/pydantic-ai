@@ -1447,7 +1447,7 @@ async def test_repo_context_user_boundaries_reach_the_model(
 ) -> None:
     home = tmp_path / 'home'
     home.mkdir()
-    monkeypatch.setattr(Path, 'home', lambda: home)
+    monkeypatch.setenv('HOME', str(home))
     parent = home if location == 'home' else tmp_path / 'outside'
     parent.mkdir(exist_ok=True)
     workspace = parent / 'workspace'
@@ -1491,7 +1491,7 @@ async def test_repo_context_uses_live_user_settings_on_the_next_run(
 ) -> None:
     home = tmp_path / 'home'
     home.mkdir()
-    monkeypatch.setattr(Path, 'home', lambda: home)
+    monkeypatch.setenv('HOME', str(home))
     parent = tmp_path / 'outside'
     workspace = parent / 'workspace'
     workspace.mkdir(parents=True)
@@ -1539,7 +1539,7 @@ async def test_repo_context_without_clai_settings_keeps_home_defaults(
     tooling.mkdir()
     (tooling / 'policy.md').write_text('Unauthorized fallback sentinel.')
     (workspace / 'AGENTS.md').symlink_to(tooling / 'policy.md')
-    monkeypatch.setattr(Path, 'home', lambda: home)
+    monkeypatch.setenv('HOME', str(home))
     monkeypatch.chdir(workspace)
     loaded = load_plugin(
         RepoContextPlugin,
@@ -1584,7 +1584,7 @@ async def test_repo_context_authorizes_workspace_links_independently_of_walk_up(
     workspace.mkdir()
     (tooling / 'policy.md').write_text('Authorized workspace link sentinel.')
     (workspace / 'AGENTS.md').symlink_to(tooling / 'policy.md')
-    monkeypatch.setattr(Path, 'home', lambda: home)
+    monkeypatch.setenv('HOME', str(home))
     monkeypatch.chdir(workspace)
     values: dict[str, JsonValue] = {
         'repo_context.walk_up_root': '~',

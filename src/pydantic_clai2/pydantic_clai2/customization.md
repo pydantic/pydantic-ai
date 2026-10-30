@@ -172,25 +172,14 @@ delete its source file yourself to remove it from disk.
 
 ### Repository instruction boundaries
 
-Keep the built-in repo_context plugin's existing `walk_up` toggle for enabling ancestor autoload; the default is false.
-Configure the inclusive stop with `/set repo_context.walk_up_root /srv/projects`; the default is `~` (home).
-A non-ancestor stop scans only the workspace. Setting the stop does not enable `walk_up`.
-Authorize shared instruction symlink targets with `/set repo_context.autoload_symlink_roots '["~/agent-context"]'`; the default is `[]`.
-Both keys are global user settings, not plugin JSON options.
-Do not put `repo_context_walk_up_root` or `repo_context_autoload_symlink_roots` in `.clai/settings.json`; the project file rejects them.
-Use absolute paths, `~`, or `~/...`. Do not use relative paths, `~other-user`, or environment-variable interpolation.
-Single-quote the whole JSON list in `/set` commands. Quote paths containing spaces, such as `/set repo_context.walk_up_root '/srv/My Projects'`.
-Paths are normalized at use and need not exist when saved. Changes apply next run, not mid-run.
-Hosts without CLAI settings, including `open_stock_agent`, keep the home/empty defaults.
-
-Choose a narrow trusted CE tooling directory, not `/` or all of home.
-A repository can select readable instruction targets beneath every authorized root.
-The workspace backend needs `SupportsRealpath` or the `SupportsCommands` command fallback to resolve symlinks for this opt-in.
-Only autoload uses the allowlist; nested traversal and inventory are unchanged.
-The allowlist authorizes resolved targets without adding scanned directories or extending the walk.
-External links use their scanned entry's label, such as `../AGENTS.md`, whose directory defines scope.
-Same-directory links keep the target name. Deduplication uses resolved targets and content hashes.
-Do not replace the built-in plugin to implement instruction discovery; Harness RepoContext owns discovery.
+Use the built-in repo_context plugin's `walk_up` option to enable ancestor instructions; its default is false.
+Set the inclusive stop with `/set repo_context.walk_up_root /srv/projects` (default `~`, home).
+Authorize shared instruction targets with `/set repo_context.autoload_symlink_roots '["~/agent-context"]'` (default `[]`).
+Use absolute paths, `~`, or `~/...`; quote paths containing spaces and single-quote the whole JSON list.
+Keep these user-only settings out of plugin JSON and `.clai/settings.json`; changes apply next run.
+Choose a directory containing only trusted instructions, not `/` or all of home.
+See the user reference's Repository instructions section for setup and path rules.
+See [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks) for loading and backend requirements.
 
 ### Git plugins
 

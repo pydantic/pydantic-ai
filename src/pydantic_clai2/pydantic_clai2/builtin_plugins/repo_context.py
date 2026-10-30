@@ -18,11 +18,6 @@ from pydantic_clai2.plugins import DepsT, Plugin
 from pydantic_clai2.runtime.session import WorkspacelessCapability, supports_local_workspace
 
 
-def _expand_user_path(value: str) -> Path:
-    path = Path(value)
-    return Path.home().joinpath(*path.parts[1:]) if path.parts[0] == '~' else path
-
-
 class RepoContextSettings(BaseModel):
     """The JSON a `repo_context` declaration may carry. Filenames stay `RepoContext`'s own defaults."""
 
@@ -61,8 +56,8 @@ class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
                 values[field] = self.host.setting(key)
         policy = Settings.model_validate(values)
         return RepoContext[DepsT](
-            home_dir=_expand_user_path(policy.repo_context_walk_up_root) if self.settings.walk_up else None,
-            autoload_symlink_roots=[_expand_user_path(root) for root in policy.repo_context_autoload_symlink_roots],
+            home_dir=Path(policy.repo_context_walk_up_root).expanduser() if self.settings.walk_up else None,
+            autoload_symlink_roots=[Path(root).expanduser() for root in policy.repo_context_autoload_symlink_roots],
             expose_inventory_tool=self.settings.inventory_tool,
             nested_traversal=self.settings.nested_traversal,
             nested_inject=self.settings.nested_inject,

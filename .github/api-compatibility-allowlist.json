@@ -1,6 +1,12 @@
 {
   "allowed_breakages": [
     {
+      "against": "v2.63.0",
+      "fingerprint": "8a5ac63061ce356da247032a343cd5ee21c39af029785c72096011d531b31c86",
+      "reason": "False positive: only the description of `RepoContextSettings.walk_up` changes to name the configurable stop directory. Its boolean type and false default are unchanged; the home stop remains the default.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12018"
+    },
+    {
       "against": "v2.62.0",
       "fingerprint": "78216eb81400af46f893b51ddc502505de40494f0e809618b9157955c6e33186",
       "reason": "`SignInRequired` was renamed to `SignInRequiredError` (#11326); the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
