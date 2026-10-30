@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
@@ -45,7 +46,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.messages import InstructionBaselinePart, InstructionPart
+from pydantic_ai.messages import CapabilityPart, InstructionBaselinePart, InstructionPart, OperatorSource
 from pydantic_ai.models import Model, ModelProfile, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -2901,6 +2902,11 @@ async def test_wrapped_model_receives_unprepared_request():
     assert seen[-1] == baseline, 'instrumentation changed the instructions the wrapped model received'
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(CapabilityPart, namespace='test_instrumented', name='reminder', voice='system'):
+    pass
+
+
 def _reminder_agent(profile: ModelProfile, settings: InstrumentationSettings | None = None) -> Agent[None, str]:
     """An agent that adds a request-scoped reminder to each of its three requests: two tool calls, then an answer."""
 
@@ -2916,7 +2922,7 @@ def _reminder_agent(profile: ModelProfile, settings: InstrumentationSettings | N
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            ctx.enqueue(SystemPromptPart(f'Reminder {ctx.run_step}.', scope='request'))
+            ctx.enqueue(_ReminderPart(content=f'Reminder {ctx.run_step}.', source=OperatorSource(), scope='request'))
             return request_context
 
     agent = Agent(

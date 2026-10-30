@@ -73,6 +73,7 @@ from pydantic_ai.exceptions import RunCancelled, RunTimedOut
 from pydantic_ai.messages import (
     BinaryContent,
     CapabilityEvent,
+    CapabilityPart,
     CompactionPart,
     CustomEvent,
     DeferredToolRequestsEvent,
@@ -98,6 +99,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -956,6 +958,11 @@ class GoldenCheckpointEvent(CapabilityEvent, namespace='golden', name='checkpoin
     label: str
 
 
+@dataclass(kw_only=True)
+class GoldenReportPart(CapabilityPart, namespace='golden', name='report', tag='report', attributes=('label',)):
+    label: str
+
+
 def test_event_payload_goldens() -> None:
     """Pin the wire shape of both event families, tag included.
 
@@ -1015,6 +1022,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
         CompactionPart(content='summary'),
+        GoldenReportPart(content='report', source=OperatorSource(), label='l'),
     ]
     response_parts: list[ModelResponsePart] = [
         TextPart('text'),
@@ -1066,12 +1074,14 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
     # `RetryPromptPart` stays in the union for type checking and the published JSON schema: the
     # discriminator translates a legacy payload into one of its replacements, so it never
     # round-trips as itself. Parts and deltas match by exact type, since several members subclass
-    # another member; events match by `isinstance`, as `CustomEvent` and `CapabilityEvent` are
-    # covered by registered subclasses.
+    # another member, except `CapabilityPart`, which is covered by a registered subclass; events match
+    # by `isinstance`, as `CustomEvent` and `CapabilityEvent` are covered by registered subclasses.
     assert {
         member.__name__
         for member in _union_members(ModelRequestPart)
-        if not any(type(part) is member for part in request_parts)
+        if not any(
+            isinstance(part, member) if member is CapabilityPart else type(part) is member for part in request_parts
+        )
     } == {'RetryPromptPart'}
     assert [
         member.__name__
