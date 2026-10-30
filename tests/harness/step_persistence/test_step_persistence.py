@@ -20,7 +20,7 @@ import pytest
 
 from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext
 from pydantic_ai._agent_graph import GraphAgentState
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
 from pydantic_ai.messages import (
     ModelMessage,
@@ -1431,32 +1431,24 @@ class TestOnRunErrorSnapshot:
         assert await store.latest_snapshot(run_id='r1') is None
         assert [e.kind for e in await store.list_events(run_id='r1')] == ['run_failed']
 
-    @pytest.mark.parametrize('tool_raises', [False, True], ids=['cancelled', 'raises-while-cancelled'])
-    async def test_failure_writes_survive_anyio_cancel(self, tmp_path: Path, tool_raises: bool) -> None:
-        """An `anyio` cancel scope around the run does not cut the error-path writes short.
+    async def test_failure_writes_survive_anyio_cancel(self, tmp_path: Path) -> None:
+        """An `anyio` scope cancelling the run does not cut the error-path writes short.
 
         `FileStepStore` writes through `anyio.to_thread.run_sync`, which checkpoints
         before it runs, so an unshielded save under the cancelled scope is lost.
-        `raises-while-cancelled` reaches `on_run_error` with the tool's error rather
-        than a cancellation, which the cancelled scope interrupts all the same.
         """
         store = FileStepStore(tmp_path)
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[ToolCallPart('work', {}, tool_call_id='work-1')])
 
-        agent: Agent[object, str] = Agent(
-            FunctionModel(model),
-            capabilities=[StepPersistence(store=store, agent_name='delegate')],
-        )
+        agent: Agent[object, str] = Agent(FunctionModel(model), capabilities=[StepPersistence(store=store)])
 
         with anyio.CancelScope() as scope:
 
             @agent.tool_plain
             async def work() -> str:
                 scope.cancel()
-                if tool_raises:
-                    raise ValueError('tool failed')
                 await anyio.sleep_forever()
                 raise AssertionError('unreachable')  # pragma: no cover
 
@@ -1464,7 +1456,47 @@ class TestOnRunErrorSnapshot:
 
         assert scope.cancelled_caught
         rid = await first_run_id(store)
-        assert [e.kind for e in await store.list_events(run_id=rid)][-1] == 'run_failed'
+        failed = (await store.list_events(run_id=rid))[-1]
+        assert failed.kind == 'run_failed'
+        assert failed.error is not None and failed.error.startswith('CancelledError')
+        snap = await store.latest_snapshot(run_id=rid, include_interrupted=True)
+        assert snap is not None
+        assert snap.state == 'interrupted'
+
+    async def test_failure_writes_survive_cancel_during_error_path(self, tmp_path: Path) -> None:
+        """A scope cancelled while a non-cancellation failure is being saved does not cut the writes short.
+
+        A `run_error` hook that runs before `StepPersistence`'s cancels the scope,
+        standing in for a deadline that fires mid-save, so `on_run_error` writes
+        the tool's `ValueError` under a cancelled scope.
+        """
+        store = FileStepStore(tmp_path)
+        hooks: Hooks[object] = Hooks()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('work', {}, tool_call_id='work-1')])
+
+        agent: Agent[object, str] = Agent(FunctionModel(model), capabilities=[StepPersistence(store=store), hooks])
+
+        @agent.tool_plain
+        def work() -> str:
+            raise ValueError('tool failed')
+
+        with anyio.CancelScope() as scope:
+
+            @hooks.on.run_error
+            async def cancel_scope(ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[Any]:
+                scope.cancel()
+                raise error
+
+            with pytest.raises(ValueError, match='tool failed'):
+                await agent.run('go')
+
+        assert scope.cancel_called
+        rid = await first_run_id(store)
+        failed = (await store.list_events(run_id=rid))[-1]
+        assert failed.kind == 'run_failed'
+        assert failed.error == "ValueError('tool failed')"
         snap = await store.latest_snapshot(run_id=rid, include_interrupted=True)
         assert snap is not None
         assert snap.state == 'interrupted'
