@@ -4258,6 +4258,7 @@ async def test_tool_approval_request_emission():
                 parts=[ToolCallPart(tool_name='delete_file', args='{"path": "test.txt"}', tool_call_id='delete_1')],
                 usage=RequestUsage(input_tokens=50, output_tokens=5),
                 model_name='function::stream_function',
+                model_id='function:function::stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id='foo',
@@ -4467,6 +4468,7 @@ async def test_tool_output_denied_chunk_emission():
                 parts=[TextPart(content='The file deletion was cancelled as requested.')],
                 usage=RequestUsage(input_tokens=50, output_tokens=8),
                 model_name='function::stream_function',
+                model_id='function:function::stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id='foo',
@@ -4842,6 +4844,7 @@ async def test_run_stream_with_explicit_deferred_tool_results():
                 parts=[TextPart(content='File deleted successfully.')],
                 usage=RequestUsage(input_tokens=50, output_tokens=4),
                 model_name='function::stream_function',
+                model_id='function:function::stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id='foo',
@@ -5061,6 +5064,7 @@ async def test_adapter_dispatch_request_timeout():
                 parts=[TextPart(content='partial')],
                 usage=RequestUsage(output_tokens=1, input_tokens=50),
                 model_name='function::_stream_then_time_out',
+                model_id='function:function::_stream_then_time_out',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id='foo',
@@ -11146,6 +11150,7 @@ async def test_system_prompt_with_vercel_adapter():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=56, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11196,6 +11201,7 @@ async def test_dynamic_system_prompt_with_vercel_adapter():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=56, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11262,6 +11268,7 @@ async def test_system_prompt_reinjected_with_vercel_history():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=59, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11314,6 +11321,7 @@ async def test_frontend_system_prompt_stripped_by_default():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11365,6 +11373,7 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11416,6 +11425,7 @@ async def test_client_mode_keeps_frontend_system_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11467,6 +11477,7 @@ async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -11517,6 +11528,7 @@ async def test_client_mode_does_not_reinject_agent_system_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -12303,6 +12315,122 @@ def test_compaction_ui_round_trip_and_sanitization():
         provider_name='openai',
         provider_details={'encrypted_content': 'blob'},
     )
+
+
+def test_canonical_system_round_trip():
+    """A response's `canonical_system` comes back with its `provider_name`, from every part kind that carries one.
+
+    Without it, a Google Cloud response's thought signatures would be judged by the name `google` alone and sent to
+    the Gemini API. A part from another provider in the same response doesn't carry the stamp.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search, then call the tool.')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Thinking...', signature='sig', provider_name='google'),
+                NativeToolCallPart(
+                    tool_name='web_search', args={'query': 'q'}, tool_call_id='ws-1', provider_name='google'
+                ),
+                NativeToolReturnPart(
+                    tool_name='web_search', content='results', tool_call_id='ws-1', provider_name='google'
+                ),
+                TextPart(content='Calling it.', provider_name='google'),
+                ToolCallPart(
+                    tool_name='lookup',
+                    args={'id': 1},
+                    tool_call_id='call-1',
+                    provider_name='google',
+                    provider_details={'thought_signature': 'sig2'},
+                ),
+            ],
+            provider_name='google',
+            canonical_system='google-cloud',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='found', tool_call_id='call-1')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Earlier thinking.', signature='other', provider_name='anthropic'),
+                FilePart(content=BinaryImage(data=b'img', media_type='image/png'), provider_name='google'),
+                CompactionPart(content=None, id='cmp-1', provider_name='google', provider_details={'blob': 'x'}),
+            ],
+            provider_name='google',
+            canonical_system='google-cloud',
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    reasoning_parts = [part for message in ui_messages for part in message.parts if isinstance(part, ReasoningUIPart)]
+    assert [part.provider_metadata for part in reasoning_parts] == snapshot(
+        [
+            {'pydantic_ai': {'signature': 'sig', 'provider_name': 'google', 'canonical_system': 'google-cloud'}},
+            {'pydantic_ai': {'signature': 'other', 'provider_name': 'anthropic'}},
+        ]
+    )
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    _sync_load_bookkeeping(messages, reloaded)
+    assert reloaded == messages
+
+
+def test_canonical_system_conflicting_claims_clear_the_stamp():
+    """Parts loaded into one response that claim different canonical systems for one provider fall back to the name.
+
+    A claim that isn't a string is ignored, and one for another provider than the first claim's leaves the stamp.
+    """
+    ui_messages = [
+        UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Hi')]),
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                ReasoningUIPart(
+                    text='a',
+                    provider_metadata={
+                        'pydantic_ai': {'signature': 's1', 'provider_name': 'google', 'canonical_system': 'google'}
+                    },
+                ),
+                ReasoningUIPart(
+                    text='b',
+                    provider_metadata={
+                        'pydantic_ai': {'signature': 's2', 'provider_name': 'google', 'canonical_system': 123}
+                    },
+                ),
+                TextUIPart(
+                    text='d',
+                    provider_metadata={'pydantic_ai': {'provider_name': 'openai', 'canonical_system': 'azure'}},
+                ),
+            ],
+        ),
+    ]
+
+    response = VercelAIAdapter.load_messages(ui_messages)[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.provider_name, response.canonical_system) == ('google', 'google')
+
+    conflicting = VercelAIAdapter.load_messages(
+        [
+            *ui_messages[:-1],
+            ui_messages[-1].model_copy(
+                update={
+                    'parts': [
+                        *ui_messages[-1].parts,
+                        ReasoningUIPart(
+                            text='c',
+                            provider_metadata={
+                                'pydantic_ai': {
+                                    'signature': 's3',
+                                    'provider_name': 'google',
+                                    'canonical_system': 'google-cloud',
+                                }
+                            },
+                        ),
+                    ]
+                }
+            ),
+        ]
+    )[-1]
+    assert isinstance(conflicting, ModelResponse)
+    assert (conflicting.provider_name, conflicting.canonical_system) == ('google', None)
 
 
 @pytest.mark.parametrize(

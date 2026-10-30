@@ -19,4 +19,4 @@ These pages put Pydantic AI side by side with the frameworks people ask us about
 - [vs Agno](vs-agno.md)
 - [vs CrewAI](vs-crewai.md)
 
-Coming from one of these? [Migrate to Pydantic AI](../framework-migration.md) covers the migration skills your coding agent can use to port an existing application.
+Coming from one of these? [Migrate to Pydantic AI](../framework-migration.md) covers the migration skills your coding agent can use to port an existing application, and [Built with Pydantic AI](../built-with.md) lists projects and organizations running on Pydantic AI, several of which moved from LangChain.

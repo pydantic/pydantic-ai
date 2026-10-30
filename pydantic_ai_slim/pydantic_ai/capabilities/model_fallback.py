@@ -5,14 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, get_args
 
 from pydantic_ai import exceptions
-from pydantic_ai._fallback import (
-    FALLBACK_CAPABILITY_PIN_KEY,
-    FallbackChain,
-    FallbackOn,
-    FallbackPredicates,
-    continuation_pin,
-    stamp_continuation_pin,
-)
+from pydantic_ai._fallback import FallbackChain, FallbackOn, FallbackPredicates
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UsageLimitExceeded, UserError
 from pydantic_ai.messages import CapabilityEvent, ModelResponse, RetryInfo
@@ -266,7 +259,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Note the model about to be attempted, routing a resumed continuation to the model it's pinned to.
+        """Note the model about to be attempted, routing a resumed continuation to the candidate that started it.
 
         Every attempt is noted here, whichever capability asked for it, so a model that was already
         attempted this step is never picked again.
@@ -288,23 +281,16 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             and messages
             and isinstance(last := messages[-1], ModelResponse)
             and last.state == 'suspended'
-            and (pin := continuation_pin(last, key=FALLBACK_CAPABILITY_PIN_KEY)) is not None
+            and last.model_id is not None
+            and (index := next((i for i, model in enumerate(self.models) if _pin_id(model) == last.model_id), None))
+            is not None
         ):
-            # A resumed suspended response pinned to one of this capability's models, or to the step's model alone.
-            # Should its continuation fail, the chain moves on from the model it's pinned to, like it would have when
-            # the job was started, instead of starting over with a model that would just start another. That holds
-            # whether or not the step's model already is that model.
-            index = next((index for index, candidate in enumerate(self.models) if _pin_id(candidate) == pin), None)
-            if pin == _pin_id(request_context.model_id or request_context.model):
-                self._cursor = max((-1 if index is None else index) + 1, self._output_cursor)
-            elif index is None:
-                raise UserError(
-                    f'Cannot resume this suspended response: it was started by {pin!r}, which is neither the '
-                    "model selected for this step nor one of `ModelFallback`'s models. Pass that model explicitly to "
-                    '`run(model=...)` when resuming.'
-                )
-            else:
-                self._cursor = max(index + 1, self._output_cursor)
+            # A resumed suspended response started by one of this capability's models. Should its continuation fail,
+            # the chain moves on from that model, like it would have when the job was started, instead of starting
+            # over with a model that would just start another. That holds whether or not the step's model already is
+            # that model. A response started by a model outside the chain continues on the step's model.
+            self._cursor = max(index + 1, self._output_cursor)
+            if last.model_id != _pin_id(request_context.model_id or request_context.model):
                 self._pin_checked = True
                 # The step would continue a provider-side job on a model other than the one that started it; send
                 # it to that model instead, before anything is sent.
@@ -377,14 +363,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                     if isinstance(self.output_retries, Mapping)
                     else self.output_retries
                 )
-            if response.state == 'suspended':
-                # Its continuation, in this run or a later one that resumes it, has to go back to the
-                # model that started the provider-side job, not to the top of the chain.
-                stamp_continuation_pin(
-                    response,
-                    _pin_id(request_context.model_id or request_context.model),
-                    key=FALLBACK_CAPABILITY_PIN_KEY,
-                )
+            # A suspended response's continuation, in this run or a later one that resumes it, goes back to the
+            # model that started the provider-side job, which the agent records as the response's `model_id`.
             return response
         # The core records a rejected response's tokens and cost before the next attempt, so a
         # rejected generation is still paid for in `RunUsage` even though it never enters history,
@@ -510,7 +490,7 @@ def _spec_list(value: object, name: str) -> Sequence[object]:
 
 
 def _pin_id(model: Model | str) -> str:
-    """How a candidate is identified in a continuation pin: the string it was given as, or its `model_id`."""
+    """How a candidate is identified in a response's `model_id`: the string it was given as, or its `model_id`."""
     return model if isinstance(model, str) else model.model_id
 
 

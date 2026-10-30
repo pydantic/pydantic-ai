@@ -2924,6 +2924,9 @@ leave content out by default, so the team gets UX telemetry and timing; turn on
 
 The plugin owns an isolated Logfire instance. Disable, reload, or exit flushes
 and shuts down that instance without shutting down application-global providers.
+CLAI waits at most three seconds for this, then warns that some telemetry may
+not have been sent and lets cleanup finish in the background. If an export is
+stuck, OpenTelemetry can still delay CLAI's exit.
 The existing global propagator is preserved. Logfire's SDK may install shared
 executor context-propagation helpers; those SDK hooks are not removed on unload.
 The plugin does not mutate a supplied agent. While enabled, its explicit per-run

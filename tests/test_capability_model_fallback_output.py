@@ -120,7 +120,7 @@ class TestOutputFallback:
                 parts=[TextPart('partial')],
                 state='suspended',
                 provider_response_id='job-1',
-                metadata={'__pydantic_ai__': {'fallback_candidate': pinned.model_id}},
+                model_id=pinned.model_id,
             ),
         ]
         agent = Agent(

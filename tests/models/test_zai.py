@@ -102,6 +102,7 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                     details={'reasoning_tokens': 638}, input_tokens=17, output_tokens=947, output_reasoning_tokens=638
                 ),
                 model_name='glm-5.1',
+                model_id='zai:glm-5.1',
                 timestamp=IsDatetime(),
                 provider_name='zai',
                 provider_url='https://api.z.ai/api/paas/v4',
@@ -129,6 +130,7 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                     details={'reasoning_tokens': 144}, input_tokens=974, output_tokens=216, output_reasoning_tokens=144
                 ),
                 model_name='glm-5.1',
+                model_id='zai:glm-5.1',
                 timestamp=IsDatetime(),
                 provider_name='zai',
                 provider_url='https://api.z.ai/api/paas/v4',
@@ -156,6 +158,7 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                     output_reasoning_tokens=0,
                 ),
                 model_name='glm-5.1',
+                model_id='zai:glm-5.1',
                 timestamp=IsDatetime(),
                 provider_name='zai',
                 provider_url='https://api.z.ai/api/paas/v4',
@@ -228,6 +231,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str,
                     details={'reasoning_tokens': 88}, output_tokens=96, input_tokens=13, output_reasoning_tokens=88
                 ),
                 model_name='glm-5.1',
+                model_id='zai:glm-5.1',
                 timestamp=IsDatetime(),
                 provider_name='zai',
                 provider_url='https://api.z.ai/api/paas/v4',
