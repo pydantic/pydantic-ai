@@ -22,6 +22,7 @@ from ..messages import (
     DocumentUrl,
     FilePart,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -37,10 +38,14 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     ModelRequestParameters,
     _drop_superseded_request_scoped_prompts,  # pyright: ignore[reportPrivateUsage]
+    _project_instruction_state,  # pyright: ignore[reportPrivateUsage]
+    _render_append_blocks,  # pyright: ignore[reportPrivateUsage]
+    _render_system_prompt_contexts,  # pyright: ignore[reportPrivateUsage]
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _wrap_non_leading_system_prompts,  # pyright: ignore[reportPrivateUsage]
     download_item,
@@ -67,11 +72,45 @@ def session_instructions(messages: Sequence[ModelMessage], model_request_paramet
     The standing system prompt the first request opens with comes first, then the resolved
     instructions, the order a standard run's providers send them in. `ModelRequest.instructions`
     recorded in `messages` are never read: only `model_request_parameters.instruction_parts` count.
+
+    Both are rendered as a standard model renders them: append-mode blocks and appending dynamic system
+    prompts as tagged `<context>` elements, so the changes a session delivers later can name them.
     """
-    blocks = [part.content for part in _standing_system_prompt(messages) if part.content]
-    if instructions := get_instructions(messages, model_request_parameters):
+    standing = _standing_system_prompt(messages)
+    if any(part.context_id is not None for part in standing):
+        (opening,) = _render_system_prompt_contexts(
+            [ModelRequest(parts=[*standing])],
+            inline_system=True,
+            prefix_states_rule=bool(_tagged_append_parts(model_request_parameters.instruction_parts or [])),
+        )
+        standing = [part for part in opening.parts if isinstance(part, SystemPromptPart)]
+    blocks = [part.content for part in standing if part.content]
+    if instructions := get_instructions(messages, _render_append_blocks(model_request_parameters)):
         blocks.append(instructions)
     return '\n\n'.join(blocks)
+
+
+def render_instruction_change(
+    history: Sequence[ModelMessage],
+    request: ModelRequest,
+    *,
+    prefix: Sequence[InstructionPart],
+    inline_system: bool,
+) -> str:
+    """The text a realtime session delivers a recorded instruction change as, rendered as a standard model renders it.
+
+    `request` records the change (instruction deltas, or statements of appending dynamic system prompts) after
+    `history`, and `prefix` are the instruction parts the session was opened with. Rendered the same every time, so
+    a reconnect replays exactly what was sent.
+    """
+    messages = _project_instruction_state([*history, request], inline_system=inline_system, prefix=None)
+    messages = _render_system_prompt_contexts(
+        messages,
+        inline_system=inline_system,
+        prefix_states_rule=bool(_tagged_append_parts(prefix)),
+    )
+    rendered = messages[-1]
+    return '\n\n'.join(part.content for part in rendered.parts if isinstance(part, SystemPromptPart) and part.content)
 
 
 def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -168,6 +207,15 @@ class SystemPromptContext(TextContext):
     """
 
     system_prompt: str
+
+
+@dataclass
+class InstructionChangeContext(SystemPromptContext):
+    """A change to the session's instructions, added as context on the operator's channel without asking for a response.
+
+    Delivered as any other `SystemPromptContext`, except by a connection whose instructions go somewhere other than the
+    conversation, such as GPT-Live's delegation backend.
+    """
 
 
 DEFAULT_MAX_RECONNECTS = 50

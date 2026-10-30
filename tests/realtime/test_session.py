@@ -8357,40 +8357,6 @@ async def test_agent_realtime_session_reevaluates_seeded_dynamic_system_prompt()
     assert stale.parts[0].content == 'Stale value.'
 
 
-async def test_agent_realtime_session_appending_dynamic_system_prompt_warns() -> None:
-    """A realtime session can't append a system prompt change, so it re-evaluates the prompt in place, and says so."""
-    agent: Agent[None, str] = Agent()
-
-    @agent.system_prompt(dynamic=True, on_change='append')
-    def dynamic_prompt() -> str:
-        return 'Current value.'
-
-    seed = [
-        ModelRequest(
-            parts=[
-                SystemPromptPart(
-                    content='Stale value.',
-                    dynamic_ref=dynamic_prompt.__qualname__,
-                    context_id='system_prompt:dynamic_prompt',
-                ),
-                UserPromptPart(content='earlier question'),
-            ]
-        ),
-        ModelResponse(parts=[TextPart(content='earlier answer')]),
-    ]
-    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
-    with pytest.warns(
-        UserWarning,
-        match="realtime sessions, so dynamic system prompts 'system_prompt:dynamic_prompt' are re-evaluated in place",
-    ):
-        async with agent.realtime(model, message_history=seed).session() as session:
-            _ = [e async for e in session]
-    assert model.last_instructions == 'Current value.'
-    first = session.all_messages()[0]
-    assert isinstance(first, ModelRequest) and isinstance(first.parts[0], SystemPromptPart)
-    assert first.parts[0].content == 'Current value.'
-
-
 async def test_agent_realtime_session_unknown_tool() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc_x', tool_name='nonexistent', args='{}'), ResponseDone()])
@@ -10361,22 +10327,6 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
         _ = [e async for e in session]
     # Static literal then dynamic function, double-newline separated — same as `run`/`iter`.
     assert model.last_instructions == 'Base\n\nDynamic'
-
-
-async def test_agent_realtime_session_append_instructions_warn() -> None:
-    agent: Agent[None, str] = Agent(instructions='Base')
-
-    @agent.instructions(name='state', on_change='append')
-    def state() -> str:
-        return 'Current state'
-
-    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
-    with pytest.warns(
-        UserWarning, match="realtime sessions, so instruction blocks 'agent:state' are sent as session instructions"
-    ):
-        async with agent.realtime(model).session() as session:
-            _ = [event async for event in session]
-    assert model.last_instructions == 'Base\n\nCurrent state'
 
 
 async def test_agent_realtime_session_sorts_static_instructions_before_dynamic() -> None:

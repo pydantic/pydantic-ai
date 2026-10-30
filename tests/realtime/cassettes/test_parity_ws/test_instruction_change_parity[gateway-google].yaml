@@ -1,0 +1,158 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: publishers/google/models/gemini-live-2.5-flash
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: 'You are a voice assistant. Answer in one short sentence.
+
+
+            <context id="agent:code_word">
+
+            The code word is BLUE. Tell the user when they ask for it.
+
+            </context>
+
+            A later <context> element with the same id replaces the earlier one and
+            stays in effect until replaced again.'
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.8
+  data:
+    setupComplete:
+      sessionId: 3bcd34f4-a360-4830-8091-2f61bd599e3d
+- kind: message
+  direction: sent
+  at: 0.8
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the code word?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 1.196
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: The
+- kind: message
+  direction: received
+  at: 1.201
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: ' code word is BLUE.'
+- kind: message
+  direction: received
+  at: 1.202
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 1.212
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 72
+      candidatesTokenCount: 6
+      totalTokenCount: 78
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 72
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 6
+- kind: message
+  direction: sent
+  at: 1.217
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: '<system><context id="agent:code_word">
+
+            The code word is ORANGE. Tell the user when they ask for it.
+
+            </context></system>'
+        role: user
+      turnComplete: false
+- kind: message
+  direction: sent
+  at: 1.217
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the code word now?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 1.6
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: The
+- kind: message
+  direction: received
+  at: 1.607
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: ' code word is ORANGE'
+- kind: message
+  direction: received
+  at: 1.617
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: .
+- kind: message
+  direction: received
+  at: 1.618
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 1.626
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 119
+      candidatesTokenCount: 6
+      totalTokenCount: 125
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 119
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 6

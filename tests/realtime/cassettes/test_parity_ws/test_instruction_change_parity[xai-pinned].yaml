@@ -1,0 +1,715 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: 4aba7490-8034-4ed4-b341-9bae5060487a
+    session:
+      id: 5147d005f09844ffa943442f03a493d2
+      object: realtime.session
+      instructions: ''
+      voice: xai_ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-3.0
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      instructions: 'You are a voice assistant. Answer in one short sentence.
+
+
+        <context id="agent:code_word">
+
+        The code word is BLUE. Tell the user when they ask for it.
+
+        </context>
+
+        A later <context> element with the same id replaces the earlier one and stays
+        in effect until replaced again.'
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    event_id: 48fa617a-f9f5-4dcb-9704-087affb6b493
+    conversation:
+      id: 7691c53b-66b9-478b-8f6c-d7c967734930
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: ping
+    event_id: f395f5f7-01e4-44cf-901f-72d6024493b1
+    timestamp: 1793318085721
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.133
+  data:
+    session:
+      instructions: 'You are a voice assistant. Answer in one short sentence.
+
+
+        <context id="agent:code_word">
+
+        The code word is BLUE. Tell the user when they ask for it.
+
+        </context>
+
+        A later <context> element with the same id replaces the earlier one and stays
+        in effect until replaced again.'
+      enable_noise_suppression: false
+      turn_detection:
+        type: server_vad
+        create_response: true
+      model: grok-voice-3.0
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: d0808677-f3a6-47cc-99d8-c528b0b38463
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 0.134
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word?
+- kind: message
+  direction: sent
+  at: 0.134
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.242
+  data:
+    type: conversation.item.added
+    event_id: 9e1eadbf-6be8-4f14-ab80-9b34389077a5
+    item:
+      id: pydantic_ai_item_0
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word?
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.242
+  data:
+    type: response.created
+    event_id: 7192e655-ff26-4fc5-ab8c-e68a295fa734
+    response:
+      id: cc4359f0-3731-4c23-af34-7fb904947d68
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '0'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.412
+  data:
+    type: response.output_item.added
+    event_id: 7929617d-a8a9-454a-9850-c40cb907a8bf
+    item:
+      id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.412
+  data:
+    type: conversation.item.added
+    event_id: 5744cc98-3b1d-44a8-ba34-484b5f225048
+    item:
+      id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: pydantic_ai_item_0
+- kind: message
+  direction: received
+  at: 0.413
+  data:
+    type: response.content_part.added
+    event_id: 49306322-16b2-4638-9ff2-2a8243b0da46
+    item_id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 0.969
+  data:
+    type: response.output_audio.delta
+    event_id: d7607793-f339-4648-9e4f-18973a641854
+    item_id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    delta: DQAUABYAFAAQAAsACQAKAA0AFAAbAB0AGwAZABYAEwAR
+    content_index: 0
+    output_index: 0
+    rid: 63397fb5-d0d0-4efb-b957-d8d7d2fb823e
+    latency: '0.68'
+    audio_duration_ms: 489
+    ts: 1793318086658
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.969
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 63397fb5-d0d0-4efb-b957-d8d7d2fb823e
+    item_id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    delta: The code word is BLUE.
+    content_index: 0
+    output_index: 0
+    rid: 63397fb5-d0d0-4efb-b957-d8d7d2fb823e
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.05
+  data:
+    type: response.output_audio.delta
+    event_id: 942a6b7a-7d34-4a39-a4fb-f7dcab19d818
+    item_id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    delta: 5vX09Bv0tfPL8nPz1vOb9KP10fVn9ob2EfcE+Mb4SfpC
+    content_index: 0
+    output_index: 0
+    rid: 63397fb5-d0d0-4efb-b957-d8d7d2fb823e
+    audio_duration_ms: 918
+    ts: 1793318086739
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.078
+  data:
+    type: response.output_audio.delta
+    event_id: 9f653456-2ea7-466b-867e-72b03758ed99
+    item_id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    delta: HQEZASABJAEkAS4BLQEyATIBLwEuASQBIQEXAQsBBAH0
+    content_index: 0
+    output_index: 0
+    rid: 63397fb5-d0d0-4efb-b957-d8d7d2fb823e
+    audio_duration_ms: 336
+    ts: 1793318086814
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.081
+  data:
+    type: response.output_audio.delta
+    event_id: e6a2c366-e1d9-4d3a-93be-e9d96b4edac7
+    item_id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    delta: ///9//3/+//6//j/+P/4//f/+P/4//j/+f/5//r/+f/6
+    content_index: 0
+    output_index: 0
+    rid: 63397fb5-d0d0-4efb-b957-d8d7d2fb823e
+    audio_duration_ms: 61
+    ts: 1793318086819
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.085
+  data:
+    type: response.output_audio.delta
+    event_id: 27e7d6d3-784c-4bb5-97f3-d7ca2b8a9a89
+    item_id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    delta: +v/5//r/+//8//3//f///wAAAAAAAAAAAAAAAAAA///+
+    content_index: 0
+    output_index: 0
+    rid: 63397fb5-d0d0-4efb-b957-d8d7d2fb823e
+    audio_duration_ms: 106
+    ts: 1793318086820
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.085
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 6d365a5a-8409-411b-9cf7-a6435bfdec30
+    item_id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+    transcript: The code word is BLUE.
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.085
+  data:
+    type: response.content_part.done
+    event_id: de3cde94-c4b5-4cc5-9d4c-f21919e8baf8
+    item_id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.085
+  data:
+    type: response.output_audio.done
+    event_id: eec3f8c9-8069-4dcb-a280-0cffcfdff0d0
+    item_id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.085
+  data:
+    type: response.output_item.done
+    event_id: ea16b4a4-eebd-4ad1-8be5-27ea22c6de7b
+    item:
+      id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.085
+  data:
+    type: response.done
+    event_id: b9c33e0a-3674-40bc-8ee1-832cb8c6097c
+    response:
+      id: cc4359f0-3731-4c23-af34-7fb904947d68
+      object: realtime.response
+      output:
+      - id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: The code word is BLUE.
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '0'
+      status_details: unimplemented
+      usage: {}
+    response_id: cc4359f0-3731-4c23-af34-7fb904947d68
+    usage:
+      input_tokens: 6
+      input_token_details:
+        text_tokens: 6
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 102
+      output_token_details:
+        text_tokens: 6
+        audio_tokens: 96
+        grok_tokens: 0
+      total_tokens: 108
+      output_audio_seconds: 1.92
+      billable_audio_seconds: 1
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 1.086
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.1
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: '<system><context id="agent:code_word">
+
+          The code word is ORANGE. Tell the user when they ask for it.
+
+          </context></system>'
+- kind: message
+  direction: sent
+  at: 1.086
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.2
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word now?
+- kind: message
+  direction: sent
+  at: 1.086
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.2
+    response:
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: received
+  at: 1.144
+  data:
+    type: conversation.item.added
+    event_id: a3c50152-37b1-4c3c-81e4-22e929745439
+    item:
+      id: pydantic_ai_item_1
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: '<system><context id="agent:code_word">
+
+          The code word is ORANGE. Tell the user when they ask for it.
+
+          </context></system>'
+      replayed: false
+    previous_item_id: f0ffa90d-f1d0-427e-be14-44693fd34f56
+- kind: message
+  direction: received
+  at: 1.145
+  data:
+    type: conversation.item.added
+    event_id: e23c2cd3-256f-494f-b877-6ac88eb7e517
+    item:
+      id: pydantic_ai_item_2
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the code word now?
+      replayed: false
+    previous_item_id: pydantic_ai_item_1
+- kind: message
+  direction: received
+  at: 1.148
+  data:
+    type: response.created
+    event_id: d4d7dc3b-7d4a-4a27-9032-f449ee72701d
+    response:
+      id: 23468b18-50e4-4567-9670-33bb8358ea99
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '2'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.237
+  data:
+    type: response.output_item.added
+    event_id: 79bae1c1-b085-4cca-84ec-8ec2303df012
+    item:
+      id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.237
+  data:
+    type: conversation.item.added
+    event_id: 5f235cf9-d52a-4655-bd63-4c005f41ebdf
+    item:
+      id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: pydantic_ai_item_2
+- kind: message
+  direction: received
+  at: 1.237
+  data:
+    type: response.content_part.added
+    event_id: 592fe2fa-3d71-4a0a-9d01-c6633925fc23
+    item_id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 1.53
+  data:
+    type: response.output_audio.delta
+    event_id: 469007f4-80f5-4dfa-990e-99f7c3eb1456
+    item_id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    delta: CgAQABQAFAAPAAsACgAKAA0AFAAbABsAGAAUABAACwAJ
+    content_index: 0
+    output_index: 0
+    rid: 40907eba-6013-4021-a616-965b02eea87f
+    latency: '0.38'
+    audio_duration_ms: 489
+    ts: 1793318087265
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.53
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 40907eba-6013-4021-a616-965b02eea87f
+    item_id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    delta: The code word is ORANGE.
+    content_index: 0
+    output_index: 0
+    rid: 40907eba-6013-4021-a616-965b02eea87f
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.645
+  data:
+    type: response.output_audio.delta
+    event_id: bfdba14a-2a0d-4a9a-ace1-5fb3b464a3b3
+    item_id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    delta: bPgO+LL3aPcT99/2r/aW9pv2qPbY9hb3bPfh91v49/iX
+    content_index: 0
+    output_index: 0
+    rid: 40907eba-6013-4021-a616-965b02eea87f
+    audio_duration_ms: 918
+    ts: 1793318087378
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.69
+  data:
+    type: response.output_audio.delta
+    event_id: ce0be954-7185-4db8-9757-fab7a894227e
+    item_id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    delta: Kf7u/lYCIQCg/UsAwQERAf4A2P9+/aD+6AFBAYb/hgFk
+    content_index: 0
+    output_index: 0
+    rid: 40907eba-6013-4021-a616-965b02eea87f
+    audio_duration_ms: 336
+    ts: 1793318087406
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.691
+  data:
+    type: response.output_audio.delta
+    event_id: b85442bd-e806-47a6-a05c-0653b80dcb5c
+    item_id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    delta: 9P/z//P/8v/z//L/8v/0//T/9v/3//n/+v/7//3//v//
+    content_index: 0
+    output_index: 0
+    rid: 40907eba-6013-4021-a616-965b02eea87f
+    audio_duration_ms: 61
+    ts: 1793318087410
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.691
+  data:
+    type: response.output_audio.delta
+    event_id: ee84b507-a71d-4331-ac1a-145eaeb02fcb
+    item_id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    delta: 9v/2//b/9//4//r/+//9//7///8AAAAAAAAAAAAA///+
+    content_index: 0
+    output_index: 0
+    rid: 40907eba-6013-4021-a616-965b02eea87f
+    audio_duration_ms: 106
+    ts: 1793318087412
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.691
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 41078a62-0b8c-4133-9069-9e31c58f5cde
+    item_id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+    transcript: The code word is ORANGE.
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.691
+  data:
+    type: response.content_part.done
+    event_id: baa75e88-a52e-49ae-8c82-a0dff507a1f9
+    item_id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.691
+  data:
+    type: response.output_audio.done
+    event_id: c36b664d-73bc-45de-bdc2-21c856a1679e
+    item_id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.691
+  data:
+    type: response.output_item.done
+    event_id: dd16ab75-ca79-4c87-8c5e-3aff0011a852
+    item:
+      id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.691
+  data:
+    type: response.done
+    event_id: e039dbaa-8f4c-464e-ba76-2b30a1199790
+    response:
+      id: 23468b18-50e4-4567-9670-33bb8358ea99
+      object: realtime.response
+      output:
+      - id: d7be4250-7b8e-4584-ba40-47cc02b5afc8
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: The code word is ORANGE.
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '2'
+      status_details: unimplemented
+      usage: {}
+    response_id: 23468b18-50e4-4567-9670-33bb8358ea99
+    usage:
+      input_tokens: 7
+      input_token_details:
+        text_tokens: 7
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 103
+      output_token_details:
+        text_tokens: 7
+        audio_tokens: 96
+        grok_tokens: 0
+      total_tokens: 110
+      output_audio_seconds: 1.92
+      billable_audio_seconds: 1
+    previous_item_id: null

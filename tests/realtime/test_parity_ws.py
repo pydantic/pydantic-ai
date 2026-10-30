@@ -25,6 +25,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    InstructionDeltaPart,
     ModelRequest,
     ModelResponse,
     RealtimeSessionErrorEvent,
@@ -296,6 +297,11 @@ _SEEDING_CASES = [
     pytest.param((case, case.route), id=case.id, marks=_marks(case))
     for case in REALTIME_PARITY_CASES
     if case.drives_turns_with_text and case.supports_session_seeding
+]
+_INSTRUCTION_CHANGE_CASES = [
+    pytest.param((case, case.route), id=case.id, marks=_marks(case, unrecorded_on_azure=True))
+    for case in REALTIME_PARITY_CASES
+    if case.drives_turns_with_text
 ]
 _AUDIO_CASES = [
     pytest.param((case, case.route), id=case.id, marks=_marks(case, unrecorded_on_azure=True))
@@ -570,6 +576,52 @@ async def test_system_prompt_note_parity(
     answer = part.transcript if isinstance(part, SpeechPart) else part.content
     assert answer is not None
     assert 'jamie' in answer.lower()
+
+
+@pytest.mark.parametrize('parity_ws_cassette', _INSTRUCTION_CHANGE_CASES, indirect=True)
+async def test_instruction_change_parity(
+    parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
+) -> None:
+    """A dynamic instruction that changes is re-resolved after the turn and delivered before the next one.
+
+    The change goes out on each provider's channel for the operator's text, as `send(SystemPromptPart(...))` does,
+    and history records it as the `InstructionDeltaPart` a standard run records. GPT-Live, whose agent instructions
+    are its backend's, updates the backend instead; its cassette tests cover it.
+    """
+    case, provider, _ = parity_ws_cassette
+    model = _model(case, provider, text_output=True)
+    code_word = {'value': 'BLUE'}
+    agent = Agent(instructions='You are a voice assistant. Answer in one short sentence.')
+
+    @agent.instructions(name='code_word')
+    def current_code_word() -> str:
+        return f'The code word is {code_word["value"]}. Tell the user when they ask for it.'
+
+    async with agent.realtime(model).session() as session:
+        await session.send('What is the code word?')
+        # Changed while the first reply is under way: the session re-resolves the instructions once it's over.
+        code_word['value'] = 'ORANGE'
+        await _collect_complete_turn(session)
+        await session.send('What is the code word now?')
+        events = await _collect_complete_turn(session)
+
+    assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
+    messages = session.all_messages()
+    changes = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ]
+    assert [change.content for change in changes] == ['The code word is ORANGE. Tell the user when they ask for it.']
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[-1]
+    assert isinstance(part, (SpeechPart, TextPart))
+    answer = part.transcript if isinstance(part, SpeechPart) else part.content
+    assert answer is not None
+    assert 'orange' in answer.lower()
 
 
 @pytest.mark.parametrize('parity_ws_cassette', _AUDIO_CASES, indirect=True)
