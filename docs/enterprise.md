@@ -14,7 +14,7 @@ This page answers the questions security, platform and procurement teams ask bef
 |---|---|
 | [What leaves our infrastructure?](#data) | The model requests, tool calls and trace exports you configure; no usage telemetry and no Pydantic-hosted runtime |
 | [Can we run on-prem or air-gapped models?](#self-hosted-models) | Yes: [Ollama](models/ollama.md), [vLLM](models/compatible-apis.md#vllm) or any OpenAI-compatible server you run |
-| [Can we run on our cloud?](#cloud) | Yes: Amazon Bedrock, Azure OpenAI and Microsoft Foundry, and Google Cloud models, selected by the model string, plus durable agents on AWS Lambda and voice agents on Azure and Gemini Live |
+| [Can we run on our cloud?](#cloud) | Yes: models and embeddings on AWS, Azure and Google Cloud, AWS Lambda durable functions, and realtime voice on Azure and Google Cloud |
 | [How do we control model access and spend?](#model-access) | The [Pydantic AI Gateway](gateway.md): one key per team or service, spending caps, provider failover, every request traced |
 | [How do we keep a person in control?](#control) | Tool approval, guardrails, and a sandbox for model-written code |
 | [Can we audit what an agent did?](#audit) | With instrumentation on, every run, model request and tool call as an OpenTelemetry trace, in [Logfire](logfire.md) or your own backend |
@@ -44,18 +44,26 @@ For an air-gapped deployment, install the packages from your own package mirror 
 
 ## Can we run on our cloud? {#cloud}
 
-Yes. Pydantic AI uses each cloud's own models, authenticating with that cloud's credentials, and its durable execution and voice services where they exist:
+Yes. Pydantic AI supports models on AWS, Microsoft Azure and Google Cloud, authenticating with each cloud's own credentials, along with the embeddings, durable execution and realtime voice integrations below:
 
-| | AWS | Microsoft Azure | Google Cloud |
+| Capability | AWS | Microsoft Azure | Google Cloud |
 |---|---|---|---|
-| Models | [Amazon Bedrock](models/bedrock.md), including [Bedrock Mantle](models/bedrock.md#bedrock-mantle) | [Azure OpenAI and Microsoft Foundry](models/azure.md), including [Claude on Foundry](models/azure.md#claude-on-microsoft-foundry) | [Gemini and Model Garden](models/google-cloud.md) (formerly Vertex AI), including [Claude](models/google-cloud.md#claude-on-google-cloud) and [image generation](image-generation.md) |
-| Embeddings | [Bedrock](embeddings.md#bedrock) | [Azure OpenAI](embeddings.md#openai-compatible) | [Google Cloud](embeddings.md#google) |
-| Durable execution | [AWS Lambda durable functions](harness/aws-lambda.md), an integration [announced by AWS](https://aws.amazon.com/about-aws/whats-new/2026/09/aws-lambda-durable-pydantic-ai/) | Any [engine we support](durable_execution/overview.md), on your own infrastructure | Any [engine we support](durable_execution/overview.md), on your own infrastructure |
-| Realtime voice | No Bedrock voice model; [other providers](realtime/overview.md) run on AWS compute | [Azure OpenAI and Azure AI Voice Live](realtime/azure.md) | [Gemini Live](realtime/gemini.md) |
+| Models | [Amazon Bedrock](models/bedrock.md), including [Bedrock Mantle](models/bedrock.md#bedrock-mantle) | [Azure OpenAI and Microsoft Foundry](models/azure.md), including [Claude on Foundry](models/azure.md#claude-on-microsoft-foundry) | [Gemini and Model Garden](models/google-cloud.md), including [Claude on Google Cloud](models/google-cloud.md#claude-on-google-cloud) |
+| Embeddings | [Bedrock](embeddings.md#bedrock) | [Azure OpenAI](embeddings.md#openai-compatible) | [Google Cloud](embeddings.md#google-cloud) |
+| Durable execution | [AWS Lambda durable functions](harness/aws-lambda.md) | No native Azure integration yet; use [Temporal, DBOS, Prefect, Restate, Absurd, pgtask or Apache Airflow](durable_execution/overview.md) on infrastructure you run or the engine's own cloud | No Google-native integration; use [Temporal, DBOS, Prefect, Restate, Absurd, pgtask or Apache Airflow](durable_execution/overview.md) on infrastructure you run or the engine's own cloud |
+| Realtime voice | No native AWS voice integration; host a voice agent on AWS compute with [another supported provider](realtime/overview.md#provider-support) | [Azure OpenAI and Azure AI Voice Live](realtime/azure.md) | [Gemini Live](realtime/gemini.md) |
 
 <!-- TODO(#11332): once Azure Durable Task durability merges, replace the Azure "Durable execution" cell with a link to its Harness page. -->
 
-Switching an agent between clouds, or to OpenAI, Anthropic, Gemini or a local model, means changing one string, without rewriting the agent, for the features both providers support. [Models and Providers](models/overview.md) lists every supported service, and a [fallback model](models/overview.md#fallback-model) moves to another provider when one is down. Weighing your cloud's own agent framework? See [Pydantic AI vs Google ADK](comparisons/vs-google-adk.md).
+The [AWS Lambda durable functions integration](harness/aws-lambda.md) is co-maintained by the Pydantic and AWS teams, [announced by AWS](https://aws.amazon.com/about-aws/whats-new/2026/09/aws-lambda-durable-pydantic-ai/) and documented in the [AWS Durable Execution SDK guide](https://docs.aws.amazon.com/durable-execution/sdk-reference/integrations/pydantic-ai/).
+
+Each cloud's enterprise features work too:
+
+- **AWS**: Bedrock [guardrails](models/bedrock.md#customizing-bedrock-runtime-api), [prompt caching](models/bedrock.md#prompt-caching), [application inference profiles](models/bedrock.md#using-aws-application-inference-profiles) and [service tiers](models/bedrock.md#service-tier), plus [LocalStack](harness/localstack.md) for agents that work against an emulated AWS environment.
+- **Azure**: the [Chat Completions](models/azure.md#configuration) and [Responses](models/azure.md#using-azure-with-the-responses-api) APIs, and Microsoft Entra ID authentication for [Claude on Foundry](models/azure.md#claude-on-microsoft-foundry) and [realtime voice](realtime/azure.md#browser-webrtc-and-microsoft-entra-id).
+- **Google Cloud**: [Application Default Credentials](models/google-cloud.md#application-default-credentials), [service accounts](models/google-cloud.md#service-account), [Model Armor](models/google.md#model-armor-google-cloud-only), [service tiers and provisioned throughput](models/google.md#service-tier-service_tier-google_cloud_service_tier), [Gemini image generation](image-generation.md#google), [Google Workspace tools](harness/google-workspace.md), and [hosting voice agents on Cloud Run](realtime/deployment.md#hosting).
+
+Once a provider's credentials are configured, changing the model string moves an agent between clouds, or to OpenAI, Anthropic, Gemini or a local model, without rewriting it, for the features both providers support; deployment and durable execution are configured separately. [Models and Providers](models/overview.md) lists every supported service, and a [fallback model](models/overview.md#fallback-model) moves to another provider when one is down. Weighing your cloud's own agent framework? See [Pydantic AI vs Google ADK](comparisons/vs-google-adk.md).
 
 <!-- TODO(#12021): add "Pydantic AI vs Microsoft Agent Framework" (comparisons/vs-microsoft-agent-framework.md) to the sentence above once it merges. -->
 <!-- TODO(#12026): add "Pydantic AI vs Strands Agents" (comparisons/vs-strands.md) to the sentence above once it merges. -->

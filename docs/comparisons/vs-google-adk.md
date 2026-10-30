@@ -38,7 +38,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 
 ## FAQ
 
-**Can I use Pydantic AI on Google Cloud?** Yes. Run agents on [Gemini and Model Garden models on Google Cloud](../models/google-cloud.md), including [Claude on Google Cloud](../models/google-cloud.md#claude-on-google-cloud), with [Google Cloud embeddings](../embeddings.md#google) and [image generation](../image-generation.md), and voice agents on [Gemini Live](../realtime/gemini.md).
+**Can I use Pydantic AI on Google Cloud?** Yes. Run agents on [Gemini and Model Garden models on Google Cloud](../models/google-cloud.md), including [Claude on Google Cloud](../models/google-cloud.md#claude-on-google-cloud), with [Google Cloud embeddings](../embeddings.md#google-cloud), [Gemini image generation](../image-generation.md#google) and voice agents on [Gemini Live](../realtime/gemini.md). The Harness adds [Google Workspace tools](../harness/google-workspace.md), and the [realtime deployment guide](../realtime/deployment.md#hosting) covers Cloud Run.
 
 **Can I build a coding agent on Pydantic AI?** Yes. Give your agent the
 [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) capability, or assemble your own from the
