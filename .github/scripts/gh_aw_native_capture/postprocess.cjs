@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const [helpers, scenario, evidence, expectedExitText, expectedPythonText, ownerMarker] = process.argv.slice(2);
 const root = '/tmp/gh-aw';
 const secret = 'acceptance-secret-unique-123';
-const { installActionsAdapter, prepareConclusionEnvironment } = require('./actions_adapter.cjs');
+const { installActionsAdapter, prepareConclusionEnvironment, assertConclusionResults } = require('./actions_adapter.cjs');
 const { failures, logs, summaries } = installActionsAdapter();
 const released = name => require(path.join(helpers, name));
 const { readProtectedCommandOutput } = released('protected_command_output.cjs');
@@ -96,7 +96,7 @@ const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filt
   for (const name of fs.readdirSync(staging)) fs.cpSync(path.join(staging, name), path.join(root, name), { recursive: true });
   // Conclusion has its own step environment in the released lock. Its collector
   // does not receive the parser's protected flag or configured-secret bindings.
-  prepareConclusionEnvironment();
+  const expectedJobs = prepareConclusionEnvironment(scenario);
   // Exact generated conclusion entry point and default options. Never add
   // protectedSessionCapture:true to make an acceptance assertion pass.
   await released('generate_usage_artifacts.cjs').main();
@@ -105,6 +105,7 @@ const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filt
   fs.mkdirSync(path.join(evidence, 'usage'), { recursive: true });
   fs.copyFileSync(finalPath, path.join(evidence, 'usage/aw_session.jsonl'));
   const unified = eventLines(finalPath);
+  const callerResults = assertConclusionResults(unified, scenario, expectedJobs);
   const finalText = fs.readFileSync(finalPath, 'utf8');
   assert(!finalText.includes(secret), 'configured secret survived the final published session');
   assert(!finalText.includes('forged-native-fixture'), 'released conclusion published hostile fallback artifacts');
@@ -116,7 +117,7 @@ const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filt
     assert(conversation.some(event => event.type === 'session.result' && event.data.status === (scenario === 'success' ? 'success' : 'failure')));
     assert(!unified.some(event => event.type === 'session.collection_warning' && event.data.code === 'malformed_jsonl'));
   }
-  save('conclusion-step.json', { entryPoint: 'generate_usage_artifacts.cjs.main()', options: {}, finalPath, events: unified.length, status: 'passed' });
+  save('conclusion-step.json', { entryPoint: 'generate_usage_artifacts.cjs.main()', options: {}, finalPath, events: unified.length, callerResults, status: 'passed' });
 })().then(() => {
   save('actions-log.json', { logs, failures, summaries });
   console.log(`${scenario}: actual released parse, redaction, and final collection assertions passed`);

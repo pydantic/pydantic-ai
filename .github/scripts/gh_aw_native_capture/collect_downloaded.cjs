@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
-const { installActionsAdapter, prepareConclusionEnvironment } = require('./actions_adapter.cjs');
+const { installActionsAdapter, prepareConclusionEnvironment, assertConclusionResults } = require('./actions_adapter.cjs');
 
 function copyVerifiedHelpers(input, output, manifest) {
   for (const [name, digest] of Object.entries(manifest)) {
@@ -87,7 +87,7 @@ async function main() {
       assert(!fs.existsSync(path.join(staging, 'sandbox/agent/logs/copilot-session-state')), 'hostile native fallback crossed the producer publication boundary');
       assert.equal(fs.readFileSync(owner, 'utf8'), marker, 'lost task ownership before copying downloaded inputs');
       if (fs.existsSync(staging)) fs.cpSync(staging, root, { recursive: true });
-      prepareConclusionEnvironment();
+      const expectedJobs = prepareConclusionEnvironment(scenario);
       process.env.RUNNER_TEMP = path.join(output, 'runner');
       // Same released entry point and zero options as the emitted conclusion.
       await generate();
@@ -97,6 +97,7 @@ async function main() {
       assert(!text.includes('acceptance-secret-unique-123'), 'configured secret survived the artifact round trip');
       assert(!text.includes('forged-native-fixture'), 'hostile fallback became authoritative after download');
       const events = text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+      const callerResults = assertConclusionResults(events, scenario, expectedJobs);
       const conversation = events.filter(event => event.provenance.component === 'agent');
       if (scenario === 'incomplete') assert.equal(conversation.length, 0, 'download promoted an incomplete conversation');
       else {
@@ -116,7 +117,7 @@ async function main() {
       const destination = path.join(output, scenario, 'usage');
       fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
       fs.writeFileSync(path.join(destination, 'aw_session.jsonl'), text, { mode: 0o600 });
-      results.push({ case: scenario, status: 'passed', events: events.length, conversationEvents: conversation.length });
+      results.push({ case: scenario, status: 'passed', events: events.length, conversationEvents: conversation.length, callerResults });
       assert.equal(fs.readFileSync(owner, 'utf8'), marker, 'lost task ownership before shared-tree cleanup');
       for (const name of fs.readdirSync(root)) if (name !== '.native-capture-owner') fs.rmSync(path.join(root, name), { recursive: true });
     }

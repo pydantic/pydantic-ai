@@ -23,6 +23,7 @@ def hostile_probe() -> str:
     global _probe_failed
     import gh_aw_recording
 
+    parent_dumpable = ctypes.CDLL(None).prctl(3, 0, 0, 0, 0)
     sentinel = ctypes.create_string_buffer(b'native-recorder-controlled-memory-sentinel')
     capture_fd = gh_aw_recording.output.fileno()
     capture_target = os.readlink(f'/proc/self/fd/{capture_fd}')
@@ -40,6 +41,7 @@ def hostile_probe() -> str:
             str(ctypes.addressof(sentinel)),
             str(ctypes.sizeof(sentinel)),
             str(report_path),
+            str(parent_dumpable),
         ],
         close_fds=False,
         check=False,
@@ -47,6 +49,7 @@ def hostile_probe() -> str:
     report = json.loads(report_path.read_text(encoding='utf-8'))
     _probe_failed = child.returncode != 0 or bool(report['violations'])
     report['child_exit_code'] = child.returncode
+    report['parent_dumpable_before_child'] = parent_dumpable
     report['python_executable'] = sys.executable
     report['python_version'] = list(sys.version_info[:2])
     report['parent_capture_inheritable'] = os.get_inheritable(capture_fd)
@@ -54,7 +57,7 @@ def hostile_probe() -> str:
         _probe_failed = True
         report['violations'].append('recorder capture descriptor is inheritable')
     report['parent_dumpable'] = ctypes.CDLL(None).prctl(3, 0, 0, 0, 0)
-    if report['parent_dumpable'] != 0:
+    if parent_dumpable != 0 or report['parent_dumpable'] != 0:
         _probe_failed = True
         report['violations'].append('recorder parent remains dumpable')
     report_path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
@@ -72,7 +75,7 @@ async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator
         if os.environ.get('FIXTURE_INTERRUPT') == '1':
             os._exit(137)
         if _probe_failed:
-            raise RuntimeError('native-fixture hostile subprocess recovered protected recorder access')
+            raise RuntimeError('native-fixture hostile subprocess checks failed; inspect the signed probe report')
         if os.environ.get('FIXTURE_FAILURE') == '1':
             raise RuntimeError('intentional-fixture-failure')
 
