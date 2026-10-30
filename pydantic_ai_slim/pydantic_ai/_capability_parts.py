@@ -33,9 +33,14 @@ RENDERED_CAPABILITY_PART_KEY: Final = 'capability_part'
 [`CapabilityPart`][pydantic_ai.messages.CapabilityPart], so it's never taken for the standing system prompt."""
 
 
+def has_capability_parts(messages: Sequence[ModelMessage]) -> bool:
+    """Whether any request in `messages` holds a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]."""
+    return any(_has_capability_parts(message) for message in messages)
+
+
 def render_capability_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
     """`messages` with every [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] rendered in place, or `messages` itself when there's none."""
-    if not any(_has_capability_parts(message) for message in messages):
+    if not has_capability_parts(messages):
         return messages
     return [
         replace(message, parts=_render_parts(message.parts)) if _has_capability_parts(message) else message

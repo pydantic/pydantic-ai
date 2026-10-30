@@ -45,7 +45,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestPart
+from pydantic_ai.messages import CapabilityPart, ModelMessagesTypeAdapter, ModelRequestPart, OperatorSource
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -108,6 +108,11 @@ SYSTEM_PROMPT = (
 PROMPT = 'Get the weather in Paris, then in Oslo, then summarize in one line.'
 
 
+@dataclass(kw_only=True)
+class ReminderPart(CapabilityPart, namespace='test_request_scoped_prompts', voice='system'):
+    """A capability's request-scoped reminder, which renders as a `SystemPromptPart(..., scope='request')`."""
+
+
 @dataclass
 class TurnReminder(AbstractCapability[Any]):
     """Adds a request-scoped reminder to every model request, the way a harness capability does.
@@ -126,7 +131,7 @@ class TurnReminder(AbstractCapability[Any]):
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         self.requests += 1
-        part = SystemPromptPart(self.text.format(n=self.requests), scope='request')
+        part = ReminderPart(content=self.text.format(n=self.requests), source=OperatorSource(), scope='request')
         if not self.two_writes:
             ctx.enqueue(part)
             return request_context
@@ -157,7 +162,9 @@ def request_scoped_texts(messages: Sequence[ModelMessage]) -> list[str]:
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart) and part.scope == 'request'
+        if isinstance(part, SystemPromptPart | ReminderPart)
+        and part.scope == 'request'
+        and isinstance(part.content, str)
     ]
 
 
@@ -509,7 +516,11 @@ async def test_enqueued_request_scoped_prompt():
 
     @agent.tool
     def get_weather(ctx: RunContext[Any], city: str) -> str:
-        ctx.enqueue(SystemPromptPart(f'The {city} result is cached; do not fetch it again.', scope='request'))
+        ctx.enqueue(
+            ReminderPart(
+                content=f'The {city} result is cached; do not fetch it again.', source=OperatorSource(), scope='request'
+            )
+        )
         return f'{city}: 18C, cloudy'
 
     result = await agent.run(PROMPT)

@@ -81,7 +81,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
-from ._capability_parts import render_capability_parts
+from ._capability_parts import has_capability_parts, render_capability_parts
 from ._context_size import context_input_tokens
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -3249,7 +3249,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, list(messages))
             request_context.model_request_parameters = model_request_parameters
-            if _has_instruction_state(messages):
+            # A capability part is rendered here too, so a continuation never hands one to a model.
+            if _has_instruction_state(messages) or has_capability_parts(messages):
                 # Projection can split a foreign native tool-search exchange into a trailing
                 # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
                 # frontier, so its tool calls must not get synthesized returns.

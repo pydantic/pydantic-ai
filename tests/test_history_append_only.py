@@ -53,12 +53,13 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.messages import (
     CapabilityInstructionSource,
+    CapabilityPart,
     InstructionId,
     InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
+    OperatorSource,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -354,6 +355,11 @@ def _count(text: str) -> int:
     return TypeAdapter(int).validate_python(text)
 
 
+@dataclass(kw_only=True)
+class ReminderPart(CapabilityPart, namespace='test_history_append_only', voice='system'):
+    """A capability's request-scoped reminder, which renders as a `SystemPromptPart(..., scope='request')`."""
+
+
 @dataclass
 class _RequestScopedNudge(AbstractCapability[Any]):
     """Add a request-scoped system prompt (#9711) to every request, the way `WarnNearLimits` does."""
@@ -361,7 +367,7 @@ class _RequestScopedNudge(AbstractCapability[Any]):
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Keep it short.', scope='request'))
+        ctx.enqueue(ReminderPart(content='Keep it short.', source=OperatorSource(), scope='request'))
         return request_context
 
 

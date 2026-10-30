@@ -1035,6 +1035,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         )
         if pending is None:
             return None
+        # Queued first: a context with nowhere to deliver to, such as one inside a durable unit, raises there. The
+        # parts are stamped in place right after, so they carry the id by the time the run delivers them.
+        self.pending_messages.append(pending)
         if (capability_id := self._calling_capability_id()) is not None:
             stamp_capability_parts(pending.messages, capability_id)
             if reason := hand_built_capability_speech(pending.messages):
@@ -1045,7 +1048,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
                     UserWarning,
                     stacklevel=2,
                 )
-        self.pending_messages.append(pending)
         return pending.enqueue_id
 
     def cancel(self) -> None:

@@ -651,6 +651,18 @@ async def test_model_request_without_prepare_messages_raises() -> None:
         await model.request([ModelRequest(parts=[report()])], None, ModelRequestParameters())
 
 
+def test_resuming_a_suspended_response_renders_capability_parts() -> None:
+    """A run resumed from a history that ends in a suspended response renders its capability parts too."""
+    model = TodaysPartsOnlyModel()
+    agent = Agent(model)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Run the tests.'), nudge()]),
+        ModelResponse(parts=[TextPart('Running')], state='suspended'),
+    ]
+    agent.run_sync(message_history=history)
+    assert model.seen == ['user: Run the tests.', 'system: Be brief.']
+
+
 # Prompt-cache properties
 
 
