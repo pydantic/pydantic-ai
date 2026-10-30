@@ -331,7 +331,7 @@ def _with_late_registration(
         if isinstance(value, unknown_type) or (cls := late_class(value)) is None:
             # The wrapped schema's own serializer flattens the unknown envelope.
             return serialize_unknown(value)
-        return _late_adapter(cls, frozen).dump_python([value], mode=info.mode)[0]
+        return _late_adapter(cls, frozen).dump_python([value], mode='json' if info.mode == 'json' else 'python')[0]
 
     return pydantic_core.core_schema.with_info_wrap_validator_function(
         validate,
