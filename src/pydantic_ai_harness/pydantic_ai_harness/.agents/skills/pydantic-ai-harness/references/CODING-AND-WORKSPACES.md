@@ -536,6 +536,8 @@ to that ancestor. It is a workspace path (on E2B, `/home/user`, not `Path.home()
 `nested_traversal=True` surfaces the instruction files between the working directory and whatever
 `FileSystem` reads or lists, shallowest first and each directory once per run (`nested_inject='pointer'`
 or `'contents'`), in the message tail so the cached prefix stays stable.
+With it on, the instructions also gain one static sentence: each instruction file applies to its
+subtree, the deeper file wins, and the user's direct instructions win over all of them.
 `nested_max_chars` caps the `'contents'` inlined per run: a file that would go past it becomes a pointer
 (`Coder` sets 32,000). It requires `nested_inject='contents'`.
 
