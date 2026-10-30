@@ -225,14 +225,18 @@ def _gave_up(
     """
 
     def handler(request: Any) -> Any:
-        http = httpx if isinstance(request, httpx.Request) else httpx2
-        if read:
-            response = http.Response(status_code, headers=headers, content=content, request=request)
-        else:
-            response = http.Response(
-                status_code, headers=headers, stream=http.ByteStream(content or b''), request=request
+        if isinstance(request, httpx.Request):
+            stream = None if read else httpx.ByteStream(content or b'')
+            response = httpx.Response(
+                status_code, headers=headers, content=content if read else None, stream=stream, request=request
             )
-        raise http.HTTPStatusError(f'Server error {status_code}', request=request, response=response)
+            raise httpx.HTTPStatusError(f'Server error {status_code}', request=request, response=response)
+        assert isinstance(request, httpx2.Request)
+        stream2 = None if read else httpx2.ByteStream(content or b'')
+        response2 = httpx2.Response(
+            status_code, headers=headers, content=content if read else None, stream=stream2, request=request
+        )
+        raise httpx2.HTTPStatusError(f'Server error {status_code}', request=request, response=response2)
 
     return handler
 
