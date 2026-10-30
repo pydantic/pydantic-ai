@@ -14,11 +14,21 @@ from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2.plugins import DepsT, Plugin
 from pydantic_clai2.runtime.session import supports_local_workspace
 
-_GLOBAL_INSTRUCTION_FILES: tuple[str, ...] = ('.claude/CLAUDE.md', '.codex/AGENTS.md', '.pydantic-ai/AGENTS.md')
-"""User-global instruction files under your home directory, broadest first, as Claude Code and Codex keep them.
 
-`.pydantic-ai/AGENTS.md` is the harness's own, so it comes last and is the most specific of the three.
-"""
+def _global_instruction_files() -> list[str]:
+    """User-global instruction files, broadest first, where Claude Code and Codex keep them.
+
+    Codex's is under `CODEX_HOME` when that is set, as Codex reads it. `~/.pydantic-ai/AGENTS.md` is the
+    harness's own, so it comes last and is the most specific of the three.
+    """
+    from pydantic_clai2.runtime import codex_sessions
+
+    home = Path.home()
+    return [
+        str(home / '.claude' / 'CLAUDE.md'),
+        str(codex_sessions.home() / 'AGENTS.md'),
+        str(home / '.pydantic-ai' / 'AGENTS.md'),
+    ]
 
 
 class RepoContextSettings(BaseModel):
@@ -32,8 +42,8 @@ class RepoContextSettings(BaseModel):
     global_files: bool = Field(
         default=True,
         description=(
-            'Also load your user-global instruction files: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and '
-            '`~/.pydantic-ai/AGENTS.md`.'
+            'Also load your user-global instruction files: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` (or '
+            '`$CODEX_HOME/AGENTS.md`) and `~/.pydantic-ai/AGENTS.md`.'
         ),
     )
     inventory_tool: bool = Field(
@@ -58,11 +68,10 @@ class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
         if not supports_local_workspace():
             return ()
         settings = self.settings
-        home = Path.home()
         return (
             RepoContext[DepsT](
                 walk_up='all' if settings.walk_up else None,
-                global_files=[str(home / path) for path in _GLOBAL_INSTRUCTION_FILES] if settings.global_files else (),
+                global_files=_global_instruction_files() if settings.global_files else (),
                 expose_inventory_tool=settings.inventory_tool,
                 nested_traversal=settings.nested_traversal,
                 nested_inject=settings.nested_inject,

@@ -89,6 +89,9 @@ async def open_stock_agent(
     `plugin_settings` maps a built-in's id to settings merged over its stock ones, such as
     `{'coder': {'sub_agents': False}}`. Unlike in the CLI, `coder`'s `task_control` is off: pass
     `{'coder': {'task_control': True}}` to give the model the task tools and background delegation.
+    `repo_context` still walks up from `workspace`, but leaves out this process user's global
+    instruction files (`~/.claude/CLAUDE.md` and the like), which belong to whoever runs the host,
+    not to the agent: pass `{'repo_context': {'global_files': True}}` to load them.
     Nothing saved for the `clai2` CLI applies: no saved or drop-in
     plugins, no project `.clai/settings.json`, no saved model settings or `chain:` fallback chains.
     Raises `UserError` when `plugin_settings` names another plugin, and `PluginSettingsError` when a
@@ -99,8 +102,13 @@ async def open_stock_agent(
     from pydantic_clai2.models.model_settings import default_model_settings
 
     stock = {plugin.id: plugin for plugin in STOCK_PLUGINS if plugin.id in ('coder', 'repo_context', 'compaction')}
-    # Task control is opt-in for an application's agent, unlike in the CLI.
-    defaults: Mapping[str, Mapping[str, JsonValue]] = {'coder': {'task_control': False}}
+    # Task control is opt-in for an application's agent, unlike in the CLI. The process user's global
+    # instruction files are personal configuration a host's agent shouldn't inherit; the walk-up stays, since
+    # the workspace's ancestors are the tree the host chose to run in.
+    defaults: Mapping[str, Mapping[str, JsonValue]] = {
+        'coder': {'task_control': False},
+        'repo_context': {'global_files': False},
+    }
     overrides = plugin_settings or {}
     if unknown := sorted(overrides.keys() - stock.keys()):
         raise UserError(

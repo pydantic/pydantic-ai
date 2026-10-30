@@ -432,9 +432,13 @@ next start. In the `/set` menu a value the project
 sets carries a muted `project` mark after it, and the details panel names the
 origin. CLAI prints the file it found when it starts.
 
-`AGENTS.md` or `CLAUDE.md` in the launch directory is read automatically by the
-built-in `repo_context` plugin (harness `RepoContext`), which is separate from
-the project file. `/plugins disable repo_context` turns it off, for this and
+The built-in `repo_context` plugin (harness `RepoContext`), which is separate
+from the project file, reads instruction files automatically: one per directory,
+`AGENTS.md` else `CLAUDE.md`, from the launch directory and every directory above
+it, plus your global files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` or
+`$CODEX_HOME/AGENTS.md`, and `~/.pydantic-ai/AGENTS.md`), which also load when
+you use CLAI to run another agent. A subdirectory's file is added the first time
+the agent reads, lists, or works in it. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
 
@@ -2713,8 +2717,10 @@ The coding tools,
 default, `/plugins disable coder` for a chat-only shell. The model can also ask
 you multiple-choice questions mid-run through the built-in `ask_user` plugin;
 see [Questions from the model](#questions-from-the-model). The built-in
-`repo_context` plugin reads `AGENTS.md` or `CLAUDE.md` from the launch directory
-into the agent's instructions; `/plugins disable repo_context` turns that off.
+`repo_context` plugin reads the instruction files (`AGENTS.md`, else `CLAUDE.md`)
+of the launch directory, its ancestors and your global files into the agent's
+instructions, and a subdirectory's as the agent works there; `/plugins disable
+repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
 `coder` clears old tool results as the context fills. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
@@ -3075,7 +3081,12 @@ The agent has the `coder`, `repo_context`, and `compaction` built-ins,
 configured as in `clai2`, except that `coder`'s `task_control` is off: pass
 `plugin_settings={'coder': {'task_control': True}}` to give the model the task
 tools and background delegation. The file and shell tools work in `workspace`,
-and `AGENTS.md` or `CLAUDE.md` is read from it. A capability you pass that
+and the instruction files (`AGENTS.md`, else `CLAUDE.md`) of `workspace` and its
+ancestors are read, plus a subdirectory's as the agent works there. Your own
+global instruction files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
+`~/.pydantic-ai/AGENTS.md`) are left out, since they belong to whoever runs the
+host: pass `plugin_settings={'repo_context': {'global_files': True}}` to load
+them. A capability you pass that
 supplies a workspace, such as a sandbox, takes its place, and a run's own
 `workspace=` replaces it for that run. Commands get this process's environment
 minus LLM provider API keys. Model names resolve as in `clai2`, the agent's own
