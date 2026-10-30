@@ -899,15 +899,18 @@ class MistralStreamedResponse(StreamedResponse):
                         for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=text):
                             yield event
 
-                # Handle the explicit tool calls
-                for index, dtc in enumerate(choice.delta.tool_calls or []):
-                    # It seems that mistral just sends full tool calls, so we just use them directly, rather than building
-                    yield self._parts_manager.handle_tool_call_part(
-                        vendor_part_id=index,
-                        tool_name=dtc.function.name,
-                        args=dtc.function.arguments,
-                        tool_call_id=dtc.id,
+                # Handle the explicit tool calls, accumulating fragments sharing a wire `index` into one call.
+                # Continuation deltas can carry an empty name, and the SDK fills an absent id with `'null'`;
+                # both are normalized to `None` so the first name and id are retained.
+                for dtc in choice.delta.tool_calls or []:
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=dtc.index,
+                        tool_name=dtc.function.name or None,
+                        args=dtc.function.arguments or None,
+                        tool_call_id=None if dtc.id == 'null' else dtc.id,
                     )
+                    if maybe_event:
+                        yield maybe_event
 
     @property
     def model_name(self) -> MistralModelName:

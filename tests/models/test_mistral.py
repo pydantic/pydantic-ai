@@ -2253,6 +2253,203 @@ async def test_stream_tool_call(allow_model_requests: None):
     )
 
 
+@pytest.mark.parametrize(
+    'tool_call_deltas',
+    [
+        pytest.param(
+            [
+                MistralToolCall(
+                    index=0, id='c1', function=MistralFunctionCall(name='search', arguments=''), type='function'
+                ),
+                MistralToolCall(
+                    index=0,
+                    id='null',
+                    function=MistralFunctionCall(name='', arguments='{"query": "ver'),
+                    type='function',
+                ),
+                MistralToolCall(
+                    index=0, id='null', function=MistralFunctionCall(name='', arguments='rous"}'), type='function'
+                ),
+            ],
+            id='name_first',
+        ),
+        pytest.param(
+            [
+                MistralToolCall(
+                    index=0, id='null', function=MistralFunctionCall(name='', arguments='{"query":'), type='function'
+                ),
+                MistralToolCall(
+                    index=0,
+                    id='c1',
+                    function=MistralFunctionCall(name='search', arguments=' "verrous"}'),
+                    type='function',
+                ),
+            ],
+            id='empty_start',
+        ),
+    ],
+)
+async def test_stream_tool_call_split_across_deltas_accumulates(
+    allow_model_requests: None, tool_call_deltas: list[MistralToolCall]
+):
+    completion = [
+        [
+            func_chunk(tool_calls=[tc], finish_reason='tool_calls' if index == len(tool_call_deltas) - 1 else None)
+            for index, tc in enumerate(tool_call_deltas)
+        ],
+        [
+            chunk(
+                delta=[MistralDeltaMessage(role=MistralUnset(), content='final response', tool_calls=MistralUnset())],
+                finish_reason='stop',
+            )
+        ],
+    ]
+    mock_client = MockMistralAI.create_stream_mock(completion)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, instructions='this is the system prompt')
+    calls: list[dict[str, str]] = []
+
+    @agent.tool_plain
+    async def search(query: str) -> str:
+        calls.append({'query': query})
+        return 'verrous found'
+
+    async with agent.iter('User prompt value') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for _event in stream:
+                        pass
+
+    assert run.result is not None
+    assert calls == [{'query': 'verrous'}]
+    response = run.result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    tool_call_parts = [part for part in response.parts if isinstance(part, ToolCallPart)]
+    assert len(tool_call_parts) == 1
+    assert tool_call_parts[0].tool_name == 'search'
+    assert tool_call_parts[0].tool_call_id == 'c1'
+    assert tool_call_parts[0].args == '{"query": "verrous"}'
+
+
+async def test_stream_whole_tool_call_per_delta_preserved(allow_model_requests: None):
+    completion = [
+        [
+            func_chunk(
+                tool_calls=[
+                    MistralToolCall(
+                        index=0,
+                        id='c1',
+                        function=MistralFunctionCall(name='search', arguments='{"query": "verrous"}'),
+                        type='function',
+                    )
+                ],
+                finish_reason='tool_calls',
+            ),
+        ],
+        [
+            chunk(
+                delta=[MistralDeltaMessage(role=MistralUnset(), content='final response', tool_calls=MistralUnset())],
+                finish_reason='stop',
+            )
+        ],
+    ]
+    mock_client = MockMistralAI.create_stream_mock(completion)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, instructions='this is the system prompt')
+    calls: list[dict[str, str]] = []
+
+    @agent.tool_plain
+    async def search(query: str) -> str:
+        calls.append({'query': query})
+        return 'verrous found'
+
+    async with agent.iter('User prompt value') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for _event in stream:
+                        pass
+
+    assert run.result is not None
+    assert calls == [{'query': 'verrous'}]
+    response = run.result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    tool_call_parts = [part for part in response.parts if isinstance(part, ToolCallPart)]
+    assert len(tool_call_parts) == 1
+    assert tool_call_parts[0].tool_name == 'search'
+    assert tool_call_parts[0].tool_call_id == 'c1'
+    assert tool_call_parts[0].args == '{"query": "verrous"}'
+
+
+async def test_stream_parallel_tool_calls_separate_chunks_both_kept(allow_model_requests: None):
+    completion = [
+        [
+            func_chunk(
+                tool_calls=[
+                    MistralToolCall(
+                        index=0,
+                        id='c1',
+                        function=MistralFunctionCall(name='search', arguments='{"query": "verrous"}'),
+                        type='function',
+                    )
+                ],
+            ),
+            func_chunk(
+                tool_calls=[
+                    MistralToolCall(
+                        index=1,
+                        id='c2',
+                        function=MistralFunctionCall(name='lookup', arguments='{"city": "Paris"}'),
+                        type='function',
+                    )
+                ],
+                finish_reason='tool_calls',
+            ),
+        ],
+        [
+            chunk(
+                delta=[MistralDeltaMessage(role=MistralUnset(), content='final response', tool_calls=MistralUnset())],
+                finish_reason='stop',
+            )
+        ],
+    ]
+    mock_client = MockMistralAI.create_stream_mock(completion)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, instructions='this is the system prompt')
+    calls: list[dict[str, str]] = []
+
+    @agent.tool_plain
+    async def search(query: str) -> str:
+        calls.append({'query': query})
+        return 'verrous found'
+
+    @agent.tool_plain
+    async def lookup(city: str) -> str:
+        calls.append({'city': city})
+        return 'Paris found'
+
+    async with agent.iter('User prompt value') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for _event in stream:
+                        pass
+
+    assert run.result is not None
+    assert calls == [{'query': 'verrous'}, {'city': 'Paris'}]
+    response = run.result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    tool_call_parts = [part for part in response.parts if isinstance(part, ToolCallPart)]
+    assert len(tool_call_parts) == 2
+    assert tool_call_parts[0].tool_name == 'search'
+    assert tool_call_parts[0].tool_call_id == 'c1'
+    assert tool_call_parts[0].args == '{"query": "verrous"}'
+    assert tool_call_parts[1].tool_name == 'lookup'
+    assert tool_call_parts[1].tool_call_id == 'c2'
+    assert tool_call_parts[1].args == '{"city": "Paris"}'
+
+
 async def test_stream_tool_call_with_retry(allow_model_requests: None):
     completion = [
         [
