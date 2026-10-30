@@ -342,8 +342,12 @@ export interface SessionEntry {
   title: string
   workspace: string
   updated_at: string
+  /** When it was first saved, which the sidebar orders by, so activity and renames never move a row. */
+  created_at: string
   /** `running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process runs. */
   state: SessionState
+  /** The process running a `busy` session's turn. */
+  owner_pid: number | null
   messages: number
   model: string | null
   current: boolean

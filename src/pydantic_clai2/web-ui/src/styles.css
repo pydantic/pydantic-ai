@@ -282,23 +282,46 @@ pre {
   color: var(--muted);
 }
 
-.archived-toggle {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  color: var(--faint);
+.sidebar-views {
+  display: flex;
+  gap: 2px;
+  margin: 0 0 8px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--hover);
 }
 
-.archived-toggle:hover {
-  background: var(--hover);
+.sidebar-views button {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 3px 4px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.sidebar-views button:hover {
   color: var(--text);
 }
 
-.archived-toggle.on {
-  background: var(--active);
-  color: var(--lithium);
+.sidebar-views button.on {
+  background: var(--bg-sidebar);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.view-count {
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--amber);
+  color: var(--bg);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .projects {
@@ -343,65 +366,18 @@ pre {
   white-space: nowrap;
 }
 
-.worktree.nested {
-  margin: 2px 0 6px 12px;
-  padding-left: 6px;
-  border-left: 1px solid var(--border);
-}
-
-.worktree-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 4px 8px 4px 6px;
-  color: var(--faint);
-  font-size: 12px;
-  border-radius: 6px;
-}
-
-.worktree-head {
+.project-head {
   position: relative;
   display: flex;
   align-items: center;
 }
 
-.worktree-head > .worktree-title {
-  flex: 1;
-  min-width: 0;
-}
-
-.worktree-head > .session-more {
-  height: 22px;
-}
-
-.worktree-head:hover > .session-more {
+.project-head:hover .session-more,
+.project-head .session-more:focus-visible {
   display: grid;
 }
 
-.worktree-title:hover,
-.worktree.current > .worktree-head > .worktree-title {
-  color: var(--text-soft);
-}
-
-.worktree-name {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.worktree-tag {
-  padding: 0 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--faint);
-  font-size: 10.5px;
-}
-
-.worktree.missing .session-title {
+.project.removed .session-title {
   color: var(--muted);
 }
 
@@ -422,8 +398,7 @@ pre {
   border-radius: 8px;
 }
 
-.session:hover,
-.session.viewing {
+.session:hover {
   background: var(--hover);
 }
 
@@ -470,8 +445,33 @@ pre {
   display: none;
 }
 
-.session.opening .session-time {
-  display: none;
+.session.unread .session-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* A branch or project, and a short ID when titles repeat: muted, so the title still leads. */
+.session-chip {
+  flex: none;
+  max-width: 40%;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.needs-input {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--amber) 22%, transparent);
+  color: var(--amber);
+  font-size: 10.5px;
+  font-weight: 600;
 }
 
 .session-more {
@@ -503,11 +503,17 @@ pre {
   background: transparent;
 }
 
-.state.running,
-.state.busy {
+.state.running {
   background: var(--lithium);
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--lithium) 60%, transparent);
   animation: pulse 1.6s ease-out infinite;
+}
+
+/* Another CLAI runs it: a hollow ring, never this CLAI's spinner. */
+.state.busy {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--lithium);
 }
 
 .state.failed {
@@ -518,20 +524,28 @@ pre {
   background: var(--amber);
 }
 
-/* A running session with input queued behind its turn: the running dot, ringed. */
-.state.queued {
+.state.unread {
   background: var(--lithium);
-  outline: 1.5px solid var(--lithium);
-  outline-offset: 1.5px;
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--lithium) 60%, transparent);
-  animation: pulse 1.6s ease-out infinite;
 }
 
-/* A question or dialog waits for the user: amber, and pulsing, unlike a cancelled turn's. */
+/* A folded project with a session waiting for your answer. */
 .state.asking {
   background: var(--amber);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber) 60%, transparent);
-  animation: pulse 1.6s ease-out infinite;
+}
+
+/* A row's turn running here: its glyph spins, at a dot's footprint. */
+.spinner.row-spinner {
+  width: 10px;
+  height: 10px;
+  margin-left: -4px;
+  border-width: 1.5px;
+  animation: spin 0.9s linear infinite;
+}
+
+/* A running session with input queued behind its turn: the spinner, ringed. */
+.spinner.row-spinner.with-queue {
+  outline: 1.5px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  outline-offset: 1.5px;
 }
 
 @keyframes pulse {
