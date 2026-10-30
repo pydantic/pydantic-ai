@@ -112,9 +112,8 @@ class TestOutputFallback:
 
         @agent.output_validator
         def validate(value: str) -> str:
-            if value == 'draft':
-                raise ModelRetry('Finish the draft.')
-            return value
+            assert value == 'draft'
+            raise ModelRetry('Finish the draft.')
 
         with pytest.raises(UnexpectedModelBehavior, match='output retries'):
             await agent.run('Answer.')
