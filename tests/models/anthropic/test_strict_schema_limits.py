@@ -8,6 +8,7 @@ https://platform.claude.com/docs/en/build-with-claude/structured-outputs#schema-
 from __future__ import annotations as _annotations
 
 import warnings
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -16,10 +17,11 @@ import pytest
 from pydantic import BaseModel, create_model
 
 from pydantic_ai import Agent, Tool
+from pydantic_ai.capabilities import OutputModeFallback
 from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models._anthropic_schema_limits import exceeded_limit, is_schema_too_complex_error
+from pydantic_ai.models._anthropic_schema_limits import exceeded_limit, reports_schema_too_complex
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import NativeOutput, OutputObjectDefinition, ToolOutput
@@ -341,6 +343,39 @@ async def test_schema_too_complex_error_has_hint(allow_model_requests: None, ant
     )
 
 
+@pytest.mark.moves_cache_prefix(
+    reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
+)
+async def test_output_mode_fallback_attempts_a_too_complex_schema_in_tool_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+    request_capture: RequestCapture,
+    remembered_output_schemas: OrderedDict[str, None],
+):
+    """On a request that thinks, a bare `output_type` infers Native Output, which Anthropic can reject as too complex.
+
+    `OutputModeFallback` then attempts the request again in Tool Output, which Anthropic doesn't compile, and the
+    process uses Tool Output for the schema from then on.
+    """
+    form = _model('Form', {f'field_{i}': (str, '') for i in range(13)})
+    # Thinks by default, adaptively.
+    agent = Agent(
+        anthropic_model('claude-sonnet-5', capture=True), output_type=form, capabilities=[OutputModeFallback()]
+    )
+
+    result = await agent.run('Fill in the form with `field_0` set to "a" and every other field left empty.')
+
+    assert result.output.model_dump(exclude_defaults=True) == {'field_0': 'a'}
+    assert [_request_shape(body) for body in request_capture.bodies()] == snapshot(
+        [
+            {'tool_choice': None, 'output_format': True, 'tools': []},
+            {'tool_choice': {'type': 'auto'}, 'output_format': False, 'tools': [('final_result', None)]},
+        ]
+    )
+    assert result.usage.requests == 1
+    assert len(remembered_output_schemas) == 1
+
+
 def _object(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
     return {'type': 'object', 'properties': properties, 'required': required, 'additionalProperties': False}
 
@@ -486,18 +521,50 @@ def test_exceeded_limit(case: CountCase):
 
 
 @pytest.mark.parametrize(
-    ('message', 'expected'),
+    ('body', 'expected'),
     [
-        ('Schema is too complex.', True),
-        ('The compiled grammar is too large, which would cause performance issues.', True),
-        ('The model returned the following errors: Schema is too complex.', True),
-        ('Schemas contains too many optional parameters (25)', False),
+        ({'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Schema is too complex.'}}, True),
+        (
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': 'The compiled grammar is too large, which would cause performance issues.',
+                },
+            },
+            True,
+        ),
+        ({'message': 'The model returned the following errors: Schema is too complex.'}, True),
+        (
+            {
+                'Error': {
+                    'Message': 'The model returned the following errors: Schema is too complex.',
+                    'Code': 'ValidationException',
+                },
+                'ResponseMetadata': {'HTTPStatusCode': 400},
+            },
+            True,
+        ),
+        (
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': 'Schemas contains too many optional parameters (25)',
+                },
+            },
+            False,
+        ),
+        ({'Error': {'Code': 'ValidationException'}}, False),
+        ({'error': 'Schema is too complex.'}, False),
         (None, False),
     ],
 )
-def test_is_schema_too_complex_error(message: object, expected: bool):
-    """Recognize both of Anthropic's messages for schemas too complex to compile, also as Bedrock wraps them.
+def test_reports_schema_too_complex(body: object, expected: bool):
+    """Recognize both of Anthropic's messages for schemas too complex to compile, in every shape its error arrives.
 
-    A unit test, as it pins message matching; the hinted 400s themselves are recorded in the cassettes above.
+    The direct API wraps the error in `error`, Bedrock's `InvokeModel` reports it at the top level, and Bedrock's
+    Converse API in `Error`. A unit test, as it pins body matching; the hinted 400s themselves are recorded in the
+    cassettes above.
     """
-    assert is_schema_too_complex_error(message) is expected
+    assert reports_schema_too_complex(body) is expected

@@ -8,6 +8,7 @@ import sys
 import time
 import uuid
 import warnings
+from collections import OrderedDict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
@@ -57,6 +58,7 @@ from pydantic_ai.capabilities import (
     DynamicCapability,
     Hooks,
     ModelFallback,
+    OutputModeFallback,
     WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -90,6 +92,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
@@ -6142,3 +6145,55 @@ def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError
     replayed = deserialize_exception(recorded, serialization, DBOSDefaultSerializer)
     assert type(replayed) is type(error)
     assert streamed_before_failing(replayed) == partial
+
+
+class _Survey(BaseModel):
+    answer: int
+
+
+@pytest.mark.moves_cache_prefix(
+    reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
+)
+async def test_dbos_output_mode_fallback_remembers_rejected_schemas_only_within_the_run(
+    dbos: DBOS, remembered_output_schemas: OrderedDict[str, None]
+) -> None:
+    """Workflow code has to make the same choices when it's replayed, by a process that may not remember them.
+
+    So each workflow's first request still infers Native Output, and its later requests use Tool Output.
+    """
+    modes: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        mode = info.model_request_parameters.output_mode
+        modes.append(mode)
+        if mode == 'native':
+            body = {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Schema is too complex.'}}
+            raise ModelHTTPError(400, 'compiler', body=body)
+        if not any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[ToolCallPart('look_up', {})])
+        return ModelResponse(parts=[ToolCallPart('final_result', {'answer': 1})])
+
+    def look_up() -> str:
+        return 'found'
+
+    model = FunctionModel(
+        respond,
+        model_name='compiler',
+        profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),
+    )
+    agent = Agent(
+        model,
+        name='dbos_output_mode_fallback',
+        output_type=_Survey,
+        tools=[look_up],
+        capabilities=[OutputModeFallback(), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> _Survey:
+        return (await agent.run('Answer the survey.')).output
+
+    assert await run_workflow() == _Survey(answer=1)
+    assert await run_workflow() == _Survey(answer=1)
+    assert modes == ['native', 'tool', 'tool'] * 2
+    assert not remembered_output_schemas

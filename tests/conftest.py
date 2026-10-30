@@ -10,6 +10,7 @@ import re
 import secrets
 import sys
 import warnings
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
@@ -34,7 +35,7 @@ import pydantic_ai._http
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, DeferredToolRequests, Embedder, ImageGenerator
 from pydantic_ai._cache_health import ConversationCacheMarkStore
-from pydantic_ai.capabilities import instrumentation as instrumentation_capability
+from pydantic_ai.capabilities import instrumentation as instrumentation_capability, output_mode_fallback
 from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     DocumentUrl,
@@ -1683,3 +1684,15 @@ def server_history_agent(
 
 
 # endregion
+
+
+@pytest.fixture
+def remembered_output_schemas() -> Iterator[OrderedDict[str, None]]:
+    """The schemas `OutputModeFallback` remembers process-wide, empty at the start and end of the test.
+
+    They're module state, which would otherwise carry over from one test to the next.
+    """
+    remembered = output_mode_fallback._too_complex_schemas  # pyright: ignore[reportPrivateUsage]
+    remembered.clear()
+    yield remembered
+    remembered.clear()

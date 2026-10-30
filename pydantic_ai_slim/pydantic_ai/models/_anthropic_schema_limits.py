@@ -44,8 +44,19 @@ SCHEMA_TOO_COMPLEX_HINT = (
 _SCHEMA_TOO_COMPLEX_MESSAGES = ('schema is too complex', 'compiled grammar is too large')
 
 
-def is_schema_too_complex_error(message: object) -> bool:
-    """Whether an error message is Anthropic's for strict schemas that are too complex to compile."""
+def reports_schema_too_complex(body: object) -> bool:
+    """Whether an error body is Anthropic's for strict schemas that are too complex to compile.
+
+    The direct API wraps the error in an `error` object, Bedrock's `InvokeModel` reports it at the top level, and
+    Bedrock's Converse API in an `Error` object, with capitalized keys.
+    """
+    if not is_str_dict(body):
+        return False
+    if is_str_dict(converse_error := body.get('Error')):
+        message = converse_error.get('Message')
+    else:
+        reported = body.get('error', body)
+        message = reported.get('message') if is_str_dict(reported) else None
     return isinstance(message, str) and any(text in message.lower() for text in _SCHEMA_TOO_COMPLEX_MESSAGES)
 
 

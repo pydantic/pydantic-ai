@@ -109,9 +109,9 @@ from pydantic_ai.models import (
 from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
     default_output_mode_within_limits,
-    is_schema_too_complex_error,
     limit_exceeded_error,
     model_exceeded_limit,
+    reports_schema_too_complex,
 )
 from pydantic_ai.models._prompt_cache import (
     excess_cache_points,
@@ -234,7 +234,7 @@ def _map_api_errors(
             hint = (
                 _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
             )
-            if strict_schema_limits and status_code == 400 and is_schema_too_complex_error(message):
+            if strict_schema_limits and status_code == 400 and reports_schema_too_complex(e.response):
                 hint = SCHEMA_TOO_COMPLEX_HINT
             raise ModelHTTPError.for_category(
                 category or _model_errors.http_status_category(status_code, message),

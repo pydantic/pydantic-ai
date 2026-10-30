@@ -709,7 +709,28 @@ Pydantic AI checks the explicit limits and recursion before it sends a request:
 
 The check applies to the Anthropic API, and to Claude on Amazon Bedrock through [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] or an `AnthropicModel` with a Bedrock client. On Google Cloud and Microsoft Foundry, where the limits haven't been verified, Pydantic AI sends these requests for Anthropic to judge, unless you set [`anthropic_enforces_strict_schema_limits=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_enforces_strict_schema_limits] in the model's `profile`.
 
-A schema within the explicit limits can still exceed Anthropic's internal limits on grammar size, for example with deeply nested models or many optional or union-typed fields. The request then fails with a 400 saying that the compiled grammar is too large or that the schema is too complex, and that 400 can arrive immediately or only after the request has waited for up to Anthropic's 180-second compilation timeout. Pydantic AI raises that 400 as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] (and a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError]) whose [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint] points here, without retrying it. If you set a [`timeout`][pydantic_ai.settings.ModelSettings.timeout] shorter than the compilation, the request times out before the error arrives, and the Anthropic SDK retries a timed-out request, twice by default, so a run can wait several times the timeout before it fails.
+A schema within the explicit limits can still exceed Anthropic's internal limits on grammar size, for example with deeply nested models or many optional or union-typed fields. The request then fails with a 400 saying that the compiled grammar is too large or that the schema is too complex, and that 400 can arrive immediately or only after the request has waited for up to Anthropic's 180-second compilation timeout. Pydantic AI raises that 400 as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] (and a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError]) whose [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint] points here, without retrying it, unless you add [`OutputModeFallback`](#output-mode-fallback). If you set a [`timeout`][pydantic_ai.settings.ModelSettings.timeout] shorter than the compilation, the request times out before the error arrives, and the Anthropic SDK retries a timed-out request, twice by default, so a run can wait several times the timeout before it fails.
+
+### Falling back to Tool Output {#output-mode-fallback}
+
+A bare structured `output_type` on a request that thinks uses Native Output, which Anthropic can reject this way even though the schema is within the explicit limits. To have Pydantic AI attempt the request again in Tool Output when that happens, add the [`OutputModeFallback`][pydantic_ai.capabilities.OutputModeFallback] capability:
+
+```python {title="output_mode_fallback.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import OutputModeFallback
+
+
+class Form(BaseModel):
+    name: str = ''
+    email: str = ''
+
+
+agent = Agent('anthropic:claude-sonnet-5', output_type=Form, capabilities=[OutputModeFallback()])
+```
+
+The second attempt stays within the same request step, on the same model, as described for [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest], so the model never sees the rejected one, and the output tool is offered as it is when an over-limit schema uses Tool Output above. The process then remembers the schema for that model and uses Tool Output for it right away, instead of waiting for the compilation to fail again. Under [durable execution](../durable_execution/overview.md), it only remembers within a run, as workflow code has to make the same choices when it's replayed. Output modes you chose, with `NativeOutput(...)` for example, are left alone. With [`ModelFallback`](../capabilities/model-fallback.md), the same model is attempted in Tool Output before the next model is.
 
 To stay within the limits, simplify the schema following [Anthropic's tips](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#tips-for-reducing-schema-complexity), such as making fields required and flattening nested models, and set `strict=True` only on the tools that need it. For a large output schema, wrap the output type in [`ToolOutput`][pydantic_ai.output.ToolOutput] without `strict=True` or in [`PromptedOutput`][pydantic_ai.output.PromptedOutput]: neither is compiled, so the model isn't constrained to the schema, and Pydantic AI validates its output and asks it to try again when validation fails.
 
