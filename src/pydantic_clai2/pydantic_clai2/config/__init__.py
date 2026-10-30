@@ -19,7 +19,8 @@ TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
 
 
 def _validate_user_path(value: str) -> str:
-    if '\0' in value or not value.strip() or (not Path(value).is_absolute() and Path(value).parts[0] != '~'):
+    path = Path(value)
+    if '\0' in value or not value.strip() or (not path.is_absolute() and path.parts[:1] != ('~',)):
         raise ValueError('Use an absolute path or a path starting with `~/`.')
     return value
 
