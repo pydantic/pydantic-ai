@@ -102,7 +102,7 @@ A run that reaches its `timeout=` stops with [`RunTimedOut`][pydantic_ai.excepti
 
 ## Falling back when a model refuses {#refusals}
 
-A model sometimes refuses a request on safety grounds that another model would carry out, as a coding agent can find when a task touches on security. Pydantic AI reports a refusal as a successful response with a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'content_filter'`, and puts the provider's explanation, where it gives one, in [`provider_details['refusal']`][pydantic_ai.messages.ModelResponse.provider_details]: Anthropic's `stop_reason: 'refusal'` with its `stop_details`, and the `refusal` that OpenAI sends in place of content. Because the request succeeded, the default `fallback_on` doesn't move on from it. Reject it with a response handler instead, listed alongside `ModelAPIError` so failed requests still fall back:
+A model sometimes refuses a request on safety grounds that another model would carry out, as a coding agent can find when a task touches on security. Pydantic AI reports a refusal as a successful response with a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'content_filter'`, and puts the provider's explanation, where it gives one, in [`provider_details['refusal']`][pydantic_ai.messages.ModelResponse.provider_details]: Anthropic's `stop_reason: 'refusal'` with its `stop_details`, and the `refusal` that OpenAI sends in place of content. Because the request succeeded, the default `fallback_on` doesn't move on from it. Reject it with a response handler instead, listed alongside `ModelAPIError` so failed requests still fall back. Here an Anthropic model refuses, and an OpenAI model takes over:
 
 ```python {title="model_fallback_on_refusal.py"}
 from pydantic_ai import Agent, ModelAPIError, ModelMessage, ModelResponse, TextPart
@@ -114,12 +114,14 @@ def refuse(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(
         parts=[],
         finish_reason='content_filter',
-        provider_details={'refusal': "I can't help with that request."},
+        provider_details={'finish_reason': 'refusal', 'refusal': "I can't help with that request."},
     )
 
 
 def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart('Here is how the exploit works, and how to patch it.')])
+    return ModelResponse(
+        parts=[TextPart("The input isn't escaped before it reaches the query; here's the fix.")]
+    )
 
 
 refusals: list[str] = []
@@ -133,27 +135,30 @@ def refused(response: ModelResponse) -> bool:
 
 
 agent = Agent(
-    # These deterministic models stand in for two providers.
-    FunctionModel(refuse, model_name='primary'),
+    # Deterministic stand-ins: an Anthropic model that refuses, and an OpenAI model that takes over.
+    FunctionModel(refuse, model_name='anthropic-stand-in'),
     capabilities=[
-        ModelFallback(FunctionModel(answer, model_name='backup'), fallback_on=[ModelAPIError, refused])
+        ModelFallback(
+            FunctionModel(answer, model_name='openai-stand-in'), fallback_on=[ModelAPIError, refused]
+        )
     ],
 )
 result = agent.run_sync('Explain the vulnerability in this code and how to fix it.')
 print(result.output)
-#> Here is how the exploit works, and how to patch it.
+#> The input isn't escaped before it reaches the query; here's the fix.
 print(result.response.model_name)
-#> backup
+#> openai-stand-in
 print(refusals)
-#> ["primary: I can't help with that request."]
+#> ["anthropic-stand-in: I can't help with that request."]
 ```
 
-[`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] records that `primary` was rejected, but not its `provider_details`, so the handler is the place to read the refusal text. The example keeps it in a list for brevity; an application would log it instead. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] takes the same `fallback_on`.
+[`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] records that the Anthropic model was rejected, but not its `provider_details`, so the handler is the place to read the refusal text. The example keeps it in a list for brevity; an application would log it instead. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] takes the same `fallback_on`.
 
 A few things to know about falling back on refusals:
 
 - **It happens per request.** When a model refuses partway through a run, only that request moves to the next model, with the run's message history so far. The responses the first model gave earlier in the run stay in the history.
-- **The handler rejects every response with that finish reason.** A refusal usually comes with no output at all, but some come with text, like a model that starts answering and then stops. Without a fallback, an empty or thinking-only refusal raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError], while one with text becomes the run's output like any other. To raise on those too, rather than fall back, add the [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
+- **Without a fallback, an empty refusal raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError].** It's an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], not a `ModelAPIError`, and so is a thinking-only refusal. Its message starts with `Content filter triggered.` and then names the reason: `Refusal: '...'` with the text from `provider_details['refusal']` for an OpenAI refusal, or `Finish reason: 'refusal'` for an Anthropic one, whose refusal text is then only in the error's `body`, the serialized response.
+- **The handler rejects every response with that finish reason.** A refusal usually comes with no output at all, but some come with text, like a model that starts answering and then stops. Without a fallback, one with text becomes the run's output like any other. To raise on those too, rather than fall back, add the [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
 - **Listing `ContentFilterError` in `fallback_on` doesn't work.** It's raised by the agent after the model's response has been accepted, not by the request, so `fallback_on=(ContentFilterError,)` never matches. Use a response handler.
 - **Response handlers don't apply to a [streamed request](#streaming).** A streamed refusal is accepted with a `UserWarning`, and an empty one then raises `ContentFilterError`. To fall back there, catch it and run again with another model passed as `model=`.
 
