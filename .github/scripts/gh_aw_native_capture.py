@@ -378,8 +378,8 @@ def main() -> None:
     packages = workspace / 'packages'
     helpers = work / 'runner' / 'gh-aw' / 'actions'
     helpers.mkdir(parents=True)
-    checksums = json.loads((assets / 'released_helpers.json').read_text())
-    download_jobs = [
+    checksums: dict[str, str] = json.loads((assets / 'released_helpers.json').read_text())
+    download_jobs: list[tuple[str, Path, str]] = [
         (
             f'https://raw.githubusercontent.com/github/gh-aw/{GHAW_SOURCE}/actions/setup/js/{name}',
             helpers / name,
@@ -463,8 +463,12 @@ Run the deterministic recorder fixture.
     (helpers / 'pydantic-ai_log_parser.cjs').write_text(compiled_parser)
     # Publish unchanged released code for the separate artifact-download consumer.
     shutil.copytree(helpers, evidence / 'released-helpers')
-    engine_version = re.search(r'^  version: "([^"]+)"$', definition, re.M)[1]
-    slim_version = re.search(r'pydantic-ai-slim\[anthropic,openai,mcp,spec\]>=([0-9.]+)', definition)[1]
+    engine_match = re.search(r'^  version: "([^"]+)"$', definition, re.M)
+    slim_match = re.search(r'pydantic-ai-slim\[anthropic,openai,mcp,spec\]>=([0-9.]+)', definition)
+    assert engine_match is not None, 'Engine definition must specify its runtime version'
+    assert slim_match is not None, 'Engine definition must specify its framework minimum'
+    engine_version = engine_match.group(1)
+    slim_version = slim_match.group(1)
     execute(
         [
             str(host_python),
@@ -492,7 +496,7 @@ Run the deterministic recorder fixture.
     marker = f'gh-aw-native-capture-{os.getpid()}-{time.time_ns()}'
     shared.mkdir(mode=0o700)
     (shared / '.native-capture-owner').write_text(marker)
-    results = []
+    results: list[dict[str, object]] = []
     try:
         for case, fail, interrupt, expected_exit in [
             ('success', '0', '0', 0),
