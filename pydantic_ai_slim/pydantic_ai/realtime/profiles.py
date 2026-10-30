@@ -7,6 +7,7 @@ from typing import Literal
 
 from typing_extensions import TypeAliasType, TypedDict
 
+from ..messages import SpeechTimestampGranularity
 from ..native_tools import AbstractNativeTool
 
 AsyncToolCallMode = TypeAliasType('AsyncToolCallMode', Literal['never', 'optional', 'always'])
@@ -159,6 +160,11 @@ class RealtimeModelProfile(TypedDict, total=False):
     operation the session can invoke. The OpenAI-protocol providers (OpenAI, Azure OpenAI, xAI) emit
     them; Gemini Live does not — a UI that shows a "listening" indicator should read this flag rather
     than wait for events that will never arrive."""
+    output_speech_timestamp_granularity: SpeechTimestampGranularity | None
+    """How finely the model reports when its speech is heard, with the
+    [`output_speech_timestamps`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps] setting on:
+    per `'word'`, per `'segment'` of one or more words, or `None` (the default) when it doesn't report it.
+    Azure AI Voice Live and ElevenLabs Agents report words."""
     synthesizes_turn_boundary: bool
     """Whether [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] is inferred
     by Pydantic AI rather than reported by the provider.
@@ -232,6 +238,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_tool_return_schema': False,
     'supported_native_tools': frozenset(),
     'emits_input_speech_events': False,
+    'output_speech_timestamp_granularity': None,
     'synthesizes_turn_boundary': False,
     'responses_are_requests': True,
     'response_usage_covers_context': True,

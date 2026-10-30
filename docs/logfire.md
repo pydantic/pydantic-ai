@@ -4,7 +4,7 @@ description: "Debug and monitor Pydantic AI agents with Pydantic Logfire or any 
 
 # Pydantic Logfire Debugging and Monitoring
 
-Once an agent is in production, its traces are how you find out why a run gave a wrong answer, took too long or cost too much. Pydantic AI emits OpenTelemetry traces of every run, model request and tool call; this page sets up [Pydantic Logfire](#pydantic-logfire) to view them, and covers [any other OpenTelemetry backend](#otel-without-logfire) too.
+While you build an agent, and once it is in production, its traces are how you find out why a run gave a wrong answer, took too long or cost too much. Pydantic AI emits OpenTelemetry traces of every run, model request and tool call; this page sets up [Pydantic Logfire](#pydantic-logfire) to view them, and covers [any other OpenTelemetry backend](#otel-without-logfire) too.
 
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.
 
@@ -21,7 +21,7 @@ LLM Observability tools that just let you understand how your model is performin
 
 ## Pydantic Logfire
 
-[Pydantic Logfire](https://pydantic.dev/logfire) is an observability platform developed by the team who created and maintain Pydantic Validation and Pydantic AI. Logfire aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs, all using OpenTelemetry.
+[Pydantic Logfire](https://pydantic.dev/logfire) is an AI engineering platform developed by the team who created and maintain Pydantic Validation and Pydantic AI. Logfire aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs, all using OpenTelemetry.
 
 !!! tip "Pydantic Logfire is a commercial product"
     Logfire is a commercially supported, hosted platform with an extremely generous and perpetual [free tier](https://pydantic.dev/pricing/).
@@ -37,7 +37,15 @@ A trace is generated for the agent run, and spans are emitted for each model req
 
 ## Using Logfire
 
-To use Logfire, you'll need a Logfire [account](https://logfire.pydantic.dev). If a coding agent is doing the setup, point it at [pydantic.dev/ai-setup.md](https://pydantic.dev/ai-setup.md), which walks it through authentication, project selection, and instrumentation. The Logfire Python SDK is included with `pydantic-ai`:
+The quickest way to start is the Logfire wizard. Run it from your project:
+
+```bash
+uvx logfire-cli wizard --task pydantic-ai
+```
+
+It signs you in (or creates a free account), picks or creates a project, and hands the instrumentation to your coding agent, which then checks that the first trace arrived. If a coding agent is already doing the setup, it can run `uvx logfire-cli --no-input --output json wizard --task pydantic-ai --print-prompt` and follow the instructions it returns.
+
+To set it up by hand instead, you'll need a Logfire [account](https://logfire.pydantic.dev). The Logfire Python SDK is included with `pydantic-ai`:
 
 ```bash
 pip/uv-add pydantic-ai
@@ -52,16 +60,14 @@ pip/uv-add "pydantic-ai-slim[logfire]"
 Then authenticate your local environment with Logfire:
 
 ```bash
-py-cli logfire auth
+uvx logfire-cli auth
 ```
 
-And configure a project to send data to:
+And connect this directory to a project to send data to, new or existing:
 
 ```bash
-py-cli logfire projects new
+uvx logfire-cli init
 ```
-
-(Or use an existing project with `logfire projects use`)
 
 This will write to a `.logfire` directory in the current working directory, which the Logfire SDK will use for configuration at run time.
 
@@ -98,6 +104,21 @@ The [Logfire documentation](https://logfire.pydantic.dev/docs/) has more details
 including how to instrument other libraries like [HTTPX](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) and [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/).
 
 Since Logfire is built on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector, see [below](#using-opentelemetry).
+
+### Use Logfire for local development, even if production uses something else {#local-development}
+
+You can use Logfire while you develop, whatever your company runs in production. Logfire's [free tier](https://pydantic.dev/pricing/) needs only a GitHub login, and setup is the two commands and two lines of code above.
+
+Pydantic AI's instrumentation is plain OpenTelemetry, so the same spans can go to your company's backend in production and to Logfire on your laptop. Tell Logfire to send only when it has a token:
+
+```python {test="skip"}
+import logfire
+
+logfire.configure(send_to_logfire='if-token-present')
+logfire.instrument_pydantic_ai()
+```
+
+On your machine, `logfire.configure()` reads the token from the `.logfire` directory that `logfire-cli init` wrote, which is gitignored. A deployment without that directory or a `LOGFIRE_TOKEN` sends nothing to Logfire (`.gitignore` does not keep it out of a Docker build context, so exclude it there too), and the Logfire SDK still exports to the backend set in the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable, as shown [below](#otel). If your application sets up its own OpenTelemetry SDK in production instead, call `logfire.configure()` and `logfire.instrument_pydantic_ai()` only when developing locally, and use [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] in production: it uses the global OpenTelemetry providers your SDK set up.
 
 ### Debugging
 
@@ -239,7 +260,7 @@ print(result.output)
 
 ### Alternative Observability backends
 
-Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just our observability platform [Pydantic Logfire](#pydantic-logfire).
+Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just [Pydantic Logfire](#pydantic-logfire).
 
 ## Advanced usage
 
@@ -516,6 +537,6 @@ See the [usage and metadata example in the agents guide](agent.md#run-metadata) 
 
 ### The first-run banner
 
-Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's shown only where someone is there to read it: when `stderr` is a terminal, or when a coding agent is running the process and reads back what it writes. It's never shown when instrumentation is configured, under `pytest`, or when `CI` is set to any value. To turn it off entirely, set `PYDANTIC_AI_NO_BANNER` to any value in the environment, or set `pydantic_ai.BANNER_ENABLED = False` before the first agent run.
+Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's shown only where someone is there to read it: when `stderr` is a terminal, or when a coding agent is running the process and reads back what it writes. It's never shown when instrumentation is configured, under `pytest`, or when `CI` is set to any value. It's also not shown for a run that an installed package (code in `site-packages`) starts by calling the agent itself, so a library or platform built on Pydantic AI doesn't show it to its own users. The next run your own code starts still gets it, as does a run that a [UI adapter](ui/overview.md) streams to your web app. To turn it off entirely, set `PYDANTIC_AI_NO_BANNER` to any value in the environment, or set `pydantic_ai.BANNER_ENABLED = False` before the first agent run.
 
 Coding agents are recognized by the environment variables they set for the purpose. That list is best-effort and will always be behind, so a harness it doesn't recognize — including one built on Pydantic AI — can set `AI_AGENT` (or `AGENT`) to be treated the same way, naming itself in the value.

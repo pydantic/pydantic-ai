@@ -56,16 +56,10 @@ __all__ = (
     'stamp_continuation_pin',
     'continuation_pin',
     'FALLBACK_MODEL_PIN_KEY',
-    'FALLBACK_CAPABILITY_PIN_KEY',
 )
 
 FALLBACK_MODEL_PIN_KEY = 'fallback_model_id'
 """Where `FallbackModel` pins a suspended response to the inner model that started it."""
-FALLBACK_CAPABILITY_PIN_KEY = 'fallback_candidate'
-"""Where the `ModelFallback` capability pins a suspended response to the candidate that served it.
-
-Separate from `FALLBACK_MODEL_PIN_KEY` so a `FallbackModel` candidate keeps its own inner pin.
-"""
 
 
 def stamp_continuation_pin(response: ModelResponse | StreamedResponse, model_id: str, *, key: str) -> None:

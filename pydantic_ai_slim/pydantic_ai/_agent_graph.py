@@ -898,8 +898,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
 
-    display_banner: _display.BannerDisplay
-    """Shows the first-run banner, once this run has resolved the model and tools it will use."""
+    display_banner: _display.BannerDisplay | None
+    """Shows the first-run banner, once this run has resolved the model and tools it will use.
+
+    `None` when an installed package started the run, which never gets a banner.
+    """
 
     agent: Agent[DepsT, Any] | None = None
 
@@ -2143,14 +2146,26 @@ def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDe
     isn't getting one counts nothing: this is on a path every run takes, and past the first one it
     comes down to reading a flag.
 
+    A run an installed package started has no `display_banner` at all: see
+    `_display.started_by_installed_package`. That doesn't spend the claim, so a process whose only
+    agents are a library's walks a few stack frames at the start of each uninstrumented run, and a
+    `run_stream_events()` stream does so when it starts whether instrumented or not, as long as no
+    banner has been shown.
+
     An instrumented run has what the banner would point it to, so it stays out of the way — without
     spending the claim, since another agent in this process may not be instrumented. `clai` differs:
     its banner is also its session header, so it shows one either way.
     """
-    if ctx.state.run_step != 1 or ctx.deps.instrumentation_settings is not None or not _display.banner_pending():
+    display_banner = ctx.deps.display_banner
+    if (
+        ctx.state.run_step != 1
+        or display_banner is None
+        or ctx.deps.instrumentation_settings is not None
+        or not _display.banner_pending()
+    ):
         return
 
-    ctx.deps.display_banner(
+    display_banner(
         model=ctx.deps.model_id or ctx.deps.model.model_id,
         tools=sum(tool_def.kind != 'output' for tool_def in ctx.deps.tool_manager.tool_defs),
     )
@@ -2186,6 +2201,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The native tool factories this request step resolved for its model, and what each resolved to."""
     _serving_model: models.Model | None = field(default=None, init=False, repr=False)
     """The model the latest attempt was sent to, with the capabilities' model wrappers."""
+    _serving_model_id: str | None = field(default=None, init=False, repr=False)
+    """The identifier of the model the latest attempt was sent to, which the response it produces records as `model_id`."""
     _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
         repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
@@ -2290,7 +2307,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         ctx, run_context, req_ctx, baseline=baseline, stream_stack=stream_stack, handoff=handoff
                     )
                     self._did_stream = True
-                    agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
+                    agent_stream = self._build_agent_stream(
+                        ctx, sr, req_ctx.model_request_parameters, model_id=self._serving_model_id
+                    )
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
                     try:
@@ -2527,8 +2546,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # leaves the capability chain suspended. Close it now that the node is done with it.
                 await agent_stream_holder[0].aclose_events()
 
-    @staticmethod
     def _commit_interrupted_response(
+        self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         streamed: _messages.ModelResponse,
         recorded: _messages.ModelResponse,
@@ -2542,6 +2561,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """
         recorded.run_id = ctx.state.run_id
         recorded.conversation_id = ctx.state.conversation_id
+        recorded.model_id = recorded.model_id or self._serving_model_id
         recorded.workspace_ref = ctx.deps.workspace_ref
         _record_billed_usage(ctx.state.usage, _billed_by_request(recorded, request_messages))
         if recorded.parts:
@@ -2555,8 +2575,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
         stream_response: models.StreamedResponse,
         model_request_parameters: models.ModelRequestParameters,
+        *,
+        model_id: str | None = None,
     ) -> result.AgentStream[DepsT, T]:
-        """Build an AgentStream from the given stream response and context."""
+        """Build an AgentStream from the given stream response and context, which came from the model `model_id` identifies."""
         return result.AgentStream[DepsT, T](
             _raw_stream_response=stream_response,
             _output_schema=ctx.deps.output_schema,
@@ -2564,6 +2586,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _output_validators=ctx.deps.output_validators,
             _run_ctx=build_run_context(ctx),
             _carried_workspace_ref=ctx.deps.carried_workspace_ref,
+            _model_id=model_id,
             _usage_limits=ctx.deps.usage_limits,
             _tool_manager=ctx.deps.tool_manager,
             _root_capability=ctx.deps.root_capability,
@@ -3149,6 +3172,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         request_context.model = attempt_model._with_serving_wrapper(wrap)  # pyright: ignore[reportPrivateUsage]
         self._serving_model = request_context.model
+        self._serving_model_id = processed_context.model_id or attempt_model.model_id
         # The wrapper is entered around each call it serves for this attempt, like a model passed to the agent is
         # around a run. One applied on this side of a durable unit only answers questions like `continuation_delay`,
         # and the unit enters the one that sends the request.
@@ -3517,8 +3541,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except exceptions.UsageLimitExceeded as limit_exceeded:
             raise limit_exceeded from unrecovered
 
-    @staticmethod
     def _append_response(
+        self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         response: _messages.ModelResponse,
         *,
@@ -3534,6 +3558,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         commits no response, so it doesn't count, though any usage it reported does.
         """
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        response.model_id = response.model_id or self._serving_model_id
         response.workspace_ref = ctx.deps.workspace_ref
         _usage_attribution.record_request(ctx.state.usage)
         if record_usage:

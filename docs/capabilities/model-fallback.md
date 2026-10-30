@@ -100,6 +100,30 @@ When every model has failed or been rejected, `ModelFallback` raises [`FallbackE
 
 A run that reaches its `timeout=` stops with [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] wherever it is, including in the middle of a candidate's request: the remaining candidates aren't attempted. Likewise, a request that exceeds the run's [usage limits](../agent.md#usage-limits) raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] whatever `fallback_on` says, as another model wouldn't change that.
 
+## In agent specs {#agent-specs}
+
+`ModelFallback` can be declared in an [agent spec](../agent-spec.md), with its models as a list of model names:
+
+```yaml {title="fallback_agent.yaml" test="skip"}
+model: {{ openai:medium }}
+capabilities:
+  - ModelFallback: [{{ anthropic:medium }}]
+```
+
+As in Python, the spec's `model:` is attempted first, and a spec without one uses the first of `ModelFallback`'s models for the first attempt.
+
+To choose when to fall back, give the models and `fallback_on` as keyword arguments. In a spec, `fallback_on` takes the names of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and its subclasses in [`pydantic_ai.exceptions`][pydantic_ai.exceptions], such as [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] and [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError]. Exception and response handlers can only be passed in Python:
+
+```yaml {title="fallback_on_agent.yaml" test="skip"}
+model: {{ openai:medium }}
+capabilities:
+  - ModelFallback:
+      models: [{{ anthropic:medium }}, {{ google:medium }}]
+      fallback_on: [ModelRateLimitError, ModelUnavailableError]
+```
+
+Model names are resolved when they're attempted, like those passed to `ModelFallback(...)`, so a spec can also list model IDs of your own that a [`ResolveModelId`](resolve-model-id.md) capability resolves, passed to [`Agent.from_spec()`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file()`][pydantic_ai.agent.Agent.from_file] with `capabilities=`.
+
 ## How attempts work
 
 Each model attempted is an *attempt* within the same request step, not a new step:
@@ -124,7 +148,7 @@ Response handlers aren't consulted for a streamed response, which is accepted as
 
 ## Continuing suspended responses
 
-Some providers suspend a response and continue it on a later request, like Anthropic's `pause_turn` or OpenAI's background mode. A suspended response `ModelFallback` accepts is pinned to the model that started it, so when a later run resumes it, the continuation goes to that model rather than to the first model in the chain. Response handlers judge the continued response like any other. If that continuation fails or is rejected, the suspended response is dropped and the turn is generated again by the next model in the chain after the one it was pinned to, as it would have been had the response failed in the run that started it. The chain doesn't start over: with [batching](../batch.md), the first model would only accept a new batch, and the request would never reach the models after it. A rejected response the provider is still working on, like a batch request that hasn't finished, has its job cancelled.
+Some providers suspend a response and continue it on a later request, like Anthropic's `pause_turn` or OpenAI's background mode. Every response records the model that served it as [`model_id`][pydantic_ai.messages.ModelResponse.model_id], so when a later run resumes a suspended response one of `ModelFallback`'s models started, the continuation goes to that model rather than to the first model in the chain. A suspended response started by a model outside the chain is continued by the step's model, as without `ModelFallback`. Response handlers judge the continued response like any other. If that continuation fails or is rejected, the suspended response is dropped and the turn is generated again by the next model in the chain after the one it was pinned to, as it would have been had the response failed in the run that started it. The chain doesn't start over: with [batching](../batch.md), the first model would only accept a new batch, and the request would never reach the models after it. A rejected response the provider is still working on, like a batch request that hasn't finished, has its job cancelled.
 
 ## Request deadlines
 

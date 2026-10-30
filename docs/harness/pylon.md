@@ -11,6 +11,8 @@ description: Connect a Pydantic AI agent to Pylon's hosted MCP server to work wi
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the Pylon capability connects to Pylon's hosted MCP server at mcp.usepylon.com with an OAuth access token, and the model sees the server's tools under the pylon_ prefix. Pylon REST API tokens are rejected. The agent sees the same issues, accounts and contacts the signed-in user sees, and read_only=True drops tools the server does not mark read-only.](../img/harness/pylon.svg)
+
 ## Before you start
 
 You need a Pylon Member or Admin seat with the `MCP Access` role; Viewer and Integration users cannot sign in. Pylon MCP takes an OAuth access token. Pylon REST API tokens do not work with it.

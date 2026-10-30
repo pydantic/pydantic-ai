@@ -108,6 +108,10 @@ agent = Agent(model=model, model_settings=bedrock_model_settings)
 
 When `trace` is set to `'enabled'` in the guardrail configuration (as in the example above), the guardrail assessment returned by Bedrock is stored verbatim under the `'trace'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], e.g. `result.all_messages()[-1].provider_details['trace']`.
 
+### Video input
+
+The Converse API takes video only on Amazon Nova. On every other family, including models that read video on other platforms (Qwen3-VL, Kimi and Nemotron Nano VL reject it on Bedrock, as do Claude, Llama 4 and Pixtral), video in the prompt raises an error, and video a tool returns is replaced by a note saying the model can't read it. A model ID the provider doesn't recognize keeps the default and is sent video.
+
 ### Output token limit
 
 When you don't set [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], Pydantic AI sends Claude's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5.5, as it does on [Anthropic](anthropic.md), so responses are only cut off at the model's own limit. Bedrock's own default can be much lower (4,096 on Claude Opus 5.5), and thinking counts toward it. An inference profile or foundation model ARN counts as the model it names. Models older than Claude Sonnet 4.5, models other than Claude, and models named by an application inference profile ARN get Bedrock's default, so set `max_tokens` yourself for those, or pass the application inference profile ARN as [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] with the base model name.
@@ -491,9 +495,6 @@ For more details on boto3 retry configuration, see the [AWS boto3 documentation]
 
 !!! note
     Unlike other providers that use httpx for HTTP requests, Bedrock uses boto3's native retry mechanisms. The retry strategies described in [Transport retries](../retries.md#transport-retries) do not apply to Bedrock.
-
-!!! warning "Keep a read timeout on Bedrock"
-    Bedrock calls boto3 from a worker thread that Pydantic AI can't interrupt, so [`request_timeout`](../timeouts.md#model-request-deadlines) and [`first_event_timeout`](../timeouts.md#waiting-for-the-first-event) can only take effect once botocore returns. They can't cut a stalled Bedrock request short, and the request then fails with botocore's own timeout as a [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] rather than `ModelRequestTimeout`. Until [#11850](https://github.com/pydantic/pydantic-ai/pull/11850) fixes this, keep `aws_read_timeout` on [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] (or `read_timeout` in your botocore `Config`) set to the longest wait you'll accept.
 
 ## Bedrock Mantle
 

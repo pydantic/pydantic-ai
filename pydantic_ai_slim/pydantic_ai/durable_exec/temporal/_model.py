@@ -446,6 +446,15 @@ class TemporalModel(WrapperModel):
             return models.Model.accepts_stateless_artifacts(self, response, part)
         return current.accepts_stateless_artifacts(response, part)
 
+    def accepts_server_state(self, response: ModelResponse) -> bool:
+        """The currently active model's answer, like `system`."""
+        current = self._current_model()
+        if isinstance(current, str):
+            # No model to ask, and the wrapped model's provider isn't the one the ID selects: judge by name alone,
+            # as `Model` does for a model without a provider.
+            return response.provider_name == self.system
+        return current.accepts_server_state(response)
+
     def _model_for_response(self, response: ModelResponse) -> models.Model:
         current = self._current_model()
         return self if isinstance(current, str) else current._model_for_response(response)

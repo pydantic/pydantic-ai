@@ -231,6 +231,8 @@ result = agent.run_sync('Find recent papers on AI safety', deps=UserContext(user
 
 Template strings are part of the spec flow, so route template-string questions here too.
 
+A spec has the same authority as the code that builds the agent: it picks the model, the capabilities, and the endpoints they connect to, such as an `MCP` server URL, `localhost` and private addresses included. Load specs only from trusted sources; if users supply them, check each spec's capabilities (`name` and `kwargs`, such as an `MCP` `url`) against what that user may use before building the agent.
+
 ## Choose or Configure Models
 
 Model strings use the `"provider:model-name"` format.
@@ -326,6 +328,8 @@ agent = Agent(
 ```
 
 `fallback_on` defaults to `ModelAPIError`; it also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass and native tool factory call (with the candidate as `ctx.model`), so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
+
+In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError]}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
 
 Good defaults:
 

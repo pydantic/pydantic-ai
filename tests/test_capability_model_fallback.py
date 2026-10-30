@@ -12,11 +12,13 @@ tool dispatch uses, and a run's cancellation.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any, cast
+from pathlib import Path
+from typing import Any, cast, get_args
 
 import anyio
 import pytest
@@ -24,6 +26,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    AgentRunResult,
     AgentStreamEvent,
     ModelMessage,
     ModelRequest,
@@ -34,8 +37,10 @@ from pydantic_ai import (
     TextPart,
     UserPromptPart,
     capture_run_messages,
+    exceptions,
     messages as _messages,
 )
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
     BatchModelRequests,
@@ -43,13 +48,16 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     ModelFallback,
     NativeTool,
+    ResolveModelId,
     SelectModel,
     WrapModelRequestHandler,
     WrapperCapability,
 )
+from pydantic_ai.capabilities.model_fallback import _SpecFallbackError  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import (
     FallbackExceptionGroup,
     ModelAPIError,
+    ModelRateLimitError,
     ModelRetry,
     RetryModelRequest,
     RunCancelled,
@@ -157,14 +165,14 @@ async def test_streaming_open_failure_falls_back():
 
 
 def _suspended_history(pinned_model_id: str) -> list[ModelMessage]:
-    """History ending in a response a provider suspended, pinned to the fallback candidate that started it."""
+    """History ending in a response a provider suspended, started by the model `pinned_model_id` identifies."""
     return [
         ModelRequest(parts=[UserPromptPart('x')]),
         ModelResponse(
             parts=[TextPart('partial')],
+            model_id=pinned_model_id,
             state='suspended',
             provider_response_id='job-1',
-            metadata={'__pydantic_ai__': {'fallback_candidate': pinned_model_id}},
         ),
     ]
 
@@ -482,7 +490,8 @@ async def test_suspended_response_is_pinned_to_the_model_that_served_it():
     suspended = messages[-1]
     assert isinstance(suspended, ModelResponse)
     assert suspended.state == 'suspended'
-    assert suspended.metadata == snapshot({'__pydantic_ai__': {'fallback_candidate': 'scripted:scripted'}})
+    assert suspended.model_id == 'scripted:scripted'
+    assert suspended.metadata is None
 
 
 async def test_complete_response_is_not_pinned():
@@ -605,14 +614,21 @@ async def test_fallback_candidates_are_entered_once_and_exited_with_the_run():
     assert events.count('request') == len([m for m in result.all_messages() if isinstance(m, ModelResponse)])
 
 
-async def test_a_pin_to_an_unknown_model_is_refused():
-    agent = Agent(FunctionModel(success, model_name='step'), capabilities=[ModelFallback(FunctionModel(success))])
-    with pytest.raises(UserError, match="started by 'function:gone'"):
-        await agent.run(message_history=_suspended_history('function:gone'))
+async def test_a_response_started_outside_the_chain_resumes_on_the_step_model():
+    """A suspended response a model outside the chain started is continued by the step's model, as without fallback."""
+    continued: list[bool] = []
+
+    def step_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        continued.append(_ends_suspended(messages))
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(step_model, model_name='step'), capabilities=[ModelFallback(FunctionModel(success))])
+    await agent.run(message_history=_suspended_history('function:gone'))
+    assert continued == [True]
 
 
 async def test_a_fallback_model_candidate_keeps_its_own_pin():
-    """`ModelFallback`'s pin sits beside `FallbackModel`'s, so a `FallbackModel` candidate still resumes on its inner model."""
+    """`ModelFallback` leaves the metadata alone, so a `FallbackModel` candidate still resumes on its inner model."""
     fallback = ModelFallback[None](TestModel())
     inner = FunctionModel(success, model_name='inner')
     ctx = RunContext[None](deps=None, model=inner, usage=RunUsage())
@@ -622,19 +638,13 @@ async def test_a_fallback_model_candidate_keeps_its_own_pin():
     response = ModelResponse(
         parts=[], state='suspended', metadata={'__pydantic_ai__': {'fallback_model_id': 'function:inner-of-inner'}}
     )
-    stamped = await fallback.after_model_request(ctx, request_context=request_context, response=response)
-    assert stamped.metadata == {
-        '__pydantic_ai__': {'fallback_model_id': 'function:inner-of-inner', 'fallback_candidate': inner.model_id}
-    }
+    accepted = await fallback.after_model_request(ctx, request_context=request_context, response=response)
+    assert accepted.metadata == {'__pydantic_ai__': {'fallback_model_id': 'function:inner-of-inner'}}
 
 
 def test_fallback_requires_a_model():
     with pytest.raises(UserError, match='requires at least one model'):
         ModelFallback()
-
-
-def test_fallback_is_not_spec_serializable():
-    assert ModelFallback.get_serialization_name() is None
 
 
 async def test_an_error_fallback_on_does_not_match_propagates():
@@ -731,8 +741,8 @@ async def test_a_rejected_resumed_continuation_describes_only_what_this_run_bill
             parts=[TextPart('old')],
             model_name='primary',
             state='suspended',
+            model_id=primary_model.model_id,
             usage=RequestUsage(input_tokens=100, output_tokens=10),
-            metadata={'__pydantic_ai__': {'fallback_candidate': primary_model.model_id}},
         ),
     ]
     agent = Agent(
@@ -2005,12 +2015,12 @@ async def test_a_failed_batch_moves_on_down_the_chain_across_resumed_runs():
         runs.append(await batched_agent().run(message_history=runs[-1].all_messages()))
 
     assert runs[-1].output == 'success (no tool calls)'
-    # The model each pending run ended waiting on, as its response is pinned to.
-    assert [
-        (run.output.response.metadata or {}).get('__pydantic_ai__', {}).get('fallback_candidate')
-        for run in runs
-        if isinstance(run.output, PendingModelResponse)
-    ] == ['test:primary', 'test:second', 'test:third']
+    # The model each pending run ended waiting on, as its response records.
+    assert [run.output.response.model_id for run in runs if isinstance(run.output, PendingModelResponse)] == [
+        'test:primary',
+        'test:second',
+        'test:third',
+    ]
     # Every model got one batch: none was submitted to again after its result failed.
     assert (len(primary.created), len(second.created), len(third.created)) == (1, 1, 1)
 
@@ -2086,9 +2096,7 @@ async def test_a_rejected_pending_batch_request_is_withdrawn_once():
     assert judged == ['suspended', 'suspended']
     assert primary.canceled == [batch.id for batch in primary.created]
     assert (len(primary.created), len(backup.created), backup.canceled) == (1, 1, [])
-    assert (pending.output.response.metadata or {}).get('__pydantic_ai__', {}).get('fallback_candidate') == (
-        'test:backup'
-    )
+    assert pending.output.response.model_id == 'test:backup'
 
     # The fallback's batch request was left for a later run, which collects it.
     result = await batched_agent().run(message_history=pending.all_messages())
@@ -2137,3 +2145,168 @@ async def test_the_answer_that_crosses_a_token_limit_after_a_fallback_is_kept_as
     assert [(attempt.model_name, attempt.outcome) for attempt in response.failed_attempts or []] == [
         ('primary', 'rejected')
     ]
+
+
+# --- Agent specs ---
+
+
+def rate_limited(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelRateLimitError(model_name='m', message='slow down')
+
+
+def spec_models() -> ResolveModelId[Any]:
+    """Resolves the aliases a spec names to `FunctionModel`s, which a spec can't name directly."""
+    models = {
+        'failing': FunctionModel(failure, model_name='failing'),
+        'rate-limited': FunctionModel(rate_limited, model_name='rate-limited'),
+        'working': FunctionModel(success, model_name='working'),
+    }
+    return ResolveModelId(lambda ctx, model_id: models.get(model_id))
+
+
+def attempted_models(result: AgentRunResult[Any]) -> list[str | None]:
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    return [attempt.model_name for attempt in response.failed_attempts or []] + [response.model_name]
+
+
+@pytest.mark.parametrize(
+    'spec',
+    [
+        pytest.param({'ModelFallback': ['failing', 'working']}, id='list'),
+        pytest.param({'ModelFallback': {'models': ['failing', 'working']}}, id='mapping'),
+        pytest.param(
+            {'ModelFallback': {'models': ['failing', 'working'], 'fallback_on': ['ModelAPIError']}}, id='fallback_on'
+        ),
+    ],
+)
+async def test_spec_without_model_attempts_each_alias_in_turn(spec: dict[str, Any]):
+    """A spec without `model:` has its first candidate supply the model, as in Python, with aliases resolved lazily."""
+    agent = Agent.from_spec({'capabilities': [spec]}, capabilities=[spec_models()])
+    result = await agent.run('x')
+    assert result.output == 'hello'
+    assert attempted_models(result) == ['failing', 'working']
+
+
+async def test_spec_model_is_attempted_before_the_fallback():
+    agent = Agent.from_spec(
+        {'model': 'failing', 'capabilities': [{'ModelFallback': 'working'}]}, capabilities=[spec_models()]
+    )
+    result = await agent.run('x')
+    assert attempted_models(result) == ['failing', 'working']
+
+    # A run-level model still outranks the spec's, and falls back the same way.
+    result = await agent.run('x', model='rate-limited')
+    assert attempted_models(result) == ['rate-limited', 'working']
+
+
+@pytest.mark.parametrize('fallback_on', ['ModelRateLimitError', ['ModelUnavailableError', 'ModelRateLimitError']])
+async def test_spec_fallback_on_names_only_fall_back_on_those_errors(fallback_on: str | list[str]):
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['working'], 'fallback_on': fallback_on}}]},
+        capabilities=[spec_models()],
+    )
+    result = await agent.run('x', model='rate-limited')
+    assert attempted_models(result) == ['rate-limited', 'working']
+
+    with pytest.raises(ModelAPIError, match='boom'):
+        await agent.run('x', model='failing')
+
+
+def test_spec_fallback_on_names_every_public_model_api_error():
+    """Every public `ModelAPIError` class can be named in a spec, and nothing else can."""
+    public_errors = {
+        name
+        for name in exceptions.__all__
+        if isinstance(cls := getattr(exceptions, name), type) and issubclass(cls, ModelAPIError)
+    }
+    assert set(get_args(_SpecFallbackError)) == public_errors
+
+
+@pytest.mark.parametrize(
+    'spec, message',
+    [
+        pytest.param(
+            {'ModelFallback': {'models': ['working'], 'fallback_on': ['ModelRateLimitError', 'UserError']}},
+            "`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, got ['UserError']. "
+            'Valid names: ModelAPIError, ModelHTTPError, ',
+            id='not-a-model-api-error',
+        ),
+        pytest.param(
+            {'ModelFallback': {'models': ['working'], 'fallback_on': 'TimeoutError'}},
+            "got ['TimeoutError']",
+            id='builtin',
+        ),
+        pytest.param(
+            {'ModelFallback': {'models': ['working'], 'fallback_on': [{'ModelRateLimitError': None}]}},
+            "got [{'ModelRateLimitError': None}]",
+            id='not-a-name',
+        ),
+        pytest.param(
+            {'ModelFallback': {'models': ['working'], 'fallback_on': []}},
+            '`ModelFallback` created with an empty `fallback_on`',
+            id='empty-fallback-on',
+        ),
+        pytest.param({'ModelFallback': []}, '`ModelFallback` requires at least one model', id='no-models'),
+        pytest.param(
+            {'ModelFallback': {'models': {'working': 'test'}}},
+            "`ModelFallback` `models` in an agent spec must be a name or a list of names, got {'working': 'test'}.",
+            id='models-mapping',
+        ),
+        pytest.param(
+            {'ModelFallback': {'models': ['working'], 'fallback_on': {'ModelRateLimitError': False}}},
+            '`ModelFallback` `fallback_on` in an agent spec must be a name or a list of names, '
+            "got {'ModelRateLimitError': False}.",
+            id='fallback-on-mapping',
+        ),
+        pytest.param(
+            {'ModelFallback': ['working', {'name': 'other'}]},
+            "`ModelFallback` in an agent spec takes model names, got [{'name': 'other'}].",
+            id='not-a-model-name',
+        ),
+    ],
+)
+def test_spec_rejects_invalid_arguments(spec: dict[str, Any], message: str):
+    with pytest.raises(ValueError, match=re.escape(message)):
+        Agent.from_spec({'model': 'test', 'capabilities': [spec]})
+
+
+@pytest.mark.parametrize('suffix', ['yaml', 'json'])
+@pytest.mark.parametrize(
+    'capability',
+    [
+        pytest.param({'ModelFallback': ['failing', 'working']}, id='list'),
+        pytest.param(
+            {'ModelFallback': {'models': ['failing', 'working'], 'fallback_on': ['ModelAPIError']}}, id='mapping'
+        ),
+    ],
+)
+def test_spec_file_round_trip(tmp_path: Path, suffix: str, capability: dict[str, Any]):
+    path = tmp_path / f'agent.{suffix}'
+    AgentSpec.model_validate({'capabilities': [capability]}).to_file(path)
+
+    loaded = AgentSpec.from_file(path)
+    assert loaded.model_dump(include={'capabilities'}, context={'use_short_form': True}) == {
+        'capabilities': [capability]
+    }
+
+    agent = Agent.from_file(path, capabilities=[spec_models()])
+    result = agent.run_sync('x')
+    assert attempted_models(result) == ['failing', 'working']
+
+
+async def test_run_spec_adds_the_fallback():
+    agent = Agent('failing', capabilities=[spec_models()])
+    with pytest.raises(ModelAPIError, match='boom'):
+        await agent.run('x')
+
+    result = await agent.run('x', spec={'capabilities': [{'ModelFallback': ['working']}]})
+    assert attempted_models(result) == ['failing', 'working']
+
+
+async def test_override_spec_sets_the_fallback():
+    agent = Agent(FunctionModel(failure, model_name='failing'))
+    with agent.override(spec={'capabilities': [{'ModelFallback': ['test']}]}):
+        result = await agent.run('x')
+    assert result.output == 'success (no tool calls)'
+    assert attempted_models(result) == ['failing', 'test']

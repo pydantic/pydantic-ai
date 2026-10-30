@@ -1,16 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
-from pydantic_ai._fallback import (
-    FALLBACK_CAPABILITY_PIN_KEY,
-    FallbackChain,
-    FallbackOn,
-    FallbackPredicates,
-    continuation_pin,
-    stamp_continuation_pin,
-)
+from pydantic_ai import exceptions
+from pydantic_ai._fallback import FallbackChain, FallbackOn, FallbackPredicates
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelResponse
@@ -21,12 +16,32 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from .abstract import AbstractCapability, AgentModel, CapabilityOrdering
 
 if TYPE_CHECKING:
-    from typing import Any
-
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import ModelRequestContext
 
 __all__ = ('ModelFallback',)
+
+_SpecFallbackError = Literal[
+    'ModelAPIError',
+    'ModelHTTPError',
+    'ModelRateLimitError',
+    'ModelQuotaExceededError',
+    'ModelUnavailableError',
+    'ModelOverloadedError',
+    'ModelServerError',
+    'ModelConnectionError',
+    'ModelTimeoutError',
+    'ModelRequestRejectedError',
+    'ModelContextWindowExceededError',
+    'ModelAuthenticationError',
+    'ModelNotFoundError',
+    'ModelRequestTimeout',
+]
+"""The exceptions an agent spec can name in `ModelFallback`'s `fallback_on`: every public `ModelAPIError` class."""
+
+_SPEC_FALLBACK_ERRORS: dict[str, type[ModelAPIError]] = {
+    name: getattr(exceptions, name) for name in get_args(_SpecFallbackError)
+}
 
 
 @dataclass(init=False)
@@ -170,7 +185,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Note the model about to be attempted, routing a resumed continuation to the model it's pinned to.
+        """Note the model about to be attempted, routing a resumed continuation to the candidate that started it.
 
         Every attempt is noted here, whichever capability asked for it, so a model that was already
         attempted this step is never picked again.
@@ -191,23 +206,16 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             and messages
             and isinstance(last := messages[-1], ModelResponse)
             and last.state == 'suspended'
-            and (pin := continuation_pin(last, key=FALLBACK_CAPABILITY_PIN_KEY)) is not None
+            and last.model_id is not None
+            and (index := next((i for i, model in enumerate(self.models) if _pin_id(model) == last.model_id), None))
+            is not None
         ):
-            # A resumed suspended response pinned to one of this capability's models, or to the step's model alone.
-            # Should its continuation fail, the chain moves on from the model it's pinned to, like it would have when
-            # the job was started, instead of starting over with a model that would just start another. That holds
-            # whether or not the step's model already is that model.
-            index = next((index for index, candidate in enumerate(self.models) if _pin_id(candidate) == pin), None)
-            if pin == _pin_id(request_context.model_id or request_context.model):
-                self._cursor = (-1 if index is None else index) + 1
-            elif index is None:
-                raise UserError(
-                    f'Cannot resume this suspended response: it was started by {pin!r}, which is neither the '
-                    "model selected for this step nor one of `ModelFallback`'s models. Pass that model explicitly to "
-                    '`run(model=...)` when resuming.'
-                )
-            else:
-                self._cursor = index + 1
+            # A resumed suspended response started by one of this capability's models. Should its continuation fail,
+            # the chain moves on from that model, like it would have when the job was started, instead of starting
+            # over with a model that would just start another. That holds whether or not the step's model already is
+            # that model. A response started by a model outside the chain continues on the step's model.
+            self._cursor = index + 1
+            if last.model_id != _pin_id(request_context.model_id or request_context.model):
                 self._pin_checked = True
                 # The step would continue a provider-side job on a model other than the one that started it; send
                 # it to that model instead, before anything is sent.
@@ -249,14 +257,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             # the response handlers, with a warning when there are any, as `FallbackModel` does.
             self._chain.warn_if_streamed_responses_unjudged()
         if request_context.streaming or not await self._chain.falls_back(response):
-            if response.state == 'suspended':
-                # Its continuation, in this run or a later one that resumes it, has to go back to the
-                # model that started the provider-side job, not to the top of the chain.
-                stamp_continuation_pin(
-                    response,
-                    _pin_id(request_context.model_id or request_context.model),
-                    key=FALLBACK_CAPABILITY_PIN_KEY,
-                )
+            # A suspended response's continuation, in this run or a later one that resumes it, goes back to the
+            # model that started the provider-side job, which the agent records as the response's `model_id`.
             return response
         # The core records a rejected response's tokens and cost before the next attempt, so a
         # rejected generation is still paid for in `RunUsage` even though it never enters history,
@@ -290,10 +292,63 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         return False
 
     @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return None  # Not spec-serializable (may hold `Model` instances and callables)
+    def from_spec(
+        cls,
+        models: KnownModelName | str | Sequence[KnownModelName | str],
+        *,
+        fallback_on: _SpecFallbackError | Sequence[_SpecFallbackError] = 'ModelAPIError',
+    ) -> ModelFallback[Any]:
+        """Build from an agent spec, which names the models and the exceptions to fall back on.
+
+        Model names are kept as given and resolved when the agent attempts them, as a model name passed to
+        `ModelFallback(...)` is, so a [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability's
+        aliases work in a spec too. `fallback_on` takes the names of exception classes in
+        [`pydantic_ai.exceptions`][pydantic_ai.exceptions] that subclass
+        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]; exception and response handlers can only be
+        passed to `ModelFallback(...)` directly.
+
+        YAML form:
+
+            capabilities:
+              - ModelFallback: [anthropic:claude-opus-5-5, openai:gpt-6.1-sol]
+              - ModelFallback:
+                  models: [anthropic:claude-opus-5-5]
+                  fallback_on: [ModelRateLimitError, ModelUnavailableError]
+        """
+        # Spec arguments reach here unvalidated: the annotations above are what the published spec schema
+        # advertises, not something that rejects other values on the way in.
+        given_models = _spec_list(models, 'models')
+        model_names = [model for model in given_models if isinstance(model, str)]
+        if len(model_names) != len(given_models):
+            invalid = [model for model in given_models if not isinstance(model, str)]
+            raise UserError(f'`ModelFallback` in an agent spec takes model names, got {invalid!r}.')
+        given_errors = _spec_list(fallback_on, 'fallback_on')
+        error_types = [
+            _SPEC_FALLBACK_ERRORS[name]
+            for name in given_errors
+            if isinstance(name, str) and name in _SPEC_FALLBACK_ERRORS
+        ]
+        if len(error_types) != len(given_errors):
+            unknown = [name for name in given_errors if not (isinstance(name, str) and name in _SPEC_FALLBACK_ERRORS)]
+            raise UserError(
+                f'`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, '
+                f'got {unknown!r}. Valid names: {", ".join(_SPEC_FALLBACK_ERRORS)}.'
+            )
+        return cls(*model_names, fallback_on=tuple(error_types))
+
+
+def _spec_list(value: object, name: str) -> Sequence[object]:
+    """A `ModelFallback` spec argument given as one name or a list of them, as a list.
+
+    Anything else, like a mapping, whose keys iterating would silently take as the names, is rejected.
+    """
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Sequence):
+        return cast(Sequence[object], value)
+    raise UserError(f'`ModelFallback` `{name}` in an agent spec must be a name or a list of names, got {value!r}.')
 
 
 def _pin_id(model: Model | str) -> str:
-    """How a candidate is identified in a continuation pin: the string it was given as, or its `model_id`."""
+    """How a candidate is identified in a response's `model_id`: the string it was given as, or its `model_id`."""
     return model if isinstance(model, str) else model.model_id

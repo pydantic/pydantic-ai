@@ -188,6 +188,10 @@ class FallbackModel(Model):
         """The first model's answer, like `canonical_system`."""
         return self.models[0].accepts_stateless_artifacts(response, part)
 
+    def accepts_server_state(self, response: ModelResponse) -> bool:
+        """The first model's answer, like `canonical_system`."""
+        return self.models[0].accepts_server_state(response)
+
     def _model_for_response(self, response: ModelResponse) -> Model:
         # A model with the response's provider name and canonical system: two models can share a name and differ
         # in system, like a `GoogleProvider` on the Gemini API and one on Google Cloud. The response doesn't say

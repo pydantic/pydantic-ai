@@ -166,15 +166,15 @@ async def test_a_slow_notice_outlives_the_naming_timeout(tmp_path: Path) -> None
     summary = await store.save(
         summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart('fix renderer')])]
     )
-    entered, release, done = anyio.Event(), anyio.Event(), anyio.Event()
+    done = anyio.Event()
     notified: list[tuple[str, str]] = []
+    deadlines: list[float] = []
 
     async def generate(prompt: str) -> NamingResult:
         return NamingResult(name=SessionName(title='Fix renderer'))
 
     async def on_named(conversation_id: str, title: str) -> None:
-        entered.set()
-        await release.wait()
+        deadlines.append(anyio.current_effective_deadline())
         notified.append((conversation_id, title))
         done.set()
 
@@ -182,21 +182,20 @@ async def test_a_slow_notice_outlives_the_naming_timeout(tmp_path: Path) -> None
         summary=ConversationSummary(workspace='/a', title_source='user'),
         messages=[ModelRequest(parts=[UserPromptPart('keep my title')])],
     )
-    namer, client = SessionNamer(store=store, timeout=0.01), NamingClient(generate=generate)
+    namer, client = SessionNamer(store=store, timeout=5), NamingClient(generate=generate)
     namer.listeners.append(on_named)
     # A conversation that needs no name saves nothing, so the shell hears nothing about it.
     assert namer.submit(named_by_user.id, client=client)
     assert namer.submit(summary.id, client=client)
     with anyio.fail_after(10):
+        outer = anyio.current_effective_deadline()
         async with anyio.create_task_group() as group:
             group.start_soon(namer.run)
-            # Hold the notice, once it is waiting, past the naming timeout.
-            await entered.wait()
-            await anyio.sleep(0.05)
-            release.set()
             await done.wait()
             group.cancel_scope.cancel()
     assert notified == [(summary.id, 'Fix renderer')]
+    # The notice runs outside the naming timeout, under only its caller's deadline, so holding it costs nothing.
+    assert deadlines == [outer]
 
 
 async def test_one_worker_names_each_conversation_with_the_model_of_the_session_that_queued_it(

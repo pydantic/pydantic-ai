@@ -1,10 +1,12 @@
 ---
-description: "Find supported model developers, cloud platforms, inference services, gateways and local servers, with setup guides, model selection and fallback configuration."
+description: "Pydantic AI is model-agnostic: switch between OpenAI, Anthropic, Gemini, Amazon Bedrock, Google Vertex AI, Azure OpenAI and local models by changing one string. Find each provider's setup guide, model selection and fallback configuration."
 ---
 
 # Models and Providers
 
 Pydantic AI supports model developers, cloud platforms, inference services, gateways, and local model servers. Find your service below and follow its setup guide for installation, authentication, and supported features.
+
+Pydantic AI is model-agnostic: switch an agent between OpenAI, Anthropic, Gemini, Amazon Bedrock, Google Vertex AI, Azure OpenAI and local models by changing one string, without rewriting the agent. It runs on [Azure OpenAI](azure.md), [Amazon Bedrock](bedrock.md) and [Google Vertex AI](google-cloud.md) with your cloud's own credentials.
 
 To keep an agent running when a provider fails, give it other models to fall back to with the [`ModelFallback`](../capabilities/model-fallback.md) capability: see [Fallback Model](#fallback-model).
 
@@ -508,6 +510,7 @@ print(response.all_messages())
         parts=[TextPart(content='The capital of France is Paris.')],
         usage=RequestUsage(cost=Decimal('0.000182'), input_tokens=56, output_tokens=7),
         model_name='{{ anthropic:medium.name }}',
+        model_id='fallback:{{ openai:medium }},{{ anthropic:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
