@@ -109,6 +109,12 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
     },
     {
+      "against": "v2.63.0",
+      "fingerprint": "16217ea4bc0fbcbab46f0c1380a34f28563ee8bcb966d04ebb8ba5485b4e14cb",
+      "reason": "Adds the new `first_event_timeout` model setting to `ModelSettingName`; every existing name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11582"
+    },
+    {
       "against": "v2.60.0",
       "fingerprint": "6cb62e895d59e4833ada607bf2b29b5f945b323505351947e51eaa9f601b6056",
       "reason": "Adds the new `citations` model setting to `ModelSettingName`; every existing name is unchanged.",
