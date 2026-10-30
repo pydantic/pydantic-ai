@@ -1980,6 +1980,21 @@ class TestLostJob:
         assert await ts.stop_command(ctx, command_id) == '(no output)\n[stopped]'
         await _wait_for_exit(command_pid)
 
+    async def test_a_live_job_launched_with_another_time_zone_is_running(self, shell_dir: Path) -> None:
+        # The job is launched with the command's `env` and checked without it. Where its start time comes from `ps`,
+        # which writes it in local time, the two must still agree.
+        ts = _env_toolset(shell_dir, env={'TZ': 'Asia/Tokyo'})
+        ctx = _ctx(shell_dir)
+        command_id = _parse_command_id(await ts.start_command(ctx, 'exec sleep 300'))
+        job = await _job(ts, ctx, command_id)
+        assert job.pgid is not None
+        # Without a process group of its own, only the wrapper's start time says whether the job is left.
+        (Path(job.directory) / 'handle').write_text(f'{job.pid} -\n')
+        try:
+            assert await ts.check_command(ctx, command_id) == '(no output yet)\n[status: running]'
+        finally:
+            await _kill_group(job.pgid)
+
     async def test_a_job_finishing_during_the_check_is_finished(
         self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

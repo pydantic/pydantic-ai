@@ -141,15 +141,16 @@ _IDENTITY_FUNCTION = """identity() {
     stat=${stat##*) }
     set -- "$1" $stat
     echo "$1 $boot ${21}"
-  elif start=$(ps -o lstart= -p "$1" 2> /dev/null) && [ -n "$start" ]; then
+  elif start=$(LC_ALL=C TZ=UTC0 ps -o lstart= -p "$1" 2> /dev/null) && [ -n "$start" ]; then
     echo "$1 $start"
   fi
 }"""
 """Print what tells process `$1` apart from any later process given the same PID, or nothing when it is gone.
 
 That is its start time: from `/proc` with the boot ID, in clock ticks since boot (field 22 of `stat`, read after
-the command name, which can hold spaces), else from `ps`, to the second. A workspace with neither prints nothing
-at launch, and its jobs are then only checked for having any process left.
+the command name, which can hold spaces), else from `ps`, to the second, in a fixed locale and time zone so a
+command's `env` can't change how it is written. A workspace with neither prints nothing at launch, and its jobs
+are then only checked for having any process left.
 """
 
 _ALIVE_SCRIPT = f"""{_IDENTITY_FUNCTION}
