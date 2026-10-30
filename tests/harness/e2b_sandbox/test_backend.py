@@ -10,6 +10,7 @@ import shlex
 import shutil
 import sys
 import tempfile
+import types
 from functools import partial
 from pathlib import Path
 from typing import IO, Any
@@ -650,26 +651,37 @@ class TestIdleTimeout:
         assert fake_e2b.create_calls[-1].timeout == 60
         assert fake_e2b.connect_calls == [('sbx-keep', 30)]
 
-    async def test_operations_extend_the_timeout_once_half_is_used(self, fake_e2b: FakeE2B) -> None:
+    @pytest.fixture
+    def clock(self, monkeypatch: pytest.MonkeyPatch) -> list[float]:
+        """The backend's monotonic clock, which a test advances by hand; the event loop keeps the real one."""
+        now = [1_000.0]
+        monkeypatch.setattr(
+            'pydantic_ai_harness.e2b_sandbox._backend.time', types.SimpleNamespace(monotonic=lambda: now[0])
+        )
+        return now
+
+    async def test_operations_extend_the_timeout_once_a_tenth_is_used(
+        self, fake_e2b: FakeE2B, clock: list[float]
+    ) -> None:
         backend = await started(idle_timeout=60)
+        clock[0] += 5
         await backend.run(['true'])
-        # Just created with 60 seconds, so nothing is extended yet.
         assert fake_e2b.set_timeout_calls == []
-        backend._expires_at = 0.0  # pyright: ignore[reportPrivateUsage]
+        clock[0] += 2
         await backend.run(['true'])
         await backend.write_bytes('/tmp/file', b'data')
         assert fake_e2b.set_timeout_calls == [('sbx-1', 60)]
 
-    async def test_extension_stops_at_the_sandbox_timeout(self, fake_e2b: FakeE2B) -> None:
+    async def test_extension_stops_at_the_sandbox_timeout(self, fake_e2b: FakeE2B, clock: list[float]) -> None:
         # A sandbox passed in has an unknown lifetime, so its first operation extends it.
-        backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'), sandbox_timeout=100, idle_timeout=600)  # pyright: ignore[reportArgumentType]
+        backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'), sandbox_timeout=100, idle_timeout=60)  # pyright: ignore[reportArgumentType]
         await backend.run(['true'])
-        [(_, extended)] = fake_e2b.set_timeout_calls
-        assert 98 <= extended <= 100
-        backend._expires_at = 0.0  # pyright: ignore[reportPrivateUsage]
-        backend._deadline = 0.0  # pyright: ignore[reportPrivateUsage]
+        clock[0] += 50
         await backend.run(['true'])
-        assert len(fake_e2b.set_timeout_calls) == 1
+        clock[0] += 20
+        await backend.run(['true'])
+        # The second extension already reaches the deadline 100 seconds after construction.
+        assert fake_e2b.set_timeout_calls == [('sbx-own', 60), ('sbx-own', 50)]
 
     async def test_a_long_command_extends_the_timeout_and_a_failed_extension_is_retried(
         self, fake_e2b: FakeE2B

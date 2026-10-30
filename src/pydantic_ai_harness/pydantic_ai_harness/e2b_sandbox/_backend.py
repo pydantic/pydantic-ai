@@ -337,14 +337,19 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         return min(self._idle_timeout, self._sandbox_timeout)
 
     async def _keep_alive(self, sandbox: e2b.AsyncSandbox) -> None:
-        """Reset an `idle_timeout` once less than half of it is left, up to the `sandbox_timeout` deadline."""
+        """Reset an `idle_timeout`, up to the `sandbox_timeout` deadline.
+
+        At most once per tenth of it, so a busy run makes few `set_timeout` requests and an unused
+        sandbox still pauses between 90% and 100% of `idle_timeout` after its last use.
+        """
         if self._idle_timeout is None:
             return
         now = time.monotonic()
-        if self._expires_at - now > self._idle_timeout / 2:
+        if self._expires_at - now > self._idle_timeout * 0.9:
             return
         timeout = min(self._idle_timeout, int(self._deadline - now))
-        if timeout < 1:
+        # Nothing to gain at the deadline, where the last extension already reaches it.
+        if timeout < 1 or now + timeout < self._expires_at + 1:
             return
         try:
             await sandbox.set_timeout(timeout)
@@ -359,7 +364,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         assert self._idle_timeout is not None
         while True:
             await self._keep_alive(sandbox)
-            await asyncio.sleep(self._idle_timeout / 2)
+            # Wakes with at least a quarter of the idle time left, so the extension lands before E2B pauses.
+            await asyncio.sleep(self._idle_timeout / 4)
 
     async def _acquire_detached(self) -> e2b.AsyncSandbox:
         try:
