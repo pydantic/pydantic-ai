@@ -138,6 +138,8 @@ An integer applies the same threshold to every model. For independent thresholds
 
 An explicit model passed through `run(model=...)` or `run(spec=...)` emits a warning naming the disabled threshold. Configure the starting model on the agent and let `ModelFallback` control selection to enable output switching.
 
+With `run(spec=...)`, a spec's `model:` is an explicit run choice, so a spec containing both it and an output threshold cannot enable output switching. Load that spec with [`Agent.from_spec()`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file()`][pydantic_ai.agent.Agent.from_file] to use its `model:` as the agent's default instead.
+
 Configure `retries={'output': ...}` explicitly to allow the desired switches and any retries on the final model. `output_retry_threshold` does not replenish that allowance, change per-output-tool overrides, or bypass usage limits. Request-hook retries consume the same output retry allowance without advancing this policy, so no threshold guarantees that a later candidate is reached.
 
 The policy state is isolated per run. Passing saved message history into a new run starts the policy afresh. Under durable execution, the switch is preserved across recovery and replay.

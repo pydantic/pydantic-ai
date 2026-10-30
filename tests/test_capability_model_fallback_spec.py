@@ -18,13 +18,20 @@ def test_invalid_output_retry_threshold_in_spec(threshold: object) -> None:
 
 
 @pytest.mark.parametrize('per_model', [False, True])
-async def test_output_fallback_spec_roundtrip_and_custom_ids(per_model: bool) -> None:
+@pytest.mark.parametrize('initial_model', [False, True])
+async def test_output_fallback_spec_roundtrip_and_custom_ids(per_model: bool, initial_model: bool) -> None:
     policy: int | dict[str, int] = {'app:first': 2} if per_model else 2
     specification = AgentSpec.model_validate(
         {
+            'model': 'app:first' if initial_model else None,
             'retries': {'output': 2},
             'capabilities': [
-                {'ModelFallback': {'models': ['app:first', 'app:next'], 'output_retry_threshold': policy}},
+                {
+                    'ModelFallback': {
+                        'models': ['app:next'] if initial_model else ['app:first', 'app:next'],
+                        'output_retry_threshold': policy,
+                    }
+                },
             ],
         }
     )

@@ -113,7 +113,7 @@ async def test_override_and_capability_composition_do_not_warn(source: Literal['
 
 async def test_warning_does_not_query_model_contributions(mocker: MockerFixture) -> None:
     fallback = ModelFallback[object](TestModel(), output_retry_threshold=1)
-    getter = mocker.spy(fallback, 'get_model')
+    getter = mocker.patch.object(fallback, 'get_model', wraps=fallback.get_model)
     capabilities: list[AbstractCapability[object]] = [fallback]
     agent = Agent(TestModel(), deps_type=object, capabilities=capabilities)
     getter.reset_mock()
