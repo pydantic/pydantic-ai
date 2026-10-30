@@ -570,19 +570,20 @@ def _job_id(ctx: RunContext[AgentDepsT], command: str) -> str | None:
 def _response_key(ctx: RunContext[AgentDepsT], tool_call_id: str) -> str | None:
     """What names the model response holding call `tool_call_id`, the same each time the call runs.
 
-    That is the run ID and timestamp the agent gave the last response in the history to hold the call, which a
-    continued conversation keeps as they were. Where the history doesn't hold the call, as inside a Temporal
-    activity, which doesn't carry it, the run's ID and step stand in, the same for a retried activity.
+    That is the run ID and timestamp the agent gave the history's last response, the one whose calls are running,
+    which a continued conversation keeps as they were. Where that response doesn't hold the call, as for a call a
+    tool makes itself, or there is no history, as inside a Temporal activity, which doesn't carry it, the run's
+    ID and step stand in, the same for a retried activity.
     """
     try:
         messages = ctx.messages
     except UserError:  # a run context rebuilt in a durable unit carries no history
         messages = []
-    for message in reversed(messages):
-        if isinstance(message, ModelResponse) and any(
-            isinstance(part, ToolCallPart) and part.tool_call_id == tool_call_id for part in message.parts
-        ):
-            return f'{message.run_id}:{message.timestamp.isoformat()}'
+    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+    if response is not None and any(
+        isinstance(part, ToolCallPart) and part.tool_call_id == tool_call_id for part in response.parts
+    ):
+        return f'{response.run_id}:{response.timestamp.isoformat()}'
     return None if ctx.run_id is None else f'{ctx.run_id}:{ctx.run_step}'
 
 
