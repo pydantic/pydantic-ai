@@ -172,14 +172,19 @@ delete its source file yourself to remove it from disk.
 
 ### Repository instruction boundaries
 
-Use the built-in repo_context plugin's `walk_up` option to enable ancestor instructions; its default is false.
-Set the inclusive stop with `/set repo_context.walk_up_root /srv/projects` (default `~`, home).
-Authorize shared instruction targets with `/set repo_context.autoload_symlink_roots '["~/agent-context"]'` (default `[]`).
-Use absolute paths, `~`, or `~/...`; quote paths containing spaces and single-quote the whole JSON list.
-Keep these user-only settings out of plugin JSON and `.clai/settings.json`; changes apply next run.
-Choose a directory containing only trusted instructions, not `/` or all of home.
-See the user reference's Repository instructions section for setup and path rules.
-See [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks) for loading and backend requirements.
+Use the built-in repo_context plugin's `walk_up` option to enable ancestor
+instructions; its default is false. Set the inclusive stop with
+`/set repo_context.walk_up_root /srv/projects` (default `~`, home). Authorize
+shared instruction targets with
+`/set repo_context.autoload_symlink_roots '["~/agent-context"]'` (default `[]`).
+
+Use absolute paths, `~`, or `~/...`; quote paths containing spaces and
+single-quote the whole JSON list. Keep these user-only settings out of plugin
+JSON and `.clai/settings.json`; changes apply next run. Choose a directory
+containing only trusted instructions, not `/` or all of home. See the user
+reference's Repository instructions section for setup and path rules, and
+[Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
+for loading and backend requirements.
 
 ### Git plugins
 

@@ -8,12 +8,11 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.repo_context import RepoContext
-from pydantic_clai2.config import Settings
 from pydantic_clai2.plugins import DepsT, Plugin
 from pydantic_clai2.runtime.session import WorkspacelessCapability, supports_local_workspace
 
@@ -47,17 +46,18 @@ class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
 
     def _for_run(self, _ctx: RunContext[DepsT]) -> RepoContext[DepsT]:
         # Read once per run: settings edits apply to the next run, not its cached instructions.
-        values: dict[str, JsonValue] = {}
-        for key, field in (
-            ('repo_context.walk_up_root', 'repo_context_walk_up_root'),
-            ('repo_context.autoload_symlink_roots', 'repo_context_autoload_symlink_roots'),
-        ):
-            with suppress(KeyError):
-                values[field] = self.host.setting(key)
-        policy = Settings.model_validate(values)
+        walk_up_root = '~'
+        symlink_roots: list[str] = []
+        # The store validates path policy; narrow the host's JSON values without depending on unrelated settings.
+        with suppress(KeyError):
+            walk_up_root = TypeAdapter(str).validate_python(self.host.setting('repo_context.walk_up_root'), strict=True)
+        with suppress(KeyError):
+            symlink_roots = TypeAdapter(list[str]).validate_python(
+                self.host.setting('repo_context.autoload_symlink_roots'), strict=True
+            )
         return RepoContext[DepsT](
-            home_dir=Path(policy.repo_context_walk_up_root).expanduser() if self.settings.walk_up else None,
-            autoload_symlink_roots=[Path(root).expanduser() for root in policy.repo_context_autoload_symlink_roots],
+            home_dir=Path(walk_up_root).expanduser() if self.settings.walk_up else None,
+            autoload_symlink_roots=[Path(root).expanduser() for root in symlink_roots],
             expose_inventory_tool=self.settings.inventory_tool,
             nested_traversal=self.settings.nested_traversal,
             nested_inject=self.settings.nested_inject,

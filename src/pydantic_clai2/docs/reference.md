@@ -401,9 +401,7 @@ and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
 first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
-`repo_context_walk_up_root` and `repo_context_autoload_symlink_roots` are user-only fields.
-The project file rejects them; configure their `/set` keys instead (see [Repository instructions](#repository-instructions)).
-They are not `repo_context` plugin JSON options either.
+For instruction-loading settings, see [Repository instructions](#repository-instructions).
 
 `plugins` takes the module declarations used by `/plugins add NAME module[:Class] [JSON]`: an `id`, a `factory`
 (`module` or `module:attr`), an optional `path`, and optional `settings`. A
@@ -456,18 +454,22 @@ Enable its existing `walk_up` option to read ancestors too:
 ```
 
 `walk_up` defaults to `false`; setting a root does not turn it on. When enabled,
-it reads ancestors up to `repo_context.walk_up_root`, inclusive (`~`, your home, by default).
-A root outside the workspace's ancestors leaves only the workspace scanned.
-`repo_context.autoload_symlink_roots` defaults to `[]`; set it to a JSON list of directories
-if your instruction files are symlinks into a shared directory.
+it reads ancestors up to `repo_context.walk_up_root`, inclusive (`~`, your home,
+by default). A root outside the workspace's ancestors leaves only the workspace
+scanned. `repo_context.autoload_symlink_roots` defaults to `[]`; set it to a JSON
+list of directories if your instruction files are symlinks into a shared directory.
 
-Both settings are user-only, not plugin JSON options; `.clai/settings.json` rejects their fields.
-Use absolute paths, `~`, or `~/...`, not relative paths, `~other-user`, or environment-variable interpolation.
-Quote paths containing spaces, such as `/set repo_context.walk_up_root '/srv/My Projects'`,
-and single-quote the whole JSON list as above. Paths are normalized when used and need not exist when saved.
-Changes apply on the next run, not during a running turn.
-Authorize a directory holding only trusted instructions, not `/` or all of home: repository symlinks can select any readable file beneath it.
-See [Repo Context](../../../docs/harness/repo-context.md#shared-instruction-symlinks) for symlink loading, scope, and backend requirements.
+Both settings are user-only, not plugin JSON options; `.clai/settings.json`
+rejects their fields. Use absolute paths, `~`, or `~/...`, not relative paths,
+`~other-user`, or environment-variable interpolation. Quote paths containing
+spaces, such as `/set repo_context.walk_up_root '/srv/My Projects'`, and
+single-quote the whole JSON list as above. Paths are normalized when used and
+need not exist when saved. Changes apply on the next run, not during a running turn.
+
+Authorize a directory holding only trusted instructions, not `/` or all of home:
+repository symlinks can select any readable file beneath it. See
+[Repo Context](../../../docs/harness/repo-context.md#shared-instruction-symlinks)
+for symlink loading, scope, and backend requirements.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
