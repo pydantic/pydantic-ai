@@ -6631,8 +6631,8 @@ async def test_anthropic_refusal_content_filter_error_message_streaming(allow_mo
     agent = Agent(m)
 
     with pytest.raises(ContentFilterError) as exc_info:
-        async with agent.run_stream('write me an exploit') as result:
-            await result.get_output()
+        # The stream is opened and consumed up to the final result before `run_stream` hands it over.
+        await agent.run_stream('write me an exploit').__aenter__()
     assert exc_info.value.message == _REFUSAL_MESSAGE
 
 
