@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 # `EventStreamHandler` holds the forward reference `'AsyncIterable[_messages.AgentStreamEvent]'`, which the
 # `AgentSpec` schema resolves against this module's globals.
 from pydantic_ai import messages as _messages  # noqa: F401  # pyright: ignore[reportUnusedImport]
-from pydantic_ai._framing import neutralize_tags
+from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -1148,11 +1148,12 @@ async def write_summary(
         model_settings=summarizer.model_settings,
         capabilities=list(summarizer.summarization_capabilities),
     )
-    result = await agent.run(
-        prompt,
-        conversation_id=ctx.conversation_id,
-        usage=ctx.usage,
-        usage_limits=reserved_usage_limits(ctx.usage_limits),
-        event_stream_handler=summarizer.event_stream_handler,
-    )
+    with second_model_prompt():
+        result = await agent.run(
+            prompt,
+            conversation_id=ctx.conversation_id,
+            usage=ctx.usage,
+            usage_limits=reserved_usage_limits(ctx.usage_limits),
+            event_stream_handler=summarizer.event_stream_handler,
+        )
     return result.output

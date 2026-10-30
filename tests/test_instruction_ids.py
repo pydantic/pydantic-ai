@@ -597,10 +597,10 @@ async def test_mcp_server_instructions_are_identified():
         assert await run_and_capture(agent) == [
             InstructionPart(
                 content="""\
-<context id="toolset:test-server">
+<context seal="pydantic-ai" id="toolset:test-server">
 You are an MCP test server.
 </context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
                 on_change='append',
                 id=toolset_instruction_id('test-server'),
@@ -1377,11 +1377,11 @@ async def test_deferred_capability_instructions_stay_hidden():
         InstructionPart(content='Agent instructions.', id=agent_instruction_id()),
         InstructionPart(
             content="""\
-<context id="capability:deferred_capabilities">
+<context seal="pydantic-ai" id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - deferred
 </context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             dynamic=True,
             on_change='append',

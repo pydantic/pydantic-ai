@@ -11,6 +11,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, TypeGuard
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
+from pydantic_ai._framing import second_model_prompt
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -599,12 +600,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         agent: Agent[None, str] = Agent(
             model, name='tool_output_limits', instructions='You summarize oversized tool output.'
         )
-        run = await agent.run(
-            prompt,
-            conversation_id=ctx.conversation_id,
-            usage=ctx.usage,
-            usage_limits=reserved_usage_limits(ctx.usage_limits),
-        )
+        with second_model_prompt():
+            run = await agent.run(
+                prompt,
+                conversation_id=ctx.conversation_id,
+                usage=ctx.usage,
+                usage_limits=reserved_usage_limits(ctx.usage_limits),
+            )
         return run.output.strip()
 
     @staticmethod

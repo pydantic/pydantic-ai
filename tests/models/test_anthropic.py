@@ -2040,10 +2040,10 @@ async def test_anthropic_cache_instructions_add_a_point_after_appending_blocks(a
             {
                 'type': 'text',
                 'text': """\
-<context id="agent:catalog">
+<context seal="pydantic-ai" id="agent:catalog">
 Catalog: a, b.
 </context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
@@ -2100,10 +2100,10 @@ async def test_anthropic_cache_instructions_keep_the_static_point_for_per_user_a
             {
                 'type': 'text',
                 'text': """\
-<context id="agent:memory">
+<context seal="pydantic-ai" id="agent:memory">
 Memory for bob.
 </context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
@@ -2820,10 +2820,10 @@ async def test_limit_cache_points_drops_the_appending_blocks_point_first(allow_m
             {
                 'type': 'text',
                 'text': """\
-<context id="agent:catalog">
+<context seal="pydantic-ai" id="agent:catalog">
 Catalog: a, b.
 </context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             },
             {
@@ -14567,11 +14567,11 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(
             {
                 'type': 'text',
                 'text': """\
-<context id="capability:deferred_capabilities">
+<context seal="pydantic-ai" id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:
 - refunds: Refund policy tools.
 </context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -14651,11 +14651,11 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
             {
                 'type': 'text',
                 'text': """\
-<context id="capability:deferred_capabilities">
+<context seal="pydantic-ai" id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Refund policy tools. Load this capability before looking up refund policy.
 </context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -14736,11 +14736,11 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
         {
             'type': 'text',
             'text': """\
-<context id="capability:deferred_capabilities">
+<context seal="pydantic-ai" id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Refund policy tools. Load this capability before looking up refund policy.
 </context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
         },
         *({'type': 'text', 'text': text} for text in announcement),

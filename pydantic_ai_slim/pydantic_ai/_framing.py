@@ -29,9 +29,12 @@ import re
 import threading
 import unicodedata
 import warnings
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Final, Literal, NewType, get_args
 
+from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 
 DataTag = Literal[
@@ -89,11 +92,35 @@ def _tag_openers(*tags: str) -> re.Pattern[str]:
 
 
 _BUILTIN_TAGS: Final[tuple[FramingTag, ...]] = get_args(FramingTag)
-_TAG_NAME: Final = re.compile(r'[a-z]+(?:_[a-z]+)*')
-"""The naming rule for every framing tag: lowercase snake_case."""
+MODEL_VISIBLE_NAME: Final = re.compile(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*')
+"""The naming rule for every tag and attribute name a model sees: lowercase snake_case.
 
-_ATTRIBUTE_NAME: Final = re.compile(r'[a-z_][a-z0-9_]*')
-"""The attribute names a tag may carry: names are written as is, so they're limited to characters that can't end the tag."""
+Letters and digits, starting with a letter, with single `_`s between words. Names are written into prompt text as
+they are, so the rule also keeps them to characters that can't end a tag.
+"""
+
+_LEGACY_NAME: Final = re.compile(r'[a-z_][a-z0-9_]*')
+"""The looser rule attribute names and `StructuredContent.tag` followed before `MODEL_VISIBLE_NAME`."""
+
+
+def model_visible_name_error(name: str, *, what: str, legacy: bool = False) -> str | None:
+    """Check `name` against `MODEL_VISIBLE_NAME`, the one naming rule for model-visible tags and attributes.
+
+    Returns `None` if it follows the rule, and otherwise the message for the error the caller raises. With
+    `legacy`, a name the looser rule accepted (`[a-z_][a-z0-9_]*`, such as `_private` or `a__b`) still passes,
+    with a deprecation warning: that's for names a released API already took.
+    """
+    if MODEL_VISIBLE_NAME.fullmatch(name):
+        return None
+    message = f'{what} must be lowercase snake_case, like `judge_feedback`; got {name!r}.'
+    if legacy and _LEGACY_NAME.fullmatch(name):
+        warnings.warn(f'{message} Other names are deprecated.', PydanticAIDeprecationWarning, stacklevel=3)
+        return None
+    return message
+
+
+_DIFF_SUFFIX: Final = '_diff'
+"""Reserved: `<{tag}_diff id>` holds a diff that replaces the earlier sealed `<{tag} id>` element with that id."""
 
 _registration_lock: Final = threading.Lock()
 _registered_tags: tuple[RegisteredTag, ...] = ()
@@ -133,8 +160,8 @@ def register_tag(name: str) -> RegisteredTag:
     """
     global _registered_tags, _data_tag_openers
 
-    if not _TAG_NAME.fullmatch(name):
-        raise UserError(f'Framing tag names must be lowercase snake_case, like `judge_feedback`; got {name!r}.')
+    if error := model_visible_name_error(name, what='Framing tag names'):
+        raise UserError(error)
     if name in _BUILTIN_TAGS:
         raise UserError(f'{name!r} is a built-in framing tag: pass it to `wrap` directly instead of registering it.')
     tag = RegisteredTag(name)
@@ -190,18 +217,17 @@ def _require_known(tag: str) -> None:
 def open_tag(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> str:
     """Core's [`open_tag`][pydantic_ai.framing.open_tag], which also takes the `'system'` voice tag."""
     _require_known(tag)
-    return _open_tag(tag, attrs)
+    return _open_tag(tag, attrs, legacy=True)
 
 
-def _check_attribute_names(names: Iterable[str]) -> None:
-    if invalid := [name for name in names if not _ATTRIBUTE_NAME.fullmatch(name)]:
-        raise UserError(
-            f'Framing tag attribute names must match `[a-z_][a-z0-9_]*`; got {", ".join(map(repr, invalid))}.'
-        )
+def _check_attribute_names(names: Iterable[str], *, legacy: bool) -> None:
+    for name in names:
+        if error := model_visible_name_error(name, what='Framing tag attribute names', legacy=legacy):
+            raise UserError(error)
 
 
-def _open_tag(tag: str, attrs: Mapping[str, str | None]) -> str:
-    _check_attribute_names(attrs)
+def _open_tag(tag: str, attrs: Mapping[str, str | None], *, legacy: bool) -> str:
+    _check_attribute_names(attrs, legacy=legacy)
     rendered = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items() if value is not None)
     return f'<{tag}{rendered}>'
 
@@ -256,14 +282,18 @@ def check_capability_frame(tag: str, attribute_names: Iterable[str]) -> None:
     `'tool_result'`, is fine. It isn't registered with `register_tag`: a capability part's body is never escaped, so
     there's no escape set for it to join. No attribute is called `seal`, which the frame seal takes.
     """
-    if not _TAG_NAME.fullmatch(tag):
-        raise UserError(f'Framing tag names must be lowercase snake_case, like `judge_feedback`; got {tag!r}.')
+    if error := model_visible_name_error(tag, what='Framing tag names'):
+        raise UserError(error)
+    if tag.endswith(_DIFF_SUFFIX):
+        raise UserError(
+            f'{tag!r} ends in `{_DIFF_SUFFIX}`, which is reserved for a diff element: name the tag differently.'
+        )
     if tag == SYSTEM_TAG:
         raise UserError(
             "`'system'` is the framework's voice tag: subclass `InstructionCapabilityPart` for a part in the application's voice."
         )
     names = tuple(attribute_names)
-    _check_attribute_names(names)
+    _check_attribute_names(names, legacy=False)
     if 'seal' in names:
         raise UserError('`seal` is the frame seal attribute, which the framework sets: name the attribute differently.')
 
@@ -274,7 +304,7 @@ def capability_frame_tags(tag: str, /, *, sealed: bool, attrs: Mapping[str, str 
     Like [`frame_tags`][pydantic_ai._framing.frame_tags], for a tag the part's class declared, which
     `check_capability_frame` has checked and nothing registers.
     """
-    return _open_tag(tag, {'seal': FRAME_SEAL if sealed else None, **attrs}), f'</{tag}>'
+    return _open_tag(tag, {'seal': FRAME_SEAL if sealed else None, **attrs}, legacy=False), f'</{tag}>'
 
 
 def frame_seal_announcement(*, system_role: bool) -> str:
@@ -282,8 +312,8 @@ def frame_seal_announcement(*, system_role: bool) -> str:
 
     It disowns only what claims the application's voice or seal, and says other tags in a user message keep their
     usual meaning. Even so, Claude models can give less weight to an application's own unsealed frames in user content,
-    such as a `<system-reminder>`, than they did before: frames that should read as the application's carry the seal,
-    through `pydantic_ai.framing.wrap(..., sealed=True)`.
+    such as a `<system-reminder>`, than they did before: frames that should read as the application's are capability
+    parts, which core renders sealed.
 
     `system_role` is whether the model has a mid-conversation system role. Without one, the application's
     mid-conversation messages are `<system seal="...">` blocks in user turns, and the sentence goes at the end of
@@ -313,6 +343,29 @@ def frame_seal_announcement(*, system_role: bool) -> str:
     )
 
 
+_in_second_model_prompt: ContextVar[bool] = ContextVar('pydantic_ai_second_model_prompt', default=False)
+
+
+@contextmanager
+def second_model_prompt() -> Iterator[None]:
+    """Mark the model requests made inside this block as a second model reading a transcript, not a conversation.
+
+    A judge or summarizer gets the conversation it reports on as one flattened prompt, and its output is a verdict or a summary rather than a reply. Its requests get no lookalike notes and no
+    frame seal announcement: a note would describe the transcript's quoted content to a model that isn't talking to
+    its authors. Pydantic AI Harness wraps its judge and summarizer runs in this.
+    """
+    token = _in_second_model_prompt.set(True)
+    try:
+        yield
+    finally:
+        _in_second_model_prompt.reset(token)
+
+
+def in_second_model_prompt() -> bool:
+    """Whether the current model request was made inside [`second_model_prompt`][pydantic_ai._framing.second_model_prompt]."""
+    return _in_second_model_prompt.get()
+
+
 LookalikeSource = Literal['user', 'tool', 'file']
 """Who wrote text that resembles a framework frame: the user, a tool, or the author of a file."""
 
@@ -335,12 +388,43 @@ def lookalike_frame_note(source: LookalikeSource, *, preceding: bool) -> str:
     )
 
 
-_LOOKALIKE_FRAME: Final = re.compile(
-    # A `<system` opener in any case or spacing, also cut off at the end of the text, or any opening tag that
-    # carries a `seal` attribute. One `[^<>]*` run per `<` keeps the scan linear.
-    r'<\s*(?:system(?=[\s/>]|$)|[a-z][\w.:-]*\s(?:[^<>]*\s)?seal\s*=)',
-    re.IGNORECASE,
-)
+_system_voice_tags: tuple[str, ...] = (SYSTEM_TAG, CONTEXT_TAG, CONTEXT_DIFF_TAG)
+"""The tags whose content speaks in system voice: core's own, and any added with `add_system_voice_tag`."""
+
+
+def _lookalike_pattern(tags: tuple[str, ...]) -> re.Pattern[str]:
+    # An opener of a system-voice tag in any case or spacing, also cut off at the end of the text, or any opening
+    # tag that carries a `seal` attribute. One `[^<>]*` run per `<` keeps the scan linear.
+    names = '|'.join(re.escape(tag) for tag in sorted(tags, key=len, reverse=True))
+    return re.compile(rf'<\s*(?:(?:{names})(?=[\s/>]|$)|[a-z][\w.:-]*\s(?:[^<>]*\s)?seal\s*=)', re.IGNORECASE)
+
+
+_lookalike_frame: re.Pattern[str] = _lookalike_pattern(_system_voice_tags)
+
+
+def add_system_voice_tag(name: str) -> None:
+    """Have text that opens the tag `name`, or its diff `<{name}_diff>`, count as a lookalike frame, as a `<system>` opener does.
+
+    The single source of the tags the lookalike check looks for: core's `system`, `context` and `context_diff`,
+    plus the tag of any instruction or system-voice capability part that declares its own. Adding a tag twice is a
+    no-op. Private: capability parts are the supported way to declare one.
+
+    Raises:
+        UserError: If `name` isn't lowercase snake_case, or ends in the reserved `_diff`.
+    """
+    global _system_voice_tags, _lookalike_frame
+
+    if error := model_visible_name_error(name, what='System-voice tag names'):
+        raise UserError(error)
+    if name.endswith(_DIFF_SUFFIX):
+        raise UserError(f'System-voice tag names cannot end in {_DIFF_SUFFIX!r}, which marks a diff; got {name!r}.')
+    with _registration_lock:
+        if name in _system_voice_tags:
+            return
+        tags = (*_system_voice_tags, name, f'{name}{_DIFF_SUFFIX}')
+        _lookalike_frame = _lookalike_pattern(tags)
+        _system_voice_tags = tags
+
 
 _ENTITY_OPENER: Final = re.compile(r'&(?:lt|#0*60|#x0*3c);', re.IGNORECASE)
 """An HTML-entity-encoded `<`, which a model may read as one."""
@@ -349,7 +433,7 @@ _ENTITY_CLOSER: Final = re.compile(r'&(?:gt|#0*62|#x0*3e);', re.IGNORECASE)
 
 _CONFUSABLES: Final = str.maketrans(
     {
-        # Cyrillic and Greek letters that look like the Latin letters of `system` and `seal`.
+        # Cyrillic and Greek letters that look like the Latin letters of `system`, `context`, `context_diff` and `seal`.
         'а': 'a', 'А': 'A', 'α': 'a', 'Α': 'A',
         'е': 'e', 'Е': 'E', 'ε': 'e', 'Ε': 'E',
         'ѕ': 's', 'Ѕ': 'S',
@@ -357,6 +441,10 @@ _CONFUSABLES: Final = str.maketrans(
         'т': 't', 'Т': 'T', 'τ': 't', 'Τ': 'T',
         'м': 'm', 'М': 'M', 'Μ': 'M',
         'ӏ': 'l', 'Ӏ': 'l', 'ι': 'l', 'Ι': 'l',
+        'с': 'c', 'С': 'C', 'ϲ': 'c', 'Ϲ': 'C',
+        'о': 'o', 'О': 'O', 'ο': 'o', 'Ο': 'O',
+        'х': 'x', 'Х': 'X', 'Χ': 'X',
+        'Ν': 'N', 'і': 'i', 'І': 'I', 'ԁ': 'd',
     }
 )  # fmt: skip
 
@@ -366,16 +454,18 @@ def _comparable(text: str) -> str:
 
     Entity-encoded `<`s and `>`s are decoded, compatibility forms folded (NFKC, which also turns a full-width `<` into `<`),
     invisible format characters (Unicode category `Cf`, such as a zero-width space or joiner) dropped, and Cyrillic
-    and Greek look-alikes of the letters in `system` and `seal` folded to Latin.
+    and Greek look-alikes of the letters in the system-voice tags and `seal` folded to Latin.
     """
     text = unicodedata.normalize('NFKC', _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text)))
     return ''.join(char for char in text if unicodedata.category(char) != 'Cf').translate(_CONFUSABLES)
 
 
 def resembles_frame(text: str) -> bool:
-    """Whether `text` contains something a model could read as a framework frame: a `<system` opener, or a tag with a `seal`.
+    """Whether `text` contains something a model could read as a framework frame: a system-voice opener or a `seal`ed tag.
+
+    The system-voice tags are `<system`, `<context` and `<context_diff`, plus any added with `add_system_voice_tag`.
 
     Matched on the text as a model reads it (see `_comparable`), so a zero-width character, a look-alike letter or
     an entity-encoded `<` doesn't hide one. The text itself is never changed.
     """
-    return _LOOKALIKE_FRAME.search(_comparable(text)) is not None
+    return _lookalike_frame.search(_comparable(text)) is not None

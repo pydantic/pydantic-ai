@@ -1426,7 +1426,7 @@ async def test_haiku_follows_a_withdrawn_instruction_after_a_tool_result(
             'content': [
                 {
                     'text': """\
-<context id="agent:sign_off">
+<context seal="pydantic-ai" id="agent:sign_off">
 This context has been withdrawn.
 </context>\
 """,

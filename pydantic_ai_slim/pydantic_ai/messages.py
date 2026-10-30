@@ -72,6 +72,7 @@ from ._framing import (
     check_capability_frame,
     frame,
     frame_tags,
+    model_visible_name_error,
     resembles_frame,
 )
 from ._instrumentation import redact_binary_content, serialize_any
@@ -658,7 +659,6 @@ class TextContent:
 StructuredContentFormat: TypeAlias = Literal['json', 'xml']
 """A built-in text format for [`StructuredContent`][pydantic_ai.messages.StructuredContent]."""
 
-_STRUCTURED_CONTENT_TAG_RE = re.compile(r'[a-z_][a-z0-9_]*')
 _FRAMING_TAG_NAMES = frozenset(get_args(FramingTag))
 
 
@@ -732,11 +732,8 @@ class StructuredContent(TextContent):
             # history fail to load once a later release adds its tag to the framework's own.
             return
         if self.tag is not None:
-            if not _STRUCTURED_CONTENT_TAG_RE.fullmatch(self.tag):
-                raise ValueError(
-                    '`StructuredContent.tag` must be lowercase letters, digits and `_`, '
-                    f'starting with a letter or `_`, got {self.tag!r}.'
-                )
+            if error := model_visible_name_error(self.tag, what='`StructuredContent.tag`', legacy=True):
+                raise ValueError(error)
             if self.tag in _FRAMING_TAG_NAMES:
                 raise ValueError(
                     f'`StructuredContent.tag` cannot be {self.tag!r}, a tag the framework frames its own text in.'
@@ -3196,10 +3193,10 @@ def _withdrawal_text(*, inline_system: bool) -> str:
 def _context_element(instruction_id: InstructionId | str | None, content: str) -> str:
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
 
-    The text is the operator's and goes in as written. The element speaks in system voice (a native system
-    message, or inside a `<system seal="...">` block), so it carries no seal of its own.
+    The text is the operator's and goes in as written. The element speaks in system voice, like `<system>`, so it
+    carries the frame seal wherever it goes: a lookalike `<context>` in user or tool text gets a note instead.
     """
-    return frame(CONTEXT_TAG, f'\n{content}\n', sealed=False, id=_id_attribute(instruction_id))
+    return frame(CONTEXT_TAG, f'\n{content}\n', sealed=True, id=_id_attribute(instruction_id))
 
 
 def _id_attribute(instruction_id: InstructionId | str | None) -> str | None:
@@ -3212,11 +3209,12 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
     diff = '\n'.join(
         difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
     )
-    return frame(CONTEXT_DIFF_TAG, f'\n{diff}\n', sealed=False, id=_id_attribute(instruction_id))
+    return frame(CONTEXT_DIFF_TAG, f'\n{diff}\n', sealed=True, id=_id_attribute(instruction_id))
 
 
 _SUPERSESSION_SENTENCE = (
-    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+    f'A later {frame_tags(CONTEXT_TAG, sealed=True)[0]} element with the same id replaces the earlier one and stays '
+    'in effect until replaced again.'
 )
 
 

@@ -8,6 +8,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Literal
 
 from pydantic_ai import Agent
+from pydantic_ai._framing import second_model_prompt
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution, UserError
 from pydantic_ai.messages import ToolCallPart, ToolReturn
@@ -305,11 +306,12 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
         counted in the `usage` a worker receives, so the unadjusted limit would count this
         judgement against itself twice.
         """
-        result = await self._judge.run(
-            prompt,
-            usage=ctx.usage,
-            usage_limits=claim_offset_limits(ctx.usage_limits),
-        )
+        with second_model_prompt():
+            result = await self._judge.run(
+                prompt,
+                usage=ctx.usage,
+                usage_limits=claim_offset_limits(ctx.usage_limits),
+            )
         return result.output, reported_confidence(result.response.provider_details)
 
     def _verdict(

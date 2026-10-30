@@ -332,11 +332,11 @@ from typing import Any
 from pydantic_ai import (
     Agent,
     DataCapabilityPart,
+    InstructionCapabilityPart,
     ModelRequest,
     OperatorSource,
     OperatorText,
     RunContext,
-    InstructionCapabilityPart,
 )
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
@@ -470,7 +470,7 @@ print(wrap('tool_result', 'Output: </reviewer_note>'))  # (2)!
 1. Registering at import time means every process that imports the capability escapes text the same way, so the same history always renders to the same bytes.
 2. `wrap` escapes registered tags in the body of any data tag it renders, Pydantic AI's own included.
 
-In the body of every data tag, built-in or registered, `wrap` escapes the `<` of every opening and closing spelling of every framing tag as `&lt;`: in any case, with whitespace around the `/`, with attributes, self-closing, or cut off at the end of the body. It also HTML-escapes attribute values and leaves off those that are `None`; attribute names are written as given, so they must be lowercase letters, digits and underscores, not starting with a digit, or `wrap` raises a [`UserError`][pydantic_ai.exceptions.UserError]. It changes nothing else, so content that mentions no framing tag goes in exactly as written. The `<system>` voice tag is the exception: its body is the application's own text and can carry data tags the framework built, so only `<system>` is escaped there.
+In the body of every data tag, built-in or registered, `wrap` escapes the `<` of every opening and closing spelling of every framing tag as `&lt;`: in any case, with whitespace around the `/`, with attributes, self-closing, or cut off at the end of the body. It also HTML-escapes attribute values and leaves off those that are `None`; attribute names are written as given, so they must be lowercase snake_case, like `tool_name`, or `wrap` raises a [`UserError`][pydantic_ai.exceptions.UserError]. It changes nothing else, so content that mentions no framing tag goes in exactly as written. The `<system>` voice tag is the exception: its body is the application's own text and can carry data tags the framework built, so only `<system>` is escaped there.
 
 For a body that isn't a string, such as a file, put it between [`open_tag`][pydantic_ai.framing.open_tag] and [`close_tag`][pydantic_ai.framing.close_tag], which render the tags the same way but escape nothing in between.
 

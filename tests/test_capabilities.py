@@ -2556,10 +2556,10 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
     assert result.output == 'done'
     # The deferred capability is surfaced in the catalog under the wrapped capability's id.
     assert first_request_instructions == [
-        '<context id="capability:deferred_capabilities">\n'
+        '<context seal="pydantic-ai" id="capability:deferred_capabilities">\n'
         "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
         '- refunds: Refund policy tools.\n</context>\n'
-        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+        'A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.'
     ]
 
 

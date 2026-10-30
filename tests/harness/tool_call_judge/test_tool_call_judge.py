@@ -66,10 +66,7 @@ def _judge_model(
                 for message in messages
                 if isinstance(message, ModelRequest)
                 for part in message.parts
-                if isinstance(part, UserPromptPart)
-                and isinstance(part.content, str)
-                # Core's note on text that resembles a frame, which the escaped transcript does.
-                and not part.content.startswith('<system seal="pydantic-ai">')
+                if isinstance(part, UserPromptPart) and isinstance(part.content, str)
             )
         if instructions is not None and info.instructions is not None:
             instructions.append(info.instructions)
