@@ -21,6 +21,9 @@ from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
 from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
+    context_file_label,
+    dir_context_file_path,
+    directories_up_to,
     discover_instruction_files,
     find_dir_context_file,
     render_context_file,
@@ -41,6 +44,11 @@ _ASSET_ROOTS_HINT = (
 _POINTER_NOTE = (
     'A directory you just accessed has an instruction file, not loaded here. Its path is in the '
     '`<context-file>` tag that follows. Read the file if it is relevant to your task.'
+)
+_NESTED_PRECEDENCE = (
+    'Instruction files ({names}) apply to the directory they are in and everything below it. Where instruction '
+    "files conflict, the more deeply nested one takes precedence, and the user's direct instructions take "
+    'precedence over all of them.'
 )
 _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
@@ -76,11 +84,17 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        the instructions then point at the roots instead.
 
     3. Nested-on-traversal (`nested_traversal`, off by default): when the model
-       lists or reads a directory through a filesystem capability event,
-       surface that directory's `CLAUDE.md`/`AGENTS.md`. The note is enqueued in
+       lists a directory or reads a file through a filesystem capability event,
+       surface the `CLAUDE.md`/`AGENTS.md` of that directory and of every
+       directory between it and the working directory, shallowest first. The
+       working directory's own files are not repeated when Strategy 1 loaded
+       them. The note is enqueued in
        the message tail, not added to system instructions, so it does not
        invalidate the cached prefix. `nested_inject='pointer'` (default)
-       enqueues a one-line pointer; `'contents'` inlines the file body.
+       enqueues a one-line pointer; `'contents'` inlines the file body. With it
+       on, the instructions also gain one static sentence on how instruction
+       files relate: each applies to its subtree, the deeper one wins, and the
+       user's direct instructions win over all of them.
 
     Cache note: injecting file contents into the system prompt costs prompt-cache
     stability. Strategy 1 is safe because its files are stable within a run, and a
@@ -127,8 +141,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     """Name of the inventory tool exposed to the model."""
 
     nested_traversal: bool = False
-    """Strategy 3: surface a directory's instruction file when the model lists or
-    reads that directory. Off by default -- it couples to the list/read tools."""
+    """Strategy 3: surface the instruction files between the working directory and
+    a directory the model lists or reads a file in. Off by default -- it couples to the list/read tools.
+    With it on, the instructions also state how instruction files relate."""
 
     nested_inject: Literal['pointer', 'contents'] = 'pointer'
     """For Strategy 3: append a one-line `pointer`, or inline the file `contents`."""
@@ -146,7 +161,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     """Walk-up result for this run, loaded once in `before_run` via `ctx.workspace`."""
 
     _seen_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
-    """Run-scoped set of directories already surfaced by Strategy 3."""
+    """Run-scoped set of directories Strategy 3 should not surface again.
+
+    Those it already surfaced, plus the working directory when the walk-up loaded its file.
+    """
 
     _cached_working_dir: Path | None = field(default=None, init=False, repr=False, compare=False)
     """The workspace's working directory for this run."""
@@ -188,14 +206,16 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if self.home_dir is not None:
             home = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
         self._context_files = await discover_instruction_files(workspace, working_dir, home, self.filenames)
+        # The walk-up loaded the working directory's instruction files (or an identical ancestor copy), so nested
+        # traversal has nothing to add there. A file that appears there later in the run is still surfaced.
+        if self.nested_traversal and await dir_context_file_path(workspace, working_dir, self.filenames) is not None:
+            self._seen_dirs.add(str(working_dir))
 
     def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
         """Cache-stable instructions resolved after `before_run` loads workspace files."""
         if not self.autoload_instructions:
-            if not self.expose_inventory_tool:
-                return None
-            # The hint doesn't depend on the run, so it stays static and inside the cached prefix.
-            return self._inventory_hint()
+            # Neither part depends on the run, so they stay static and inside the cached prefix.
+            return '\n\n'.join(self._static_instructions()) or None
 
         def instructions(_ctx: RunContext[AgentDepsT]) -> str | None:
             return self._render_instructions()
@@ -212,9 +232,16 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if self._context_files:
             assert self._cached_working_dir is not None, '`before_run` resolves it before loading files'
             parts.append(render_context_files(self._context_files, relative_to=self._cached_working_dir))
+        parts.extend(self._static_instructions())
+        return '\n\n'.join(parts) or None
+
+    def _static_instructions(self) -> list[str]:
+        parts: list[str] = []
         if self.expose_inventory_tool:
             parts.append(self._inventory_hint())
-        return '\n\n'.join(parts) or None
+        if self.nested_traversal:
+            parts.append(_NESTED_PRECEDENCE.format(names=', '.join(f'`{name}`' for name in self.filenames)))
+        return parts
 
     def _inventory_hint(self) -> str:
         """Point at the inventory tool, and at the asset roots when a file reader can replace it.
@@ -286,6 +313,15 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         await self._enqueue_context(ctx, directory)
 
     async def _enqueue_context(self, ctx: RunContext[AgentDepsT], directory: Path) -> None:
+        """Surface the instruction file of `directory` and of each directory between it and the working directory.
+
+        Files are enqueued shallowest first, so the most specific file is the latest one the model reads.
+        """
+        working_dir = await self._working_dir(ctx.workspace)
+        for current in directories_up_to(directory, working_dir):
+            await self._enqueue_directory(ctx, current)
+
+    async def _enqueue_directory(self, ctx: RunContext[AgentDepsT], directory: Path) -> None:
         key = str(directory)
         if key in self._seen_dirs:
             return
@@ -312,17 +348,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         The contents and the path are the repository's, not the operator's or the framework's, so they go on
         the user channel in a `<context-file>` tag. Only the pointer's own wording is in system voice.
         """
-        label = self._label(context_file.path)
+        assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'
+        label = context_file_label(context_file.path, self._cached_working_dir)
         if self.nested_inject == 'contents':
             return [render_context_file(context_file, label=label)]
         return [SystemPromptPart(_POINTER_NOTE), render_context_file_path(label)]
-
-    def _label(self, path: Path) -> str:
-        assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'
-        try:
-            return path.relative_to(self._cached_working_dir).as_posix()
-        except ValueError:
-            return path.as_posix()
 
     async def _working_dir(self, workspace: Workspace) -> Path:
         if self._cached_working_dir is None:

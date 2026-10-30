@@ -28,8 +28,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import RealtimeSession as _RealtimeSession, WebRTCSession
 from pydantic_ai.realtime._lifecycle import InputAdded, InputLost, ResponseEnded, ResponseStarted, ToolCallsAbandoned
-from pydantic_ai.realtime.codec import OutputTranscript, ResponseDone
+from pydantic_ai.realtime.codec import OutputTranscript, ResponseDone, SessionUsage
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RequestUsage
 
 from ..conftest import TestEnv, try_import
 from ..realtime_connections import lifecycle_events
@@ -512,6 +513,54 @@ async def test_keep_alive_carries_on_across_a_reconnect() -> None:
             await keep_alive
 
 
+@pytest.mark.parametrize('tool_only', [False, True])
+@pytest.mark.parametrize('usage_location', ['nested', 'frame'])
+@pytest.mark.parametrize(
+    'usage', [None, {}, {'input_tokens': 0, 'output_tokens': 0}, {'input_tokens': 10, 'output_tokens': 2}]
+)
+async def test_response_usage_presence(tool_only: bool, usage_location: str, usage: dict[str, int] | None) -> None:
+    """Synthetic frames cover measured payload shapes absent from ElevenLabs' omitted-usage recordings."""
+    response: dict[str, object] = {
+        'id': 'resp-1',
+        'status': 'completed',
+        'output': [{'type': 'function_call'}] if tool_only else [],
+    }
+    terminal: dict[str, object] = {'type': 'response.done', 'response': response}
+    if usage_location == 'nested':
+        response['usage'] = usage
+    else:
+        terminal['usage'] = usage
+        if usage is not None:
+            response['usage'] = {}
+    ws = FakeWebSocket(frames(created('resp-1'), terminal))
+    connection = ElevenLabsRealtimeConnection(ws)  # pyright: ignore[reportArgumentType]
+    events = await collect_codec_events(connection)
+    usages = [event for event in events if isinstance(event, SessionUsage)]
+    if usage == {} and not tool_only:
+        assert usages == []
+    else:
+        [event] = usages
+        assert event.usage == RequestUsage(
+            input_tokens=(usage or {}).get('input_tokens', 0),
+            output_tokens=(usage or {}).get('output_tokens', 0),
+            unmeasured_requests=int(usage is None),
+        )
+        assert event.provider_response_id == 'resp-1'
+        assert event.finish_reason == ('tool_call' if tool_only else 'stop')
+        assert event.provider_details == {'status': 'completed'}
+
+
+async def test_superseded_response_without_usage_is_unmeasured() -> None:
+    """A late completion still contributes usage, without ending or annotating the newer response."""
+    ws = FakeWebSocket(frames(created('old'), created('new'), done('old', status='cancelled')))
+    connection = ElevenLabsRealtimeConnection(ws)  # pyright: ignore[reportArgumentType]
+    events = await collect_codec_events(connection)
+    [event] = [event for event in events if isinstance(event, SessionUsage) and event.provider_response_id == 'old']
+    assert event.usage == RequestUsage(unmeasured_requests=1)
+    assert event.provider_details is None
+    assert not any(isinstance(event, ResponseDone) and event.provider_response_id == 'old' for event in events)
+
+
 def _call(response_id: str, call_id: str) -> dict[str, Any]:
     return {
         'type': 'response.function_call_arguments.done',
@@ -567,7 +616,7 @@ async def test_tool_calls_abandoned_by_a_later_response() -> None:
     )
     conn = ElevenLabsRealtimeConnection(ws)  # type: ignore[arg-type]
     events = aiter(lifecycle_events(conn))
-    taken = [describe(await anext(events)) for _ in range(8)]
+    taken = [describe(await anext(events)) for _ in range(10)]
     await conn.send(ToolResult(tool_call_id='call_1', output='42'))
     rest = [describe(event) async for event in events]
 
@@ -575,6 +624,7 @@ async def test_tool_calls_abandoned_by_a_later_response() -> None:
         [
             ResponseStarted(response_id='resp_1'),
             'ToolCall',
+            'SessionUsage',
             'ResponseDone',
             ResponseEnded(
                 response_id='resp_1', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
@@ -582,6 +632,7 @@ async def test_tool_calls_abandoned_by_a_later_response() -> None:
             ToolCallsAbandoned(tool_call_ids=('call_1',)),
             'RealtimeSessionErrorEvent',
             ResponseStarted(response_id='resp_2'),
+            'SessionUsage',
             'ResponseDone',
             ResponseEnded(
                 response_id='resp_2', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
@@ -774,6 +825,12 @@ async def test_audio_tags_are_stripped_from_transcripts() -> None:
             OutputTranscript(text=' there!', item_id='item_1', response_id='resp_1'),
             OutputTranscript(text=' How are you?', item_id='item_1', response_id='resp_1'),
             OutputTranscript(text='Hello there! How are you?', is_final=True, item_id='item_1', response_id='resp_1'),
+            SessionUsage(
+                usage=RequestUsage(unmeasured_requests=1),
+                provider_response_id='resp_1',
+                finish_reason='stop',
+                provider_details={'status': 'completed'},
+            ),
             ResponseDone(provider_response_id='resp_1', finish_reason='stop', provider_details={'status': 'completed'}),
             ResponseEnded(
                 response_id='resp_1',

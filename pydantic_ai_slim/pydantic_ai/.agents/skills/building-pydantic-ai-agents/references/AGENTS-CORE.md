@@ -329,7 +329,9 @@ agent = Agent(
 
 `fallback_on` defaults to `ModelAPIError`; it also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass and native tool factory call (with the candidate as `ctx.model`), so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
 
-In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError]}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
+Each step restarts the chain from the step's model. Pass `sticky=True` to keep a conversation on the candidate it fell back to, which keeps that provider's prompt cache warm and stops retrying a failing primary every step. The agent records the answering model as each response's `model_id` and a fallback as its `failed_attempts`, so stickiness carries over to later runs continuing that history. Only a fallback makes a conversation sticky: a candidate picked with `run(model=...)` that answered without one doesn't. It only replaces the agent's default model, not `run(model=...)`, `override(model=...)` or `SelectModel`, and if the sticky candidate fails, the chain continues after it and wraps around.
+
+In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError], sticky: true}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
 
 To retry the *same* model on transient failures (rate limits, unavailable/overloaded models, 5xx, connection errors and transport timeouts), add the `RetryOnModelErrors` capability, e.g. `RetryOnModelErrors(max_attempts=4)`. It sends its requests with `max_retries=0` so the provider SDK doesn't retry underneath it (an explicit `max_retries` is kept), so don't set that yourself. It waits the error's `retry_after` or an exponential, jittered backoff from `initial_delay` up to `max_delay`, gives up (raising the error) when the wait would exceed `max_delay` or end after the request's `request_timeout` (which spans all retries of a model) or the run's deadline, and never retries an error with an `x-should-retry: false` header. `retry_on` takes the same forms as `fallback_on`. With `ModelFallback` too, in either order, each model is retried up to `max_attempts` times before falling back, and `failed_attempts` lists retries (`kind='retry'`) and fallbacks (`kind='fallback'`) in one list. A stream is retried only before its first event reaches the consumer. Spec form: `- RetryOnModelErrors: {retry_on: [ModelRateLimitError], max_attempts: 5}`.
 
@@ -369,3 +371,10 @@ by default; each model they try gets a fresh deadline. It applies to any model, 
 Temporal, a model's deadline runs as a workflow timer that cancels its model activity, including each model
 `ModelFallback` tries, as each attempt is an activity of its own; a `FallbackModel`'s per-model deadlines run inside
 its one activity instead.
+
+To fall back when a streamed response doesn't start in time, without cutting off a long response once it has, set
+`model_settings={'first_event_timeout': seconds}`. It bounds the wait from making a streamed request until its first
+event (a part starting or a delta, thinking included; OpenAI's `response.created` doesn't count), across SDK retries
+and the continuations of a paused or background response, and stops applying once that event arrives. Expiry raises
+`ModelRequestTimeout` with `setting='first_event_timeout'`, which `FallbackModel` and `ModelFallback` fall back on by
+default. With `request_timeout` also set, whichever passes first wins. It has no effect on non-streamed requests.
