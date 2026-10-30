@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING
 import anyio
 import anyio.lowlevel
 
-from pydantic_ai._utils import cancel_and_drain
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -241,9 +240,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             allows; Pro plans allow up to 86400. With `idle_timeout`, it is instead the most the backend
             extends the lifetime to, from its first use.
         idle_timeout: Seconds without a command or file operation after which E2B pauses the sandbox.
-            Each operation, and a long command or file transfer while it runs, extends the sandbox's lifetime with
-            E2B's `set_timeout`, but never past `sandbox_timeout` from when the backend first used
-            it. Time between operations, such as model turns, counts as idle.
+            Each operation extends the sandbox's lifetime with E2B's `set_timeout` as it starts, but
+            never past `sandbox_timeout` from when the backend first used it. Time between operations,
+            such as model turns, counts as idle, and one command must finish within `idle_timeout`.
             `None` keeps the fixed `sandbox_timeout` lifetime.
         working_dir: Absolute directory commands start in and relative paths resolve against.
             E2B has no create-time working directory, so this is applied per command, including
@@ -364,28 +363,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             return
         self._expires_at = now + timeout
 
-    @asynccontextmanager
-    async def _kept_alive(self, sandbox: e2b.AsyncSandbox) -> AsyncGenerator[None]:
-        """Keep extending an `idle_timeout` while a long command or file transfer makes no other request."""
-        idle_timeout = self._idle_timeout
-        if idle_timeout is None:
-            yield
-            return
-
-        async def keep_alive() -> None:
-            while True:
-                await self._keep_alive(sandbox)
-                # Wakes with at least a quarter of the idle time left, so the extension lands before E2B pauses.
-                await asyncio.sleep(idle_timeout / 4)
-
-        # An asyncio task rather than a task group, which would wrap the operation's errors.
-        task = asyncio.create_task(keep_alive())
-        try:
-            yield
-        finally:
-            # Waits for its `set_timeout` request to unwind, so the operation leaves no request behind.
-            await cancel_and_drain(task)
-
     async def _acquire_detached(self) -> e2b.AsyncSandbox:
         try:
             return await self._acquire()
@@ -487,12 +464,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         probe = await self._probe(['test', '-p', path], context)
         if probe.exit_code == 0:
             raise OSError(f'{context}: FIFO reads are not supported')
-        async with self._sdk_errors(sandbox.sandbox_id, context, path), self._kept_alive(sandbox):
+        async with self._sdk_errors(sandbox.sandbox_id, context, path):
             return bytes(await sandbox.files.read(path, 'bytes', user=self._user))
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         sandbox = await self._sandbox_for_operation()
-        async with self._sdk_errors(sandbox.sandbox_id, f'Could not write {path!r}', path), self._kept_alive(sandbox):
+        async with self._sdk_errors(sandbox.sandbox_id, f'Could not write {path!r}', path):
             # The SDK bounds a buffered upload by one whole-request deadline, and 0 means none: keep
             # its 60 s for small files and allow a slow link's throughput for large ones.
             deadline = _UPLOAD_BASE_TIMEOUT + len(data) / _UPLOAD_MIN_BYTES_PER_SECOND
@@ -753,8 +730,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 )
                 assert handle is not None
                 try:
-                    async with self._kept_alive(sandbox):
-                        result = await handle.wait()
+                    result = await handle.wait()
                 except e2b.CommandExitException as exited:
                     # A nonzero exit is a completed result; the SDK's exception carries it.
                     result = exited

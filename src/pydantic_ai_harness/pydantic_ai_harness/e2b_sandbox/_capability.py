@@ -46,8 +46,8 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     idle_timeout: int | None = None
     """Seconds without use after which E2B pauses the sandbox; `None` keeps the fixed `sandbox_timeout` lifetime.
 
-    Each command or file operation, and a long command or file transfer while it runs, extends its lifetime, but never past
-    `sandbox_timeout` from the run's first use. Model turns between operations count as idle, so use minutes.
+    Each command or file operation extends its lifetime as it starts, but never past `sandbox_timeout` from the run's
+    first use. Model turns between operations count as idle, and one command must finish within it, so use minutes.
     """
 
     working_dir: str | None = None
