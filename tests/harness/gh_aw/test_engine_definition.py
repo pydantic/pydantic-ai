@@ -1617,9 +1617,8 @@ agent = Agent(FunctionModel(stream_function=stream))
                 process.send_signal(signal.SIGTERM)
                 stdout, stderr = process.communicate(timeout=10)
             finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.communicate(timeout=10)
+                process.kill()
+                process.communicate(timeout=10)
 
     assert process.returncode == -signal.SIGTERM, f'{stdout}\n{stderr}'
     assert '\x1eGH-AW-SESSION/' not in stdout
