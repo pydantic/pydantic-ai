@@ -27,7 +27,13 @@ A model that was already attempted in the step is skipped, whichever capability 
 
 ## When to fall back
 
-By default, `ModelFallback` moves on when a request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], the error a model raises when the provider's API fails, such as a 4xx or 5xx response. The `fallback_on` parameter takes the same forms as [`FallbackModel`'s](../models/overview.md#fallback-model):
+By default, `ModelFallback` moves on when a request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], the error a model raises when the provider's API fails, such as a 4xx or 5xx response, and when the model refuses in a way that would end the run with [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]: the provider's content filter ended the response (`finish_reason='content_filter'`), as a safety refusal from Anthropic or OpenAI, or Azure's content filter, does, without any text or tool calls. That default is `fallback_on=(ModelAPIError, ContentFilterError)`: as the run only raises `ContentFilterError` once it has accepted a response, naming it in `fallback_on` falls back from the response it would be raised for.
+
+A refusal that comes with text, like an explanation, is a valid response, and is the run's output as without `ModelFallback`. To fall back from it too, add [`RaiseContentFilterError`](raise-content-filter-error.md), which makes the run end on any response the content filter ended: `ModelFallback` then falls back from all of them.
+
+The next model applies its own provider's safety policy, so it may answer what the first one refused. To have a refusal end the run with `ContentFilterError` instead, pass `fallback_on=(ModelAPIError,)`. A streamed refusal is only known once it has been streamed, so it ends the run, as without `ModelFallback` (see [Streaming](#streaming)).
+
+The `fallback_on` parameter takes the same forms as [`FallbackModel`'s](../models/overview.md#fallback-model), whose default is `(ModelAPIError,)`. `ContentFilterError` in a `FallbackModel`'s `fallback_on` falls back from a refusal without text or tool calls only, as a `FallbackModel` can't tell whether the agent it serves has `RaiseContentFilterError`:
 
 - a tuple of exception types
 - an exception handler, `(Exception) -> bool`
@@ -37,7 +43,7 @@ By default, `ModelFallback` moves on when a request raises [`ModelAPIError`][pyd
 Handlers may be sync or async. A handler whose first parameter is annotated as [`ModelResponse`][pydantic_ai.messages.ModelResponse] is a response handler; any other handler is an exception handler. See [Response-Based Fallback](../models/overview.md#response-based-fallback) for examples of handlers, which work the same for both.
 
 !!! warning "A response handler on its own replaces the default"
-    Passing only a response handler as `fallback_on` replaces the default `(ModelAPIError,)`, so API errors are raised rather than fallen back from. To keep falling back on them, pass both in a list, as below.
+    Passing only a response handler as `fallback_on` replaces the default `(ModelAPIError, ContentFilterError)`, so API errors and refusals are raised rather than fallen back from. To keep falling back on them, pass both in a list, as below.
 
 Here the first model's response is cut off and rejected, the second model fails, and the third answers. The answering response lists both attempts it moved on from, and the rejected response's tokens count in the run's usage:
 
@@ -112,7 +118,7 @@ capabilities:
 
 As in Python, the spec's `model:` is attempted first, and a spec without one uses the first of `ModelFallback`'s models for the first attempt.
 
-To choose when to fall back, give the models and `fallback_on` as keyword arguments. In a spec, `fallback_on` takes the names of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and its subclasses in [`pydantic_ai.exceptions`][pydantic_ai.exceptions], such as [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] and [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError]. Exception and response handlers can only be passed in Python:
+To choose when to fall back, give the models and `fallback_on` as keyword arguments. In a spec, `fallback_on` takes the names of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and its subclasses in [`pydantic_ai.exceptions`][pydantic_ai.exceptions], and `ContentFilterError`, such as [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] and [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError]. Exception and response handlers can only be passed in Python:
 
 ```yaml {title="fallback_on_agent.yaml" test="skip"}
 model: {{ openai:medium }}
@@ -146,7 +152,7 @@ When the agent is [instrumented](../logfire.md), the model request (`chat`) span
 
 A streamed request falls back if it fails before any output reaches you: `ModelFallback` waits for each candidate's stream to produce its first event before handing it over, so a connection error, an error status, or an error the provider reports right after accepting the request (like an overload) can still be handled. The first event is then replayed, so you see the same stream. Once output has been streamed, a failure is raised to you rather than retried. `FallbackModel` streams the same way.
 
-Response handlers aren't consulted for a streamed response, which is accepted as is with a `UserWarning`: it has already been streamed by the time it could be judged. A request is streamed whenever something consumes the run's events: [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] (which the [UI adapters](../ui/overview.md) use), [`agent.iter()`][pydantic_ai.agent.Agent.iter] with `node.stream()`, and [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] or [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] with an `event_stream_handler`, an [`agent.on_event`][pydantic_ai.agent.Agent.on_event] listener, or a capability that reacts to events. A capability of your own that raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] from `after_model_request` on a streamed request gets a [`UserError`][pydantic_ai.exceptions.UserError].
+Response handlers aren't consulted for a streamed response, which is accepted as is with a `UserWarning`: it has already been streamed by the time it could be judged. A streamed refusal is accepted for the same reason, without a warning, and ends the run with `ContentFilterError` as it would without `ModelFallback`. A request is streamed whenever something consumes the run's events: [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] (which the [UI adapters](../ui/overview.md) use), [`agent.iter()`][pydantic_ai.agent.Agent.iter] with `node.stream()`, and [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] or [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] with an `event_stream_handler`, an [`agent.on_event`][pydantic_ai.agent.Agent.on_event] listener, or a capability that reacts to events. A capability of your own that raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] from `after_model_request` on a streamed request gets a [`UserError`][pydantic_ai.exceptions.UserError].
 
 ## Staying on the model that answered
 
@@ -244,7 +250,7 @@ agent = Agent(primary, capabilities=[ModelFallback(backup, fallback_on=[ModelAPI
 
 Everything a `FallbackModel` does carries over:
 
-- `fallback_on` takes the same exception types, exception handlers and response handlers, mixed in a list, sync or async.
+- `fallback_on` takes the same exception types, exception handlers and response handlers, mixed in a list, sync or async. `ModelFallback`'s default also falls back on [refusals](#when-to-fall-back), which `FallbackModel`'s doesn't: pass `fallback_on=(ModelAPIError,)` to keep `FallbackModel`'s behavior, or `fallback_on=(ModelAPIError, ContentFilterError)` to `FallbackModel` for the capability's.
 - Each model keeps its own `settings`, and settings on the agent or run apply to every model.
 - The answering response lists the attempts moved on from in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], and when every model fails, [`FallbackExceptionGroup.attempts`][pydantic_ai.exceptions.FallbackExceptionGroup] lists them.
 - A rejected response's tokens and cost count in the run's usage and towards its limits, also when the run is cancelled, times out or ends on an error `fallback_on` doesn't cover.

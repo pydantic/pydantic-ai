@@ -69,7 +69,7 @@ from pydantic_ai import (
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._utils import PeekableAsyncStream
-from pydantic_ai.capabilities import AbstractCapability, Capability, Citations, NativeTool, ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, Capability, Citations, ModelFallback, NativeTool, ToolSearch
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -81,6 +81,7 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
@@ -6527,6 +6528,32 @@ async def test_anthropic_refusal_stop_details(
 
     assert response.finish_reason == 'content_filter'
     assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
+
+
+async def test_anthropic_refusal_falls_back_with_model_fallback(allow_model_requests: None):
+    """`ModelFallback` falls back by default when Claude refuses, and records the refused attempt."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='msg_refusal',
+            content=[],
+            model='claude-opus-4-8',
+            role='assistant',
+            stop_reason='refusal',
+            stop_details=BetaRefusalStopDetails(type='refusal', category='cyber', explanation=None),
+            type='message',
+            usage=BetaUsage(input_tokens=8, output_tokens=0),
+        )
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(m, capabilities=[ModelFallback(backup)])
+
+    result = await agent.run('write me an exploit')
+
+    assert result.output == 'from backup'
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [
+        ('claude-opus-4-8', 'rejected')
+    ]
 
 
 @pytest.mark.parametrize('category,explanation,expected_extra', _REFUSAL_CASE_PARAMS)

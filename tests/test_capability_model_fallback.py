@@ -50,6 +50,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     ModelFallback,
     NativeTool,
+    RaiseContentFilterError,
     ResolveModelId,
     SelectModel,
     WrapModelRequestHandler,
@@ -57,6 +58,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.capabilities.model_fallback import _SpecFallbackError  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import (
+    ContentFilterError,
     FallbackExceptionGroup,
     ModelAPIError,
     ModelRateLimitError,
@@ -2557,13 +2559,13 @@ async def test_spec_fallback_on_names_only_fall_back_on_those_errors(fallback_on
 
 
 def test_spec_fallback_on_names_every_public_model_api_error():
-    """Every public `ModelAPIError` class can be named in a spec, and nothing else can."""
+    """Every public `ModelAPIError` class, and `ContentFilterError`, can be named in a spec, and nothing else can."""
     public_errors = {
         name
         for name in exceptions.__all__
         if isinstance(cls := getattr(exceptions, name), type) and issubclass(cls, ModelAPIError)
     }
-    assert set(get_args(_SpecFallbackError)) == public_errors
+    assert set(get_args(_SpecFallbackError)) == public_errors | {'ContentFilterError'}
 
 
 @pytest.mark.parametrize(
@@ -2571,8 +2573,8 @@ def test_spec_fallback_on_names_every_public_model_api_error():
     [
         pytest.param(
             {'ModelFallback': {'models': ['working'], 'fallback_on': ['ModelRateLimitError', 'UserError']}},
-            "`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, got ['UserError']. "
-            'Valid names: ModelAPIError, ModelHTTPError, ',
+            '`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes and '
+            "`ContentFilterError`, got ['UserError']. Valid names: ModelAPIError, ContentFilterError, ModelHTTPError, ",
             id='not-a-model-api-error',
         ),
         pytest.param(
@@ -2653,3 +2655,152 @@ async def test_override_spec_sets_the_fallback():
         result = await agent.run('x')
     assert result.output == 'success (no tool calls)'
     assert attempted_models(result) == ['failing', 'test']
+
+
+# --- Refusals ---
+
+
+def _refusal(name: str, calls: list[str], text: str | None = None) -> FunctionModel:
+    """A model whose content filter ends every response, as a provider's safety refusal does."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        return ModelResponse(
+            parts=[TextPart(text)] if text else [],
+            finish_reason='content_filter',
+            provider_details={'refusal': 'I cannot help with that.'},
+            usage=RequestUsage(input_tokens=10, output_tokens=2),
+        )
+
+    return FunctionModel(respond, model_name=name)
+
+
+def _answering(name: str, calls: list[str]) -> FunctionModel:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        return ModelResponse(parts=[TextPart(f'{name} answered')])
+
+    return FunctionModel(respond, model_name=name)
+
+
+async def test_falls_back_when_a_model_refuses_by_default():
+    """A refusal the run would end on with `ContentFilterError` falls back to the next model."""
+    calls: list[str] = []
+    agent = Agent(_refusal('primary', calls), capabilities=[ModelFallback(_answering('backup', calls))])
+    result = await agent.run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('primary', 'rejected')]
+    # The refused response was billed.
+    assert result.usage.input_tokens == 10 + 51
+
+
+async def test_a_refusal_ends_the_run_when_opted_out():
+    """With `fallback_on=(ModelAPIError,)`, a refusal is accepted, so the run ends on `ContentFilterError` as before."""
+    calls: list[str] = []
+    agent = Agent(
+        _refusal('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError,))],
+    )
+    with pytest.raises(ContentFilterError, match='Content filter triggered'):
+        await agent.run('x')
+    assert calls == ['primary']
+
+
+async def test_a_refusal_with_text_is_the_output():
+    """A refusal with text is valid output, as without `ModelFallback`, unless `RaiseContentFilterError` is added."""
+    calls: list[str] = []
+    agent = Agent(
+        _refusal('primary', calls, 'I cannot help with that.'),
+        capabilities=[ModelFallback(_answering('backup', calls))],
+    )
+    assert (await agent.run('x')).output == 'I cannot help with that.'
+    assert calls == ['primary']
+
+    calls.clear()
+    agent = Agent(
+        _refusal('primary', calls, 'I cannot help with that.'),
+        capabilities=[ModelFallback(_answering('backup', calls)), RaiseContentFilterError()],
+    )
+    assert (await agent.run('x')).output == 'backup answered'
+    assert calls == ['primary', 'backup']
+
+
+async def test_only_content_filter_error_names_refusals():
+    """A supertype of `ContentFilterError`, like `UnexpectedModelBehavior` or `Exception`, doesn't name refusals."""
+    calls: list[str] = []
+    agent = Agent(
+        _refusal('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(Exception,))],
+    )
+    with pytest.raises(ContentFilterError):
+        await agent.run('x')
+    assert calls == ['primary']
+
+
+async def test_every_model_refusing_raises_the_group():
+    calls: list[str] = []
+    agent = Agent(_refusal('primary', calls), capabilities=[ModelFallback(_refusal('backup', calls))])
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x')
+    assert [(a.model_name, a.outcome) for a in exc_info.value.attempts] == [
+        ('primary', 'rejected'),
+        ('backup', 'rejected'),
+    ]
+
+
+async def test_fallback_model_falls_back_on_refusals_when_named():
+    """`FallbackModel` keeps its `(ModelAPIError,)` default, and falls back on a refusal when `fallback_on` names it."""
+    calls: list[str] = []
+    with pytest.raises(ContentFilterError):
+        await Agent(FallbackModel(_refusal('primary', calls), _answering('backup', calls))).run('x')
+    assert calls == ['primary']
+
+    calls.clear()
+    model = FallbackModel(
+        _refusal('primary', calls), _answering('backup', calls), fallback_on=(ModelAPIError, ContentFilterError)
+    )
+    result = await Agent(model).run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+
+
+async def test_spec_falls_back_on_refusals_by_default_and_can_opt_out():
+    calls: list[str] = []
+    models = {'primary': _refusal('primary', calls), 'backup': _answering('backup', calls)}
+    resolve = ResolveModelId(lambda ctx, model_id: models.get(model_id))
+
+    agent = Agent.from_spec({'capabilities': [{'ModelFallback': ['backup']}]}, model='primary', capabilities=[resolve])
+    assert (await agent.run('x')).output == 'backup answered'
+
+    calls.clear()
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['backup'], 'fallback_on': ['ModelAPIError']}}]},
+        model='primary',
+        capabilities=[resolve],
+    )
+    with pytest.raises(ContentFilterError):
+        await agent.run('x')
+    assert calls == ['primary']
+
+    calls.clear()
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['backup'], 'fallback_on': 'ContentFilterError'}}]},
+        model='primary',
+        capabilities=[resolve],
+    )
+    assert (await agent.run('x')).output == 'backup answered'
+
+
+async def test_sticky_stays_on_the_model_that_answered_a_refusal():
+    """A refusal that fell back makes the conversation sticky, like any other fallback."""
+    calls: list[str] = []
+    agent = _with_noop(
+        Agent(_refusal('primary', calls), capabilities=[ModelFallback(_answering('backup', calls), sticky=True)])
+    )
+    first = await agent.run('x')
+    assert first.output == 'backup answered'
+    calls.clear()
+    second = await agent.run('y', message_history=first.all_messages())
+    assert second.output == 'backup answered'
+    assert calls == ['backup']

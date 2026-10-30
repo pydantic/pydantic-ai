@@ -27,7 +27,7 @@ import anyio
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar
 
-from pydantic_ai._fallback import AttemptLog
+from pydantic_ai._fallback import AttemptLog, has_no_actionable_output
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -3749,22 +3749,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     'Resume it by running the agent with this message history and no new prompt.'
                 )
 
-            is_empty = not self.model_response.parts
-            # A `TextPart` with empty content carries no text output; adapters preserve such parts
-            # (e.g. when a gateway returns a text item with `text: null`) so their IDs round-trip.
-            is_blank_text_only = not is_empty and all(
-                isinstance(p, _messages.TextPart) and not p.content for p in self.model_response.parts
-            )
-            is_thinking_only = (
-                not is_empty
-                and not is_blank_text_only
-                and all(
-                    isinstance(p, _messages.ThinkingPart) or (isinstance(p, _messages.TextPart) and not p.content)
-                    for p in self.model_response.parts
-                )
-            )
-
-            if is_empty or is_blank_text_only or is_thinking_only:
+            if has_no_actionable_output(self.model_response):
                 # No actionable output was returned by the model.
 
                 # Don't retry if the token limit was exceeded, possibly during thinking.

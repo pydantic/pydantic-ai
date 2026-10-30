@@ -750,10 +750,12 @@ print(result.output)
     `UnexpectedModelBehavior`).
 
     All of these are raised from the agent loop, after `model.request()` has already returned
-    successfully, so no exception-based `fallback_on` can catch them — not the default
-    `fallback_on=(ModelAPIError,)` (which wouldn't match anyway, as `ContentFilterError` inherits from
-    `UnexpectedModelBehavior`, not [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]), and not an
-    explicit `fallback_on=(ContentFilterError,)` either. To fall back on a bad finish reason instead,
+    successfully, so an exception-based `fallback_on` can't catch them: not the default
+    `fallback_on=(ModelAPIError,)`, which wouldn't match anyway, as `ContentFilterError` inherits from
+    `UnexpectedModelBehavior`, not [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. The exception is
+    `ContentFilterError` itself: naming it in `fallback_on` rejects the empty or thinking-only
+    `'content_filter'` response it would be raised for, so the next model is tried instead, as
+    [`ModelFallback`](../capabilities/model-fallback.md#when-to-fall-back) does by default. To fall back on another bad finish reason instead,
     use a response handler (see the [example above](#finish-reason-example)) that inspects
     [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason]: it rejects the response inside
     `FallbackModel` before the agent loop sees it, so the next model is tried instead of an exception

@@ -2376,6 +2376,7 @@ def test_model_json_schema_with_capabilities():
                                 {
                                     'enum': [
                                         'ModelAPIError',
+                                        'ContentFilterError',
                                         'ModelHTTPError',
                                         'ModelRateLimitError',
                                         'ModelQuotaExceededError',
@@ -2396,6 +2397,7 @@ def test_model_json_schema_with_capabilities():
                                     'items': {
                                         'enum': [
                                             'ModelAPIError',
+                                            'ContentFilterError',
                                             'ModelHTTPError',
                                             'ModelRateLimitError',
                                             'ModelQuotaExceededError',

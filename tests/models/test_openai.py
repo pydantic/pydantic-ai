@@ -55,7 +55,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, Thinking, ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback, NativeTool, Thinking, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import (
@@ -70,6 +70,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -7766,6 +7767,40 @@ async def test_openai_chat_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I'm sorry, I can't help with that."
+
+
+async def test_openai_chat_refusal_falls_back_with_model_fallback(allow_model_requests: None):
+    """`ModelFallback` falls back by default when the model refuses, and records the refused attempt."""
+    c = completion_message(
+        ChatCompletionMessage(content=None, refusal="I'm sorry, I can't help with that.", role='assistant'),
+    )
+    c.model = 'gpt-4o'
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(m, capabilities=[ModelFallback(backup)])
+
+    result = await agent.run('harmful prompt')
+
+    assert result.output == 'from backup'
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('gpt-4o', 'rejected')]
+
+
+async def test_openai_chat_streamed_refusal_with_model_fallback(allow_model_requests: None):
+    """A streamed refusal is only known once it has been streamed, so it's accepted, without a warning."""
+    stream = [
+        chunk([ChoiceDelta(refusal="I'm sorry, ", role='assistant')]),
+        chunk([ChoiceDelta(refusal="I can't help with that.")]),
+        chunk([ChoiceDelta()], finish_reason='stop'),
+    ]
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(m, capabilities=[ModelFallback(backup)])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        with pytest.raises(ContentFilterError, match='Content filter triggered'):
+            async with agent.run_stream('harmful prompt'):
+                pass
 
 
 async def test_stream_cancel(allow_model_requests: None):
