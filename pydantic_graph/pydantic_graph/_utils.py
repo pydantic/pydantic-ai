@@ -32,12 +32,12 @@ try:
     # Logic taken from logfire.experimental.annotations
     def get_traceparent(span: AbstractSpan) -> str | None:
         """Get a string representing the span context to use for annotating spans."""
-        real_span: Span
         if isinstance(span, Span):
             real_span = span  # pragma: lax no cover
         else:
-            real_span = span._span
-            assert real_span
+            real_span = getattr(span, '_span', None)
+            if not isinstance(real_span, Span):
+                return ''
         context = set_span_in_context(real_span)
         carrier: dict[str, Any] = {}
         TRACEPARENT_PROPAGATOR.inject(carrier, context)

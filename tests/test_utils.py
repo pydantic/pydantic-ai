@@ -33,6 +33,7 @@ from pydantic_ai._utils import (
     get_first_param_type,
     group_by_temporal,
     is_async_callable,
+    is_google_files_api_url,
     is_str_dict,
     merge_json_schema_defs,
     replace_no_init,
@@ -47,6 +48,32 @@ from .conftest import undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 
 READINESS_WAIT_TIMEOUT = 5
+
+
+@pytest.mark.parametrize(
+    'url,expected',
+    [
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/files/abc123', True, id='file'),
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/files', True, id='bare-prefix'),
+        # Current prefix behavior, not a URL-validity requirement.
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/filesOther', True, id='prefix-only'),
+        pytest.param(
+            'https://generativelanguage.googleapis.com/v1beta/files/abc?alt=media#ref', True, id='query-fragment'
+        ),
+        pytest.param('', False, id='empty'),
+        pytest.param('http://generativelanguage.googleapis.com/v1beta/files/abc123', False, id='http'),
+        pytest.param('https://generativelanguage.googleapis.com/v1/files/abc123', False, id='other-version'),
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/file/abc123', False, id='other-path'),
+        pytest.param('https://GENERATIVELANGUAGE.googleapis.com/v1beta/files/abc123', False, id='case-sensitive'),
+        pytest.param('https://generativelanguage.googleapis.com.evil/v1beta/files/abc123', False, id='other-host'),
+        pytest.param('https://generativelanguage.googleapis.com:443/v1beta/files/abc123', False, id='explicit-port'),
+        pytest.param(' https://generativelanguage.googleapis.com/v1beta/files/abc123', False, id='leading-space'),
+        pytest.param('gs://bucket/file.png', False, id='cloud-storage'),
+    ],
+)
+def test_is_google_files_api_url(url: str, expected: bool):
+    """Pin classification directly: cassette matching alone does not protect prefix edge cases."""
+    assert is_google_files_api_url(url) is expected
 
 
 async def test_await_maybe():
