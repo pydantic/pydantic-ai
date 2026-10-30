@@ -22,6 +22,7 @@ from hashlib import sha256
 from pydantic_ai._deferred_capabilities import LoadExchanges
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
+    CapabilityLoadDeltaPart,
     CompactionPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
@@ -216,9 +217,12 @@ def keep_capability_loads(
 
 
 def is_load_part(part: ModelRequestPart | ModelResponsePart) -> bool:
-    """Whether *part* records which capabilities are loaded: a `load_capability` call or return, or a tool reveal.
+    """Whether *part* records which capabilities are loaded: a `load_capability` call or return, a load from code, or a tool reveal.
 
     The summarizer leaves these out: load state is carried by the exchanges themselves, recorded again after
     each compaction, or by the note saying they were unloaded, never by the summary.
     """
-    return isinstance(part, LoadCapabilityCallPart | LoadCapabilityReturnPart | ToolAvailabilityDeltaPart)
+    return isinstance(
+        part,
+        LoadCapabilityCallPart | LoadCapabilityReturnPart | CapabilityLoadDeltaPart | ToolAvailabilityDeltaPart,
+    )
