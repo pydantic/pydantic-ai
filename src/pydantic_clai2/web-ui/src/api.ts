@@ -32,10 +32,14 @@ const token =
   ''
 
 const RELOADED = 'clai-reloaded-for'
+const RELOADED_FROM = 'clai-reloaded-from'
 
 /** The version of the CLAI whose bundle this page loaded again for, after `/update` restarted it; `null` otherwise. */
 export const reloadedFor = sessionStorage.getItem(RELOADED)
+/** The version the page ran before that reload, which an older bundle reloading leaves unset. */
+export const reloadedFrom = sessionStorage.getItem(RELOADED_FROM)
 sessionStorage.removeItem(RELOADED)
+sessionStorage.removeItem(RELOADED_FROM)
 
 export class ApiError extends Error {
   constructor(
@@ -328,6 +332,7 @@ export function connect(
         stopped = true
         socket?.close()
         sessionStorage.setItem(RELOADED, message.version)
+        sessionStorage.setItem(RELOADED_FROM, version)
         location.reload()
         return
       }

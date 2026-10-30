@@ -1,4 +1,4 @@
-import { reloadedFor } from './api'
+import { reloadedFor, reloadedFrom } from './api'
 import type {
   Dialog,
   ForkEntry,
@@ -130,6 +130,8 @@ export interface State {
   version: string | null
   /** `/update` installing a newer CLAI, until the install ends or the new build is back. */
   update: UpdateInfo | null
+  /** The versions the last `/update` this page followed went from and to, once the new build is back. */
+  updated: { from: string; to: string } | null
 }
 
 export const initial: State = {
@@ -149,6 +151,7 @@ export const initial: State = {
   followsWorkspace: false,
   version: null,
   update: null,
+  updated: null,
 }
 
 /**
@@ -353,6 +356,7 @@ function applySnapshot(state: State, message: Snapshot): State {
     followsWorkspace: message.follows_workspace,
     version: message.version,
     update: message.update,
+    updated: updated && reloadedFrom !== null ? { from: reloadedFrom, to: message.version } : state.updated,
   }
 }
 

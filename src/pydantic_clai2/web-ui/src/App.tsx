@@ -356,6 +356,22 @@ export function App() {
     const timer = window.setTimeout(() => setLost(true), 60000)
     return () => window.clearTimeout(timer)
   }, [restarting])
+  // Over the session, or over Settings when it is open, as it is after About's Update… starts the install.
+  const updating = state.update && (
+    <div className="opening-overlay" role="status">
+      {!lost && <span className="spinner" />}
+      {lost ? (
+        <span>CLAI did not come back at this address. Check the terminal it runs in.</span>
+      ) : restarting ? (
+        <span>Restarting CLAI…</span>
+      ) : (
+        <span>
+          Updating CLAI to <span className="opening-title">{state.update.target}</span>…
+          {state.update.line && <span className="update-line mono">{state.update.line}</span>}
+        </span>
+      )}
+    </div>
+  )
 
   const showToast = useCallback((text: string, level: 'info' | 'error') => {
     const shown = { text, level }
@@ -820,21 +836,7 @@ export function App() {
             </span>
           </div>
         )}
-        {state.update && (
-          <div className="opening-overlay" role="status">
-            {!lost && <span className="spinner" />}
-            {lost ? (
-              <span>CLAI did not come back at this address. Check the terminal it runs in.</span>
-            ) : restarting ? (
-              <span>Restarting CLAI…</span>
-            ) : (
-              <span>
-                Updating CLAI to <span className="opening-title">{state.update.target}</span>…
-                {state.update.line && <span className="update-line mono">{state.update.line}</span>}
-              </span>
-            )}
-          </div>
-        )}
+        {!settings && updating}
         {connection === 'expired' && (
           <div className="toast expired" role="alert">
             This page belongs to an earlier CLAI. Open the new address it printed.
@@ -860,8 +862,10 @@ export function App() {
           pluginsVersion={state.pluginsVersion}
           settingsVersion={state.settingsVersion}
           pluginFocus={pluginFocus}
+          updated={state.updated}
           onError={showError}
           onNotice={showNotice}
+          overlay={updating}
         />
       )}
       {commandMenu && (
