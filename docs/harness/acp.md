@@ -23,6 +23,8 @@ Editors like [Zed](https://zed.dev/docs/ai/external-agents) speak ACP: a stdio J
     warnings.filterwarnings('ignore', category=HarnessExperimentalWarning)
     ```
 
+![An editor such as Zed launches the agent script as a subprocess and talks to it over stdio with ACP JSON-RPC messages. session/new carries the workspace directory, and session_config roots the FileSystem and Shell tools there. session/prompt starts an agent run, and session/update streams its text and tool calls back so the editor shows them as messages and diffs. A tool that requires approval sends session/request_permission and waits as pending until the user allows or rejects it.](../img/harness/acp.svg)
+
 ## The problem
 
 To plug a Pydantic AI agent into an ACP editor you would otherwise have to implement the ACP server side by hand -- chunking streamed text under the wire limit, rendering tool calls as diffs, mapping the protocol's permission requests onto the agent's tools, and managing per-workspace sessions.

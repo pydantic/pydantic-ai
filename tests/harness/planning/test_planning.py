@@ -15,6 +15,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, AgentRunResultEvent
 from pydantic_ai._frame_seal import framework_frame_text
 from pydantic_ai._utils import is_str_dict
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     CompactionPart,
@@ -1100,6 +1101,13 @@ class TestCapability:
 
     def test_from_spec_carries_the_tool_allowlist(self) -> None:
         assert Planning.from_spec(tools=['write_plan']).tools == ['write_plan']
+
+    def test_from_spec_sets_the_base_capability_fields(self) -> None:
+        """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+        definitions = AgentSpec.model_json_schema_with_capabilities([Planning])['$defs']
+        assert {'id', 'description', 'defer_loading'} <= definitions['spec_params_Planning']['properties'].keys()
+        capability = Planning[None].from_spec(id='second', description='The second one.', defer_loading=True)
+        assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
 
 
 class TestToolAllowlist:

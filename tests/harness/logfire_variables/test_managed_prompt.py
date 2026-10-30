@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from pydantic_handlebars import HandlebarsParseError
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionDeltaPart, ModelMessage, ModelRequest, ModelResponse, TextPart
@@ -191,6 +192,60 @@ def test_id_is_derived_from_the_prompt_name() -> None:
         'managed-prompt-derived_custom'
     )
     assert ManagedPrompt('derived_explicit', default=DEFAULT, id='support').id == 'support'
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    definitions = AgentSpec.model_json_schema_with_capabilities([ManagedPrompt])['$defs']
+
+    assert set(definitions['spec_params_ManagedPrompt']['properties']) == {
+        'name',
+        'default',
+        'label',
+        'targeting_key',
+        'attributes',
+        'render_template',
+        'id',
+        'description',
+        'defer_loading',
+    }
+    assert definitions['spec_params_ManagedPrompt']['required'] == ['name']
+
+
+def test_loads_from_agent_spec() -> None:
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {'ManagedPrompt': {'name': 'minimal', 'default': DEFAULT}},
+                {
+                    'ManagedPrompt': {
+                        'name': 'long_form',
+                        'default': DEFAULT,
+                        'label': 'production',
+                        'targeting_key': 'user-1',
+                        'attributes': {'plan': 'pro'},
+                        'render_template': True,
+                        'description': 'Support prompt',
+                        'logfire_instance': logfire.DEFAULT_LOGFIRE_INSTANCE,
+                    }
+                },
+            ],
+        },
+        custom_capability_types=[ManagedPrompt],
+    )
+
+    minimal, long = [c for c in agent.root_capability.capabilities if isinstance(c, ManagedPrompt)]
+    assert (minimal.id, minimal.label, minimal.render_template) == ('managed-prompt-minimal', None, False)
+    assert (long.id, long.default, long.label, long.targeting_key, long.attributes, long.render_template) == (
+        'managed-prompt-long_form',
+        DEFAULT,
+        'production',
+        'user-1',
+        {'plan': 'pro'},
+        True,
+    )
+    assert long.description == 'Support prompt'
+    assert long.logfire_instance is logfire.DEFAULT_LOGFIRE_INSTANCE
 
 
 def test_two_with_the_same_name_raise_when_the_agent_is_built() -> None:

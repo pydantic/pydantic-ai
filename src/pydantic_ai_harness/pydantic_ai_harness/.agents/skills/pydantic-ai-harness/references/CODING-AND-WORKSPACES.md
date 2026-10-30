@@ -59,7 +59,7 @@ that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairT
 prompt caching (unified `cache=True`).
 
 ```bash
-uv add "pydantic-ai-harness[coder]"   # installs ripgrep (rg) on the agent host
+uv add "pydantic-ai-harness[coder]"   # installs json-repair, and ripgrep (rg) on the agent host
 ```
 
 ```python
@@ -91,7 +91,8 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
 `repo_context=True`, `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
-is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`.
+is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`,
+`strict=False`.
 
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
   `sub_agents=False`. Delegates re-run the bound agent (same model, workspace, and neighbouring
@@ -109,6 +110,12 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
   the model, in `Agent(model_settings=...)`, or by a `Caching` listed before `Coder` wins, as do a later
   capability and run-level `model_settings`: `model_settings={'cache': False}` turns it off,
   `{'cache': '1h'}` keeps it longer. `Coder(caching=False)` leaves the default out.
+- **Strict tool schemas are off by default** (`strict=False` on Coder's own tools): unset, OpenAI
+  constrains arguments to strict-compatible schemas and Gemini 2.5+ uses `VALIDATED` mode; Coder relies
+  on `RepairToolArguments` and validation retries instead. `Coder(strict=True)` forces strict mode,
+  `strict=None` leaves it to the provider. Tools bound next to Coder keep their own `strict`, but on
+  Gemini a `strict=False` tool keeps the whole request on `AUTO`. See
+  <https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode>.
 - Your own `ClearToolResults` / `TieredCompaction` / `WarnNearLimits` next to `Coder` run as well (no id
   clash), each at its own trigger. List your `ToolOutputLimits` **after** `Coder` so it sees raw returns;
   listed before, it sees Coder's 64,000-char result. For `shell`, bands must sit under ~16,000 chars.
@@ -523,6 +530,8 @@ RepoContext(home_dir='..', nested_traversal=True)  # walk up one level; follow t
 a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserError`.
 `nested_traversal=True` surfaces a directory's instruction file when `FileSystem` reads or lists it
 (`nested_inject='pointer'` or `'contents'`), in the message tail so the cached prefix stays stable.
+With it on, the instructions also gain one static sentence: each instruction file applies to its
+subtree, the deeper file wins, and the user's direct instructions win over all of them.
 
 ## Macroscope
 
@@ -548,20 +557,6 @@ exclusive. The default image needs `LOCALSTACK_AUTH_TOKEN` (forwarded automatica
 and write host files (`file://`, `s3 cp`), but gets its own empty AWS config and credentials files instead of
 `~/.aws/config` and `~/.aws/credentials`.
 
-## CLAI 2
-
-`pydantic-clai2` is a separate terminal client (`clai2`) whose default agent is
-`Coder(unrestricted_filesystem=True)` in the launch directory, with no sandbox or approval layer.
-`clai2 --worktree NAME` starts in a new git worktree (not a sandbox). To chat with your own agent:
-`asyncio.run(chat(agent, deps=None))` with `from pydantic_clai2 import chat`.
-
-To run CLAI's stock coding agent from code or over ACP, without the terminal:
-`async with open_stock_agent(workspace=path, model=...) as agent:` from `pydantic_clai2`. It binds the
-`coder`, `repo_context`, and `compaction` built-ins plus your `capabilities`, and ignores the user's
-saved CLAI configuration. `plugin_settings={'coder': {...}}` overrides built-in settings. With a
-capability that requires approval over ACP, pass `{'coder': {'sub_agents': False}}`: a delegated
-task's approval fails the run.
-
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/coder/
@@ -578,5 +573,4 @@ task's approval fails the run.
 - https://pydantic.dev/docs/ai/harness/repo-context/
 - https://pydantic.dev/docs/ai/harness/macroscope/
 - https://pydantic.dev/docs/ai/harness/localstack/
-- https://pydantic.dev/docs/ai/harness/clai2/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/

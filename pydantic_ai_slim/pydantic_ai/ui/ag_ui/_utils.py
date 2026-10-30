@@ -107,6 +107,7 @@ class FileActivityContent(TypedDict, total=False):
     id: str
     provider_name: str
     provider_details: dict[str, Any]
+    canonical_system: str
     vendor_metadata: dict[str, Any]
 
 
@@ -156,8 +157,11 @@ REASONING_MESSAGE_ROLE: str = (
 """The correct `role` value for `ReasoningMessageStartEvent`, based on the installed SDK version."""
 
 
-def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
-    """Collect non-None metadata fields from a ThinkingPart for AG-UI encrypted_value."""
+def thinking_encrypted_metadata(part: ThinkingPart, *, canonical_system: str | None = None) -> dict[str, Any]:
+    """Collect non-None metadata fields from a ThinkingPart for AG-UI encrypted_value.
+
+    `canonical_system` is the response's, when it applies to the part (see `part_canonical_system`).
+    """
     encrypted: dict[str, Any] = {}
     if part.id is not None:
         encrypted['id'] = part.id
@@ -167,6 +171,8 @@ def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
         encrypted['provider_name'] = part.provider_name
     if part.provider_details is not None:
         encrypted['provider_details'] = part.provider_details
+    if canonical_system is not None:
+        encrypted['canonical_system'] = canonical_system
     return encrypted
 
 

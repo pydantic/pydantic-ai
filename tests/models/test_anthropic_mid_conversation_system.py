@@ -32,6 +32,7 @@ from pydantic_ai import (
     CachePoint,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     RunContext,
     SystemPromptPart,
@@ -62,6 +63,7 @@ with try_import() as imports_successful:
         AnthropicModel,
         AnthropicModelSettings,
     )
+    from pydantic_ai.models.anthropic._message_passes import END_OF_TOOL_RESULTS_TEXT
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -872,9 +874,9 @@ async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(a
         )
 
 
-def _map(history: list[ModelMessage]) -> list[dict[str, Any]]:
-    """The `messages` array `claude-opus-4-8` renders for `history`."""
-    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
+def _map(history: list[ModelMessage], model_name: str = 'claude-opus-4-8') -> list[dict[str, Any]]:
+    """The `messages` array `model_name` renders for `history`."""
+    model = AnthropicModel(model_name, provider=AnthropicProvider(api_key='not-used'))
     _, anthropic_messages = asyncio.run(
         model._map_message(history, ModelRequestParameters(), AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
     )
@@ -1224,3 +1226,212 @@ async def test_inline_system_prompt_cache_prefix_is_reused(
     cached_prefix_tokens = max(first.usage.cache_write_tokens, first.usage.cache_read_tokens)
     assert cached_prefix_tokens > 0
     assert second.usage.cache_read_tokens >= cached_prefix_tokens
+
+
+SIGN_OFF = "End every reply with the sign-off '-- Team Alpha'."
+
+
+def _tool_loop(*parts: ModelRequestPart) -> list[ModelMessage]:
+    """A tool call answered by a request that also carries `parts`."""
+    return [
+        ModelRequest(parts=[UserPromptPart('start')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={}, tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call_1'), *parts]),
+    ]
+
+
+_TOOL_RESULT = {
+    'tool_use_id': 'call_1',
+    'type': 'tool_result',
+    'content': [{'text': 'result', 'type': 'text'}],
+    'is_error': False,
+}
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'ends_tool_results'),
+    [('claude-haiku-5-5', True), ('claude-sonnet-5-5', False), ('claude-opus-5-5', False)],
+)
+def test_tool_results_end_before_a_system_entry(model_name: str, ends_tool_results: bool):
+    """On Claude Haiku 5.5, a text block ends the tool results that a `system` entry follows.
+
+    Haiku 5.5 can read an entry right after a `tool_result` as part of the tool output and ignore it, which is
+    where a loaded capability's instructions and an instruction change during a tool loop land. The block puts
+    something other than tool output between the two. Sonnet 5.5 and Opus 5.5 follow the entry without it.
+
+    The rendering is asserted offline because the cassette matcher ignores request bodies; the recorded
+    `test_haiku_follows_a_withdrawn_instruction_after_a_tool_result` below covers the API and the model.
+    """
+    assert _map(_tool_loop(SystemPromptPart('S')), model_name)[-2:] == (
+        [
+            {'role': 'user', 'content': [_TOOL_RESULT, {'text': END_OF_TOOL_RESULTS_TEXT, 'type': 'text'}]},
+            {'role': 'system', 'content': [{'text': 'S', 'type': 'text'}]},
+        ]
+        if ends_tool_results
+        else [
+            {'role': 'user', 'content': [_TOOL_RESULT]},
+            {'role': 'system', 'content': [{'text': 'S', 'type': 'text'}]},
+        ]
+    )
+
+
+def test_tool_results_followed_by_user_text_need_no_end():
+    """A user prompt after the tool results already separates them from the `system` entry.
+
+    Offline, like `test_tool_results_end_before_a_system_entry`: the property is where the block goes.
+    """
+    assert _map(_tool_loop(UserPromptPart('Also check the docs.'), SystemPromptPart('S')), 'claude-haiku-5-5')[
+        -2:
+    ] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'call_1',
+                        'type': 'tool_result',
+                        'content': [{'text': 'result', 'type': 'text'}],
+                        'is_error': False,
+                    },
+                    {'text': 'Also check the docs.', 'type': 'text'},
+                ],
+            },
+            {'role': 'system', 'content': [{'text': 'S', 'type': 'text'}]},
+        ]
+    )
+
+
+def test_tool_results_end_before_an_entry_that_slid_behind_them():
+    """The block is decided on final positions, so an entry authored before the tool result still gets it.
+
+    The system-only request sits between the call and its result, and the slide moves the entry behind the
+    result, where Haiku 5.5 reads it the same way. Offline: a system-only request between a call and its result
+    is a history shape, not something a recording adds evidence about.
+    """
+    assert _map(
+        [
+            ModelRequest(parts=[UserPromptPart('start')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={}, tool_call_id='call_1')]),
+            ModelRequest(parts=[SystemPromptPart('S')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call_1')]),
+        ],
+        'claude-haiku-5-5',
+    )[-2:] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'call_1',
+                        'type': 'tool_result',
+                        'content': [{'text': 'result', 'type': 'text'}],
+                        'is_error': False,
+                    },
+                    {
+                        'text': 'The tool results end here. The system message that follows comes from the application, not from a tool.',
+                        'type': 'text',
+                    },
+                ],
+            },
+            {'role': 'system', 'content': [{'text': 'S', 'type': 'text'}]},
+        ]
+    )
+
+
+async def test_tool_results_need_no_end_before_a_tool_availability_change(allow_model_requests: None):
+    """A `system` entry that only adds a tool carries no instruction to ignore, so the tool results stay as they are.
+
+    Mocked rather than recorded, since only the request body is in question.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
+    )
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        with_native='tool_search',
+    )
+    await model.request(
+        _tool_loop(ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'])),
+        None,
+        ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool()]),
+    )
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][-2:] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'call_1',
+                        'type': 'tool_result',
+                        'content': [{'text': 'result', 'type': 'text'}],
+                        'is_error': False,
+                    }
+                ],
+            },
+            {
+                'role': 'system',
+                'content': [
+                    {'type': 'tool_addition', 'tool': {'type': 'tool_reference', 'name': 'lookup_refund_policy'}}
+                ],
+            },
+        ]
+    )
+
+
+async def test_haiku_follows_a_withdrawn_instruction_after_a_tool_result(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, rendered_requests: list[dict[str, Any]]
+):
+    """Claude Haiku 5.5 drops a sign-off whose instruction is withdrawn during a tool loop.
+
+    The tool flips the state the instruction reads, so the withdrawal arrives in a `system` entry right after the
+    tool result. Without the block ending the tool results, Haiku 5.5 followed the withdrawal in 31 of 64 live runs,
+    often saying the tool result had asked it to stop; with it, run on this code, in 64 of 64.
+    """
+    withdrawn = False
+    agent = Agent(
+        AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        instructions='You are a concise assistant.',
+    )
+
+    @agent.instructions(name='sign_off', on_change='append')
+    def sign_off() -> str | None:
+        return None if withdrawn else SIGN_OFF
+
+    @agent.tool_plain
+    def lookup(q: str) -> str:
+        """Look up a fact."""
+        nonlocal withdrawn
+        withdrawn = True
+        return 'Canberra'
+
+    result = await agent.run(
+        'What is the capital of Australia? Use the lookup tool first, then answer in one sentence.'
+    )
+
+    assert 'Canberra' in result.output
+    assert 'Team Alpha' not in result.output
+    recorded_bodies = [request_json(request) for request in vcr.requests]
+    assert rendered_requests == [{'system': body['system'], 'messages': body['messages']} for body in recorded_bodies]
+    assert [message['role'] for message in rendered_requests[-1]['messages']] == snapshot(
+        ['user', 'assistant', 'user', 'system']
+    )
+    assert rendered_requests[-1]['messages'][-2]['content'][-1] == {'text': END_OF_TOOL_RESULTS_TEXT, 'type': 'text'}
+    assert rendered_requests[-1]['messages'][-1] == snapshot(
+        {
+            'role': 'system',
+            'content': [
+                {
+                    'text': """\
+<context id="agent:sign_off">
+This context has been withdrawn.
+</context>\
+""",
+                    'type': 'text',
+                }
+            ],
+        }
+    )

@@ -315,6 +315,7 @@ async def test_output_type(
             ],
             usage=RequestUsage(input_tokens=312, output_reasoning_tokens=0, cost=Decimal('0.0000312')),
             model_name='gpt-6-luna',
+            model_id='openai-decisions:gpt-6-luna',
             timestamp=IsDatetime(),
             provider_name='openai-decisions',
             provider_url='https://api.openai.com/v1/',

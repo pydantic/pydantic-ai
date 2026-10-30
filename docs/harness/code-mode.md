@@ -11,6 +11,8 @@ description: "Let a Pydantic AI agent call its tools from one sandboxed Python s
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Two lanes compare the same task. With tool calling, the model makes three requests: it calls list_items, then get_item ten times, then answers, and every tool result is sent back to the model on each later request. With Code Mode, the model makes two requests: its first writes one run_code program, which runs in the Monty sandbox, calls list_items and then get_item ten times in parallel, filters the items in Python, and returns only the names that match; the second request answers.](../img/harness/code-mode.svg)
+
 ## The problem
 
 Standard tool calling often needs another model turn for each dependent batch of tool calls. An agent that needs to fetch 10 items and then process their results can require many model turns, increasing latency, cost, and context use. Intermediate results also grow the conversation history.
@@ -631,7 +633,7 @@ answered by Monty from the mounts first and reach the handler on another thread.
 
 ## Observability
 
-Nested tool calls inside `run_code` produce their own spans when instrumented with [Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend -- the easiest way to understand what code mode actually did, since each `run_code` span fans out into the tool calls the model issued from inside the sandbox. See the [Pydantic AI Logfire docs](../logfire.md) for setup.
+Nested tool calls inside `run_code` produce their own spans when instrumented with [Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend -- the easiest way to understand what code mode actually did, since each `run_code` span fans out into the tool calls the model issued from inside the sandbox. See the [Pydantic AI Logfire docs](../logfire.md#using-logfire) for setup.
 
 Suspension-limit retries use the existing `run_code` error span and nested tool spans, rather
 than a separate capability span. The retry includes bounded started-call context and recovery

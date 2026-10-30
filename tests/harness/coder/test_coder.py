@@ -3,6 +3,7 @@ import importlib
 import os
 import subprocess
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import NoReturn
 
@@ -13,12 +14,15 @@ import pydantic_ai_harness.coder
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef
 from pydantic_ai_harness.coder import FILE_TOOL_NAMES, Coder, coder_agent
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.subagents import SubAgents
+from pydantic_ai_harness.subagents import SubAgents, TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
 
@@ -112,6 +116,7 @@ def test_coder_members_and_parameters() -> None:
         '_BoundToolOutputs',
         'RepairToolArguments',
         '_DefaultCaching',
+        '_SetToolStrict',
     ]
     files = next(item for item in coder.capabilities if isinstance(item, FileSystem))
     assert (files.root_dir, files.content_hashes, files.tools) == (None, False, FILE_TOOL_NAMES)
@@ -140,3 +145,67 @@ async def test_no_workspace_fails_the_run_naming_coder() -> None:
         await Agent(TestModel(), capabilities=[Coder()]).run('go')
     assert 'from pydantic_ai.capabilities import LocalWorkspace' in str(raised.value)
     assert '- LocalWorkspace: .' in str(raised.value)
+
+
+CONTROL_TOOLS = {'list_tasks', 'message_task', 'answer_task', 'cancel_task'}
+CODER_TOOLS = {*FILE_TOOL_NAMES, 'shell', 'delegate_task', *CONTROL_TOOLS}
+
+
+async def _sent_tools(tmp_path: Path, coder: Coder[object]) -> dict[str, ToolDefinition]:
+    model = TestModel(call_tools=[])
+    agent = Agent[object](model, capabilities=[LocalWorkspace(tmp_path), coder])
+
+    @agent.tool_plain(strict=True)
+    def strict_tool() -> str:
+        return 'ok'  # pragma: no cover
+
+    @agent.tool_plain
+    def inferred_tool() -> str:
+        return 'ok'  # pragma: no cover
+
+    await agent.run('go')
+    assert model.last_model_request_parameters is not None
+    return {tool.name: tool for tool in model.last_model_request_parameters.function_tools}
+
+
+async def test_coder_tools_are_not_strict_by_default(tmp_path: Path) -> None:
+    sent = await _sent_tools(tmp_path, Coder[object]())
+
+    assert set(sent) == CODER_TOOLS - CONTROL_TOOLS | {'strict_tool', 'inferred_tool'}
+    assert {name: tool.strict for name, tool in sent.items()} == {
+        **dict.fromkeys(CODER_TOOLS - CONTROL_TOOLS, False),
+        'strict_tool': True,
+        'inferred_tool': None,
+    }
+
+
+@pytest.mark.parametrize('strict', [False, True, None])
+async def test_coder_strict_applies_to_its_own_tools_only(tmp_path: Path, strict: bool | None) -> None:
+    sent = await _sent_tools(tmp_path, Coder[object](strict=strict, task_control=TaskControl()))
+
+    assert {name: tool.strict for name, tool in sent.items()} == {
+        **dict.fromkeys(CODER_TOOLS, strict),
+        'strict_tool': True,
+        'inferred_tool': None,
+    }
+
+
+@pytest.mark.parametrize('strict', [False, True, None])
+async def test_coder_strict_reaches_the_delegates_ask_parent(tmp_path: Path, strict: bool | None) -> None:
+    delegate_tools: dict[str, bool | None] = {}
+
+    def delegate(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'Run it'})])
+
+    async def run_delegated(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        delegate_tools.update((tool.name, tool.strict) for tool in info.function_tools)
+        yield 'done'
+
+    coder = Coder[object](strict=strict, task_control=TaskControl(), repo_context=False)
+    model = FunctionModel(delegate, stream_function=run_delegated)
+    await Agent[object](model, capabilities=[LocalWorkspace(tmp_path), coder]).run('go')
+
+    assert 'ask_parent' in delegate_tools
+    assert set(delegate_tools.values()) == {strict}

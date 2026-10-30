@@ -174,6 +174,7 @@ def test_first_successful() -> None:
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
+                model_id='fallback:function:function:success_response:,function:function:failure_response:',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -204,6 +205,7 @@ def test_first_failed() -> None:
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
+                model_id='fallback:function:function:failure_response:,function:function:success_response:',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -320,6 +322,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
+                model_id='fallback:function:function:failure_response:,function:function:success_response:',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -522,6 +525,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
+                    model_id='fallback:function:function::failure_response_stream,function:function::success_response_stream',
                     timestamp=IsNow(tz=UTC),
                     failed_attempts=[
                         ModelRequestAttempt(
@@ -539,6 +543,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
+                    model_id='fallback:function:function::failure_response_stream,function:function::success_response_stream',
                     timestamp=IsNow(tz=UTC),
                     failed_attempts=[
                         ModelRequestAttempt(
@@ -556,6 +561,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
+                    model_id='fallback:function:function::failure_response_stream,function:function::success_response_stream',
                     timestamp=IsNow(tz=UTC),
                     failed_attempts=[
                         ModelRequestAttempt(
@@ -573,6 +579,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
+                    model_id='fallback:function:function::failure_response_stream,function:function::success_response_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1011,6 +1018,7 @@ async def test_first_success_streaming() -> None:
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
+                    model_id='fallback:function:function::success_response_stream,function:function::failure_response_stream',
                     timestamp=IsNow(tz=UTC),
                     state='incomplete',
                 ),
@@ -1018,6 +1026,7 @@ async def test_first_success_streaming() -> None:
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
+                    model_id='fallback:function:function::success_response_stream,function:function::failure_response_stream',
                     timestamp=IsNow(tz=UTC),
                     state='incomplete',
                 ),
@@ -1025,6 +1034,7 @@ async def test_first_success_streaming() -> None:
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
+                    model_id='fallback:function:function::success_response_stream,function:function::failure_response_stream',
                     timestamp=IsNow(tz=UTC),
                     state='incomplete',
                 ),
@@ -1032,6 +1042,7 @@ async def test_first_success_streaming() -> None:
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
+                    model_id='fallback:function:function::success_response_stream,function:function::failure_response_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1052,6 +1063,7 @@ async def test_first_failed_streaming() -> None:
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
+                    model_id='fallback:function:function::failure_response_stream,function:function::success_response_stream',
                     timestamp=IsNow(tz=UTC),
                     failed_attempts=[
                         ModelRequestAttempt(
@@ -1069,6 +1081,7 @@ async def test_first_failed_streaming() -> None:
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
+                    model_id='fallback:function:function::failure_response_stream,function:function::success_response_stream',
                     timestamp=IsNow(tz=UTC),
                     failed_attempts=[
                         ModelRequestAttempt(
@@ -1086,6 +1099,7 @@ async def test_first_failed_streaming() -> None:
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
+                    model_id='fallback:function:function::failure_response_stream,function:function::success_response_stream',
                     timestamp=IsNow(tz=UTC),
                     failed_attempts=[
                         ModelRequestAttempt(
@@ -1103,6 +1117,7 @@ async def test_first_failed_streaming() -> None:
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
+                    model_id='fallback:function:function::failure_response_stream,function:function::success_response_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1312,6 +1327,7 @@ async def test_fallback_condition_tuple() -> None:
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
+                model_id='fallback:function:function:potato_exception_response:,function:function:success_response:',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1352,6 +1368,7 @@ async def test_fallback_connection_error() -> None:
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
+                model_id='fallback:function:function:connection_error_response:,function:function:success_response:',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1688,6 +1705,7 @@ Don't include any text or Markdown fencing before or after.
                 parts=[TextPart(content='{"bar":"baz"}')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:prompted_output_func:',
+                model_id='fallback:function:function:tool_output_func:,function:function:prompted_output_func:',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1929,6 +1947,7 @@ async def test_response_handler_triggered() -> None:
                 parts=[TextPart(content='fallback response')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:fallback_response:',
+                model_id='fallback:function:function:primary_response:,function:function:fallback_response:',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3158,6 +3177,7 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
                 parts=[TextPart(content='paused'), TextPart(content='done')],
                 usage=RequestUsage(input_tokens=102, output_tokens=3),
                 model_name='primary',
+                model_id='fallback:function:primary,function:fallback',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3235,6 +3255,7 @@ def test_fallback_primary_continuation_multiple_pauses() -> None:
                 parts=[TextPart(content='paused'), TextPart(content='paused'), TextPart(content='done')],
                 usage=RequestUsage(input_tokens=153, output_tokens=6),
                 model_name='primary',
+                model_id='fallback:function:primary,function:fallback',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3297,6 +3318,7 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
                 ],
                 usage=RequestUsage(input_tokens=102, output_tokens=6),
                 model_name='fallback',
+                model_id='fallback:function:primary,function:fallback',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3329,6 +3351,7 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
                 parts=[TextPart(content='final answer')],
                 usage=RequestUsage(input_tokens=53, output_tokens=6),
                 model_name='primary',
+                model_id='fallback:function:primary,function:fallback',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5021,3 +5044,16 @@ async def test_a_failed_pinned_continuation_job_is_cancelled_once_when_the_chain
         else:
             await agent.run(message_history=history)
     assert cancelled == [('primary', 'job-1')]
+
+
+async def test_fallback_pin_joins_framework_metadata_the_response_already_has() -> None:
+    """A suspended response that already carries `__pydantic_ai__` metadata keeps it next to `FallbackModel`'s pin."""
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('paused')], state='suspended', metadata={'__pydantic_ai__': {'other': 'kept'}}
+        )
+
+    model = FallbackModel(FunctionModel(primary, model_name='primary'), FunctionModel(primary, model_name='backup'))
+    response = await model.request([ModelRequest.user_text_prompt('x')], None, ModelRequestParameters())
+    assert response.metadata == {'__pydantic_ai__': {'other': 'kept', 'fallback_model_id': 'function:primary'}}

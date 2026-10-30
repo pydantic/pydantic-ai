@@ -11,6 +11,8 @@ description: "Load a repo's AGENTS.md and CLAUDE.md instruction files into a Pyd
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![RepoContext has three strategies. On by default, the walk-up loads AGENTS.md and CLAUDE.md from the working directory and each ancestor up to home_dir into the instructions, broadest first, once per run. Off by default, the inventory_agent_context tool reports where the .claude, .agents, .codex and .grok roots keep skills, agents and hooks. Off by default, nested traversal reacts to FileSystem reading or listing a directory, such as src/api, and queues a pointer to that directory's AGENTS.md before the next model request.](../img/harness/repo-context.svg)
+
 ## The problem
 
 A repo accumulates CE for whatever coding assistant worked in it: instruction files (`CLAUDE.md`/`AGENTS.md`) scattered across the tree, and assets under `.claude`/`.agents`/`.codex`/`.grok` (skills, sub-agents, hooks). An agent that loads only the top-level instruction file misses the ancestor context and has no idea the rest of the setup exists, so it cannot honor all of it.
@@ -39,7 +41,7 @@ print(result.output)
 
 ### 1. Walk-up instruction autoload (on by default)
 
-Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up to `home_dir` (inclusive). Precedence is ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by the path a symlink resolves to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors sharing identical content load once. Where the workspace can resolve symlinks, a symlinked file is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`. Symlinks to instruction files outside the directory being scanned are skipped, including shared dotfiles in another directory.
+Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up to `home_dir` (inclusive). Precedence is ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by the path a symlink resolves to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors sharing identical content load once. Where the workspace can resolve symlinks, a symlinked file is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`. A file in an ancestor is labeled relative to the working directory, such as `../AGENTS.md`, not by its absolute path. Symlinks to instruction files outside the directory being scanned are skipped, including shared dotfiles in another directory.
 
 When `home_dir` is `None` (the default), only the working directory is scanned -- no walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
 
@@ -82,6 +84,11 @@ result = agent.run_sync('List the source directory.')
 file; `'contents'` enqueues the file body. The note reaches message history
 before the next model request. Each directory is surfaced at most once per run.
 As with the walk-up, a symlinked instruction file is named after its target.
+
+With nested traversal on, the instructions also tell the model how instruction
+files relate: each applies to its own directory and everything below it, the
+more deeply nested file wins a conflict, and the user's direct instructions win
+over all of them. The statement is static, so it stays in the cached prefix.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
 the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
