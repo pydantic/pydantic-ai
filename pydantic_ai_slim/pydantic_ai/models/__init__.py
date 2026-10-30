@@ -93,6 +93,7 @@ from ..messages import (
     BaseToolReturnPart,
     BinaryImage,
     CachePoint,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     DocumentMediaType,
     FilePart,
@@ -1707,6 +1708,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         mid-conversation effort change and the profile sets `supports_mid_conversation_effort`; everywhere else it
         drops them, so the current effort goes out as the request-level setting.
 
+        Drops [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart]s: the
+        model sees a capability's load as its instructions and tools, not as the record that loads it.
+
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
         instruction baseline or compaction. A change to a loaded deferred capability's block is kept
@@ -1748,6 +1752,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
+        messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
             # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
@@ -3643,6 +3648,7 @@ def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
         | InstructionDeltaPart
         | InstructionBaselinePart
         | ToolAvailabilityDeltaPart
+        | CapabilityLoadDeltaPart
         | ModelSettingsDeltaPart,
     ):
         return False
@@ -4009,6 +4015,26 @@ def _project_instruction_state(
     return projected
 
 
+def _drop_capability_load_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """`messages` without their `CapabilityLoadDeltaPart`s, or `messages` itself when there are none.
+
+    A request left with no parts is kept, as it is when every other part of it is dropped.
+    """
+    if not any(
+        isinstance(part, CapabilityLoadDeltaPart)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    ):
+        return messages
+    return [
+        replace(message, parts=[part for part in message.parts if not isinstance(part, CapabilityLoadDeltaPart)])
+        if isinstance(message, ModelRequest)
+        else message
+        for message in messages
+    ]
+
+
 def _project_model_settings_deltas(messages: list[ModelMessage], *, keep: bool) -> list[ModelMessage]:
     """Leave the `ModelSettingsDeltaPart`s a model with a mid-conversation effort channel renders, or drop them all.
 
@@ -4298,15 +4324,20 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
 # TODO(v3): remove `RetryPromptPart`
 _UnpreparedPart: TypeAlias = (
-    ToolAvailabilityDeltaPart | ModelSettingsDeltaPart | RetryFeedbackPart | RetryPromptPart | CompactionPart  # pyright: ignore[reportDeprecated]
+    ToolAvailabilityDeltaPart
+    | CapabilityLoadDeltaPart
+    | ModelSettingsDeltaPart
+    | RetryFeedbackPart
+    | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    | CompactionPart
 )
 """The request parts `prepare_messages` translates away before any adapter sees them.
 
-Each of these carries something no provider API has a field for — a mid-conversation change to the
-tool list or the thinking effort, or a retry that isn't a plain turn — and `prepare_messages` turns it
-into the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that step never
-ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart`
-on a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
+Each of these carries something no provider API has a field for — a mid-conversation change to the tool list or the
+thinking effort, a capability load from code, or a retry that isn't a plain turn — and `prepare_messages` turns it into
+the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that
+step never ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
+a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` or a request-side `CompactionPart` never reaches this branch either:
 adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts.
 """
