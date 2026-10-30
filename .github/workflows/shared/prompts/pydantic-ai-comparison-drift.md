@@ -69,7 +69,7 @@ jq '.[] | select(any(.labels[]; .name == "comparison-drift")) | {number, title, 
   /tmp/gh-aw/agent/github-context/open-issues.json
 ```
 
-If an open issue already proposes all currently needed edits, call
+If an open issue already proposes all currently needed factual edits (ignore `Last checked` rows when comparing), call
 `mcp__safeoutputs__noop`. If it overlaps only partly, include only the new or
 changed proposals in this run's issue. Do not enumerate issues with `gh` from
 inside the sandbox.
@@ -91,8 +91,13 @@ competitor's own docs or repository for competitor claims, and to this
 repository or the Pydantic AI docs for our claims. Use multiple first-party
 links in the source cell when one proposed change contains multiple claims.
 
-For every page you fully re-checked, add a row proposing its `Last checked`
-date be set to today's date, so the next run's review window starts there.
+When you file an issue, also add a row for every page you fully re-checked,
+proposing its `Last checked` date be set to today's date, so the next run's
+review window starts there. These `Last checked` rows are bookkeeping, not
+proposed changes: they never justify filing an issue on their own, and they
+are ignored when comparing this run's rows with an open drift issue. In a
+month with no factual corrections, call `mcp__safeoutputs__noop`; the dates
+stay as they are and the next run reads the longer window.
 
 After the table, add a short `## Research notes` section that names each
 competitor's release or changelog window checked and notes any first-party
@@ -101,5 +106,5 @@ unchanged rows or general recommendations.
 
 Before filing, challenge every proposed row as if you maintain the named
 competitor. Drop any row whose source does not directly support both the
-current assessment and the proposed wording. If no rows remain, call
-`mcp__safeoutputs__noop`.
+current assessment and the proposed wording. If no factual rows remain
+(only `Last checked` rows, or none), call `mcp__safeoutputs__noop`.
