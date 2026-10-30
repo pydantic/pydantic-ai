@@ -119,7 +119,7 @@ export function SettingsWindow({
   updated,
   onError,
   onNotice,
-  children,
+  overlay,
 }: {
   section: SettingsSection
   onSection: (section: SettingsSection) => void
@@ -133,8 +133,8 @@ export function SettingsWindow({
   updated: { from: string; to: string } | null
   onError: (message: string) => void
   onNotice: (message: string) => void
-  /** What covers the shown section, such as `/update` installing: About's Update… leaves the window open. */
-  children?: ReactNode
+  /** An `.opening-overlay` over the shown section, such as `/update` installing: About's Update… leaves it open. */
+  overlay: ReactNode
 }) {
   const window_ = useRef<HTMLDivElement>(null)
   useEscape(onClose)
@@ -240,7 +240,7 @@ export function SettingsWindow({
           )}
         </div>
       </main>
-      {children}
+      {overlay}
     </div>
   )
 }

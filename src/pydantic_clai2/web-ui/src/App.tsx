@@ -854,9 +854,8 @@ export function App() {
           updated={state.updated}
           onError={showError}
           onNotice={showNotice}
-        >
-          {updating}
-        </SettingsWindow>
+          overlay={updating}
+        />
       )}
       {commandMenu && (
         <CommandMenu

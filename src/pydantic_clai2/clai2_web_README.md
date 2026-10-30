@@ -294,7 +294,8 @@ leaves the token out, and no browser opens.
 **Update…** asks first): the page shows uv's progress, over Settings while it is open, then
 "Restarting CLAI…" while the new build starts on the same address, reconnects by itself to the
 same session, and says which version it updated to; About says which versions it updated from
-and to. A failed install, or nothing to install, says so and nothing restarts. A terminal session with `/web` running comes back with it running.
+and to. A failed install, or nothing to install, says so and nothing restarts. A terminal session
+with `/web` running comes back with it running.
 
 ## Workspaces
 
