@@ -82,6 +82,7 @@ from .._json_schema import (
 )
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
+from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
 from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
@@ -4782,8 +4783,4 @@ _REMOVED_IN_V2 = {
 }
 
 if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
-
-    def __getattr__(name: str) -> object:
-        from .._removed_names import removed_name_error
-
-        raise removed_name_error(__name__, name, _REMOVED_IN_V2)
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

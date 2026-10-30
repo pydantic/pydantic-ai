@@ -35,6 +35,7 @@ from .._framing import neutralize_voice_tag
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
+from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
 from .._thinking_part import render_replayed_thinking, split_content_into_text_and_thinking
 from .._utils import (
@@ -7652,8 +7653,4 @@ _REMOVED_IN_V2 = {
 }
 
 if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
-
-    def __getattr__(name: str) -> object:
-        from .._removed_names import removed_name_error
-
-        raise removed_name_error(__name__, name, _REMOVED_IN_V2)
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

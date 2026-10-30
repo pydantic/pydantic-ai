@@ -7,7 +7,8 @@ users then see our error rather than the library's. See `docs/migration.md` for 
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from typing import NoReturn
 
 MIGRATION_URL = 'https://pydantic.dev/docs/ai/overview/migration/'
 
@@ -25,3 +26,15 @@ def removed_name_error(module: str, name: str, replacements: Mapping[str, str]) 
     return ImportError(
         f'`{module}.{name}` was removed in Pydantic AI V2: {replacement} See {MIGRATION_URL}', name=module
     )
+
+
+def removed_names_getattr(module: str, replacements: Mapping[str, str]) -> Callable[[str], NoReturn]:
+    """A module-level `__getattr__` for `module` that raises `removed_name_error()`.
+
+    Assign it under `if not TYPE_CHECKING:`, so type checkers keep reporting names the module doesn't have.
+    """
+
+    def __getattr__(name: str) -> NoReturn:
+        raise removed_name_error(module, name, replacements)
+
+    return __getattr__

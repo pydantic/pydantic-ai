@@ -16,6 +16,7 @@ from typing_extensions import deprecated
 from . import _utils
 from ._gateway_cost import gateway_reported_cost
 from ._genai_prices import iter_provider_references
+from ._removed_names import removed_names_getattr
 from ._warnings import (
     CostNotFoundWarning,
     PydanticAIDeprecationWarning,
@@ -732,8 +733,4 @@ _REMOVED_IN_V2 = {
 }
 
 if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
-
-    def __getattr__(name: str) -> object:
-        from ._removed_names import removed_name_error
-
-        raise removed_name_error(__name__, name, _REMOVED_IN_V2)
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

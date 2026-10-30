@@ -17,6 +17,8 @@ from pydantic_ai.models import get_user_agent
 from pydantic_ai.profiles.google import google_model_profile, google_realtime_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
+from .._removed_names import removed_names_getattr
+
 if TYPE_CHECKING:
     from pydantic_ai.realtime import RealtimeModelProfile
 
@@ -243,8 +245,4 @@ _REMOVED_IN_V2 = {
 }
 
 if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
-
-    def __getattr__(name: str) -> object:
-        from .._removed_names import removed_name_error
-
-        raise removed_name_error(__name__, name, _REMOVED_IN_V2)
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

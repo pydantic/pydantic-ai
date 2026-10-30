@@ -12,6 +12,7 @@ from typing_extensions import TypeAliasType, TypeForm, TypeVar
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
+from ._removed_names import removed_names_getattr
 from ._run_context import RunContext
 from .messages import ModelResponse, ToolCallPart
 from .tools import ObjectJsonSchema, ToolDefinition
@@ -796,8 +797,4 @@ _REMOVED_IN_V2 = {
 }
 
 if not TYPE_CHECKING:  # Kept from type checkers, which would otherwise accept any name on this module.
-
-    def __getattr__(name: str) -> object:
-        from ._removed_names import removed_name_error
-
-        raise removed_name_error(__name__, name, _REMOVED_IN_V2)
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)
