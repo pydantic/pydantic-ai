@@ -131,7 +131,7 @@ print(agent.run_sync('Answer.').output)
 
 Unlike `fallback_on`, this happens across ordinary request steps: the next model sees the rejected response and validation feedback. Successful tools are retained, usage keeps accumulating, and the logical run and trace continue. The next model is the next candidate in the chain; it need not be larger or more capable.
 
-An integer applies the same threshold to every model. For independent thresholds, pass a mapping from model IDs to positive integers. Keys match the string used to select the model, including a `ResolveModelId` alias, or [`Model.model_id`][pydantic_ai.models.Model.model_id] for a model instance. Unlisted models keep request-only fallback; an empty mapping disables output-driven switching. The capability copies the mapping when constructed.
+An integer applies the same threshold to every model. For independent thresholds, pass a mapping from model IDs to positive integers. Keys match the effective selection ID, including a `ResolveModelId` alias, or [`Model.model_id`][pydantic_ai.models.Model.model_id] for a model instance. An agent default already inferred from a name uses that instance's canonical `model_id`; for example, `Agent('test')` uses `'test:test'`. Unlisted models keep request-only fallback; an empty mapping disables output-driven switching. The capability copies the mapping when constructed.
 
 - Schema failures, output-validator or output-function `ModelRetry`, invalid output-tool arguments, and unusable responses count when the applicable retry limit allows another attempt. Function-tool retries, request-hook `ModelRetry`, request errors, and cancellation do not count towards this threshold.
 - Each model ID has its own count, including resolver aliases. Several failed output calls in one response count against their producer and trigger at most one move; they cannot skip a candidate that has not run.
@@ -145,6 +145,8 @@ With `run(spec=...)`, a spec's `model:` is an explicit run choice, so a spec con
 Configure `retries={'output': ...}` explicitly to allow the desired switches and any retries on the final model. `output_retry_threshold` does not replenish that allowance, change per-output-tool overrides, or bypass usage limits. Request-hook retries consume the same output retry allowance without advancing this policy, so no threshold guarantees that a later candidate is reached.
 
 The policy state is isolated per run. Passing saved message history into a new run starts the policy afresh. Under durable execution, the switch is preserved across recovery and replay.
+
+With [`sticky=True`](#staying-on-the-model-that-answered), request-level fallback history can choose the run's starting candidate. Once output-driven switching retires candidates, later request failures in that run stay within the remaining suffix. A new run resets output retirement; only request-level fallbacks start sticky conversation history.
 
 Graph-level streaming through `run(event_stream_handler=...)`, `run_stream_events()`, and `iter()` can continue to the next candidate after validation rejects a completed response. `run_stream()` does not replace final output already delivered to its consumer.
 

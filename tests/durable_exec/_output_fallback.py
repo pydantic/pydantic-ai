@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, ModelFallback
@@ -31,6 +31,8 @@ def make_agent(
     durability: AbstractCapability[object],
     executions: list[str],
     lookup_tool: Callable[[], str] | None = None,
+    *,
+    capabilities: Sequence[AbstractCapability[object]] = (),
 ) -> Agent[object, str]:
     def lookup() -> str:
         executions.append('lookup')
@@ -43,6 +45,7 @@ def make_agent(
         capabilities=[
             ModelFallback(models['primary'], models['backup'], output_retry_threshold=1),
             durability,
+            *capabilities,
         ],
     )
 

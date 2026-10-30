@@ -4773,7 +4773,7 @@ async def notify_output_retry(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     retry_context: OutputRetryContext,
 ) -> None:
-    """Notify after accepted response-output retries, before closing their event stream."""
+    """Notify capabilities after core accepts an output retry charge."""
     raise_if_cancelling()
     await ctx.deps.root_capability.on_output_retry(_build_output_run_context(ctx), retry_context=retry_context)
 

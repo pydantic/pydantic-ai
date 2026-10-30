@@ -363,7 +363,11 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         if (
             self._output_transition is not None
             and self._output_model is not None
-            and _matches_model(self._output_model, request_context.model, request_context.model_id)
+            and (
+                self._output_model == request_context.model_id
+                if isinstance(self._output_model, str)
+                else _is_or_wraps(request_context.model, self._output_model)
+            )
         ):
             retry = self._output_transition
             assert self._output_response is not None
@@ -619,9 +623,3 @@ def _is_or_wraps(model: Model, candidate: Model) -> bool:
         if not isinstance(model, WrapperModel):
             return False
         model = model.wrapped
-
-
-def _matches_model(candidate: Model | str, model: Model, model_id: str | None) -> bool:
-    if isinstance(candidate, str):
-        return candidate == model_id
-    return _is_or_wraps(model, candidate)

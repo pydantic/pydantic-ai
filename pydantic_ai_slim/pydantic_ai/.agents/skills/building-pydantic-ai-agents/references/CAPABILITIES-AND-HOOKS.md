@@ -142,6 +142,10 @@ For each stage, the entire `wrap_*` chain encloses the `before_*` chain, the cor
 
 Use `on_output_retry` for output failures that consume an allowed retry, including empty responses and output-tool argument errors. Read the rejected response and effective budget from `retry_context`. Request-hook and function-tool retries do not notify. The notification does not replenish retry limits; exceptions from it stop the run. Use `ModelFallback(..., output_retry_threshold=N)` to move the next ordinary request step to the next candidate after N output retries from the serving model. Pass a mapping from selected model IDs to positive thresholds for per-model configuration; unlisted models keep request-only fallback. The choice persists for that run; configure the agent's output retry limit explicitly.
 
+Use the canonical `Model.model_id` for an inferred default. Keep `ResolveModelId` aliases as selection keys.
+
+Use `sticky=True` to carry request-level fallback choices through conversation history. Output retirement stays within one run and restricts later request failures to the remaining suffix. An output-only switch does not start sticky history.
+
 Observe applied output-driven switches through `OutputFallbackEvent`. Read source and target selection IDs and the triggering retry from the event. Use `on_output_retry` to observe individual output retries, including retries that never lead to a switch. Both retry contexts and fallback events use `OutputRetrySource` for response-level output or output-tool failures.
 
 In `run_stream()`, `ContextVar` values set by an async `before_model_request` hook are available to later tool, output, and run hooks, as in non-streamed runs. Values set later in that model request may not be; use a mutable attribute on `ctx.deps` for state that must be shared throughout the run.

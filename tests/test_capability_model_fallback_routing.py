@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -54,12 +55,29 @@ class ObserveStepModel(AbstractCapability[object]):
         return tool_defs
 
 
-@pytest.mark.parametrize(
-    'source', ['agent', 'fallback_default', 'run', 'override', 'selector_before', 'selector_after', 'wrapped']
+@dataclass(frozen=True)
+class SelectionCase:
+    source: Literal['agent', 'fallback_default', 'run', 'override', 'selector_before', 'selector_after', 'wrapped']
+    expected_models: tuple[str, ...] = ('primary', 'backup', 'backup')
+    expected_output: str | None = 'ready'
+    selected_steps: tuple[int, ...] = ()
+    warning: str | None = None
+
+
+SELECTION_CASES: tuple[SelectionCase, ...] = (
+    SelectionCase('agent'),
+    SelectionCase('fallback_default'),
+    SelectionCase('run', ('primary', 'primary', 'primary'), None, warning='output_retry_threshold=1'),
+    SelectionCase('override', ('primary', 'primary', 'primary'), None),
+    SelectionCase('selector_before', ('primary', 'primary', 'primary'), None, (1, 1, 2, 3)),
+    SelectionCase('selector_after', ('primary', 'primary', 'primary'), None, (1, 1, 2, 3)),
+    SelectionCase('wrapped'),
 )
-async def test_output_switch_selects_before_step_hooks(
-    source: Literal['agent', 'fallback_default', 'run', 'override', 'selector_before', 'selector_after', 'wrapped'],
-) -> None:
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.source) for case in SELECTION_CASES])
+async def test_output_switch_selects_before_step_hooks(case: SelectionCase) -> None:
+    source = case.source
     phases: list[tuple[str, int, str]] = []
     attempts: list[tuple[int, str, int]] = []
     selected_steps: list[int] = []
@@ -116,29 +134,30 @@ async def test_output_switch_selects_before_step_hooks(
             raise ModelRetry('Finish the draft.')
         return value
 
-    if source in {'run', 'override', 'selector_before', 'selector_after'}:
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+    output: str | None = None
+    with (
+        pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries')
+        if case.expected_output is None
+        else nullcontext()
+    ):
+        with pytest.warns(UserWarning, match=case.warning) if case.warning is not None else nullcontext():
             if source == 'override':
                 with agent.override(model=primary):
-                    await agent.run('Answer.', model=other)
+                    output = (await agent.run('Answer.', model=other)).output
             elif source == 'run':
-                with pytest.warns(UserWarning, match='output_retry_threshold=1'):
-                    await agent.run('Answer.', model=primary)
+                output = (await agent.run('Answer.', model=primary)).output
             else:
-                await agent.run('Answer.')
-        assert attempts == [(1, 'primary', 1), (2, 'primary', 1), (3, 'primary', 1)]
-        assert all(model == 'primary' for _, _, model in phases)
-        assert backup_calls == 0
-    else:
-        result = await agent.run('Answer.')
-        assert result.output == 'ready'
-        assert attempts == [(1, 'primary', 1), (2, 'backup', 1), (3, 'backup', 1)]
-        assert all(model == ('primary' if step == 1 else 'backup') for _, step, model in phases)
+                output = (await agent.run('Answer.')).output
+    assert output == case.expected_output
+    assert attempts == [(step, model, 1) for step, model in enumerate(case.expected_models, 1)]
+    assert all(model == case.expected_models[step - 1] for _, step, model in phases)
+    assert backup_calls == case.expected_models.count('backup')
+    if case.expected_output is not None:
         assert ('tool', 2, 'backup') in phases
     for step in (1, 2, 3):
         assert {'before', 'wrap', 'settings', 'tools'} <= {phase for phase, number, _ in phases if number == step}
     # Resolving the run-bound fallback copy re-evaluates the bootstrap selector on step one.
-    assert selected_steps == ([1, 1, 2, 3] if source.startswith('selector_') else [])
+    assert tuple(selected_steps) == case.selected_steps
 
 
 @pytest.mark.parametrize('threshold', [None, 1])
@@ -226,11 +245,26 @@ async def test_output_counts_use_configured_aliases() -> None:
     assert served == ['first', 'first', 'second', 'second', 'backup']
 
 
-@pytest.mark.parametrize('pin', ['known', 'outside', 'missing'])
-@pytest.mark.parametrize('mapped', [False, True])
-async def test_output_policy_preserves_suspended_selection(
-    pin: Literal['known', 'outside', 'missing'], mapped: bool
-) -> None:
+@dataclass(frozen=True)
+class SuspendedCase:
+    id: str
+    pin: Literal['known', 'outside', 'missing']
+    mapped: bool
+    expected_models: tuple[str, ...]
+
+
+SUSPENDED_CASES: tuple[SuspendedCase, ...] = (
+    SuspendedCase('known-uniform', 'known', False, ('pinned', 'backup')),
+    SuspendedCase('known-mapped', 'known', True, ('pinned', 'backup')),
+    SuspendedCase('outside-uniform', 'outside', False, ('primary', 'pinned', 'backup')),
+    SuspendedCase('outside-mapped', 'outside', True, ('primary', 'pinned', 'backup')),
+    SuspendedCase('missing-uniform', 'missing', False, ('primary', 'pinned', 'backup')),
+    SuspendedCase('missing-mapped', 'missing', True, ('primary', 'pinned', 'backup')),
+)
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in SUSPENDED_CASES])
+async def test_output_policy_preserves_suspended_selection(case: SuspendedCase) -> None:
     phases: list[tuple[str, int, str]] = []
     attempts: list[tuple[int, str, int]] = []
 
@@ -239,8 +273,8 @@ async def test_output_policy_preserves_suspended_selection(
 
     primary = FunctionModel(draft, model_name='primary')
     pinned = FunctionModel(draft, model_name='pinned')
-    backup = TestModel(custom_output_text='ready')
-    threshold: int | dict[str, int] = {primary.model_id: 1, pinned.model_id: 1} if mapped else 1
+    backup = TestModel(custom_output_text='ready', model_name='backup')
+    threshold: int | dict[str, int] = {primary.model_id: 1, pinned.model_id: 1} if case.mapped else 1
     fallback = ModelFallback[object](pinned, backup, output_retry_threshold=threshold)
     agent = Agent(
         primary,
@@ -255,27 +289,20 @@ async def test_output_policy_preserves_suspended_selection(
             raise ModelRetry('Finish the draft.')
         return value
 
+    pin_ids: dict[str, str | None] = {'known': pinned.model_id, 'outside': 'outside:model', 'missing': None}
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Answer.')]),
         ModelResponse(
             parts=[TextPart('partial')],
             state='suspended',
             provider_response_id='job',
-            model_id=pinned.model_id if pin == 'known' else 'outside:model' if pin == 'outside' else None,
+            model_id=pin_ids[case.pin],
         ),
     ]
     result = await agent.run(message_history=history)
 
     assert result.output == 'ready'
-    expected: list[tuple[int, str, int]] = (
-        [(1, 'pinned', 1), (2, backup.model_name, 1)]
-        if pin == 'known'
-        else [
-            (1, 'primary', 1),
-            (2, 'pinned', 1),
-            (3, backup.model_name, 1),
-        ]
-    )
+    expected: list[tuple[int, str, int]] = [(step, model, 1) for step, model in enumerate(case.expected_models, 1)]
     assert attempts == expected
     for step, model, _ in expected:
         assert ('before', step, model) in phases

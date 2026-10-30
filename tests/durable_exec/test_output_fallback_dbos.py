@@ -6,7 +6,10 @@ from uuid import uuid4
 
 import pytest
 
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models import ModelRequestContext
 from tests.conftest import detach_dbos_logging, try_import
 from tests.durable_exec._output_fallback import make_agent, make_models
 
@@ -66,3 +69,41 @@ def test_recovery_reconstructs_selection(dbos: DBOS) -> None:
     DBOS.resume_workflow(workflow_id).get_result()
     assert attempts == [['primary', 'primary', 'backup']] * 2
     assert executions == ['primary', 'lookup', 'primary', 'backup']
+
+
+def test_mid_run_recovery_rebuilds_output_selection(dbos: DBOS) -> None:
+    executions: list[str] = []
+    models = make_models(executions)
+    interrupted = False
+
+    def interrupt(ctx: RunContext[object], request_context: ModelRequestContext) -> ModelRequestContext:
+        nonlocal interrupted
+        if request_context.model.model_name == 'backup' and not interrupted:
+            interrupted = True
+            executions.append('interrupted')
+            raise Crash
+        return request_context
+
+    @DBOS.step(name='fallback_midrun_lookup')
+    def lookup() -> str:
+        executions.append('lookup')
+        return 'evidence'
+
+    agent = make_agent(
+        models,
+        DBOSDurability(models=models),
+        executions,
+        lookup_tool=lookup,
+        capabilities=[Hooks(before_model_request=interrupt)],
+    )
+
+    @DBOS.workflow(name='output_fallback_midrun')
+    def workflow() -> str:
+        return agent.run_sync('Answer.').output
+
+    workflow_id = str(uuid4())
+    with SetWorkflowID(workflow_id), pytest.raises(Crash):
+        workflow()
+    assert executions == ['primary', 'lookup', 'primary', 'interrupted']
+    assert DBOS.resume_workflow(workflow_id).get_result() == 'ready'
+    assert executions == ['primary', 'lookup', 'primary', 'interrupted', 'backup']

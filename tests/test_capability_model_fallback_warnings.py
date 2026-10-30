@@ -152,3 +152,12 @@ def test_warning_points_to_sync_caller() -> None:
 
     assert len(emitted) == 1
     assert emitted[0].filename == __file__
+
+
+async def test_warning_without_frame_inspection(mocker: MockerFixture) -> None:
+    capabilities: list[AbstractCapability[object]] = [ModelFallback(TestModel(), output_retry_threshold=1)]
+    agent = Agent(TestModel(), name='fallback_warning', deps_type=object, capabilities=capabilities)
+    mocker.patch('pydantic_ai._warnings.inspect.currentframe', return_value=None)
+
+    with pytest.warns(UserWarning, match='output switching.*explicit run'):
+        assert (await agent.run('Answer.', model=TestModel(custom_output_text='chosen'))).output == 'chosen'

@@ -65,3 +65,31 @@ async def test_output_retirement_restricts_sticky_fallback_and_resets_next_run()
 
     assert (await agent.run('Continue again.', message_history=first.all_messages())).output == 'ready'
     assert calls == ['primary', 'backup', 'backup', 'final', 'backup']
+
+
+async def test_output_only_switch_does_not_start_sticky_history() -> None:
+    calls: list[str] = []
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('primary')
+        return ModelResponse(parts=[TextPart('draft')])
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('backup')
+        return ModelResponse(parts=[TextPart('ready')])
+
+    agent = Agent(
+        FunctionModel(primary, model_name='primary'),
+        capabilities=[ModelFallback(FunctionModel(backup, model_name='backup'), sticky=True, output_retry_threshold=1)],
+    )
+
+    @agent.output_validator
+    def validate(value: str) -> str:
+        if value == 'draft':
+            raise ModelRetry('Finish the draft.')
+        return value
+
+    first = await agent.run('Answer.')
+    assert first.output == 'ready'
+    assert (await agent.run('Continue.', message_history=first.all_messages())).output == 'ready'
+    assert calls == ['primary', 'backup', 'primary', 'backup']

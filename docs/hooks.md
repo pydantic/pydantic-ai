@@ -261,6 +261,8 @@ See [Output hooks](capabilities/custom.md#output-hooks) for the full lifecycle, 
 
 Request-hook and function-tool retries, recovered errors, partial validation, skipped calls, cancellation, and a failure that exhausts its retry budget do not notify. Several output failures within their retry limits produce several notifications, including a failed output beside a successful sibling or a sibling that exhausts its own budget. Hooks run in reverse capability order. Exceptions from this notification stop the run; they do not grant another retry.
 
+When `run_stream()` has found its final result, allowed retries from other processed output-tool calls still notify. The final output already delivered to the consumer remains the result.
+
 Use this hook for output-retry events and policy state. [`ModelFallback(output_retry_threshold=...)`](capabilities/model-fallback.md#output-validation-retries) uses it to move the next ordinary request step to another model while preserving the agent's retry limits.
 
 ### Tool preparation
