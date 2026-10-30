@@ -46,7 +46,7 @@ function places(projects: Project[], current?: string): Place[] {
 }
 
 /** Where a new session runs: a directory CLAI has sessions in or a worktree of its repository, by default the current one,
- * a new worktree of the highlighted place's repository, or any other directory by its path, completed as it is typed. */
+ * a new worktree of a repository row (or of the keyboard-highlighted one), or any other directory by its path, completed as it is typed. */
 export function NewSessionDialog({
   current,
   onOpened,
@@ -170,16 +170,14 @@ export function NewSessionDialog({
           onKeyDown={keys}
         >
           {shown.map((place, index) => (
-            <button
+            <div
               key={place.path}
               id={`place-${index}`}
               role="option"
               aria-selected={index === cursor}
               className={`dialog-option ${index === cursor ? 'active' : ''}`}
-              disabled={sending}
-              onMouseEnter={() => setCursor(index)}
-              onClick={() => void start(place.path)}
               title={place.path}
+              onClick={() => !sending && void start(place.path)}
             >
               <span className="dialog-option-label">
                 <FolderIcon size={13} />
@@ -191,7 +189,23 @@ export function NewSessionDialog({
                 )}
               </span>
               <span className="dialog-option-description">{place.detail}</span>
-            </button>
+              {place.repo && (
+                <button
+                  type="button"
+                  className="dialog-option-worktree"
+                  disabled={sending}
+                  aria-label={`New worktree of ${place.label}`}
+                  title={`Check out a new branch of ${place.label} in a worktree, and start there`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setWorktreeOf(place)
+                    setProblem(null)
+                  }}
+                >
+                  New worktree…
+                </button>
+              )}
+            </div>
           ))}
         </div>
         {worktreeOf ? (
@@ -313,8 +327,8 @@ export function NewSessionDialog({
           </form>
         )}
         <p className="dialog-hint">
-          Click a directory, make a new worktree of the highlighted one, or type an absolute path to find others. Esc goes
-          back.
+          Click a directory or its New worktree action. The button below follows the keyboard highlight, not the pointer.
+          Esc goes back.
         </p>
       </div>
     </div>

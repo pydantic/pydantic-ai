@@ -1123,10 +1123,10 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await page.goto(f'{web_ui.url}/?token={TOKEN}')
         sidebar = page.locator('.sidebar')
         dialog = page.get_by_role('dialog', name='New session')
-        new_worktree = dialog.get_by_role('button', name='New worktree of repo · main…')
         await sidebar.get_by_role('button', name='New session').click()
-        await expect(dialog.get_by_role('option', name='repo · main')).to_be_visible()
-        await dialog.get_by_role('option', name='repo · main').hover()
+        repo_main = dialog.get_by_role('option', name='repo · main')
+        new_worktree = repo_main.get_by_role('button', name='New worktree of repo · main', exact=True)
+        await expect(repo_main).to_be_visible()
         await new_worktree.click()
         await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
         await dialog.get_by_label('Base').fill('main')
@@ -1155,9 +1155,9 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await page.reload()
         await sidebar.get_by_role('button', name='New session').click()
         await expect(dialog.get_by_role('option', name='repo · feature-x')).to_be_visible()
-        await dialog.get_by_role('option', name='alpha').hover()
-        await expect(dialog.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
-        await dialog.get_by_role('option', name='repo · main').hover()
+        await expect(
+            dialog.get_by_role('option', name='alpha').get_by_role('button', name=re.compile('New worktree'))
+        ).to_have_count(0)
         await new_worktree.click()
         # Esc goes back to the list, and Esc there closes the dialog.
         await page.keyboard.press('Escape')
@@ -1172,3 +1172,72 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         for name in ('repo', 'feature-x'):
             if name in runtimes:
                 runtimes[name].sessions.relocate = None
+
+
+async def test_new_worktree_stays_on_the_chosen_row_when_the_pointer_crosses_another(
+    page: Page, web_ui: WebUI
+) -> None:
+    """Hovering a later row on the way to New worktree does not retarget the one the user chose."""
+    projects = [
+        {
+            'key': '/git/scratch',
+            'name': 'scratch',
+            'current': False,
+            'worktrees': [
+                {'root': '/wt/scratch', 'label': 'main', 'current': False, 'missing': False, 'sessions': []},
+            ],
+        },
+        {
+            'key': '/git/notes',
+            'name': 'notes',
+            'current': False,
+            'worktrees': [
+                {'root': '/wt/notes', 'label': 'dev', 'current': False, 'missing': False, 'sessions': []},
+            ],
+        },
+        {
+            'key': '/git/paper-trader',
+            'name': 'paper-trader',
+            'current': False,
+            'worktrees': [
+                {
+                    'root': '/wt/paper',
+                    'label': 'issue-6-api',
+                    'current': False,
+                    'missing': False,
+                    'sessions': [],
+                },
+            ],
+        },
+    ]
+
+    async def checkouts(route: Route) -> None:
+        if 'include_worktrees=true' in route.request.url:
+            await route.fulfill(json=projects)
+            return
+        await route.fallback()
+
+    await page.route('**/api/sessions?*', checkouts)
+    try:
+        await page.goto(f'{web_ui.url}/?token={TOKEN}')
+        dialog = page.get_by_role('dialog', name='New session')
+        await page.locator('.sidebar').get_by_role('button', name='New session').click()
+        scratch = dialog.get_by_role('option', name='scratch · main')
+        paper = dialog.get_by_role('option', name='paper-trader · issue-6-api')
+        await expect(scratch).to_be_visible()
+        # The pointer crosses a later row. That row's own action still belongs to it, and scratch's stays put.
+        await paper.hover()
+        await scratch.get_by_role('button', name='New worktree of scratch · main', exact=True).click()
+        await expect(dialog.get_by_label('Branch of the new worktree of scratch · main')).to_be_visible()
+        await dialog.get_by_role('button', name='Back').click()
+        # The shared button follows the keyboard highlight. Crossing paper-trader does not move it.
+        await dialog.get_by_role('listbox').focus()
+        await page.keyboard.press('ArrowDown')
+        shared = dialog.get_by_role('button', name='New worktree of scratch · main…', exact=True)
+        await expect(shared).to_be_visible()
+        await paper.hover()
+        await expect(shared).to_be_visible()
+        await shared.click()
+        await expect(dialog.get_by_label('Branch of the new worktree of scratch · main')).to_be_visible()
+    finally:
+        await page.unroute('**/api/sessions?*', checkouts)

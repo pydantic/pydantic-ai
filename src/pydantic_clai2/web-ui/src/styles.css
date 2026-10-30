@@ -3407,6 +3407,21 @@ textarea.setting-input {
   margin: 0;
 }
 
+.new-session-dialog .dialog-option {
+  cursor: pointer;
+}
+
+.new-session-dialog .dialog-option:hover {
+  background: var(--hover);
+}
+
+.new-session-dialog .dialog-option-worktree {
+  align-self: flex-start;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .new-session-dialog .dialog-option-label svg {
   flex: none;
   color: var(--muted);
