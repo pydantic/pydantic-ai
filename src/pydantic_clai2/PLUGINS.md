@@ -1462,7 +1462,8 @@ it. **New session** does the same in the folder the user picks (`POST /api/sessi
 calls `host.live.new`), offering the sidebar's checkouts and every other worktree Git lists for
 their repositories (`GET /api/sessions?include_worktrees=true`), and the directories a typed path
 completes to (`GET /api/directories?path=…`, the first 12, each repository with its worktrees). Its
-**New worktree of …** first checks out a new branch of the highlighted folder's repository
+**New worktree…** (on a row, or below the list for the row the arrow keys select) first checks out a new
+branch of that folder's repository
 (`POST /api/worktrees`, which places it as `clai2 --worktree` does and answers its folder). The page
 watches the session it
 shows (`LiveSession.watch`), so that one is never closed for being idle; any other live session

@@ -1211,7 +1211,7 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await page.goto(f'{web_ui.url}/?token={TOKEN}')
         sidebar = page.locator('.sidebar')
         dialog = page.get_by_role('dialog', name='New session')
-        new_worktree = dialog.get_by_role('button', name='New worktree of repo · main…')
+        new_worktree = dialog.get_by_role('listbox').get_by_role('button', name='New worktree of repo · main…')
         await sidebar.get_by_role('button', name='New session').click()
         await expect(dialog.get_by_role('option', name='repo · main')).to_be_visible()
         await dialog.get_by_role('option', name='repo · main').hover()
@@ -1243,8 +1243,9 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await page.reload()
         await sidebar.get_by_role('button', name='New session').click()
         await expect(dialog.get_by_role('option', name='repo · feature-x')).to_be_visible()
-        await dialog.get_by_role('option', name='alpha').hover()
-        await expect(dialog.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
+        alpha = dialog.locator('.dialog-option-row').filter(has=page.get_by_role('option', name='alpha'))
+        await alpha.hover()
+        await expect(alpha.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
         await dialog.get_by_role('option', name='repo · main').hover()
         await new_worktree.click()
         # Esc goes back to the list, and Esc there closes the dialog.
@@ -1260,3 +1261,84 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         for name in ('repo', 'feature-x'):
             if name in runtimes:
                 runtimes[name].sessions.relocate = None
+
+
+async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
+    page: Page, web_ui: WebUI, tmp_path: Path
+) -> None:
+    """Moving the pointer from a row to New worktree… crosses other rows, which must not change whose worktree it makes."""
+    names = ('north', 'south')
+    for name in names:
+        repo = (tmp_path / name).resolve()
+        git('init', '-b', 'main', str(repo))
+        git(
+            '-C',
+            str(repo),
+            '-c',
+            'user.name=Test',
+            '-c',
+            'user.email=test@example.com',
+            'commit',
+            '--allow-empty',
+            '-m',
+            'init',
+        )
+        opened = await page.request.post(
+            f'{web_ui.url}/api/sessions/new', headers={HEADER: TOKEN}, data={'workspace': str(repo)}
+        )
+        assert opened.ok, await opened.text()
+        # Saved, so New session lists the folder even when another one is current.
+        web_ui.fleet.portal.call(web_ui.fleet.runtimes[name].session.commit_messages, list[ModelMessage]())
+        renamed = await page.request.post(
+            f'{web_ui.url}/api/sessions/{(await opened.json())["id"]}/rename',
+            headers={HEADER: TOKEN},
+            data={'title': f'Browser {name.title()}'},
+        )
+        assert renamed.ok, await renamed.text()
+    # The page starts on the last session opened: one in a folder outside Git, so the list's cursor starts on a row
+    # without New worktree….
+    (tmp_path / 'plain').mkdir()
+    opened = await page.request.post(
+        f'{web_ui.url}/api/sessions/new', headers={HEADER: TOKEN}, data={'workspace': str(tmp_path / 'plain')}
+    )
+    assert opened.ok, await opened.text()
+    runtimes = web_ui.fleet.runtimes
+    for name in ('plain', *names):
+        runtimes[name].sessions.relocate = stay
+    try:
+        await page.goto(f'{web_ui.url}/?token={TOKEN}')
+        dialog = page.get_by_role('dialog', name='New session')
+        await page.locator('.sidebar').get_by_role('button', name='New session').click()
+        rows = {name: dialog.get_by_role('option', name=f'{name} · main') for name in names}
+        tops: dict[str, float] = {}
+        for name, row in rows.items():
+            await expect(row).to_be_visible()
+            box = await row.bounding_box()
+            assert box is not None
+            tops[name] = box['y']
+        # The pointer goes straight down from the upper row, across the lower one, to the dialog's buttons.
+        chosen, crossed = sorted(names, key=tops.__getitem__)
+        await rows[chosen].hover()
+        cancel = await dialog.get_by_role('button', name='Cancel').bounding_box()
+        assert cancel is not None
+        await page.mouse.move(cancel['x'] + cancel['width'] / 2, cancel['y'] + cancel['height'] / 2, steps=40)
+        # Crossing a row leaves the cursor, which the buttons below act on, where it was: on `plain`, outside Git.
+        await expect(rows[crossed]).not_to_have_attribute('aria-selected', 'true')
+        below = dialog.locator('.dialog-actions')
+        await expect(below.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
+        await dialog.get_by_role('button', name=f'New worktree of {chosen} · main…').click(timeout=2_000)
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {chosen} · main')).to_be_visible()
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed} · main')).to_have_count(0)
+        # From the keyboard, the button below makes a worktree of the row the arrow keys select.
+        await page.keyboard.press('Escape')
+        await dialog.get_by_role('listbox').focus()
+        for _ in range(await dialog.get_by_role('option').count()):
+            if await rows[crossed].get_attribute('aria-selected') == 'true':
+                break
+            await page.keyboard.press('ArrowDown')
+        await expect(rows[crossed]).to_have_attribute('aria-selected', 'true')
+        await below.get_by_role('button', name=f'New worktree of {crossed} · main…').click()
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed} · main')).to_be_visible()
+    finally:
+        for name in ('plain', *names):
+            runtimes[name].sessions.relocate = None

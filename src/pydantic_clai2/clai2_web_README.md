@@ -17,7 +17,8 @@ ends every session. There, each session you open is live in its own directory, w
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
 there; CLAI's own working directory never changes. **New session** asks where the session runs: a
 project or worktree from the sidebar or any other worktree Git lists for its repository, by default
-the current one, a new worktree of the highlighted one's repository (**New worktree of …**: a branch name,
+the current one, a new worktree of a listed checkout's repository (**New worktree…** on its row, or
+**New worktree of …** for the row the arrow keys select: a branch name,
 generated if empty, and a base, `HEAD` if empty; it goes in `.worktrees/` as `--worktree` puts it),
 or any directory by its absolute path, which it completes as you type, listing each repository's
 worktrees. The header shows where the session works.
