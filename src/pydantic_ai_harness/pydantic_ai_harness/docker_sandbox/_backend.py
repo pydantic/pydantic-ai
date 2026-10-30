@@ -44,6 +44,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces._telemetry import lifecycle_span, stop_span
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 
 __all__ = ('DockerSandboxBackend', 'remove_container')
@@ -277,10 +278,11 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         """Create or start the container once, however many first operations race, and return the working directory."""
         async with self._lock:
             if self._resolved_working_dir is None:
-                if self._ref is None:
-                    await self._create()
-                else:
-                    await self._start()
+                with lifecycle_span('create' if self._ref is None else 'attach', self):
+                    if self._ref is None:
+                        await self._create()
+                    else:
+                        await self._start()
                 # Created here rather than by `docker run --workdir`, which Podman refuses for a missing directory.
                 if self._working_dir is None:
                     result = await self._exec(['sh', '-c', 'pwd -P'], env={}, timeout=None, workdir=None)
@@ -431,4 +433,5 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         # Killing the local `docker exec` client leaves the command running in the container, so a second
         # exec stops it. Best effort: a daemon that stalls now has nothing to report.
         argv = [self._executable, 'exec', '--workdir', '/', self._name, 'sh', '-c', _STOP, 'sh', tag]
-        await stop_shielded(lambda: self._runner.run(argv), grace=_STOP_TIMEOUT)
+        with stop_span():
+            await stop_shielded(lambda: self._runner.run(argv), grace=_STOP_TIMEOUT)

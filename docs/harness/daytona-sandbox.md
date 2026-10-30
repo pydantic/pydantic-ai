@@ -247,7 +247,7 @@ Removing a capability while workflows using it are still running changes their r
 
 ## Telemetry
 
-`DaytonaSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a sandbox logs its ID at `INFO` (`Created Daytona sandbox <id>`) on the `pydantic_ai_harness.daytona_sandbox._backend` logger, so a sandbox that outlives its run can still be found.
+`DaytonaSandbox` traces starting or reconnecting to the sandbox as `workspace create` or `workspace attach`, under the call that needed it, `destroy(ref)` called inside a run as `workspace destroy`, and stopping a command after a timeout, cancellation or failure as `workspace stop`; see [workspace spans](../logfire.md#workspace-spans). Core's [instrumentation](../capabilities/instrumentation.md) also records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a sandbox logs its ID at `INFO` (`Created Daytona sandbox <id>`) on the `pydantic_ai_harness.daytona_sandbox._backend` logger, so a sandbox that outlives its run can still be found.
 
 ## API reference
 

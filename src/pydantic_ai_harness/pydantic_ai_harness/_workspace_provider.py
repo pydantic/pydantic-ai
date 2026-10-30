@@ -13,6 +13,7 @@ import anyio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceTimeoutError
+from pydantic_ai.workspaces._telemetry import stop_span
 
 # Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
 try:
@@ -121,7 +122,8 @@ async def command_deadline(
         try:
             yield
         except BaseException:
-            await stop_shielded(stop)
+            with stop_span():
+                await stop_shielded(stop)
             raise
     if scope.cancelled_caught:
         stdout, stderr = output()

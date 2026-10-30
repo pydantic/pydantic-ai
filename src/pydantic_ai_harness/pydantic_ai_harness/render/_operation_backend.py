@@ -19,6 +19,7 @@ from pydantic_ai.durable_exec import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.workspaces._telemetry import workspace_telemetry_scope
 
 from ._compat import (
     BoundDurableOperation,
@@ -193,8 +194,15 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                     # Retrying cannot repair persisted request bytes or worker-side decoding.
                     return permanent_error('invalid-request', exc)
 
+                ctx = operation_run_context(params)
+                assert ctx is not None, 'every installed operation carries a run context'
                 try:
-                    with self._runtime.activate(context):
+                    # The task's workspace calls trace with the tracer and content setting its run context was
+                    # rebuilt with, the same ones its tools trace with.
+                    with (
+                        self._runtime.activate(context),
+                        workspace_telemetry_scope(ctx.tracer, include_content=ctx.trace_include_content),
+                    ):
                         value = await operation.handler(params)
                 except RenderProtocolError as exc:
                     return permanent_error('invalid-result', exc)

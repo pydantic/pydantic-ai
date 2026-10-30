@@ -223,7 +223,7 @@ The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorksp
 
 ## Telemetry
 
-`DockerSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the container on the agent run span as `pydantic_ai.workspace.provider` (`docker`) and `pydantic_ai.workspace.id` (its name). Each command or file operation a tool makes runs inside that tool call's span.
+`DockerSandbox` traces starting or reconnecting to the container as `workspace create` or `workspace attach`, under the call that needed it, `destroy(ref)` called inside a run as `workspace destroy`, and stopping a command after a timeout, cancellation or failure as `workspace stop`; see [workspace spans](../logfire.md#workspace-spans). Core's [instrumentation](../capabilities/instrumentation.md) also records the container on the agent run span as `pydantic_ai.workspace.provider` (`docker`) and `pydantic_ai.workspace.id` (its name). Each command or file operation a tool makes runs inside that tool call's span.
 
 ## API reference
 

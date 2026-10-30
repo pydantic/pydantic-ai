@@ -155,6 +155,7 @@ from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from ..workspaces import UnavailableWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
+from ..workspaces._telemetry import publish_workspace_telemetry
 from ..workspaces.unavailable import NO_WORKSPACE
 from ..workspaces.workspace import workspace_layers
 from .abstract import (
@@ -342,7 +343,11 @@ async def _run_lifecycle_hooks(  # noqa: C901
     run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
 
     outer_context = contextvars.copy_context()
-    _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
+    # A workspace has no `RunContext`, so its spans find the run's instrumentation in the context the run
+    # and its tasks inherit. Set it in `wrap_run`'s context, so it is propagated and restored with the rest.
+    wrap_context = outer_context.copy()
+    wrap_context.run(publish_workspace_telemetry, run_ctx.tracer, include_content=run_ctx.trace_include_content)
+    _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run), context=wrap_context)
     # Wait for handler to start or wrap_run to complete (short-circuit).
     _ready_waiter = asyncio.create_task(_run_ready.wait())
     try:

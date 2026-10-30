@@ -48,6 +48,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -325,32 +326,33 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _acquire(self, machine_id: str, *, create: bool) -> smol.Machine:
         try:
-            try:
-                if create:
-                    config = smol.MachineConfig(
-                        name=machine_id, image=self._image, resources=self._resources, persistent=True
-                    )
-                    machine = await asyncio.to_thread(smol.Machine.create, config, local_target())
-                else:
-                    machine = await asyncio.to_thread(smol.Machine.connect, machine_id, local_target())
-            except smol.SmolError as error:
-                if create:
-                    # The SDK reported the boot failed, so a retry boots a VM under a new name.
-                    self._ref = None
-                elif error.code == 'NOT_FOUND' and self._passed_in:
-                    # One deleted since, or a Smol Cloud machine, whose id the local target doesn't know: the SDK
-                    # can't tell them apart.
-                    raise WorkspaceUnavailableError(
-                        f'The smol VM {machine_id!r} passed as `sandbox` is not, or is no longer, a VM on this '
-                        'machine: SmolSandboxBackend only uses the local target.'
-                    ) from error
-                elif error.code == 'NOT_FOUND':
-                    raise WorkspaceUnavailableError(_gone_message(machine_id)) from error
-                if error.code in _HOST_UNAVAILABLE:
-                    raise WorkspaceUnavailableError(
-                        f'This host cannot run a local smol VM ({error.code}): {error}'
-                    ) from error
-                raise
+            with lifecycle_span('create' if create else 'attach', self):
+                try:
+                    if create:
+                        config = smol.MachineConfig(
+                            name=machine_id, image=self._image, resources=self._resources, persistent=True
+                        )
+                        machine = await asyncio.to_thread(smol.Machine.create, config, local_target())
+                    else:
+                        machine = await asyncio.to_thread(smol.Machine.connect, machine_id, local_target())
+                except smol.SmolError as error:
+                    if create:
+                        # The SDK reported the boot failed, so a retry boots a VM under a new name.
+                        self._ref = None
+                    elif error.code == 'NOT_FOUND' and self._passed_in:
+                        # One deleted since, or a Smol Cloud machine, whose id the local target doesn't know: the SDK
+                        # can't tell them apart.
+                        raise WorkspaceUnavailableError(
+                            f'The smol VM {machine_id!r} passed as `sandbox` is not, or is no longer, a VM on this '
+                            'machine: SmolSandboxBackend only uses the local target.'
+                        ) from error
+                    elif error.code == 'NOT_FOUND':
+                        raise WorkspaceUnavailableError(_gone_message(machine_id)) from error
+                    if error.code in _HOST_UNAVAILABLE:
+                        raise WorkspaceUnavailableError(
+                            f'This host cannot run a local smol VM ({error.code}): {error}'
+                        ) from error
+                    raise
             if self._working_dir is not None:
                 result = await self._exec(
                     machine, ['mkdir', '-p', self._working_dir], env={}, working_dir=None, timeout=_SETUP_TIMEOUT

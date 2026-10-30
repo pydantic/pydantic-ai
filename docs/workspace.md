@@ -704,6 +704,7 @@ without a suitable payload codec.
 
 Agent run spans record `pydantic_ai.workspace.id` (the sandbox id, or the directory path for
 `LocalWorkspace`) even with `include_content=False`, because it identifies the environment, not content.
+In an instrumented run, each workspace call gets a span of its own; see [workspace spans](logfire.md#workspace-spans) for what they record.
 
 ## Platforms
 

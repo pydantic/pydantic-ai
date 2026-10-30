@@ -11,6 +11,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
 from pydantic_ai_harness.modal_sandbox._backend import (
@@ -309,7 +310,8 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         """
         if ref.provider != 'modal':
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'modal'")
-        await terminate_sandbox(ref.id)
+        with lifecycle_span('destroy', ref):
+            await terminate_sandbox(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build a backend without performing Modal I/O."""

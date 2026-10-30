@@ -73,7 +73,7 @@ The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorksp
 
 ## Telemetry
 
-`SSHWorkspace` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the workspace on the agent run span as `pydantic_ai.workspace.provider` (`ssh`) and `pydantic_ai.workspace.id` (the host and directory, recorded even without `include_content`, because it identifies the environment rather than content), and each command or file operation a tool makes runs inside that tool call's span.
+`SSHWorkspace` traces stopping a command after a timeout, cancellation or failure as `workspace stop`; see [workspace spans](https://pydantic.dev/docs/ai/integrations/logfire/#workspace-spans). Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the workspace on the agent run span as `pydantic_ai.workspace.provider` (`ssh`) and `pydantic_ai.workspace.id` (the host and directory, recorded even without `include_content`, because it identifies the environment rather than content), and each command or file operation a tool makes runs inside that tool call's span.
 
 ## API reference
 
