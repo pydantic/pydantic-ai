@@ -3309,7 +3309,7 @@ textarea.setting-input {
   flex-direction: column;
 }
 
-.dialog-option:hover:not(.active) {
+.dialog-option-row:hover .dialog-option:not(.active) {
   background: var(--hover);
 }
 
@@ -3325,6 +3325,13 @@ textarea.setting-input {
 
 .dialog-option-row:hover .dialog-option-worktree {
   opacity: 1;
+}
+
+/* Without hover, as on a touch screen, it always shows, as it takes taps either way. */
+@media (hover: none) {
+  .dialog-option-worktree {
+    opacity: 1;
+  }
 }
 
 .dialog-option-label {

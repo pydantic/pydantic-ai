@@ -1234,9 +1234,20 @@ async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
         cancel = await dialog.get_by_role('button', name='Cancel').bounding_box()
         assert cancel is not None
         await page.mouse.move(cancel['x'] + cancel['width'] / 2, cancel['y'] + cancel['height'] / 2, steps=40)
+        # Crossing a row leaves the cursor, which the buttons below act on, where it was: on `plain`, outside Git.
+        await expect(rows[crossed]).not_to_have_attribute('aria-selected', 'true')
+        below = dialog.locator('.dialog-actions')
+        await expect(below.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
         await dialog.get_by_role('button', name=f'New worktree of {chosen} · main…').click(timeout=2_000)
         await expect(dialog.get_by_label(f'Branch of the new worktree of {chosen} · main')).to_be_visible()
         await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed} · main')).to_have_count(0)
+        # From the keyboard, the button below makes a worktree of the row the arrow keys select.
+        await page.keyboard.press('Escape')
+        await dialog.get_by_role('listbox').focus()
+        while await rows[crossed].get_attribute('aria-selected') != 'true':
+            await page.keyboard.press('ArrowDown')
+        await below.get_by_role('button', name=f'New worktree of {crossed} · main…').click()
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed} · main')).to_be_visible()
     finally:
         for name in ('plain', *names):
             runtimes[name].sessions.relocate = None

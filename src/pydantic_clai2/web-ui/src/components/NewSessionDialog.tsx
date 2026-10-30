@@ -176,7 +176,8 @@ export function NewSessionDialog({
         >
           {shown.map((place, index) => (
             // The pointer crosses other rows on its way to the buttons below, so hovering one does not move the
-            // keyboard's cursor, which those buttons act on; a row of a Git checkout has its own New worktree… instead.
+            // keyboard's cursor, which those buttons act on; a row of a Git checkout has its own New worktree… instead,
+            // a button beside the option rather than one of the listbox's options.
             <div key={place.path} className="dialog-option-row" role="none">
               <button
                 id={`place-${index}`}
