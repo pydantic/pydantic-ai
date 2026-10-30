@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import re
 
 import pytest
+from dirty_equals import IsOneOf
 
 from pydantic_ai import (
     Agent,
@@ -21,7 +22,7 @@ from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
+from ..conftest import IsDatetime, IsDecimal, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
     from openai.types import chat
@@ -99,7 +100,11 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                     TextPart(content=IsStr(regex=r'(?s).*\b323\b.*')),
                 ],
                 usage=RequestUsage(
-                    details={'reasoning_tokens': 638}, input_tokens=17, output_tokens=947, output_reasoning_tokens=638
+                    details={'reasoning_tokens': 638},
+                    input_tokens=17,
+                    output_tokens=947,
+                    output_reasoning_tokens=638,
+                    cost=IsOneOf(None, IsDecimal(gt=0)),
                 ),
                 model_name='glm-5.1',
                 timestamp=IsDatetime(),
@@ -126,7 +131,11 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                     TextPart(content=IsStr(regex=r'(?s).*\b646\b.*')),
                 ],
                 usage=RequestUsage(
-                    details={'reasoning_tokens': 144}, input_tokens=974, output_tokens=216, output_reasoning_tokens=144
+                    details={'reasoning_tokens': 144},
+                    input_tokens=974,
+                    output_tokens=216,
+                    output_reasoning_tokens=144,
+                    cost=IsOneOf(None, IsDecimal(gt=0)),
                 ),
                 model_name='glm-5.1',
                 timestamp=IsDatetime(),
@@ -154,6 +163,7 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                     input_tokens=417,
                     output_tokens=19,
                     output_reasoning_tokens=0,
+                    cost=IsOneOf(None, IsDecimal(gt=0)),
                 ),
                 model_name='glm-5.1',
                 timestamp=IsDatetime(),
@@ -225,7 +235,11 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str,
                     TextPart(content='2 + 2 = 4'),
                 ],
                 usage=RequestUsage(
-                    details={'reasoning_tokens': 88}, output_tokens=96, input_tokens=13, output_reasoning_tokens=88
+                    details={'reasoning_tokens': 88},
+                    output_tokens=96,
+                    input_tokens=13,
+                    output_reasoning_tokens=88,
+                    cost=IsOneOf(None, IsDecimal(gt=0)),
                 ),
                 model_name='glm-5.1',
                 timestamp=IsDatetime(),
