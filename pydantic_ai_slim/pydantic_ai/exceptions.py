@@ -1311,7 +1311,8 @@ class UnsupportedSettingWarning(UserWarning):
     request has function tools), `extra_headers` and `extra_body`. Each field's `Supported by:` list names the
     models that honor it. An OpenAI Responses model also emits it when
     [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport] asks
-    for a WebSocket it can never open, and sends the request over HTTP.
+    for a WebSocket it can't open, such as on an unsupported setup or after a failed connection, and sends the
+    request over HTTP.
 
     It's emitted wherever the setting comes from: the run, the agent, a capability or the model's own `settings`. The
     `stop_sequences` of an MCP server's sampling request don't warn, since the server chose them, not you.

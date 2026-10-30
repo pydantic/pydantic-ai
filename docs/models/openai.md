@@ -673,6 +673,7 @@ In WebSocket mode, these requests use HTTP instead. The warning column refers to
 | A transport failure prevents the socket connection from opening, such as a TLS, proxy or DNS error, or a connect timeout. No `response.create` has been sent. | Yes |
 
 An HTTP-level handshake rejection remains an error. Transport failures after a request is sent propagate as described above.
+After a failed connection, later requests in the same run or outer agent/model context use HTTP without trying the handshake or warning again. Once that shared lifetime ends, the next run or context tries a socket again.
 
 With instrumentation enabled, WebSocket mode records `pydantic_ai.transport` on each request's `chat` span, or under Temporal, on the model activity span within that trace. Its value is `'websocket'` for a socket request or `'http'` for one sent over HTTP. HTTP-only mode leaves the attribute unset.
 

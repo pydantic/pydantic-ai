@@ -98,7 +98,7 @@ from ..realtime.ws_cassettes import (
 with try_import() as imports_successful:
     import logfire
     from logfire.testing import CaptureLogfire
-    from openai import APIError, AsyncAzureOpenAI, AsyncOpenAI
+    from openai import APIConnectionError, APIError, AsyncAzureOpenAI, AsyncOpenAI
     from openai._base_client import platform_headers
     from openai.auth import WorkloadIdentity
     from openai.types.websocket_connection_options import WebSocketConnectionOptions
@@ -778,14 +778,17 @@ async def test_run_on_another_event_loop_doesnt_wait_for_the_socket_this_loop_op
     assert sockets.connect_count == 2
 
 
-@pytest.mark.parametrize('lease_ends', [False, True])
+@pytest.mark.parametrize(('lease_ends', 'connect_fails'), [(False, False), (False, True), (True, True)])
 async def test_request_waiting_for_another_to_open_the_socket(
-    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, lease_ends: bool
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    http: HTTPResponses,
+    lease_ends: bool,
+    connect_fails: bool,
 ):
     """A request that waits while another opens the socket takes a lane on it.
 
-    When that handshake fails after the request's lease ended, the request uses HTTP rather than open a socket that
-    would serve it alone.
+    A failed handshake sends the waiting request over HTTP, whether the lease remains held or has ended.
     """
     socket = sockets.pending[0]
     socket.responses = deque([text_events('first'), text_events('second')])
@@ -796,18 +799,26 @@ async def test_request_waiting_for_another_to_open_the_socket(
         waiting = asyncio.create_task(model.request(user_prompt('second'), None, ModelRequestParameters()))
         await anyio.wait_all_tasks_blocked()
         assert sockets.connect_count == 1
+        if connect_fails:
+            sockets.connect_error = OSError('unreachable')
         if not lease_ends:
             gate.set()
-            assert [(await opening).text, (await waiting).text] == ['first', 'second']
+            with (
+                pytest.warns(UnsupportedSettingWarning, match='WebSocket connection failed: unreachable')
+                if connect_fails
+                else nullcontext()
+            ):
+                outputs = [(await opening).text, (await waiting).text]
+            assert outputs == (['from HTTP', 'from HTTP'] if connect_fails else ['first', 'second'])
     if lease_ends:
-        sockets.connect_error = OSError('unreachable')
         gate.set()
         with pytest.warns(UnsupportedSettingWarning, match='WebSocket connection failed: unreachable'):
             assert (await opening).text == 'from HTTP'
         assert (await waiting).text == 'from HTTP'
+    if connect_fails:
         assert len(http.requests) == 2
     assert sockets.connect_count == 1
-    assert [frame.get('stream_id') for frame in socket.sent] == ([] if lease_ends else [None, 'lane-1'])
+    assert [frame.get('stream_id') for frame in socket.sent] == ([] if connect_fails else [None, 'lane-1'])
 
 
 async def test_transport_failure_fails_every_request_on_the_socket(allow_model_requests: None, sockets: SocketHarness):
@@ -2243,16 +2254,22 @@ async def test_send_timeout(allow_model_requests: None, sockets: SocketHarness):
     [
         pytest.param(lambda: SSLCertVerificationError(1, 'certificate verify failed'), False, id='tls'),
         pytest.param(lambda: InvalidHandshake('proxy connection failed'), True, id='proxy'),
+        pytest.param(
+            lambda: APIConnectionError(request=httpx2.Request('GET', 'https://api.openai.com/v1/responses')),
+            False,
+            id='sdk-connection',
+        ),
     ],
 )
-@pytest.mark.parametrize('reconnect', [False, True])
+@pytest.mark.parametrize('reconnect', ['initial', 'idle', 'retired'])
 async def test_handshake_transport_failure_uses_http(
     allow_model_requests: None,
     sockets: SocketHarness,
     http: HTTPResponses,
+    monkeypatch: pytest.MonkeyPatch,
     connect_error: Callable[[], Exception],
     stream: bool,
-    reconnect: bool,
+    reconnect: Literal['initial', 'idle', 'retired'],
 ):
     """A failed initial or replacement handshake sends the unwritten request over HTTP."""
     before = asyncio.all_tasks()
@@ -2261,13 +2278,16 @@ async def test_handshake_transport_failure_uses_http(
     model = websocket_model(http.provider())
     messages: list[ModelMessage] = user_prompt('hello')
     async with model:
-        if reconnect:
+        if reconnect != 'initial':
             first = await model.request(user_prompt('first'), None, ModelRequestParameters())
             messages = [*user_prompt('first'), first, *messages]
-            socket.send_error = ConnectionClosedOK(None, None)
+            if reconnect == 'idle':
+                socket.send_error = ConnectionClosedOK(None, None)
+            else:
+                monkeypatch.setattr('pydantic_ai.models._openai_responses_websocket.RETIREMENT_AGE', 0)
             sockets.pending.append(unopened)
         sockets.connect_error = connect_error()
-        if stream or reconnect:
+        if stream or reconnect == 'idle':
             events = text_events('from HTTP', 'resp_http')
             body = ''.join(
                 f'event: {event["type"]}\ndata: {FRAME_ADAPTER.dump_json(event).decode()}\n\n' for event in events
@@ -2283,24 +2303,34 @@ async def test_handshake_transport_failure_uses_http(
                 response = streamed.get()
             else:
                 response = await model.request(messages, None, ModelRequestParameters())
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            second = await model.request(user_prompt('again'), None, ModelRequestParameters())
+        assert sockets.connect_count == (1 if reconnect == 'initial' else 2)
+        assert second.text == 'from HTTP'
+        assert not caught
     assert response.text == 'from HTTP'
     assert response.history_digest is not None
     assert 'transport' not in (response.provider_details or {})
-    assert sockets.connect_count == (2 if reconnect else 1)
-    assert sockets.opened == ([socket] if reconnect else [])
-    assert len(socket.sent) == (1 if reconnect else 0)
+    assert sockets.opened == ([] if reconnect == 'initial' else [socket])
+    assert len(socket.sent) == (0 if reconnect == 'initial' else 1)
     assert unopened.sent == []
-    assert len(http.requests) == 1
+    assert len(http.requests) == 2
     assert http.requests[0].method == 'POST'
     assert http.requests[0].url.path == '/v1/responses'
-    assert http.bodies[0]['stream'] is (stream or reconnect)
-    if reconnect:
+    assert http.bodies[0]['stream'] is (stream or reconnect == 'idle')
+    assert http.bodies[1]['stream'] is False
+    if reconnect != 'initial':
         assert 'previous_response_id' not in http.bodies[0]
         assert http.bodies[0]['input'] == [
             {'role': 'user', 'content': 'first'},
             {'role': 'assistant', 'content': 'ready'},
             {'role': 'user', 'content': 'hello'},
         ]
+    sockets.connect_error = None
+    async with model:
+        assert (await model.request(user_prompt('new scope'), None, ModelRequestParameters())).text == 'ready'
+    assert sockets.connect_count == (2 if reconnect == 'initial' else 3)
     assert asyncio.all_tasks() == before
 
 

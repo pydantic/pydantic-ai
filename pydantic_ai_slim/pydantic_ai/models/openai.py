@@ -3085,6 +3085,7 @@ class _ResponsesWebSocketState:
     in_flight: int = 0
     socket: ResponsesWebSocket | None = None
     open_lock: anyio.Lock | None = None
+    connection_failed: bool = False
 
     async def reserve(
         self,
@@ -3094,7 +3095,7 @@ class _ResponsesWebSocketState:
     ) -> ResponsesWebSocketStream | None:
         """Reserve a lane, opening a socket first if there's none, or the current one failed, closed or aged out.
 
-        Returns `None` when the socket has no free lane, opened with other headers, or when
+        Returns `None` when opening a connection failed, the socket has no free lane, opened with other headers, or when
         there's no socket left to use once the request's lease has ended. Only requests on this state's loop call this.
         """
         socket = self.socket
@@ -3105,9 +3106,14 @@ class _ResponsesWebSocketState:
                 if self.socket is socket:
                     # The lease that let this request choose the socket may have ended while it waited for the lock,
                     # and a socket opened now would only serve this one request.
-                    if not self.leases:
+                    if not self.leases or self.connection_failed:
                         return None
-                    self.socket = await connect()
+                    try:
+                        self.socket = await connect()
+                    except (APIConnectionError, ModelConnectionError):
+                        # Do not repeat an unavailable transport's handshake for every tool-loop request.
+                        self.connection_failed = True
+                        raise
                     if socket is not None:
                         # A socket replaced near OpenAI's time limit closes once its responses finish.
                         await socket.close_if_idle()
