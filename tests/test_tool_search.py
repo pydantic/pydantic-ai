@@ -893,7 +893,8 @@ async def test_tool_search_toolset_max_results():
     assert len(rv['discovered_tools']) == 10
 
 
-async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed() -> None:
+@pytest.mark.parametrize('explicit_keywords', [False, True])
+async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed(explicit_keywords: bool) -> None:
     """An already-available match can never displace an undiscovered one when `max_results`
     trims: undiscovered-first is the primary sort key, relevance the tiebreak, so discovered
     tools only fill leftover slots."""
@@ -907,7 +908,8 @@ async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed
     def second_tool() -> str:  # pragma: no cover
         return 'second'
 
-    searchable = ToolSearchToolset(wrapped=toolset, max_results=1)
+    search_fn = keywords_search_fn if explicit_keywords else None
+    searchable = ToolSearchToolset(wrapped=toolset, max_results=1, search_fn=search_fn)
     ctx = _build_run_context(None, discovered_tool_names={'first_tool'})
     search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
 
@@ -919,7 +921,7 @@ async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed
 
     # With room for both, the discovered tool is appended after the undiscovered one rather
     # than excluded — the corpus never shrinks with discovery.
-    searchable = ToolSearchToolset(wrapped=toolset, max_results=2)
+    searchable = ToolSearchToolset(wrapped=toolset, max_results=2, search_fn=search_fn)
     search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['first', 'tool']}, ctx, search_tool)
@@ -927,7 +929,8 @@ async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed
     assert result == {'discovered_tools': [{'name': 'second_tool'}, {'name': 'first_tool'}]}
 
 
-async def test_repeated_searches_paginate_through_a_large_corpus() -> None:
+@pytest.mark.parametrize('explicit_keywords', [False, True])
+async def test_repeated_searches_paginate_through_a_large_corpus(explicit_keywords: bool) -> None:
     """Repeating the same query enumerates a corpus larger than `max_results`.
 
     Each page's results become discovered and sink below undiscovered matches, so the next
@@ -943,7 +946,7 @@ async def test_repeated_searches_paginate_through_a_large_corpus() -> None:
 
         toolset.add_function(tool, name=tool_name, defer_loading=True)
 
-    searchable = ToolSearchToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset, search_fn=keywords_search_fn if explicit_keywords else None)
     discovered: set[str] = set()
     pages: list[list[str]] = []
     for _ in range(3):
@@ -960,6 +963,42 @@ async def test_repeated_searches_paginate_through_a_large_corpus() -> None:
     # fill the leftover slots — the model's signal that it has seen the whole corpus.
     assert set(pages[0]) | set(pages[1]) | set(pages[2][:5]) == set(all_names)
     assert set(pages[2][5:]) <= set(pages[0]) | set(pages[1])
+    assert pages == [all_names[:10], all_names[10:20], all_names[20:] + all_names[:5]]
+
+
+@pytest.mark.parametrize('strategy', [None, 'keywords'])
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
+async def test_agent_keyword_search_discovers_every_page(strategy: Literal['keywords'] | None) -> None:
+    """The public capability must reveal every match through repeated identical queries."""
+    toolset = FunctionToolset()
+    all_names = [f'mcp_tool_{i:02d}' for i in range(25)]
+    for tool_name in all_names:
+
+        def tool(name: str = tool_name) -> str:  # pragma: no cover
+            return name
+
+        toolset.add_function(tool, name=tool_name, defer_loading=True)
+
+    def same_query_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        searches = [part for message in messages for part in message.parts if isinstance(part, ToolSearchReturnPart)]
+        if len(searches) < 3:
+            return ModelResponse(parts=[ToolCallPart(_SEARCH_TOOLS_NAME, {'queries': ['mcp']})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        NoNativeToolSearchModel(same_query_model),
+        toolsets=[toolset],
+        capabilities=[ToolSearch(strategy=strategy)],
+    )
+    result = await agent.run('Find all matching tools')
+    pages = [
+        [match['name'] for match in part.content['discovered_tools']]
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolSearchReturnPart)
+    ]
+    assert result.output == 'done'
+    assert pages == [all_names[:10], all_names[10:20], all_names[20:] + all_names[:5]]
 
 
 async def test_search_corpus_includes_already_discovered_tools() -> None:
@@ -1741,7 +1780,8 @@ async def test_tool_search_toolset_dispatches_by_plain_name_via_tool_manager():
     assert 'Mortgage calculated' in str(result)
 
 
-async def test_tool_search_toolset_custom_search_fn_is_used():
+@pytest.mark.parametrize('discovered', [set[str](), {'stock_price'}])
+async def test_tool_search_toolset_custom_search_fn_is_used(discovered: set[str]):
     """A custom `search_fn` replaces the default keyword-matching algorithm."""
     calls: list[Sequence[str]] = []
 
@@ -1752,7 +1792,7 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
 
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset, search_fn=custom_search)
-    ctx = _build_run_context(None)
+    ctx = _build_run_context(None, discovered_tool_names=discovered)
 
     tools = await searchable.get_tools(ctx)
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['anything']}, ctx, tools[_SEARCH_TOOLS_NAME])
@@ -7235,6 +7275,25 @@ def test_keywords_search_fn_returns_empty_for_no_tokens() -> None:
     # Punctuation-only queries also produce no tokens — `_SEARCH_TOKEN_RE` matches
     # `[a-z0-9]+` only.
     assert keywords_search_fn(ctx, ['!!!'], []) == []
+
+
+def test_keywords_search_fn_preserves_relevance_and_ties_within_discovery_groups() -> None:
+    ctx = _build_run_context(None, discovered_tool_names={'known_high', 'known_low'})
+    tools = [
+        ToolDefinition(name='known_low', description='alpha'),
+        ToolDefinition(name='fresh_low_first', description='alpha'),
+        ToolDefinition(name='known_high', description='alpha beta gamma'),
+        ToolDefinition(name='fresh_high', description='alpha beta'),
+        ToolDefinition(name='fresh_low_second', description='alpha'),
+        ToolDefinition(name='unmatched', description='delta'),
+    ]
+    assert keywords_search_fn(ctx, ['alpha beta gamma'], tools) == [
+        'fresh_high',
+        'fresh_low_first',
+        'fresh_low_second',
+        'known_high',
+        'known_low',
+    ]
 
 
 async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_fn() -> None:

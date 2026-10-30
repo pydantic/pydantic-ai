@@ -108,15 +108,14 @@ def _tokenize(text: str) -> set[str]:
     return set(_SEARCH_TOKEN_RE.findall(text.lower()))
 
 
-def keywords_search_fn(_ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+def keywords_search_fn(ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
     """Built-in keyword-overlap search algorithm exposed as a [`ToolSearchFunc`][pydantic_ai.capabilities.ToolSearchFunc].
 
     Score each tool by how many query keywords appear in its name or description, then
-    return matching names ordered by descending score. Used both as the default
-    algorithm when `ToolSearch` was constructed without an explicit strategy AND as
-    the explicit `strategy='keywords'` choice — the difference is that the explicit
-    choice routes through the same dispatch path as a user-supplied callable, which
-    enables client-executed-native wire on supporting providers (cache benefit).
+    return undiscovered matches first, ordered by descending score within each discovery
+    group. Ties preserve corpus order, matching the default keyword search's ranking.
+    The explicit `strategy='keywords'` choice routes through the same dispatch path as
+    a user-supplied callable, enabling client-executed-native wire on supporting providers.
     """
     terms = _tokenize(' '.join(queries))
     if not terms:
@@ -127,7 +126,7 @@ def keywords_search_fn(_ctx: RunContext[Any], queries: Sequence[str], tools: Seq
         score = len(terms & tool_terms)
         if score > 0:
             scored.append((score, tool_def.name))
-    scored.sort(key=lambda item: item[0], reverse=True)
+    scored.sort(key=lambda item: (item[1] in ctx.discovered_tool_names, -item[0]))
     return [name for _, name in scored]
 
 
