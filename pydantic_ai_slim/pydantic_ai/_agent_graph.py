@@ -3900,12 +3900,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             schema=output_schema,
                             output_validators=ctx.deps.output_validators,
                         )
+                    except ToolRetryError as e:
+                        retry = e
+                    else:
                         self._next_node = self._handle_final_result(
                             ctx, result.FinalResult(cast(NodeRunEndT, result_data)), []
                         )
-                    except ToolRetryError as e:
-                        async for event in self._retry_rejected_response(ctx, e):
-                            yield event
+                        return
+                    async for event in self._retry_rejected_response(ctx, retry):
+                        yield event
                     return
 
                 # For responses with no text output, fall through to the normal retry prompt
