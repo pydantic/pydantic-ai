@@ -3304,21 +3304,39 @@ textarea.setting-input {
 }
 
 .dialog-option-row {
-  position: relative;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
 }
 
-.dialog-option-row:hover .dialog-option:not(.active) {
+/* The row, wider than its option by the New worktree… beside it, shows the cursor and the pointer. */
+.dialog-option-row.active {
+  background: var(--active);
+}
+
+.dialog-option-row:hover:not(.active) {
   background: var(--hover);
 }
 
-/* A Git checkout's New worktree…, at the end of its row while the pointer is on it. */
+.dialog-option-row .dialog-option {
+  flex: 1;
+  min-width: 0;
+}
+
+.dialog-option-row .dialog-option.active {
+  background: none;
+}
+
+.dialog-option-row .dialog-option-description {
+  overflow-wrap: anywhere;
+}
+
+/* A Git checkout's New worktree…, beside its option, so the option's text never runs under it; it shows while the
+   pointer is on the row. */
 .dialog-option-worktree {
-  position: absolute;
-  top: 50%;
-  right: 8px;
-  transform: translateY(-50%);
+  flex: none;
+  margin-right: 8px;
   border: 1px solid var(--border);
   opacity: 0;
 }
