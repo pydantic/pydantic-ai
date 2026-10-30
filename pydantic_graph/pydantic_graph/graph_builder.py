@@ -14,7 +14,13 @@ import inspect
 import itertools
 from collections import Counter, defaultdict, deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
-from contextlib import AbstractContextManager, ExitStack, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    ExitStack,
+    asynccontextmanager,
+    contextmanager,
+)
 from dataclasses import dataclass, field, replace
 from types import NoneType
 from typing import (
@@ -434,6 +440,8 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         DepsT: The type of the dependencies
         OutputT: The type of the output data
     """
+
+    _run_context: AbstractAsyncContextManager[None]
 
     def __init__(
         self,

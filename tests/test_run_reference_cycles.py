@@ -10,9 +10,10 @@ import datetime
 import gc
 import traceback
 import weakref
-from collections.abc import AsyncIterator, Generator
+from collections.abc import AsyncIterator, Callable, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from functools import partial
 from types import AsyncGeneratorType
 from typing import Literal, Never
 
@@ -381,55 +382,42 @@ def raise_failure(message: str, explicit_cause: bool) -> Never:
         raise RuntimeError(message)
 
 
-@pytest.mark.usefixtures('no_gc')
-@pytest.mark.parametrize('explicit_cause', [False, True])
-@pytest.mark.parametrize(
-    ('failure', 'drive', 'node_hook'),
-    [
-        ('sync_tool', 'iter', 'none'),
-        ('sync_tool', 'run', 'none'),
-        ('async_tool', 'iter', 'none'),
-        ('async_tool', 'run', 'none'),
-        ('async_tool', 'iter', 'passthrough'),
-        ('async_tool', 'run', 'passthrough'),
-        ('async_tool', 'iter', 'replacement'),
-        ('async_tool', 'run', 'replacement'),
-        ('sync_model', 'iter', 'none'),
-        ('sync_model', 'run', 'none'),
-        ('async_model', 'iter', 'none'),
-        ('async_model', 'run', 'none'),
-        ('consumer', 'iter', 'none'),
-    ],
-)
-async def test_failed_run_releases_dependencies(  # noqa: C901
-    failure: Literal['sync_tool', 'async_tool', 'sync_model', 'async_model', 'consumer'],
-    drive: Literal['iter', 'run'],
-    node_hook: Literal['none', 'passthrough', 'replacement'],
+class FailureNodeHook(AbstractCapability[Deps]):
+    def __init__(self, *, replacement: bool = False) -> None:
+        super().__init__()
+        self.replacement = replacement
+
+    async def before_node_run(self, ctx: RunContext[Deps], *, node: AgentNode[Deps]) -> AgentNode[Deps]:
+        if self.replacement and Agent.is_call_tools_node(node):
+            return replace(node)
+        return node
+
+    async def wrap_node_run(
+        self, ctx: RunContext[Deps], *, node: AgentNode[Deps], handler: WrapNodeRunHandler[Deps]
+    ) -> NodeResult[Deps]:
+        return await handler(node)
+
+
+def failure_agent(
     explicit_cause: bool,
-) -> None:
-    class NodeHook(AbstractCapability[Deps]):
-        async def before_node_run(self, ctx: RunContext[Deps], *, node: AgentNode[Deps]) -> AgentNode[Deps]:
-            if node_hook == 'replacement' and Agent.is_call_tools_node(node):
-                return replace(node)
-            return node
-
-        async def wrap_node_run(
-            self, ctx: RunContext[Deps], *, node: AgentNode[Deps], handler: WrapNodeRunHandler[Deps]
-        ) -> NodeResult[Deps]:
-            return await handler(node)
-
+    capabilities: Sequence[AbstractCapability[Deps]],
+    *,
+    model_failure: bool = False,
+    async_model: bool = False,
+    async_tool: bool = False,
+) -> Agent[Deps, str]:
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if failure in ('sync_model', 'async_model'):
+        if model_failure:
             raise_failure('model failed', explicit_cause)
         return ModelResponse(parts=[ToolCallPart('lookup', {})])
 
-    async def async_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    async def model_async(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return model(messages, info)
 
     agent = Agent(
-        FunctionModel(async_model if failure == 'async_model' else model),
+        FunctionModel(model_async if async_model else model),
         deps_type=Deps,
-        capabilities=[NodeHook()] if node_hook != 'none' else [],
+        capabilities=capabilities,
     )
 
     def lookup(ctx: RunContext[Deps]) -> str:
@@ -438,7 +426,92 @@ async def test_failed_run_releases_dependencies(  # noqa: C901
     async def async_lookup(ctx: RunContext[Deps]) -> str:
         return lookup(ctx)
 
-    agent.tool(name='lookup')(async_lookup if failure == 'async_tool' else lookup)
+    agent.tool(name='lookup')(async_lookup if async_tool else lookup)
+    return agent
+
+
+@dataclass(frozen=True)
+class FailedRunCase:
+    id: str
+    agent_factory: Callable[[bool, Sequence[AbstractCapability[Deps]]], Agent[Deps, str]]
+    origin: Literal['lookup', 'model', 'execute']
+    drive: Literal['iter', 'run']
+    hook: Callable[[], AbstractCapability[Deps]] | None = None
+    drain_worker: bool = True
+    consumer_error: bool = False
+
+
+FAILED_RUN_CASES: list[FailedRunCase] = [
+    FailedRunCase(id='sync_tool-iter-none', agent_factory=failure_agent, origin='lookup', drive='iter'),
+    FailedRunCase(id='sync_tool-run-none', agent_factory=failure_agent, origin='lookup', drive='run'),
+    FailedRunCase(
+        id='async_tool-iter-none', agent_factory=partial(failure_agent, async_tool=True), origin='lookup', drive='iter'
+    ),
+    FailedRunCase(
+        id='async_tool-run-none', agent_factory=partial(failure_agent, async_tool=True), origin='lookup', drive='run'
+    ),
+    FailedRunCase(
+        id='async_tool-iter-passthrough',
+        agent_factory=partial(failure_agent, async_tool=True),
+        origin='lookup',
+        drive='iter',
+        hook=FailureNodeHook,
+    ),
+    FailedRunCase(
+        id='async_tool-run-passthrough',
+        agent_factory=partial(failure_agent, async_tool=True),
+        origin='lookup',
+        drive='run',
+        hook=FailureNodeHook,
+    ),
+    FailedRunCase(
+        id='async_tool-iter-replacement',
+        agent_factory=partial(failure_agent, async_tool=True),
+        origin='lookup',
+        drive='iter',
+        hook=partial(FailureNodeHook, replacement=True),
+    ),
+    FailedRunCase(
+        id='async_tool-run-replacement',
+        agent_factory=partial(failure_agent, async_tool=True),
+        origin='lookup',
+        drive='run',
+        hook=partial(FailureNodeHook, replacement=True),
+    ),
+    FailedRunCase(
+        id='sync_model-iter-none',
+        agent_factory=partial(failure_agent, model_failure=True),
+        origin='model',
+        drive='iter',
+    ),
+    FailedRunCase(
+        id='sync_model-run-none', agent_factory=partial(failure_agent, model_failure=True), origin='model', drive='run'
+    ),
+    FailedRunCase(
+        id='async_model-iter-none',
+        agent_factory=partial(failure_agent, model_failure=True, async_model=True),
+        origin='model',
+        drive='iter',
+        drain_worker=False,
+    ),
+    FailedRunCase(
+        id='async_model-run-none',
+        agent_factory=partial(failure_agent, model_failure=True, async_model=True),
+        origin='model',
+        drive='run',
+        drain_worker=False,
+    ),
+    FailedRunCase(
+        id='consumer-iter-none', agent_factory=failure_agent, origin='execute', drive='iter', consumer_error=True
+    ),
+]
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('explicit_cause', [False, True])
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in FAILED_RUN_CASES])
+async def test_failed_run_releases_dependencies(case: FailedRunCase, explicit_cause: bool) -> None:
+    agent = case.agent_factory(explicit_cause, [] if case.hook is None else [case.hook()])
     errors: list[BaseException] = []
     runs: list[AgentRun[Deps, str]] = []
 
@@ -447,13 +520,13 @@ async def test_failed_run_releases_dependencies(  # noqa: C901
         ref = weakref.ref(deps)
         run = node = None
         try:
-            if drive == 'run':
+            if case.drive == 'run':
                 await agent.run('hi', deps=deps, infer_name=False)
             else:
                 async with agent.iter('hi', deps=deps, infer_name=False) as run:
                     runs.append(run)
                     async for node in run:
-                        if failure == 'consumer' and Agent.is_call_tools_node(node):
+                        if case.consumer_error and Agent.is_call_tools_node(node):
                             raise_failure('consumer failed', explicit_cause)
         except RuntimeError as exc:
             errors.append(exc)
@@ -464,24 +537,19 @@ async def test_failed_run_releases_dependencies(  # noqa: C901
     assert ref() is not None
     assert len(errors) == 1
     error = errors[0]
-    if failure == 'consumer':
+    if case.consumer_error:
         assert str(error) == 'consumer failed'
+    # Keep only a boolean so the no-GC check below has no extra exception owner.
     original_context = isinstance(error.__context__, ValueError) and str(error.__context__) == 'original cause'
+    assert original_context
     if explicit_cause:
         assert error.__cause__ is error.__context__
     else:
         assert error.__cause__ is None
     assert error.__traceback__ is not None
     names = [frame.name for frame in traceback.extract_tb(error.__traceback__)]
-    origins: dict[str, str] = {
-        'sync_tool': 'lookup',
-        'async_tool': 'lookup',
-        'sync_model': 'model',
-        'async_model': 'model',
-        'consumer': 'execute',
-    }
-    assert origins[failure] in names
-    if failure in ('sync_tool', 'async_tool'):
+    assert case.origin in names
+    if case.origin == 'lookup':
         tb = error.__traceback__
         while tb.tb_frame.f_code.co_name != 'lookup':
             assert tb.tb_next is not None
@@ -498,12 +566,11 @@ async def test_failed_run_releases_dependencies(  # noqa: C901
     if runs:
         assert ref() is not None
     runs.clear()
-    if failure != 'async_model':
+    if case.drain_worker:
         # AnyIO can deliver a result before its worker drops the copied run context.
         # Reusing the worker guarantees its preceding work item has been released.
         await anyio.to_thread.run_sync(lambda: None)
     assert ref() is None
-    assert original_context
 
 
 @pytest.mark.usefixtures('no_gc')
