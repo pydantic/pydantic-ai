@@ -1,5 +1,5 @@
 ---
-description: "Adopt Pydantic AI in an enterprise: agents run in your own process with no usage telemetry, on self-hosted models or Azure OpenAI, Amazon Bedrock and Google Vertex AI, with human approval and OpenTelemetry traces of every run. Pydantic Logfire and the Pydantic AI Gateway add observability, evals, central model access and spending caps, in Pydantic's cloud or self-hosted, and Pydantic offers commercial support with an SLA."
+description: "Adopt Pydantic AI in an enterprise: agents run in your own process with no usage telemetry, on self-hosted models or Azure OpenAI, Amazon Bedrock and Google Vertex AI, durable on AWS Lambda, with human approval and OpenTelemetry traces of every run. Pydantic Logfire and the Pydantic AI Gateway add observability, evals, central model access and spending caps, in Pydantic's cloud or self-hosted, and Pydantic offers commercial support with an SLA."
 ---
 
 # Pydantic AI for Enterprise
@@ -14,7 +14,7 @@ This page answers the questions security, platform and procurement teams ask bef
 |---|---|
 | [What leaves our infrastructure?](#data) | The model requests, tool calls and trace exports you configure; no usage telemetry and no Pydantic-hosted runtime |
 | [Can we run on-prem or air-gapped models?](#self-hosted-models) | Yes: [Ollama](models/ollama.md), [vLLM](models/compatible-apis.md#vllm) or any OpenAI-compatible server you run |
-| [Can we use our cloud's models?](#cloud) | Azure OpenAI and Microsoft Foundry, Amazon Bedrock and Google Vertex AI, selected by the model string |
+| [Can we run on our cloud?](#cloud) | Yes: Amazon Bedrock, Azure OpenAI and Microsoft Foundry, and Google Cloud models, selected by the model string, plus durable agents on AWS Lambda and voice agents on Azure and Gemini Live |
 | [How do we control model access and spend?](#model-access) | The [Pydantic AI Gateway](gateway.md): one key per team or service, spending caps, provider failover, every request traced |
 | [How do we keep a person in control?](#control) | Tool approval, guardrails, and a sandbox for model-written code |
 | [Can we audit what an agent did?](#audit) | With instrumentation on, every run, model request and tool call as an OpenTelemetry trace, in [Logfire](logfire.md) or your own backend |
@@ -42,9 +42,23 @@ Yes. Point an agent at a model server inside your network and model requests sta
 
 For an air-gapped deployment, install the packages from your own package mirror and point agents at a model server inside the network. A few optional integrations download files on first use, such as `tiktoken` encodings and [Sentence Transformers](embeddings.md#sentence-transformers-local) models; mirror those too.
 
-## Can we use our cloud's models? {#cloud}
+## Can we run on our cloud? {#cloud}
 
-Pydantic AI runs on [Azure OpenAI and Microsoft Foundry](models/azure.md), [Amazon Bedrock](models/bedrock.md) and [Google Vertex AI](models/google-cloud.md), authenticating with that cloud's own credentials. Switching an agent between them, or to OpenAI, Anthropic, Gemini or a local model, means changing one string, without rewriting the agent, for the features both providers support. [Models and Providers](models/overview.md) lists every supported service, and a [fallback model](models/overview.md#fallback-model) moves to another provider when one is down.
+Yes. Pydantic AI uses each cloud's own models, authenticating with that cloud's credentials, and its durable execution and voice services where they exist:
+
+| | AWS | Microsoft Azure | Google Cloud |
+|---|---|---|---|
+| Models | [Amazon Bedrock](models/bedrock.md), including [Bedrock Mantle](models/bedrock.md#bedrock-mantle) | [Azure OpenAI and Microsoft Foundry](models/azure.md), including [Claude on Foundry](models/azure.md#claude-on-microsoft-foundry) | [Gemini and Model Garden](models/google-cloud.md) (formerly Vertex AI), including [Claude](models/google-cloud.md#claude-on-google-cloud) and [image generation](image-generation.md) |
+| Embeddings | [Bedrock](embeddings.md#bedrock) | [Azure OpenAI](embeddings.md#openai-compatible) | [Google Cloud](embeddings.md#google) |
+| Durable execution | [AWS Lambda durable functions](harness/aws-lambda.md), an integration [announced by AWS](https://aws.amazon.com/about-aws/whats-new/2026/09/aws-lambda-durable-pydantic-ai/) | Any [engine we support](durable_execution/overview.md), on your own infrastructure | Any [engine we support](durable_execution/overview.md), on your own infrastructure |
+| Realtime voice | No Bedrock voice model; [other providers](realtime/overview.md) run on AWS compute | [Azure OpenAI and Azure AI Voice Live](realtime/azure.md) | [Gemini Live](realtime/gemini.md) |
+
+<!-- TODO(#11332): once Azure Durable Task durability merges, replace the Azure "Durable execution" cell with a link to its Harness page. -->
+
+Switching an agent between clouds, or to OpenAI, Anthropic, Gemini or a local model, means changing one string, without rewriting the agent, for the features both providers support. [Models and Providers](models/overview.md) lists every supported service, and a [fallback model](models/overview.md#fallback-model) moves to another provider when one is down. Weighing your cloud's own agent framework? See [Pydantic AI vs Google ADK](comparisons/vs-google-adk.md).
+
+<!-- TODO(#12021): add "Pydantic AI vs Microsoft Agent Framework" (comparisons/vs-microsoft-agent-framework.md) to the sentence above once it merges. -->
+<!-- TODO(#12026): add "Pydantic AI vs Strands Agents" (comparisons/vs-strands.md) to the sentence above once it merges. -->
 
 ## How do we control model access and spend? {#model-access}
 
