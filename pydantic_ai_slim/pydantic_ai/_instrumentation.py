@@ -235,6 +235,12 @@ class CachedMessageJson:
     """The serialized fragment (see `message_json_fragment`)."""
     mcp_url_ids: frozenset[str] = frozenset()
     """MCP names withheld from the serialized historical message fragment."""
+    request_scoped: bool = False
+    """Whether the message holds a request-scoped system prompt, whose fragment changes once its request
+    has been answered."""
+    answered: bool = False
+    """Whether the fragment marks the message's request-scoped system prompts as no longer visible (see
+    `message_json_fragment`)."""
 
 
 MessageJsonCache: TypeAlias = dict[int, CachedMessageJson]
@@ -378,15 +384,25 @@ def safe_to_json(value: object) -> bytes:
 
 
 def message_json_fragment(
-    settings: InstrumentationSettings, message: ModelMessage, mcp_url_ids: frozenset[str] = frozenset()
+    settings: InstrumentationSettings,
+    message: ModelMessage,
+    mcp_url_ids: frozenset[str] = frozenset(),
+    *,
+    answered: bool = False,
 ) -> bytes:
     """Serialize one message to its OTel JSON fragment: comma-joined objects without enclosing brackets.
 
     A single `ModelMessage` can map to multiple OTel `ChatMessage`s (a `ModelRequest` splits into
     system/user messages) or to none (an empty request), so the fragment is the whole serialized
     array with the outer `[` and `]` stripped — fragments then concatenate into a single array.
+    With `answered`, the message is from a request before the current one, so its request-scoped
+    system prompts are marked as no longer visible.
     """
-    return safe_to_json(settings.messages_to_otel_messages([message], mcp_url_ids=mcp_url_ids))[1:-1]
+    return safe_to_json(
+        settings._span_input_messages(  # pyright: ignore[reportPrivateUsage]
+            [message], mcp_url_ids=mcp_url_ids, current_request_start=1 if answered else 0
+        )
+    )[1:-1]
 
 
 def has_stale_message_json(
@@ -411,7 +427,7 @@ def has_stale_message_json(
         if (
             entry is not None
             and entry.parts is message.parts
-            and entry.fragment != message_json_fragment(settings, message, entry.mcp_url_ids)
+            and entry.fragment != message_json_fragment(settings, message, entry.mcp_url_ids, answered=entry.answered)
         ):
             return True
     return False

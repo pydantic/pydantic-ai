@@ -238,6 +238,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Repair Tool Arguments](repair-tool-arguments.md) | Harness | Repair malformed JSON tool arguments before schema validation. |
 | [Guardrails](guardrails.md) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
 | [Prompt Injection Defender](prompt-injection-defender.md) | Harness | Classify local tool results for indirect prompt injection and optionally withhold high-risk results |
+| [Artifact Scanning](artifact-scanning.md) | Harness | Scan memory files and skills for prompt injection, credential exfiltration, and hidden content before they are stored or loaded |
 | [Spend Limits](spend.md) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
 | [Ask User](ask-user.md) | Harness | Let the model ask the user multiple-choice questions mid-run; you supply the answerer (terminal, web, test) |
 | [Tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
@@ -293,7 +294,7 @@ New to Pydantic AI itself? Start with [its docs](../index.md): the agent you mou
 
 ## Observability
 
-Everything the harness does is observable: core's [Instrumentation](../capabilities/instrumentation.md) capability (or `logfire.instrument_pydantic_ai()`) emits a full trace of every run: every model call and tool call, with token and cost tracking. It's standard OpenTelemetry, so any OTLP backend works; [Logfire](https://pydantic.dev/logfire) is the easiest way to see it during development.
+Everything the harness does is observable: core's [Instrumentation](../capabilities/instrumentation.md) capability (or `logfire.instrument_pydantic_ai()`) emits a full trace of every run: every model call and tool call, with token and cost tracking. It's standard OpenTelemetry, so any OTLP backend works; run `uvx logfire-cli wizard --task pydantic-ai` once to [set up Logfire](../logfire.md#using-logfire), the easiest way to see it during development.
 
 ## Build your own
 

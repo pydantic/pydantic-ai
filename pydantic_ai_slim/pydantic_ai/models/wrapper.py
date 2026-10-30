@@ -268,6 +268,9 @@ class WrapperModel(Model):
         # predicate keeps deciding.
         return self.wrapped.accepts_stateless_artifacts(response, part)
 
+    def accepts_server_state(self, response: ModelResponse) -> bool:
+        return self.wrapped.accepts_server_state(response)
+
     def _model_for_response(self, response: ModelResponse) -> Model:
         return self.wrapped._model_for_response(response)
 

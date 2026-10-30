@@ -1189,8 +1189,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Every model that sends such data back decides with this method, as does the trim that drops history
         before a compaction part, so the two always agree. Data that isn't accepted gets the model's fallback
-        for foreign data, such as thinking rendered as text. Stateful data, such as response, file and
-        container IDs, is only sent back to the same `provider_name`.
+        for foreign data, such as thinking rendered as text. Server-side state, such as response and container
+        IDs, is judged by [`accepts_server_state`][pydantic_ai.models.Model.accepts_server_state] instead.
 
         Args:
             response: The response the part is in.
@@ -1205,6 +1205,28 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             canonical_system=self.canonical_system,
             compatible_systems=self.compatible_systems,
         )
+
+    def accepts_server_state(self, response: ModelResponse) -> bool:
+        """Whether this model can send back the IDs of server-side state created by `response`.
+
+        That's state the API stores and looks up by ID, rather than verifying by its own key: stored responses
+        (`previous_response_id`), output item IDs, conversations and code execution containers. It's accepted
+        when the response has this model's `system` as its `provider_name` and was created at an endpoint this
+        model's provider [`shares_server_state_with`][pydantic_ai.providers.Provider.shares_server_state_with].
+        A response without a `provider_url`, such as one recorded by hand, and a model without a provider are
+        judged by `provider_name` alone. Stateless data has its own check,
+        [`accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts], so a response from
+        another endpoint of the same API still has its encrypted reasoning sent back, without the IDs.
+
+        Uploaded files aren't judged here: the endpoint an
+        [`UploadedFile`][pydantic_ai.messages.UploadedFile] is sent to is the one you pass it to.
+        """
+        if response.provider_name != self.system:
+            return False
+        provider = self.provider
+        if provider is None or response.provider_url is None:
+            return True
+        return provider.shares_server_state_with(response.provider_url)
 
     @property
     def _canonical_system_stamp(self) -> str | None:

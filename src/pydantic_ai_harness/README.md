@@ -253,6 +253,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Repair Tool Arguments](pydantic_ai_harness/repair_tool_arguments/) | Harness | Repair malformed JSON tool arguments before schema validation. |
 | [Guardrails](pydantic_ai_harness/guardrails/) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
 | [Prompt Injection Defender](pydantic_ai_harness/prompt_injection_defender/) | Harness | Classify local tool results for indirect prompt injection and optionally withhold high-risk results |
+| [Artifact Scanning](pydantic_ai_harness/artifact_scanning/) | Harness | Scan memory files and skills for prompt injection, credential exfiltration, and hidden content before they are stored or loaded |
 | [Spend Limits](pydantic_ai_harness/spend/) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
 | [Ask User](pydantic_ai_harness/ask_user/) | Harness | Let the model ask the user multiple-choice questions mid-run; you supply the answerer (terminal, web, test) |
 | [Tool approval](https://ai.pydantic.dev/deferred-tools#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
@@ -325,7 +326,7 @@ print(result.output)
 #> ...
 ```
 
-Everything is observable: `logfire.instrument_pydantic_ai()` gives you [a full trace of every run](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946): every model call and tool call, with token and cost tracking. It's standard OpenTelemetry, so any OTLP backend works; [Logfire](https://pydantic.dev/logfire) is the easiest way to see it during development.
+Everything is observable: `logfire.instrument_pydantic_ai()` gives you [a full trace of every run](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946): every model call and tool call, with token and cost tracking. It's standard OpenTelemetry, so any OTLP backend works; run `uvx logfire-cli wizard --task pydantic-ai` once to [set up Logfire](https://pydantic.dev/docs/ai/integrations/logfire/#using-logfire), the easiest way to see it during development.
 
 ## When do you need the Harness?
 
