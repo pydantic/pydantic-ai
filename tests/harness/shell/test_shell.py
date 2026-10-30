@@ -26,7 +26,7 @@ import sniffio
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -43,7 +43,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace import READ_ONLY_FAILURE
 from pydantic_ai_harness.code_mode import CodeMode
-from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
+from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, MAX_FOREGROUND_WAIT, Shell
 from pydantic_ai_harness.shell._jobs import Job
 from pydantic_ai_harness.shell._policy import is_interactive_command
 from pydantic_ai_harness.shell._toolset import ShellToolset
@@ -1481,11 +1481,12 @@ class TestBackgroundCommands:
         job_dir.mkdir()
         (job_dir / 'handle').write_text('garbage\n')
         assert 'unknown command ID' in await ts.stop_command(_ctx(shell_dir), command_id)
-        # A job whose group was not its own to signal records `-`; checking it signals nothing.
+        # A job whose group was not its own to signal records `-`, so only its wrapper is looked for, and no
+        # process has this PID: above any `pid_max`.
         (job_dir / 'handle').write_text(f'{2**22 + 12345} -\n')
         job = await _job(ts, _ctx(shell_dir), command_id)
         assert job.pgid is None
-        assert await ts.check_command(_ctx(shell_dir), command_id) == '(no output yet)\n[status: running]'
+        assert await ts.check_command(_ctx(shell_dir), command_id) == f'(no output yet)\n{_LOST}'
 
 
 class TestEdgeCases:
@@ -1705,7 +1706,7 @@ class TestStopEscalation:
                 await anyio.sleep(0.01)  # pragma: lax no cover
         job.pgid = None
         job.pid = 2**22 + 12345  # beyond any live PID, so `kill` finds no process
-        await job.kill()
+        assert not await job.kill()
 
 
 _KILL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
@@ -1888,6 +1889,155 @@ class TestSignalling:
             backend.kill_result = None
             await job.kill()
             await job.cleanup()
+
+
+_LOST = '[status: lost; its process is gone without leaving an exit code (killed, or the workspace restarted)]'
+
+
+class _FailingAliveCheck(LocalWorkspaceBackend):
+    """A local backend whose check for a job's processes fails, as a wedged or unreachable workspace's can."""
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        if not isinstance(command, str) and command[3:4] == ['alive']:  # `sh -c <script> alive ...`
+            return CommandResult(exit_code=1, stdout='', stderr='workspace unreachable')
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
+async def _kill_group(group: int) -> None:
+    """`SIGKILL` every process in `group`, as the OOM killer or a workspace restart would, and wait until none is left."""
+    os.killpg(group, signal.SIGKILL)
+    with anyio.fail_after(10):
+        while True:
+            try:
+                os.killpg(group, 0)
+            except ProcessLookupError:
+                return
+            except PermissionError:  # pragma: no cover - macOS, while only unreaped zombies are left
+                pass
+            await anyio.sleep(0.01)  # pragma: lax no cover
+
+
+class TestLostJob:
+    """A job whose processes are gone without an exit code is reported lost, and nothing is signalled for it."""
+
+    async def test_a_job_killed_with_its_group_is_lost(self, shell_dir: Path) -> None:
+        backend = _RecordingKill(shell_dir)
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(backend))
+        command_id = _parse_command_id(await ts.start_command(ctx, 'exec sleep 300'))
+        job = await _job(ts, ctx, command_id)
+        assert job.pgid is not None
+        await _kill_group(job.pgid)
+
+        assert await ts.check_command(ctx, command_id) == f'(no output yet)\n{_LOST}'
+        assert await ts.stop_command(ctx, command_id) == f'(no output)\n{_LOST}'
+        assert [argv for argv in backend.argv if argv[:3] == ['sh', '-c', _KILL_SCRIPT]] == []
+        assert not Path(job.directory).exists()
+
+    async def test_an_unrelated_process_holding_the_job_ids_is_not_signalled(self, shell_dir: Path) -> None:
+        # After a workspace restart, PIDs start again from 1, so an unrelated session leader can hold the
+        # job's old PID and group ID. Here the job's processes are killed and its handle names that process.
+        unrelated = await anyio.open_process(['sleep', '300'], start_new_session=True)
+        try:
+            backend = _RecordingKill(shell_dir)
+            ts = _shell_toolset(shell_dir)
+            ctx = _run_context(Workspace(backend))
+            command_id = _parse_command_id(await ts.start_command(ctx, 'exec sleep 300'))
+            job = await _job(ts, ctx, command_id)
+            assert job.pgid is not None
+            await _kill_group(job.pgid)
+            (Path(job.directory) / 'handle').write_text(f'{unrelated.pid} {unrelated.pid}\n')
+
+            assert await ts.check_command(ctx, command_id) == f'(no output yet)\n{_LOST}'
+            assert await ts.stop_command(ctx, command_id) == f'(no output)\n{_LOST}'
+            assert [argv for argv in backend.argv if argv[:3] == ['sh', '-c', _KILL_SCRIPT]] == []
+        finally:
+            unrelated.kill()
+            await unrelated.wait()
+
+    async def test_a_group_that_outlives_its_wrapper_is_still_stopped(self, shell_dir: Path) -> None:
+        # Only the wrapper is killed: the command still runs in the job's group, which no one else can hold.
+        ts = _shell_toolset(shell_dir)
+        ctx = _ctx(shell_dir)
+        pid_pipe = shell_dir / 'pid'
+        os.mkfifo(pid_pipe)
+        command_id = _parse_command_id(await ts.start_command(ctx, f'echo $$ > {pid_pipe}; exec sleep 300'))
+        job = await _job(ts, ctx, command_id)
+        with anyio.fail_after(10):
+            command_pid = int(await anyio.to_thread.run_sync(pid_pipe.read_text))
+        os.kill(job.pid, signal.SIGKILL)
+        await _wait_for_exit(job.pid)
+
+        assert await ts.check_command(ctx, command_id) == '(no output yet)\n[status: running]'
+        # The wrapper can't publish how the command ended, so there is no exit code.
+        assert await ts.stop_command(ctx, command_id) == '(no output)\n[stopped]'
+        await _wait_for_exit(command_pid)
+
+    async def test_a_job_finishing_during_the_check_is_finished(
+        self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The job is still running when its status is first read, and gone, having published its exit code,
+        # by the time its processes are looked for.
+        release = shell_dir / 'release'
+        os.mkfifo(release)
+        ts = _shell_toolset(shell_dir)
+        ctx = _ctx(shell_dir)
+        command_id = _parse_command_id(await ts.start_command(ctx, f'read line < {release}'))
+        alive = Job.alive
+
+        async def alive_once_finished(job: Job) -> bool:
+            await anyio.to_thread.run_sync(release.write_text, 'go\n')
+            await _wait_for_exit(job.pid)
+            return await alive(job)
+
+        monkeypatch.setattr(Job, 'alive', alive_once_finished)
+        with anyio.fail_after(10):
+            assert await ts.check_command(ctx, command_id) == '(no output yet)\n[status: finished]\n[exit code: 0]'
+
+    async def test_a_failed_check_is_not_taken_for_a_lost_job(self, shell_dir: Path) -> None:
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(_FailingAliveCheck(shell_dir)))
+        command_id = _parse_command_id(await ts.start_command(ctx, 'exec sleep 300'))
+        try:
+            for tool in (ts.check_command, ts.stop_command):
+                with pytest.raises(ToolFailed) as failed:
+                    await tool(ctx, command_id)
+                assert failed.value.message == 'workspace unreachable'
+        finally:
+            await ts.stop_command(_ctx(shell_dir), command_id)
+
+    @pytest.mark.parametrize('mode', ['foreground', 'background'])
+    async def test_the_shell_tool_names_no_kill_command_for_a_lost_job(self, shell_dir: Path, mode: str) -> None:
+        async def call_shell(arguments: dict[str, object]) -> str:
+            # The same run ID and tool call ID each time: a durable retry of one call, which attaches to the job
+            # the first attempt started.
+            def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+                if isinstance(messages[-1].parts[-1], ToolReturnPart):
+                    return ModelResponse(parts=[TextPart('done')])
+                return ModelResponse(parts=[ToolCallPart('shell', arguments, tool_call_id='shell-1')])
+
+            agent = Agent(FunctionModel(respond), capabilities=[Shell(denied_commands=[], tools=['shell'])])
+            result = await agent.run('go', workspace=LocalWorkspaceBackend(shell_dir), run_id='durable-run')
+            [returned] = [p.content for m in result.new_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+            return str(returned)
+
+        started = await call_shell({'command': 'exec sleep 300', 'mode': 'background'})
+        pid = started.split('PID: ')[1].split()[0]
+        await _kill_group(int(started.split('kill -- -')[1].split('`')[0]))
+
+        # Without the check, a foreground call would wait out its whole timeout for a status no one will publish.
+        with anyio.fail_after(30):
+            result = await call_shell({'command': 'exec sleep 300', 'mode': mode, 'timeout': MAX_FOREGROUND_WAIT})
+        assert result.splitlines()[0] == (
+            f'PID: {pid} (lost; its process is gone without leaving an exit code (killed, or the workspace restarted))'
+        )
 
 
 async def _wait_for_exit(pid: int) -> None:

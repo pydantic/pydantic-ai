@@ -20,7 +20,7 @@ from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness.shell._events import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, POLL_MAX, POLL_MIN, Job
+from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, LOST, POLL_MAX, POLL_MIN, Job
 
 MAX_FOREGROUND_WAIT: float = 270.0
 """Longest a foreground `shell` call waits before returning handles to the still-running command.
@@ -171,12 +171,16 @@ async def run_persistent_command(
         if mode == 'foreground':
             interval = POLL_MIN
             with anyio.move_on_after(timeout):
-                while (await job.status())[0]:
+                # A job killed with its process group, or lost to a workspace restart, never publishes the
+                # status this waits for, so once the log goes quiet each poll also checks its processes are left.
+                while (await job.status())[0] and (interval < POLL_MAX or await job.alive()):
                     emitted = await output.emit()
                     await anyio.sleep(interval)
                     interval = POLL_MIN if emitted else min(interval * 2, POLL_MAX)
             await output.drain()
         await output.finish()
+        # Checked before naming the `kill` command: a lost job's process group ID may now be someone else's.
+        lost = await job.lost()
 
         # Handles last: `ShellToolset.call_tool` keeps the tail of an over-long
         # result, and the PID and paths are what the model must not lose.
@@ -185,10 +189,8 @@ async def run_persistent_command(
             result = await _output_tail(job)
             if result and not result.endswith('\n'):
                 result += '\n'
-        result += (
-            f'PID: {job.pid} (supervisor; use `{job.stop_command}` to stop the whole process tree)\n'
-            f'Output: {job.output_path}\nStatus: {job.status_path}'
-        )
+        stop = f'lost; {LOST}' if lost else f'supervisor; use `{job.stop_command}` to stop the whole process tree'
+        result += f'PID: {job.pid} ({stop})\nOutput: {job.output_path}\nStatus: {job.status_path}'
         if (status := await job.status_text()) is not None:
             result += f'\n{status}'
     except BaseException:

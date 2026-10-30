@@ -228,6 +228,13 @@ A background command is not tied to the run: a conversation spans several
 runs, so a later run on the same workspace can check or stop it by its ID. It
 keeps running until it exits, `stop_command` stops it, or the workspace ends.
 
+A command whose processes are gone without recording an exit code, because they
+were killed with `SIGKILL` or the workspace restarted, is reported as
+`[status: lost; ...]`, and `stop_command` signals nothing for it. Before
+signalling a command, Shell checks that its PID still names the process it
+started, by start time (from `/proc`, or `ps` where there is no `/proc`), so a
+process that took over the ID after a workspace restart is never signalled.
+
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
@@ -263,7 +270,7 @@ Shell(tools=['shell'])
 small supervisor that writes its combined output to a log and its exit status to
 a JSON file (`{"pid": ..., "exit_code": ...}`, `exit_code` null while it runs).
 The tool returns the PID and both paths, so the model reads progress with its
-file tools and stops the command with the `kill` command the result names. Foreground waits up to
+file tools and stops the command with the `kill` command the result names. A command whose processes are gone without an exit code is reported as lost in place of a `kill` command, and a foreground call stops waiting for it. Foreground waits up to
 `timeout` seconds (default `default_timeout`, at most `MAX_FOREGROUND_WAIT`,
 270) for the exit status and returns the last 16,000 bytes of the log followed
 by the handles, even if the command is still running. When the log is longer,

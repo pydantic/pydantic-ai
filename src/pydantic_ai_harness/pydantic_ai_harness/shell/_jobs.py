@@ -7,7 +7,8 @@ launcher's process group) and returns once the wrapper is running. The wrapper p
 command's output to log files next to it, and publishes the exit code when the command ends.
 Each job's files live in one owner-only directory below `.pydantic-ai-harness/shell` in the
 workspace's working directory, never on the host unless the workspace is the host. Status and output are read, and the process group
-is signalled, through the same workspace.
+is signalled, through the same workspace. The wrapper's start time is recorded too, so that once its status stops
+changing, a PID or process group ID taken over by an unrelated process is not mistaken for the job's.
 """
 
 from __future__ import annotations
@@ -41,6 +42,9 @@ _LOG_CHECK_INTERVAL = 1.0
 
 `sleep 1` stands in where `sleep` takes only whole seconds.
 """
+
+LOST = 'its process is gone without leaving an exit code (killed, or the workspace restarted)'
+"""How a job is described once `Job.alive` finds none of its processes left while its status says it is running."""
 
 POLL_MIN = 0.05
 POLL_MAX = 1.0
@@ -132,6 +136,40 @@ handling is in place, is lost. `Job.kill` therefore creates the job's `stop` fil
 signalling, and the subshell checks for it once a signal would end it.
 """
 
+_IDENTITY_FUNCTION = """identity() {
+  if { read -r boot < /proc/sys/kernel/random/boot_id && read -r stat < "/proc/$1/stat"; } 2> /dev/null; then
+    stat=${stat##*) }
+    set -- "$1" $stat
+    echo "$1 $boot ${21}"
+  elif start=$(ps -o lstart= -p "$1" 2> /dev/null) && [ -n "$start" ]; then
+    echo "$1 $start"
+  fi
+}"""
+"""Print what tells process `$1` apart from any later process given the same PID, or nothing when it is gone.
+
+That is its start time: from `/proc` with the boot ID, in clock ticks since boot (field 22 of `stat`, read after
+the command name, which can hold spaces), else from `ps`, to the second. A workspace with neither prints nothing
+at launch, and its jobs are then only checked for having any process left.
+"""
+
+_ALIVE_SCRIPT = f"""{_IDENTITY_FUNCTION}
+IFS= read -r recorded 2> /dev/null < "$3"
+if [ -z "$recorded" ]; then
+  kill -s 0 -- "$2" 2> /dev/null
+elif [ "$(identity "$1")" = "$recorded" ]; then
+  true
+else
+  case $2 in -*) [ -z "$(identity "${{2#-}}")" ] && kill -s 0 -- "$2" 2> /dev/null ;; *) false ;; esac
+fi && echo alive || echo gone
+"""
+"""Print whether the job with wrapper `$1`, signal target `$2` and identity file `$3` still has a process of its own.
+
+It does while its wrapper is the process the launcher recorded, or, once the wrapper is gone, while its process
+group has members and no leader: a group ID is not given to a new group while a member of the old one is left, so a
+group that outlived its leader is still the job's. A group whose ID now names a leader that is not the wrapper
+belongs to someone else. Without a recorded identity, any process answering signal `0` counts.
+"""
+
 _SIGNAL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
 """Send signal `$1` to `$2`, first creating the stop file `$3` the wrapper checks before starting the command.
 
@@ -145,7 +183,8 @@ _REQUIRED_TOOLS = ('mv', 'base64')
 _MISSING_TOOLS = 122
 """The launcher's exit status when a tool in `_REQUIRED_TOOLS` is not on the workspace's `PATH`."""
 
-_LAUNCHER = f"""missing=
+_LAUNCHER = f"""{_IDENTITY_FUNCTION}
+missing=
 for tool in {' '.join(_REQUIRED_TOOLS)}; do command -v "$tool" > /dev/null 2>&1 || missing="$missing $tool"; done
 if [ -n "$missing" ]; then echo $missing; exit {_MISSING_TOOLS}; fi
 if [ "$exclusive" = 1 ]; then
@@ -163,6 +202,7 @@ else
   if [ "$(ps -o pgid= -p $$ 2> /dev/null | tr -d ' ')" = "$$" ]; then group=$$; fi
 fi
 while [ ! -e "$dir/status.json" ]; do sleep 0.1 2> /dev/null || sleep 1; done
+identity "$pid" > "$dir/identity"
 : > "$dir/launch.ready"
 echo "$pid $group" > "$dir/handle"
 echo "$pid $group"
@@ -178,6 +218,8 @@ process, and prints the missing ones and exits `_MISSING_TOOLS` instead of launc
 
 Before returning, the launcher waits for the wrapper to publish its status after `setsid`
 has detached it: some workspaces kill the launching process group as soon as it exits.
+While the wrapper waits for `launch.ready`, so is certainly running, the launcher records
+its identity (see `_IDENTITY_FUNCTION`), which `Job.alive` checks before trusting the PID.
 The workspace run is bounded by `CONTROL_TIMEOUT`. `sleep 1` stands in where `sleep`
 takes only whole seconds.
 
@@ -356,25 +398,66 @@ class Job:
         start = max(0, size - max_bytes)
         return await self.read(path, start, size - start)
 
-    async def kill(self) -> None:
-        """Stop the job's process group: `SIGTERM`, then `SIGKILL` if it is still running after the grace period."""
-        if not await self._signal('TERM'):
-            return
+    async def alive(self) -> bool:
+        """Whether a process the job launched is left, so its PID and process group are still its own to signal.
+
+        `status.json` alone can't tell: a wrapper killed with its group, or by a workspace restart, never
+        publishes an exit code, and after a restart its PID and group ID can belong to an unrelated process.
+        See `_ALIVE_SCRIPT`.
+        """
+        result = await self.workspace.run(
+            [
+                'sh',
+                '-c',
+                _ALIVE_SCRIPT,
+                'alive',
+                str(self.pid),
+                self._target,
+                posixpath.join(self.directory, 'identity'),
+            ],
+            timeout=CONTROL_TIMEOUT,
+        )
+        answer = result.stdout.strip()
+        if result.exit_code != 0 or answer not in ('alive', 'gone'):
+            raise WorkspaceError(result.stderr.strip() or f'Unable to check whether job {self.pid} is running.')
+        return answer == 'alive'
+
+    async def lost(self) -> bool:
+        """Whether the job's processes are gone without publishing an exit code."""
+        if not (await self.status())[0]:
+            return False
+        # The wrapper publishes its exit code before it exits, so only a status read after finding it gone is final.
+        return not await self.alive() and (await self.status())[0]
+
+    async def kill(self) -> bool:
+        """Stop the job's process group: `SIGTERM`, then `SIGKILL` if it is still running after the grace period.
+
+        Returns `False`, signalling nothing, when no process of the job is left (see `alive`).
+        """
+        if not await self.alive():
+            return False
+        await self._signal('TERM')
         if self.pgid is None:
-            return
+            return True
         # The wrapper's status says nothing about children left in its process group.
         # When it is already finished, avoid waiting a grace period for zombie members.
         if not (await self.status())[0]:
             if await self._signal('0'):
                 await self._signal('KILL')
-            return
+            return True
         interval = POLL_MIN
         with anyio.move_on_after(_KILL_GRACE_PERIOD):
             while await self._signal('0'):
                 await anyio.sleep(interval)
                 interval = min(interval * 2, POLL_MAX)
-            return
+            return True
         await self._signal('KILL')
+        return True
+
+    @property
+    def _target(self) -> str:
+        """What `kill` is given: the process group, or the wrapper's PID when the group isn't the job's."""
+        return f'-{self.pgid}' if self.pgid is not None else str(self.pid)
 
     async def _signal(self, name: str) -> bool:
         """Whether the signal reached a process; a job that already exited is not an error.
@@ -383,9 +466,8 @@ class Job:
         such as Debian's ship none. A failure other than "no such process" raises, rather than
         reporting a job stopped that may still be running.
         """
-        target = f'-{self.pgid}' if self.pgid is not None else str(self.pid)
         result = await self.workspace.run(
-            ['sh', '-c', _SIGNAL_SCRIPT, 'kill', name, target, posixpath.join(self.directory, 'stop')],
+            ['sh', '-c', _SIGNAL_SCRIPT, 'kill', name, self._target, posixpath.join(self.directory, 'stop')],
             timeout=CONTROL_TIMEOUT,
         )
         if result.exit_code == 0:
