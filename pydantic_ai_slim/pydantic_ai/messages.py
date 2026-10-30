@@ -286,7 +286,7 @@ class SystemPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
-        return [_otel_messages.TextPart(type='text', **{'content': self.content} if settings.include_content else {})]
+        return [_otel_messages.text_part(self.content, include_content=settings.include_content)]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1374,11 +1374,7 @@ class UserPromptPart:
         for part in content:
             if isinstance(part, str | TextContent):
                 content_str = part if isinstance(part, str) else part.content
-                parts.append(
-                    _otel_messages.TextPart(
-                        type='text', **({'content': content_str} if settings.include_content else {})
-                    )
-                )
+                parts.append(_otel_messages.text_part(content_str, include_content=settings.include_content))
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 if settings.version >= 4:
                     uri_part = _otel_messages.UriPart(type='uri')
@@ -2630,11 +2626,7 @@ class RetryPromptPart:
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         if self.tool_name is None:
-            return [
-                _otel_messages.TextPart(
-                    type='text', **({'content': self.model_response()} if settings.include_content else {})
-                )
-            ]
+            return [_otel_messages.text_part(self.model_response(), include_content=settings.include_content)]
         else:
             part = _otel_messages.ToolCallResponsePart(
                 type='tool_call_response',
@@ -2736,11 +2728,7 @@ class RetryFeedbackPart:
         `prepare_messages` has already replaced this part with the part its `retry.cause` calls for, so it
         shows the same text at every instrumentation version.
         """
-        return [
-            _otel_messages.TextPart(
-                type='text', **{'content': self.model_response()} if settings.include_content else {}
-            )
-        ]
+        return [_otel_messages.text_part(self.model_response(), include_content=settings.include_content)]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -3299,6 +3287,41 @@ class ToolAvailabilityDeltaPart:
         """
         changes = ', '.join(f'+{name}' for name in self.tools_added)
         return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {changes}')]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class CapabilityLoadDeltaPart:
+    """Records a change to the set of loaded [on-demand capabilities](../capabilities/on-demand.md) at this point, without a `load_capability` call.
+
+    Additions only, in `loaded`: unloading a capability isn't supported yet.
+
+    [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] records one on the request after the
+    tool call that loaded the capability, followed by a
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] revealing its tools, if it has any. A
+    load's record is the model's exchange, or else this delta: a capability the model loads through the
+    `load_capability` tool is recorded by that call and its return, as with tool search, and writes no delta. Either
+    way, the capability is loaded from the next model request on: its tools are callable, its instructions are stated,
+    and its model settings and hooks apply.
+
+    Never sent to the model: `prepare_messages` drops it, and the model sees the capability's instructions and
+    tools instead.
+    """
+
+    loaded: list[str] = field(default_factory=lambda: [])
+    """IDs of the capabilities loaded at this point in history, in load order."""
+
+    tool_call_id: str | None = None
+    """The tool call being handled when the capabilities were loaded, if any."""
+
+    part_kind: Literal['capability-load-delta'] = 'capability-load-delta'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the change as trace content: capability IDs aren't user content, so they're always recorded."""
+        changes = ', '.join(f'+{capability_id}' for capability_id in self.loaded)
+        return [_otel_messages.TextPart(type='text', content=f'Loaded capabilities changed: {changes}')]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -3940,11 +3963,7 @@ class SpeechPart:
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
         if self.transcript is not None:
-            parts.append(
-                _otel_messages.TextPart(
-                    type='text', **({'content': self.transcript} if settings.include_content else {})
-                )
-            )
+            parts.append(_otel_messages.text_part(self.transcript, include_content=settings.include_content))
         if (audio := self.audio) is not None:
             parts.append(_convert_binary_to_otel_part(audio.media_type, lambda: audio.base64, settings))
         return parts
@@ -4414,6 +4433,7 @@ ModelRequestPart = Annotated[
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]  # pyright: ignore[reportDeprecated]
     | Annotated[RetryFeedbackPart, pydantic.Tag('retry-feedback')]
     | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
+    | Annotated[CapabilityLoadDeltaPart, pydantic.Tag('capability-load-delta')]
     | Annotated[ModelSettingsDeltaPart, pydantic.Tag('model-settings-delta')]
     | Annotated[InstructionDeltaPart, pydantic.Tag('instruction-delta')]
     | Annotated[InstructionBaselinePart, pydantic.Tag('instruction-baseline')]
@@ -4582,6 +4602,22 @@ class ModelResponse:
 
     model_name: str | None = None
     """The name of the model that generated the response."""
+
+    model_id: str | None = None
+    """The identifier of the model the agent sent the request to.
+
+    That's the string the model was selected by, like `'openai:gpt-5'` or an alias that a
+    [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] capability resolved, or
+    otherwise the model's [`model_id`][pydantic_ai.models.Model.model_id]. Unlike `model_name`, which is what the
+    provider reports, often a dated version, it identifies the model as you configured it, so a later step or run
+    can tell which of your models answered and send a request back to it, as
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] does to continue a suspended response.
+
+    Set by the agent on every response it commits to history from a model request, including one a capability moved
+    to another model, like a fallback; `None` on a response that didn't come from a request, like one a
+    [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest] returned before any was made. A response that
+    already has one keeps it.
+    """
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp when the response was received locally.
@@ -4791,12 +4827,7 @@ class ModelResponse:
         parts: list[_otel_messages.MessagePart] = []
         for part in self.parts:
             if isinstance(part, TextPart):
-                parts.append(
-                    _otel_messages.TextPart(
-                        type='text',
-                        **({'content': part.content} if settings.include_content else {}),
-                    )
-                )
+                parts.append(_otel_messages.text_part(part.content, include_content=settings.include_content))
             elif isinstance(part, ThinkingPart):
                 parts.append(
                     _otel_messages.ThinkingPart(
@@ -5508,6 +5539,10 @@ def sanitize_messages(
       otherwise offered to a capability's `get_workspace`, so a client that can set it could point a
       reconnecting capability at an environment it attaches to using server-side provider
       credentials. Reconnect explicitly by passing an authorized `workspace=` instead.
+    - [`ModelResponse.model_id`][pydantic_ai.messages.ModelResponse.model_id], resetting it to `None`.
+      Pydantic AI routes later requests by it, like a suspended response's continuation going back to the
+      [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] candidate that started it, so it is only honored on
+      trusted server-side `message_history`.
     - The framework-reserved `__pydantic_ai__` key from
       [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and
       [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata], keeping your own keys
@@ -5652,8 +5687,11 @@ def _sanitize_messages(
                 # capability at an environment it attaches to with server-side credentials.
                 workspace_ref = None if strip_workspace_refs else message.workspace_ref
                 metadata = _without_reserved_metadata(message, reserved_metadata_messages)
+                # Drop `model_id` too: Pydantic AI routes later requests by it.
                 sanitized.append(
-                    replace(message, parts=new_response_parts, workspace_ref=workspace_ref, metadata=metadata)
+                    replace(
+                        message, parts=new_response_parts, model_id=None, workspace_ref=workspace_ref, metadata=metadata
+                    )
                 )
                 sources.append(index)
             # Otherwise drop the response entirely so we don't leave an empty
@@ -6784,6 +6822,24 @@ class ToolAvailabilityDeltaEvent:
 
 
 @dataclass(repr=False, kw_only=True)
+class CapabilityLoadDeltaEvent:
+    """An event indicating on-demand capabilities were loaded without a `load_capability` call, carrying the recorded part.
+
+    Emitted when a request records a
+    [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart], so a UI that
+    rebuilds history from the event stream keeps it.
+    """
+
+    part: CapabilityLoadDeltaPart
+    """The capability load delta part that will be recorded in message history."""
+
+    event_kind: Literal['capability_load_delta'] = 'capability_load_delta'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
 class ModelSettingsDeltaEvent:
     """An event indicating recorded model settings changed, carrying the recorded delta part.
 
@@ -7083,6 +7139,7 @@ HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
     | ToolAvailabilityDeltaEvent
+    | CapabilityLoadDeltaEvent
     | ModelSettingsDeltaEvent
     | OutputToolCallEvent
     | OutputToolResultEvent

@@ -265,6 +265,9 @@ class WrapperModel(Model):
         # predicate keeps deciding.
         return self.wrapped.accepts_stateless_artifacts(response, part)
 
+    def accepts_server_state(self, response: ModelResponse) -> bool:
+        return self.wrapped.accepts_server_state(response)
+
     def _model_for_response(self, response: ModelResponse) -> Model:
         return self.wrapped._model_for_response(response)
 
@@ -297,8 +300,8 @@ class WrapperModel(Model):
         # attribute lookup succeeds and `__getattr__` never forwards.
         return self.wrapped.resolve_cache_retention(model_settings)
 
-    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
-        return self.wrapped._start_request_deadline(model_settings)
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        return self.wrapped._start_request_deadline(model_settings, stream=stream)
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         # Defined on the base class too, so it must forward explicitly, like `resolve_cache_retention`.

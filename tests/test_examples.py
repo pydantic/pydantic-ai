@@ -2133,13 +2133,14 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
             decision_model_logic, stream_function=stream_model_logic, model_name=model.model_name, profile=model.profile
         )
     else:
-        model_name = model if isinstance(model, str) else model.model_name
-        return FunctionModel(
-            model_logic,
-            stream_function=stream_model_logic,
-            model_name=model_name,
-            profile=model.profile if isinstance(model, Model) else None,
+        # A model name was inferred into a model above.
+        assert isinstance(model, Model)
+        mocked_model = FunctionModel(
+            model_logic, stream_function=stream_model_logic, model_name=model.model_name, profile=model.profile
         )
+        # Named after the provider it stands in for, so the `model_id` responses record is the one the user would see.
+        mocked_model._system = model.system  # pyright: ignore[reportPrivateUsage]
+        return mocked_model
 
 
 def fast_batching(self: BatchModelRequests) -> None:

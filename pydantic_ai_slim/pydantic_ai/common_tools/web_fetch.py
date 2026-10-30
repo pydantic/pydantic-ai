@@ -303,7 +303,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     budget.feed(html)
     budget.close()
     soup = BeautifulSoup(html, 'html.parser')
-    converter = _MarkdownConverter(strip=['img', 'script', 'style'])
+    converter = _MarkdownConverter(strip=['img'])
     # `markdownify` repeatedly scans each descendant's converted text as it walks back up the
     # tree. Blockquotes, definition items, and list items also indent every line at each level.
     # Estimate scans beyond 16 levels and indentation at any depth before conversion so a small,

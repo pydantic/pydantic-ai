@@ -25,6 +25,8 @@ agent = Agent(capabilities=[ModelFallback('{{ openai:medium }}', '{{ anthropic:m
 
 A model that was already attempted in the step is skipped, whichever capability attempted it, so listing the agent's own model among the candidates doesn't cause a duplicate request.
 
+Falling back is not retrying: the next model usually can't use the prompt cache that earlier requests built on the first one, and can answer differently and at a different price. Leave a transient failure, like a dropped connection, to a retry of the same model, with a budget small enough that it doesn't hold up the fallback when the model stays down. See [Recovery scopes compared](../retries.md#recovery-scopes) and [Choosing one retry owner](../retries.md#choosing-one-retry-owner).
+
 ## When to fall back
 
 By default, `ModelFallback` moves on when a request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], the error a model raises when the provider's API fails, such as a 4xx or 5xx response. The `fallback_on` parameter takes the same forms as [`FallbackModel`'s](../models/overview.md#fallback-model):
@@ -122,6 +124,8 @@ capabilities:
       fallback_on: [ModelRateLimitError, ModelUnavailableError]
 ```
 
+A spec can also set [`sticky: true`](#staying-on-the-model-that-answered) the same way.
+
 Model names are resolved when they're attempted, like those passed to `ModelFallback(...)`, so a spec can also list model IDs of your own that a [`ResolveModelId`](resolve-model-id.md) capability resolves, passed to [`Agent.from_spec()`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file()`][pydantic_ai.agent.Agent.from_file] with `capabilities=`.
 
 ## How attempts work
@@ -146,13 +150,52 @@ A streamed request falls back if it fails before any output reaches you: `ModelF
 
 Response handlers aren't consulted for a streamed response, which is accepted as is with a `UserWarning`: it has already been streamed by the time it could be judged. A request is streamed whenever something consumes the run's events: [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] (which the [UI adapters](../ui/overview.md) use), [`agent.iter()`][pydantic_ai.agent.Agent.iter] with `node.stream()`, and [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] or [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] with an `event_stream_handler`, an [`agent.on_event`][pydantic_ai.agent.Agent.on_event] listener, or a capability that reacts to events. A capability of your own that raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] from `after_model_request` on a streamed request gets a [`UserError`][pydantic_ai.exceptions.UserError].
 
+## Staying on the model that answered
+
+By default, every request step starts the chain from the model selected for it, so a conversation that fell back goes back to the first model at its next step. With `sticky=True`, it keeps using the candidate that answered instead. That keeps hitting the same provider's prompt cache, and doesn't make every step wait on a model that's failing:
+
+```python {title="model_fallback_sticky.py"}
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai.capabilities import ModelFallback
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def primary_response(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    raise ModelAPIError(model_name='primary', message='Overloaded')
+
+
+def backup_response(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('Paris')])
+
+
+# These deterministic responses stand in for calls to a primary model that's down and a backup model.
+primary = FunctionModel(primary_response, model_name='primary')
+backup = FunctionModel(backup_response, model_name='backup')
+
+agent = Agent(primary, capabilities=[ModelFallback(backup, sticky=True)])
+
+result = agent.run_sync('What is the capital of France?')
+print([attempt.model_name for attempt in result.response.failed_attempts or []])
+#> ['primary']
+result = agent.run_sync('Are you sure?', message_history=result.all_messages())
+print(result.response.model_name, result.response.failed_attempts)
+#> backup None
+```
+
+The second run goes straight to the backup model. Every response records the model that served it as [`model_id`][pydantic_ai.messages.ModelResponse.model_id], and the attempts that failed before it as [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], so this holds for any later run that continues the conversation, in this process or another. Only a fallback makes a conversation sticky: an answer from a candidate you picked for one run, with `agent.run(model=...)`, doesn't change which model later runs start from. The conversation stays on the candidate it fell back to until it fails. The chain then moves on to the models after it, and comes back around to the step's own model and the models before it, so no model the chain would have attempted is left out. Once the step's own model answers, the conversation starts from it again.
+
+`sticky` only replaces the agent's default model: a model passed to `agent.run(model=...)` or [`Agent.override`][pydantic_ai.agent.Agent.override], or selected by a capability such as [`SelectModel`](select-model.md), is still attempted first. A recorded candidate that's no longer among `ModelFallback`'s models is ignored.
+
 ## Continuing suspended responses
 
-Some providers suspend a response and continue it on a later request, like Anthropic's `pause_turn` or OpenAI's background mode. A suspended response `ModelFallback` accepts is pinned to the model that started it, so when a later run resumes it, the continuation goes to that model rather than to the first model in the chain. Response handlers judge the continued response like any other. If that continuation fails or is rejected, the suspended response is dropped and the turn is generated again by the next model in the chain after the one it was pinned to, as it would have been had the response failed in the run that started it. The chain doesn't start over: with [batching](../batch.md), the first model would only accept a new batch, and the request would never reach the models after it. A rejected response the provider is still working on, like a batch request that hasn't finished, has its job cancelled.
+Some providers suspend a response and continue it on a later request, like Anthropic's `pause_turn` or OpenAI's background mode. Every response records the model that served it as [`model_id`][pydantic_ai.messages.ModelResponse.model_id], so when a later run resumes a suspended response one of `ModelFallback`'s models started, the continuation goes to that model rather than to the first model in the chain. A suspended response started by a model outside the chain is continued by the step's model, as without `ModelFallback`. Response handlers judge the continued response like any other. If that continuation fails or is rejected, the suspended response is dropped and the turn is generated again by the next model in the chain after the one it was pinned to, as it would have been had the response failed in the run that started it. The chain doesn't start over: with [batching](../batch.md), the first model would only accept a new batch, and the request would never reach the models after it. A rejected response the provider is still working on, like a batch request that hasn't finished, has its job cancelled.
 
 ## Request deadlines
 
-A [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings bounds each model's attempt as a whole, across the provider SDK's own retries: each model `ModelFallback` tries gets a fresh deadline, and the [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] it raises when the deadline passes moves on to the next model by default. A model's own `settings` can set a different `request_timeout` for it.
+A [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings bounds each model's attempt as a whole, across the provider SDK's own retries: each model `ModelFallback` tries gets a fresh deadline, and the [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] it raises when the deadline passes moves on to the next model by default. A model's own `settings` can set a different `request_timeout` or `first_event_timeout` for it, which applies only when neither the agent nor the run sets one, as those take precedence.
+
+On a streamed request, [`first_event_timeout`](../timeouts.md#waiting-for-the-first-event) also bounds each model's wait for its first output, and whichever deadline passes first applies: a model that hasn't started streaming in time raises `ModelRequestTimeout` too, and `ModelFallback` moves on to the next model, which gets a fresh deadline. Once a response has started, the setting no longer applies, so a long response isn't cut off.
 
 ## Batching
 
@@ -160,7 +203,7 @@ With [`BatchModelRequests`](../batch.md), every attempt is batched with the mode
 
 ## Durable execution
 
-Under a [durability capability](../durable_execution/overview.md), each attempt is a durable model operation of its own: on [Temporal](../durable_execution/temporal.md), an activity per model tried. The activity's retry policy retries a failed request before the error reaches `ModelFallback`'s `fallback_on`, and Temporal's default retry policy retries without limit: set `maximum_attempts` in the retry policy of `TemporalDurability`'s [`model_activity_config`](../durable_execution/temporal.md#activity-configuration) so that a failing model doesn't hold up the fallback. Each model's `request_timeout` deadline runs as a durable timer around its own activity.
+Under a [durability capability](../durable_execution/overview.md), each attempt is a durable model operation of its own: on [Temporal](../durable_execution/temporal.md), an activity per model tried. The activity's retry policy retries a failed request before the error reaches `ModelFallback`'s `fallback_on`, and Temporal's default retry policy retries without limit: set `maximum_attempts` in the retry policy of `TemporalDurability`'s [`model_activity_config`](../durable_execution/temporal.md#activity-configuration) so that a failing model doesn't hold up the fallback. Each model's `request_timeout` deadline runs as a durable timer around its own activity. Its `first_event_timeout` deadline runs inside the activity, which is what sees the stream's events, so the `ModelRequestTimeout` it raises goes through the activity's retry policy before `ModelFallback` sees it: list it in [`non_retryable_model_errors`](../durable_execution/temporal.md#activity-retries) to move on to the next model straight away.
 
 A streamed request is consumed inside its durable unit, where its events reach a durability capability's `event_stream_handler`, so a stream that fails after producing output there is raised rather than fallen back from, as outside durable execution, and what it produced counts towards the run's usage.
 
@@ -207,7 +250,7 @@ Everything a `FallbackModel` does carries over:
 - Each model keeps its own `settings`, and settings on the agent or run apply to every model.
 - The answering response lists the attempts moved on from in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], and when every model fails, [`FallbackExceptionGroup.attempts`][pydantic_ai.exceptions.FallbackExceptionGroup] lists them.
 - A rejected response's tokens and cost count in the run's usage and towards its limits, also when the run is cancelled, times out or ends on an error `fallback_on` doesn't cover.
-- Each model gets a fresh `request_timeout` deadline.
+- Each model gets fresh `request_timeout` and `first_event_timeout` deadlines.
 - A stream that fails before any output falls back, and response handlers don't apply to a streamed response.
 - A suspended response is continued on the model that started it.
 - The same spans: a `chat` span for the model that answered, and a `model request attempt` span for each attempt moved on from.

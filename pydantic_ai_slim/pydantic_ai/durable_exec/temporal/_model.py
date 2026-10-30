@@ -25,6 +25,7 @@ from pydantic_ai.models import (
     infer_model_profile,
     parse_model_id,
 )
+from pydantic_ai.models._request_timeout import RequestDeadline, open_durable_unit_stream
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile
@@ -148,7 +149,8 @@ class TemporalModel(WrapperModel):
                 model_for_request, owned=not self._is_registered_model(model_for_request)
             ) as active_model:
                 messages = self._reprepare_messages(params, active_model)
-                async with active_model.request_stream(
+                async with open_durable_unit_stream(
+                    active_model,
                     messages,
                     cast(ModelSettings | None, params.model_settings),
                     params.model_request_parameters,
@@ -208,6 +210,11 @@ class TemporalModel(WrapperModel):
 
         Activities send the requests from the worker's event loop, not the workflow's.
         """
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        # In a workflow, the activity consumes the stream before this side gets it, so the activity enforces the
+        # `first_event_timeout` deadline, and this side just `request_timeout`'s.
+        return super()._start_request_deadline(model_settings, stream=stream and not workflow.in_workflow())
 
     def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
         return reject_serving_wrapper(self, wrap, 'TemporalAgent', 'TemporalDurability')
@@ -438,6 +445,15 @@ class TemporalModel(WrapperModel):
             # No model to ask, so judge by the provider name in the ID, as `Model` does.
             return models.Model.accepts_stateless_artifacts(self, response, part)
         return current.accepts_stateless_artifacts(response, part)
+
+    def accepts_server_state(self, response: ModelResponse) -> bool:
+        """The currently active model's answer, like `system`."""
+        current = self._current_model()
+        if isinstance(current, str):
+            # No model to ask, and the wrapped model's provider isn't the one the ID selects: judge by name alone,
+            # as `Model` does for a model without a provider.
+            return response.provider_name == self.system
+        return current.accepts_server_state(response)
 
     def _model_for_response(self, response: ModelResponse) -> models.Model:
         current = self._current_model()

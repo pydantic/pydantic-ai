@@ -53,6 +53,7 @@ from pydantic_ai.models import (
     StreamedResponse,
     infer_model,
 )
+from pydantic_ai.models._request_timeout import open_durable_unit_stream
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
@@ -1805,8 +1806,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 model,
                 durable_ctx,
             ):
-                async with model.request_stream(
-                    params.messages, params.model_settings, params.model_request_parameters, durable_ctx
+                async with open_durable_unit_stream(
+                    model, params.messages, params.model_settings, params.model_request_parameters, durable_ctx
                 ) as streamed:
                     await consume_event_stream(
                         run_context=durable_ctx,

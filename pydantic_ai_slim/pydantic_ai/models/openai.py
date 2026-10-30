@@ -24,8 +24,9 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
+import httpx2
 from httpx2 import Timeout as HTTPX2Timeout
-from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
@@ -99,6 +100,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
+    _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..native_tools import (
@@ -273,6 +275,9 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
         # been received; it gets the status the same error has before a stream opens.
         raise _model_errors.stream_error(model_name, e.message, e.body) from e
+    except httpx2.HTTPStatusError as e:
+        # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
+        raise _model_errors.transport_status_error(model_name, e.response) from e
 
 
 def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:
@@ -492,9 +497,38 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
 
 
+def _join_text_content_parts(content: object) -> object:
+    """Join a list of content parts into the string the Chat Completions API specifies, keeping only their text.
+
+    Some OpenAI-compatible servers (Mistral models served by the Albert API, for one) return `content` as a list of
+    parts like `[{'type': 'text', 'text': '...'}]`, especially when the answer carries references. Parts other than
+    text, like those references, are dropped. Anything that isn't a list is returned unchanged; a list with no text
+    becomes `None`.
+    """
+    if not isinstance(content, list):
+        return content
+    texts: list[str] = []
+    for part in cast(list[object], content):
+        if isinstance(part, str):
+            texts.append(part)
+        elif _utils.is_str_dict(part) and part.get('type') == 'text' and isinstance(text := part.get('text'), str):
+            texts.append(text)
+    return ''.join(texts) or None
+
+
+class _ChatCompletionMessage(chat.ChatCompletionMessage):
+    @field_validator('content', mode='before')
+    @classmethod
+    def _join_content_parts(cls, value: object) -> object:
+        return _join_text_content_parts(value)
+
+
 class _ChatCompletionChoice(chat_completion.Choice):
     finish_reason: Annotated[str, Field(min_length=1)]  # type: ignore[reportIncompatibleVariableOverride]
     """OpenAI-compatible providers can return arbitrary `finish_reason` values (e.g. `"guardrail_intervened"`)."""
+
+    message: _ChatCompletionMessage  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers can return `content` as a list of parts rather than a string."""
 
 
 class _ChatCompletion(chat.ChatCompletion):
@@ -4596,7 +4630,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> str | None:
         """The response to compare this request against for prompt cache diagnostics, if they should be requested.
 
-        That is the most recent response from this provider. OpenAI rejects an ID that doesn't start with `resp` with
+        That is the most recent response from this provider, unless a later compaction satisfies `_is_compaction_boundary`.
+        OpenAI rejects an ID that doesn't start with `resp` with
         a 400, so a response from an endpoint that issues other IDs is skipped. So is one from the `/compact`
         endpoint: like `previous_response_id`, it's a boundary, and a request after it starts a new prefix anyway.
         """
@@ -4605,12 +4640,27 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         ):
             return None
         for message in reversed(messages):
-            if isinstance(message, ModelResponse) and message.provider_name == self.system:
-                if message.provider_details and message.provider_details.get('compaction'):
-                    return None
+            if isinstance(message, ModelResponse) and self._is_compaction_boundary(message):
+                return None
+            if isinstance(message, ModelResponse) and self.accepts_server_state(message):
                 response_id = message.provider_response_id
                 return response_id if response_id and response_id.startswith('resp_') else None
         return None
+
+    def _is_compaction_boundary(self, response: ModelResponse) -> bool:
+        """Keep accepted inline server state chainable; otherwise use the portable compaction boundary."""
+        if self.accepts_server_state(response):
+            return bool(response.provider_details and response.provider_details.get('compaction'))
+        return any(
+            isinstance(part, CompactionPart)
+            and _compaction_part_is_wire_boundary(
+                response,
+                part,
+                self.accepts_stateless_artifacts,
+                requires_encrypted_content=self.compaction_requires_encrypted_content,
+            )
+            for part in response.parts
+        )
 
     def _get_previous_response_id_and_new_messages(
         self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False
@@ -4619,19 +4669,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # provider, and return it along with the messages that came after it (which
         # still need to be sent as new input). When nothing suitable is found, returns
         # `(None, messages)` with the full list unchanged. The third element says whether
-        # the most recent response from this provider is a chain boundary (a compaction, or
-        # a changed history), which a concrete seed must not cross either.
+        # retained history has a chain boundary (an accepted compaction, or changed
+        # history from this provider), which a concrete seed must not cross either.
         previous_response_id = None
         trimmed_messages: list[ModelMessage] = []
         for index in range(len(messages) - 1, -1, -1):
             m = messages[index]
-            if isinstance(m, ModelResponse) and m.provider_name == self.system:
-                # Responses from the stateless `/compact` endpoint can't be used as
-                # `previous_response_id`, so the compaction acts as a hard chain boundary:
-                # the next request must pass the `CompactionPart` via the `input` array
-                # (handled by `_map_messages`) without a `previous_response_id`.
-                if m.provider_details and m.provider_details.get('compaction'):
-                    return None, messages, True
+            if isinstance(m, ModelResponse) and self._is_compaction_boundary(m):
+                # Continue from the compaction item instead of restoring the older server-side context.
+                return None, messages, True
+            if isinstance(m, ModelResponse) and self.accepts_server_state(m):
                 # The server continues from this response and the history it was created with, so if
                 # either has changed since (a history processor redacted or trimmed them, say),
                 # continuing would silently drop the change: resend everything instead.
@@ -4690,7 +4737,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> tuple[str | None, list[ModelMessage]]:
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
-            if isinstance(m, ModelResponse) and m.provider_name == self.system:
+            if isinstance(m, ModelResponse) and self.accepts_server_state(m):
                 candidate = m.provider_details and m.provider_details.get('conversation_id')
                 if (
                     pydantic_ai_conversation_id is not None
@@ -4848,7 +4895,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
-                response_from_same_provider = message.provider_name == self.system
+                # Server-side state is only sent back to the endpoint that created it. A part from this provider in a
+                # response from another (or none) has no endpoint of its own, so it's judged by name as before.
+                same_endpoint = message.provider_name != self.system or self.accepts_server_state(message)
+                response_from_same_provider = message.provider_name == self.system and same_endpoint
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
@@ -4865,11 +4915,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         client_tool_search_active=client_tool_search_active,
                     )
                 for item in response_parts:
-                    from_same_provider = item.provider_name == self.system or (
-                        item.provider_name is None and message.provider_name == self.system
+                    from_same_provider = same_endpoint and (
+                        item.provider_name == self.system
+                        or (item.provider_name is None and message.provider_name == self.system)
                     )
-                    response_id_from_same_provider = message.provider_name == self.system or (
-                        message.provider_name is None and item.provider_name == self.system
+                    response_id_from_same_provider = same_endpoint and (
+                        message.provider_name == self.system
+                        or (message.provider_name is None and item.provider_name == self.system)
                     )
                     response_from_same_provider |= response_id_from_same_provider
                     # Two distinct gates. For native tool items whose state lives server-side
@@ -5628,9 +5680,9 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
-        # Handle the text part of the response
-        content = choice.delta.content
-        if content:
+        # Handle the text part of the response. Some OpenAI-compatible servers stream it as a list of parts.
+        content = _join_text_content_parts(choice.delta.content)
+        if isinstance(content, str) and content:
             self._raw_text_content += content
             emitted = False
             for event in self._parts_manager.handle_text_delta(

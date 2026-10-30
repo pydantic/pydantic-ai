@@ -215,6 +215,8 @@ Agent tools are automatically wrapped as Prefect tasks, which means they benefit
 * **Caching**: Tool results are cached based on their inputs
 * **Observability**: Tool execution is tracked in the Prefect UI
 
+Because a tool's recorded result can be replayed without re-running it, a tool running as a task can't load an [on-demand capability](../capabilities/on-demand.md) with [`ctx.load_capability()`][pydantic_ai.tools.RunContext.load_capability]; see [Loading a capability from code](../capabilities/on-demand.md#loading-from-code-durable) for where to load it instead.
+
 For a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset], including one contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], tool discovery and each tool call run as Prefect tasks, and flow retries replay recorded discovery and tool results. When the factory is built with `per_run_step=False`, the run resolves the toolset once and each task reuses it, entering it the first time a task needs it and leaving it entered for the rest of the run. Building a toolset is not the same as connecting it — an `MCPToolset` opens nothing until it is entered — so connecting happens inside a task, where it is retried like any other task failure. The factory itself runs in flow code and re-runs whenever that replays, so like the capability factory below it must be deterministic given the run's `deps`: build the toolset in the factory and leave its I/O to the tasks. This is the lifecycle a non-durable run gives the toolset, so a toolset's own caching — such as [`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] on an `MCPToolset` the factory returns — works as it does outside a flow, instead of being discarded between tasks. A `per_run_step=True` factory is re-resolved inside each task, as it asks to be.
 
 For an [`MCPToolset`][pydantic_ai.mcp.MCPToolset], tool discovery and each tool call run as Prefect
@@ -367,7 +369,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 Pydantic AI and provider API clients have their own retry logic. When using Prefect, you may want to:
 
 * Disable [transport retries](../retries.md#transport-retries) in Pydantic AI
-* Turn off your provider API client's retry logic (e.g., `max_retries=0` on a [custom OpenAI client](../models/openai.md#custom-openai-client))
+* Turn off your provider API client's retry logic by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0`, so Prefect is the [one retry owner](../retries.md#choosing-one-retry-owner)
 * Rely on Prefect's task-level retry configuration for consistency
 
 This prevents requests from being retried multiple times at different layers. The layers *multiply*: see [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
@@ -400,7 +402,7 @@ To access the Prefect UI, you can either:
 1. Use [Prefect Cloud](https://www.prefect.io/cloud) (managed service)
 2. Run a local [Prefect server](https://docs.prefect.io/v3/how-to-guides/self-hosted/server-cli) with `prefect server start`
 
-You can also use [Pydantic Logfire](../logfire.md) for detailed observability. When using both Prefect and Logfire, you'll get complementary views:
+Run `uvx logfire-cli wizard --task pydantic-ai` once to [set up Pydantic Logfire](../logfire.md#using-logfire) for detailed observability. When using both Prefect and Logfire, you'll get complementary views:
 
 * **Prefect**: Workflow-level orchestration, task status, and retry history
 * **Logfire**: Fine-grained tracing of agent runs, model requests, and tool invocations

@@ -346,10 +346,12 @@ def _map_usage(
     Google Cloud (formerly known as Vertex AI) returns token_count in embedding statistics.
     """
     total_tokens = 0
+    usage_reported = provider != 'google'
     if response.embeddings:  # pragma: no branch
         for emb in response.embeddings:
-            if emb.statistics and emb.statistics.token_count:
+            if emb.statistics and emb.statistics.token_count is not None:
                 # Requires Vertex AI.
                 total_tokens += int(emb.statistics.token_count)  # pragma: lax no cover
+                usage_reported = True
 
-    return RequestUsage(input_tokens=total_tokens)
+    return RequestUsage(input_tokens=total_tokens, unmeasured_requests=int(not usage_reported))
