@@ -39,7 +39,7 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 A sandbox lives for 1 hour (`sandbox_timeout=3600`, the most E2B's Hobby plan allows), then pauses; the next run resumes it. Pro plans allow up to `E2BSandbox(sandbox_timeout=86400)`. A lifetime over your plan's limit raises `WorkspaceUnavailableError`, with the limit in the message.
 
-To pause a sandbox only when it goes unused, pass `idle_timeout`: `E2BSandbox(idle_timeout=600)` pauses it about 10 minutes after its last command or file operation. Each operation extends its lifetime as it starts, up to `sandbox_timeout` from the run's first use. Model requests and other tools in between count as idle time, and nothing extends it while one command runs, so set `idle_timeout` longer than the slowest model turn and the longest command: minutes, not seconds. With `idle_timeout` set, a new sandbox is created with the shorter of the two, so a `sandbox_timeout` over your plan's limit is not refused up front; keep it within your plan's limit.
+To pause a sandbox only when it goes unused, pass `idle_timeout`: `E2BSandbox(idle_timeout=600)` pauses it about 10 minutes after its last command or file operation. Each operation extends its lifetime as it starts, up to `sandbox_timeout` from the run's first use (under durable execution, each activity attaches again, so from each activity's first use). Model requests and other tools in between count as idle time, and nothing extends it while one command runs, so set `idle_timeout` longer than the slowest model turn and the longest command: minutes, not seconds. With `idle_timeout` set, a new sandbox is created with the shorter of the two, so a `sandbox_timeout` over your plan's limit is not refused up front; keep it within your plan's limit.
 
 For runs longer than an hour, use a Pro plan and pass both, such as `E2BSandbox(sandbox_timeout=86400, idle_timeout=600)`: a busy run keeps the sandbox for up to 24 hours, and a finished one pauses it after 10 minutes instead of billing for the rest of the day.
 
@@ -132,7 +132,7 @@ The ref holds no credentials, so the process that reattaches needs `E2B_API_KEY`
 
 `template` and `allow_internet_access` only shape a new sandbox. `sandbox_timeout` and `idle_timeout` also apply when you reattach, and `working_dir` and `env` apply to every command.
 
-Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox)` to a run, with `E2BSandboxBackend` from `pydantic_ai_harness.e2b_sandbox`. `E2BSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
+Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox)` to a run, with `E2BSandboxBackend` from `pydantic_ai_harness.e2b_sandbox`. `E2BSandbox`'s settings don't apply to it; pass `working_dir=`, `env=` and `idle_timeout=` to the backend.
 
 ## Prepare a sandbox before the run
 
@@ -173,7 +173,7 @@ The `finally` kills the sandbox even when setup or the run fails. To keep it ins
 
 ## Preview a dev server
 
-With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, get the sandbox with `sandbox = await capability.backend(ref).get_sandbox()`, where `capability` is the `E2BSandbox` the agent runs with, so its `sandbox_timeout` and `idle_timeout` apply, and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). With `idle_timeout` set, the sandbox pauses about `idle_timeout` after the run's last use, since serving the preview does not count as use; call `await sandbox.set_timeout(seconds)` to keep it up longer. When done, call `stop_command` with the ID while the workspace is attached, then delete the sandbox with `await E2BSandbox().destroy(ref)`. Do not leave a public preview running longer than necessary.
+With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, get the sandbox with `sandbox = await capability.backend(ref).get_sandbox()`, where `capability` is the `E2BSandbox` the agent runs with, so its `sandbox_timeout` and `idle_timeout` apply, and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). With `idle_timeout` set, the sandbox pauses about `idle_timeout` after the run's last use, since serving the preview does not count as use; call `await sandbox.set_timeout(seconds)` to keep it up longer, though a later run with `idle_timeout` shortens it to `idle_timeout` again. When done, call `stop_command` with the ID while the workspace is attached, then delete the sandbox with `await E2BSandbox().destroy(ref)`. Do not leave a public preview running longer than necessary.
 
 ## Clean up
 
