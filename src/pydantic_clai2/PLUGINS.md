@@ -1099,12 +1099,12 @@ and `repo_context` therefore refer to that checkout. User plugins and settings
 still load from the same database directory, even with a relative `--database`
 path. Only committed project files reach the new checkout. After interactive
 shutdown and plugin cleanup, CLAI offers to remove the linked worktree, defaulting
-to keep. This includes existing linked worktrees. Removal uses Git without
-`--force` and keeps the branch; dirty or locked checkouts stay on disk.
+to keep. This includes existing linked worktrees. By default, removal uses Git
+without `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
 and `/reload` keep the checkout in use, except under `clai2 --web`, where opening a session saved
 elsewhere, or `/workspace`, moves the session to its own directory. Plugins do not own worktree cleanup.
-See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup.
+See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup, including configuration for a user-defined removal command.
 
 ## The built-in plugins
 
@@ -1321,7 +1321,7 @@ workspace and its default filenames. Its settings:
 |---|---|---|
 | `walk_up` | `false` | also load instruction files from every directory between the workspace and your home directory |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
-| `nested_traversal` | `false` | when the agent reads, lists, writes or edits in a directory, tell it about that directory's instruction file |
+| `nested_traversal` | `false` | when the agent reads, lists, writes or edits in a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
 | `nested_inject` | `"pointer"` | what nested traversal adds: `"pointer"` (one line naming the file) or `"contents"` |
 
 A repository can declare plugins too, in `.clai/settings.json`; they show as
@@ -1462,7 +1462,8 @@ it. **New session** does the same in the folder the user picks (`POST /api/sessi
 calls `host.live.new`), offering the sidebar's checkouts and every other worktree Git lists for
 their repositories (`GET /api/sessions?include_worktrees=true`), and the directories a typed path
 completes to (`GET /api/directories?path=…`, the first 12, each repository with its worktrees). Its
-**New worktree of …** first checks out a new branch of the highlighted folder's repository
+**New worktree…** (on a row, or below the list for the row the arrow keys select) first checks out a new
+branch of that folder's repository
 (`POST /api/worktrees`, which places it as `clai2 --worktree` does and answers its folder). The page
 watches the session it
 shows (`LiveSession.watch`), so that one is never closed for being idle; any other live session
@@ -1526,14 +1527,17 @@ printed and returned. Code mode keeps Monty's state with the session between tur
 so cells are numbered across the session, as a notebook numbers them, until a `restart: true`
 clears it. Its input runs your own cell with `/monty` between turns, shown as yours; your next
 prompt tells the model what you ran. A saved session keeps no sandbox call log, so its cells list
-the calls found in their code.
+the calls found in their code. It uses the same column as the Changes panel and plugins' side
+panels, so opening one closes the others.
 
 The **Changes** panel (Cmd/Ctrl+Shift+E, or the diff button at the top right, which shows how
 many files the session has changed) lists what the session changed, one diff per file. **Last
 turn** and **This session** come from the session's own `write_file` and `edit_file` calls, so
-they also work outside Git. **Uncommitted** is `git diff HEAD` in the session's directory, and
+they also work outside Git. **Uncommitted** is `git diff HEAD` in the session's directory, plus
+untracked files that are not ignored, as added, and
 **Branch vs base** compares the files with where the branch left `origin/HEAD`, `main`, or
-`master`. It uses the same column as plugins' side panels, so opening one closes the other.
+`master`. It uses the same column as Monty and plugins' side panels, so opening one closes the
+others.
 
 Images pasted or dropped into the composer go with the next prompt: the page shows each as a
 thumbnail until it is sent, and sends them with the text (`POST /api/sessions/ID/input` with
@@ -1600,7 +1604,7 @@ view. A panel sits on the right, resized by dragging its left edge; the browser 
 one is open and how wide. A page that allows the web UI to frame it shows inside the panel;
 others open in a window beside this one, which follows the panel as its page changes. The page's
 own `Content-Security-Policy` admits frames from `https:` and loopback `http:` pages only.
-Opening a side panel closes the Changes panel, which uses the same column.
+Opening a side panel closes the Changes panel or Monty, which use the same column.
 
 One menu edits a plugin at a time: while the terminal shows its menu, or an action's dialogs
 are open in the page, other edits to that plugin are refused until it closes. The panel cannot
@@ -1636,11 +1640,12 @@ to install dependencies, rebuild the bundle, and run browser tests. Do not commi
 workflow commits it.
 
 `/update now`, typed in the terminal or confirmed with **Update…** in the page's About section (bare
-`/update` in the composer opens that section), shows in the page: uv's latest line while it
-installs (`on_install_progress`), then all it printed and the command's result. A failed install,
-or nothing to install, says so and changes nothing. After a successful one, CLAI restarts as the
-new build serving the web UI again on the same port with the same token, and resumes the session;
-the page says it is restarting, reconnects by itself, and names the new version. That holds for
+`/update` in the composer opens that section), shows in the page, over Settings too while it is open:
+uv's latest line while it installs (`on_install_progress`), then all it printed and the command's
+result. A failed install, or nothing to install, says so and changes nothing. After a successful one,
+CLAI restarts as the new build serving the web UI again on the same port with the same token, and
+resumes the session; the page says it is restarting, reconnects by itself, and names the new
+version, and About names the versions it updated from and to. That holds for
 `clai2 --web`, with its `--port` and `--token-file`, and for `/web` started from a terminal, which
 restarts as a terminal session with the web UI running, though the browser does not open again.
 The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only

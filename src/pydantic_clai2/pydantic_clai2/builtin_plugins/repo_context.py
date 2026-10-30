@@ -27,7 +27,10 @@ class RepoContextSettings(BaseModel):
     )
     nested_traversal: bool = Field(
         default=False,
-        description="Surface a directory's instruction file when the agent reads, lists, writes or edits in it.",
+        description=(
+            'Surface the instruction files of a directory the agent reads, lists, writes or edits in, and of every '
+            'directory between it and the workspace.'
+        ),
     )
     nested_inject: Literal['pointer', 'contents'] = Field(
         default='pointer', description='What nested traversal adds: a one-line pointer or the file contents.'

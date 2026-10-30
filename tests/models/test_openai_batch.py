@@ -335,7 +335,6 @@ async def test_batch_create_refuses_a_different_client_or_model(allow_model_requ
     'settings,match',
     [
         ({'timeout': 10}, 'per-request `timeout`'),
-        ({'max_retries': 0}, 'per-request `max_retries`'),
         ({'extra_headers': {'X-Tenant': 'a'}}, 'per-request `extra_headers`'),
         ({'openai_background': True}, '`openai_background`'),
         ({'extra_body': {'stream': True}}, '`stream` or `background`'),
@@ -346,6 +345,12 @@ async def test_batch_create_refuses_a_different_client_or_model(allow_model_requ
 async def test_batch_encode_rejects_what_a_batch_cannot_honor(settings: dict[str, Any], match: str) -> None:
     with pytest.raises(UserError, match=match):
         await _model().batch_encode(_request(**settings))
+
+
+async def test_batch_encode_ignores_max_retries() -> None:
+    """OpenAI runs a batched request itself, so an SDK retry count is ignored rather than rejected."""
+    encoded = await _model().batch_encode(_request(max_retries=0))
+    assert encoded == await _model().batch_encode(_request())
 
 
 async def test_batch_requires_a_static_api_key() -> None:

@@ -1,6 +1,18 @@
 {
   "allowed_breakages": [
     {
+      "against": "v2.63.0",
+      "fingerprint": "c899f363810e6caff10f37ffc738cdeef40a8b9863fd3e231247155935a3f350",
+      "reason": "Adds `CapabilityLoadDeltaPart` to `ModelRequestPart`, the record `RunContext.load_capability` leaves for a capability loaded from code; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10090"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "56230242ad0a14b12479047f6f0642d31f45b628331f2db068f7ea21eacaaf2f",
+      "reason": "Adds `CapabilityLoadDeltaEvent` to `HandleResponseEvent`, emitted when a request records a `CapabilityLoadDeltaPart`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10090"
+    },
+    {
       "against": "v2.62.0",
       "fingerprint": "78216eb81400af46f893b51ddc502505de40494f0e809618b9157955c6e33186",
       "reason": "`SignInRequired` was renamed to `SignInRequiredError` (#11326); the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
@@ -107,6 +119,12 @@
       "fingerprint": "c4aa7c8b9e94bd5ada5a90325d99ca764fed5f8bd156d31ef511842e4d854f3a",
       "reason": "False positive: `BackgroundTools` still inherits `prepare_tools` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the tool preparation moved into the wrapper toolset.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "16217ea4bc0fbcbab46f0c1380a34f28563ee8bcb966d04ebb8ba5485b4e14cb",
+      "reason": "Adds the new `first_event_timeout` model setting to `ModelSettingName`; every existing name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11582"
     },
     {
       "against": "v2.60.0",
@@ -440,8 +458,8 @@
     },
     {
       "against": "v2.63.0",
-      "fingerprint": "a6296755aaa4051c8d8f5d14b7d1f9be06bb330538c9d66370553e403a112697",
-      "reason": "`RepoContextSettings.nested_traversal` keeps its type and default; only its `Field` description changed, to say nested traversal also reacts to writes and edits.",
+      "fingerprint": "ba9cf963f7276078e6e0f01722735a466bd11e59a88dde3adb3a9b06edc1f3af",
+      "reason": "`RepoContextSettings.nested_traversal` keeps its type and default; only its `Field` description changed, to say nested traversal reacts to writes and edits as well as reads and listings, and surfaces every directory between the traversed one and the workspace.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11701"
     }
   ],

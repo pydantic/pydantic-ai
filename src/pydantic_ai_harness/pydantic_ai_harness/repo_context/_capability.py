@@ -22,6 +22,8 @@ from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     context_file_label,
+    dir_context_file_path,
+    directories_up_to,
     discover_instruction_files,
     find_dir_context_file,
     render_context_file,
@@ -82,11 +84,13 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        the instructions then point at the roots instead.
 
     3. Nested-on-traversal (`nested_traversal`, off by default): when the model
-       lists or reads a directory, or writes or edits a file in it, through a
-       filesystem capability event, surface that directory's
-       `CLAUDE.md`/`AGENTS.md`. The note is enqueued in the message tail, not
-       added to system instructions, so it does not invalidate the cached
-       prefix. `nested_inject='pointer'` (default)
+       lists a directory, reads a file in it, or writes or edits a file in it,
+       through a filesystem capability event, surface the `CLAUDE.md`/`AGENTS.md`
+       of that directory and of every directory between it and the working
+       directory, shallowest first. The working directory's own files are not
+       repeated when Strategy 1 loaded them. The note is enqueued in
+       the message tail, not added to system instructions, so it does not
+       invalidate the cached prefix. `nested_inject='pointer'` (default)
        enqueues a one-line pointer; `'contents'` inlines the file body. With it
        on, the instructions also gain one static sentence on how instruction
        files relate: each applies to its subtree, the deeper one wins, and the
@@ -137,10 +141,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     """Name of the inventory tool exposed to the model."""
 
     nested_traversal: bool = False
-    """Strategy 3: surface a directory's instruction file when the model lists or
-    reads that directory, or writes or edits a file in it. Off by default -- it couples
-    to the filesystem tools. With it on, the instructions also state how instruction
-    files relate."""
+    """Strategy 3: surface the instruction files between the working directory and
+    a directory the model lists, or reads, writes or edits a file in. Off by default -- it couples to the
+    filesystem tools. With it on, the instructions also state how instruction files relate."""
 
     nested_inject: Literal['pointer', 'contents'] = 'pointer'
     """For Strategy 3: append a one-line `pointer`, or inline the file `contents`."""
@@ -158,7 +161,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     """Walk-up result for this run, loaded once in `before_run` via `ctx.workspace`."""
 
     _seen_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
-    """Run-scoped set of directories already surfaced by Strategy 3."""
+    """Run-scoped set of directories Strategy 3 should not surface again.
+
+    Those it already surfaced, plus the working directory when the walk-up loaded its file.
+    """
 
     _cached_working_dir: Path | None = field(default=None, init=False, repr=False, compare=False)
     """The workspace's working directory for this run."""
@@ -200,6 +206,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if self.home_dir is not None:
             home = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
         self._context_files = await discover_instruction_files(workspace, working_dir, home, self.filenames)
+        # The walk-up loaded the working directory's instruction files (or an identical ancestor copy), so nested
+        # traversal has nothing to add there. A file that appears there later in the run is still surfaced.
+        if self.nested_traversal and await dir_context_file_path(workspace, working_dir, self.filenames) is not None:
+            self._seen_dirs.add(str(working_dir))
 
     def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
         """Cache-stable instructions resolved after `before_run` loads workspace files."""
@@ -306,6 +316,17 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         await self._enqueue_context(ctx, directory, written_file=written_file)
 
     async def _enqueue_context(
+        self, ctx: RunContext[AgentDepsT], directory: Path, *, written_file: Path | None = None
+    ) -> None:
+        """Surface the instruction file of `directory` and of each directory between it and the working directory.
+
+        Files are enqueued shallowest first, so the most specific file is the latest one the model reads.
+        """
+        working_dir = await self._working_dir(ctx.workspace)
+        for current in directories_up_to(directory, working_dir):
+            await self._enqueue_directory(ctx, current, written_file=written_file)
+
+    async def _enqueue_directory(
         self, ctx: RunContext[AgentDepsT], directory: Path, *, written_file: Path | None = None
     ) -> None:
         key = str(directory)

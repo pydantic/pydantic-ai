@@ -56,14 +56,16 @@ With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'
 
 ### 3. Nested-on-traversal (off by default)
 
-When the model lists or reads a directory, or writes or edits a file in it,
-surface that directory's `CLAUDE.md`/`AGENTS.md`. A plain `FileWrittenEvent`
-for the instruction file itself counts as surfacing it, since the model wrote
-the whole file. A `FileReadEvent` or `FileEditedEvent` for it doesn't: a read
-can return part of the file and an edit changes part of it. This strategy
-subscribes to `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent`,
-so it receives normalized, containment-checked paths instead of inspecting raw
-tool arguments. It remains opt-in:
+When the model lists a directory, reads a file in it, or writes or edits a file
+in it, surface the `CLAUDE.md`/`AGENTS.md` of that directory and of every
+directory between it and the working directory, shallowest first: reading
+`packages/foo/src/x.py` also surfaces `packages/foo/AGENTS.md`. A plain
+`FileWrittenEvent` for the instruction file itself counts as surfacing it, since
+the model wrote the whole file. A `FileReadEvent` or `FileEditedEvent` for it
+doesn't: a read can return part of the file and an edit changes part of it. This
+strategy subscribes to `FileReadEvent`, `DirectoryListedEvent` and
+`FileWrittenEvent`, so it receives normalized, containment-checked paths instead
+of inspecting raw tool arguments. It remains opt-in:
 
 ```python
 from pydantic_ai import Agent
@@ -86,7 +88,9 @@ result = agent.run_sync('List the source directory.')
 
 `nested_inject='pointer'` (default) enqueues a one-line note pointing at the
 file; `'contents'` enqueues the file body. The note reaches message history
-before the next model request. Each directory is surfaced at most once per run.
+before the next model request. Each directory is surfaced at most once per run,
+and the working directory's files are not surfaced again when the walk-up
+already loaded them.
 As with the walk-up, a symlinked instruction file is named after its target.
 
 With nested traversal on, the instructions also tell the model how instruction
