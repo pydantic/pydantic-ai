@@ -37,7 +37,7 @@ from .._tool_execution import (
     cancelled_sub_agent_return,
     tool_bound_retry_part,
 )
-from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
+from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from ..conversation import Conversation
 from ..exceptions import (
     ApprovalRequired,
@@ -971,7 +971,9 @@ class RealtimeSession:
             elif replays:
                 assert isinstance(message, ModelRequest)
                 text = self._render_instruction_change(messages[:index], message)
-                replayed.append(replace(message, parts=[SystemPromptPart(text, timestamp=message.timestamp)]))
+                replayed.append(
+                    replace(message, parts=[SystemPromptPart(text, timestamp=message.timestamp or now_utc())])
+                )
         return replayed
 
     def _render_instruction_change(self, history: Sequence[ModelMessage], request: ModelRequest) -> str:

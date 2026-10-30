@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 import pytest
 from inline_snapshot import snapshot
@@ -31,7 +31,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.realtime._utils import InstructionChangeContext
 from pydantic_ai.realtime.codec import (
     OutputTranscript,
-    RealtimeInput,
+    RealtimeCodecEvent,
     ResponseDone,
     TextContext,
     ToolCall,
@@ -43,11 +43,7 @@ from .test_session import BlockingRealtimeConnection, FakeRealtimeConnection, Fa
 
 pytestmark = pytest.mark.anyio
 
-_TURN = [OutputTranscript(text='Hello.', is_final=True), ResponseDone()]
-
-
-def _texts(sent: Sequence[RealtimeInput]) -> list[str]:
-    return [content.text for content in sent if isinstance(content, TextContext)]
+_TURN: list[RealtimeCodecEvent] = [OutputTranscript(text='Hello.', is_final=True), ResponseDone()]
 
 
 def _changing_agent() -> tuple[Agent[None, str], dict[str, str | None]]:
@@ -479,11 +475,13 @@ async def test_loaded_capability_block_changes_are_delivered_and_left_out_of_the
             return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'accent'})])
         return ModelResponse(parts=[TextPart('Arr.')])
 
-    history = (await Agent(FunctionModel(load_then_answer), capabilities=[Accent()]).run('Hello.')).all_messages()
+    history = (
+        await Agent(FunctionModel(load_then_answer), deps_type=type(None), capabilities=[Accent()]).run('Hello.')
+    ).all_messages()
 
     connection = FakeRealtimeConnection(_TURN)
     model = FakeRealtimeModel(connection)
-    agent: Agent[None, str] = Agent(instructions='Be helpful.', capabilities=[Accent()])
+    agent = Agent(instructions='Be helpful.', deps_type=type(None), capabilities=[Accent()])
     async with agent.realtime(model, message_history=history).session() as session:
         state['accent'] = 'cowboy'
         _ = [event async for event in session]
