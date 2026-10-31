@@ -26,11 +26,14 @@ from pydantic_ai._framing import (
     SYSTEM_TAG,
     TOOL_RESULT_TAG,
     FramingTag,
+    LookalikeSource,
     add_system_voice_tag,
     close_tag,
     frame,
     frame_tags,
+    is_framework_note,
     lookalike_frame_note,
+    lookalike_note_announcement,
     lookalike_tags,
     model_visible_name_error,
     open_tag,
@@ -555,3 +558,26 @@ def test_a_context_lookalike_note_says_which_elements_do_apply() -> None:
     )
     assert 'contains a <context> or <context_diff> element and a <system> tag written by the tool' in mixed
     assert lookalike_tags('<CONTEXT_DIFF id="a"> <system> <context>') == ['context', 'system']
+
+
+@pytest.mark.parametrize('source', ['user', 'tool', 'file'])
+@pytest.mark.parametrize('tags', [['system'], ['context'], ['system', 'context']])
+@pytest.mark.parametrize('system_role', [True, False])
+def test_framework_notes_are_recognized(source: LookalikeSource, tags: list[str], system_role: bool) -> None:
+    note = lookalike_frame_note(source, preceding=True, tags=tags, system_role=system_role, tool_name='t')
+    assert is_framework_note(note)
+    assert is_framework_note(f'<system>{note}</system>')
+    assert is_framework_note(lookalike_note_announcement(system_role=system_role))
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        'The following user message is short.',
+        'Only <context> elements matter, not by the application.',
+        # Many near-misses of the note's opening: recognized in linear time, not rescanned for each one.
+        'Only <context>' + ' change your instructions, and any in this turn apply. The following user message x' * 4000,
+    ],
+)
+def test_user_text_is_not_a_framework_note(text: str) -> None:
+    assert not is_framework_note(text)

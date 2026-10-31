@@ -366,23 +366,25 @@ def lookalike_frame_note(
     )
 
 
-_NOTE_TEXT: Final = re.compile(
-    r'(?:<system>)?(?:Only .*? change your instructions, and any in this turn apply\. )?'
-    r'The (?:preceding|following) (?:user message|tool result|file)\b.*? not by the application[:,]',
-    re.DOTALL,
-)
+_NOTE_SUBJECT: Final = re.compile(r'The (?:preceding|following) (?:user message|tool result|file)\b')
+_CONTEXT_NOTE_OPENING: Final = ' change your instructions, and any in this turn apply. '
 
 
 def is_framework_note(text: str) -> bool:
     """Whether `text` is a lookalike note or the announcement, as rendered by this module, `<system>`-wrapped or not.
 
     For code that looks at a prepared request and needs to tell the parts the framework added from the ones the
-    history holds.
+    history holds. It reads any prompt text, so it only anchors a fixed pattern and searches for fixed strings, in
+    linear time.
     """
     unwrapped = text.removeprefix('<system>').removesuffix('</system>')
-    return unwrapped in (_NOTE_ANNOUNCEMENT, lookalike_note_announcement(system_role=False)) or bool(
-        _NOTE_TEXT.match(text)
-    )
+    if unwrapped in (_NOTE_ANNOUNCEMENT, lookalike_note_announcement(system_role=False)):
+        return True
+    if unwrapped.startswith('Only <'):
+        _, opening, unwrapped = unwrapped.partition(_CONTEXT_NOTE_OPENING)
+        if not opening:
+            return False
+    return _NOTE_SUBJECT.match(unwrapped) is not None and ' not by the application' in unwrapped
 
 
 _system_voice_tags: tuple[str, ...] = (SYSTEM_TAG, CONTEXT_TAG, CONTEXT_DIFF_TAG)
