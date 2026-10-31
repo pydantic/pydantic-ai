@@ -681,7 +681,7 @@ for attempt in result.response.failed_attempts or []:
     #> primary rejected RequestUsage(input_tokens=60, output_tokens=100)
 ```
 
-When the agent is [instrumented](../logfire.md), the model request (`chat`) span describes the model that answered and ends OK. Each attempt the `FallbackModel` moved on from gets its own child span, `model request attempt <model name>`, which ends with an ERROR status, the way a failed tool call gets its own span inside a successful agent run. An error is recorded on that span as an exception, and a response rejected by a [response handler](#response-based-fallback) carries its usage, cost and finish reason instead, as a `chat` span would. Each attempt span names the model it tried in its `gen_ai.provider.name` and `gen_ai.request.model` attributes, and gives its zero-based position among the request's attempts in `pydantic_ai.model_request.attempt`. With [`include_content=False`](../logfire.md#excluding-prompts-and-completions), the exception keeps only its type. The attempt span is created once the attempt has failed, so spans the tried model opens itself, such as a [decision model](decision.md)'s `decide` span, sit beside it under the `chat` span rather than inside it.
+When the agent is [instrumented](../logfire.md), the model request (`chat`) span describes the model that answered and ends OK. Each attempt the `FallbackModel` moved on from gets its own child span, `model request attempt <model name>`, which ends with an ERROR status, the way a failed tool call gets its own span inside a successful agent run. An error is recorded on that span as an exception, and a response rejected by a [response handler](#response-based-fallback), or as a refusal, carries its usage, cost and finish reason instead, as a `chat` span would. Each attempt span names the model it tried in its `gen_ai.provider.name` and `gen_ai.request.model` attributes, and gives its zero-based position among the request's attempts in `pydantic_ai.model_request.attempt`. With [`include_content=False`](../logfire.md#excluding-prompts-and-completions), the exception keeps only its type. The attempt span is created once the attempt has failed, so spans the tried model opens itself, such as a [decision model](decision.md)'s `decide` span, sit beside it under the `chat` span rather than inside it.
 
 ### Response-Based Fallback
 
@@ -750,10 +750,12 @@ print(result.output)
     `UnexpectedModelBehavior`).
 
     All of these are raised from the agent loop, after `model.request()` has already returned
-    successfully, so no exception-based `fallback_on` can catch them — not the default
-    `fallback_on=(ModelAPIError,)` (which wouldn't match anyway, as `ContentFilterError` inherits from
-    `UnexpectedModelBehavior`, not [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]), and not an
-    explicit `fallback_on=(ContentFilterError,)` either. To fall back on a bad finish reason instead,
+    successfully, so an exception-based `fallback_on` can't catch them: not the default
+    `fallback_on=(ModelAPIError,)`, which wouldn't match anyway, as `ContentFilterError` inherits from
+    `UnexpectedModelBehavior`, not [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. The exception is
+    `ContentFilterError` itself: naming it in `fallback_on` rejects any response with a `'content_filter'`
+    finish reason, empty or not, so the next model is tried instead, as
+    [`ModelFallback`](../capabilities/model-fallback.md#when-to-fall-back) does by default. To fall back on another bad finish reason instead,
     use a response handler (see the [example above](#finish-reason-example)) that inspects
     [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason]: it rejects the response inside
     `FallbackModel` before the agent loop sees it, so the next model is tried instead of an exception
@@ -761,6 +763,8 @@ print(result.output)
     ones the agent loop would have accepted. To instead raise on `content_filter` responses that still
     carry partial or refusal text, add the
     [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
+    [Falling back when a model refuses](../capabilities/model-fallback.md#refusals) puts this together
+    for safety refusals.
 
 #### Native Tool Failure Example
 
