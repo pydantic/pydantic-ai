@@ -355,7 +355,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return
         self._pending_dirs.add(key)
         # The model just wrote the instruction file itself, so a note would repeat what it wrote. The directory stays
-        # pending, so it isn't surfaced again until a compaction summarizes the write away.
+        # pending for the rest of this run, or until a compaction summarizes the write away; a later run, which keeps
+        # no pending state and finds no stamped note, may surface it once more.
         if written_file is not None and await self._same_file(ctx.workspace, written_file, context_file.path):
             return
         ctx.enqueue(*_stamp(self._render_note(context_file), key))
