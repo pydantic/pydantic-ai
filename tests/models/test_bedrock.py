@@ -5299,9 +5299,10 @@ This is a simple addition problem where we combine ten and eleven to get twenty-
 
 @pytest.mark.vcr()
 @pytest.mark.parametrize(
-    'cache,expected_cache_point,expected_usage',
+    'model_name,cache,expected_cache_point,expected_usage',
     [
         pytest.param(
+            'us.anthropic.claude-sonnet-5',
             True,
             # No `ttl`, matching what `bedrock_cache_instructions=True` sends.
             {'cachePoint': {'type': 'default'}},
@@ -5327,6 +5328,7 @@ This is a simple addition problem where we combine ten and eleven to get twenty-
             id='default',
         ),
         pytest.param(
+            'us.anthropic.claude-sonnet-5',
             '1h',
             {'cachePoint': {'type': 'default', 'ttl': '1h'}},
             snapshot(
@@ -5350,11 +5352,37 @@ This is a simple addition problem where we combine ten and eleven to get twenty-
             ),
             id='1h',
         ),
+        pytest.param(
+            'us.anthropic.claude-haiku-5-5',
+            '1h',
+            {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+            snapshot(
+                (
+                    RunUsage(
+                        cache_write_1h_tokens=8281,
+                        input_tokens=8285,
+                        cache_write_tokens=8281,
+                        output_tokens=5,
+                        cost=Decimal('0.00182501'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        cache_read_tokens=8281,
+                        input_tokens=8285,
+                        output_tokens=5,
+                        cost=Decimal('0.000094281'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='haiku-5-5-1h',
+        ),
     ],
 )
 async def test_unified_cache_writes_then_reads_real_api(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
+    model_name: str,
     cache: Literal[True, '1h'],
     expected_cache_point: dict[str, Any],
     expected_usage: tuple[RunUsage, RunUsage],
@@ -5364,7 +5392,7 @@ async def test_unified_cache_writes_then_reads_real_api(
 
     The same prompt is sent twice: the first run writes the prefix to the cache and the second reads it back.
     """
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-5', provider=bedrock_provider)
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
     agent = Agent(
         model,
         # Distinct per case, so that recording one case doesn't read the cache the other wrote.
