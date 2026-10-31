@@ -385,6 +385,18 @@ def test_kind_defined_after_the_schema_was_built_loads_as_itself() -> None:
     assert adapter.validate_python(adapter.dump_python(messages)) == messages
     assert adapter.dump_python(messages, mode='json') == ModelMessagesTypeAdapter.dump_python(messages, mode='json')
     assert adapter.validate_python(messages) == messages
+    # Serialization options reach the late kind's fields too.
+    assert None not in adapter.dump_python(messages, mode='json', exclude_none=True)[0]['parts'][0].values()
+    excluded = adapter.dump_python(messages, mode='json', exclude={0: {'parts': {0: {'record_id'}}}})
+    assert 'record_id' not in excluded[0]['parts'][0]
+
+
+def test_envelope_field_cannot_be_an_attribute() -> None:
+    with pytest.raises(UserError, match='declares no such field'):
+
+        @dataclass(kw_only=True)
+        class Bad(DataCapabilityPart, namespace='ok', tag='x', attributes=('content',)):
+            pass
 
 
 def test_unknown_kind_without_render_facts_fails_validation() -> None:
@@ -957,7 +969,10 @@ def test_sanitize_drops_capability_parts() -> None:
     assert [type(part).__name__ for message in sanitized for part in getattr(message, 'parts', [])] == [
         'UserPromptPart'
     ]
-    assert sanitize_messages(messages, strip_system_prompts=False) == messages
+    # Even when the client owns the system prompt: a capability part never comes from a client.
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+        kept = sanitize_messages(messages, strip_system_prompts=False)
+    assert [type(part).__name__ for message in kept for part in getattr(message, 'parts', [])] == ['UserPromptPart']
 
 
 @pytest.mark.skipif(not ui_imports_successful(), reason='UI adapters not installed')

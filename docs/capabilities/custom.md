@@ -407,7 +407,7 @@ The class arguments declare the part's kind and, for a data kind, how its conten
 | Argument | What it does |
 |---|---|
 | `namespace`, `name` | Make up the part's [`kind`][pydantic_ai.messages.CapabilityPart.kind], `namespace.name`, which identifies it when history is stored and loaded. `name` defaults to the class name in snake_case without a `Part` suffix, and subclasses inherit the namespace. Both are lowercase snake_case, and a kind can be defined only once. |
-| `tag` | Data kinds only, and required there. The lowercase snake_case tag a data part's content goes in. Prefer an existing tag that says what the content *is*, such as `tool_result`. `'system'` is refused. |
+| `tag` | Data kinds only, and required there. The lowercase snake_case tag a data part's content goes in. Prefer an existing tag that says what the content *is*, such as `tool_result`. System-voice tags such as `system` and `context`, and names ending in `_diff`, are refused. |
 | `attributes` | Data kinds only. The typed fields whose values go on the tag as attributes, in that order: strings or integers, left off when `None`. Keep them to identity and outcome, such as whose output it is. |
 | `note` | Data kinds only. A fixed sentence in the application's voice that goes with each data part, naming its frame with `{frame}`, which renders as the tag, such as `<review_feedback>`. Name the frame, never its position: providers order system and user content their own way. |
 
@@ -427,11 +427,11 @@ Every part has a [`source`][pydantic_ai.messages.CapabilityPart.source], which d
 | Source | Trusted |
 |---|---|
 | [`OperatorSource()`][pydantic_ai.messages.OperatorSource]: your code or your configuration wrote it | Yes |
-| [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace]: read from a file in a workspace, which it asks whether the operator controls its files; there's no other way to build one | When the operator controls the workspace's files |
+| [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace]: read from a file in a workspace, which it asks whether the operator controls its files; there's no other way to build one | When the operator controls the workspace's files, which the workspace reports (#11836); until then, every workspace counts as trusted |
 | [`ToolResultSource(tool_name=...)`][pydantic_ai.messages.ToolResultSource]: a tool's output | No |
 | [`UserSource()`][pydantic_ai.messages.UserSource]: the user wrote it | No |
 
-An instruction part speaks with the operator's authority, so it needs a trusted source, and its content is a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText]: text your code builds from its own values, your configuration, or a file read with [`OperatorText.from_workspace`][pydantic_ai.messages.OperatorText.from_workspace], which refuses a workspace whose files the operator doesn't control. A type checker rejects any other string, and creating one from an untrusted source raises a [`UserError`][pydantic_ai.exceptions.UserError]. From a source that isn't trusted, a data part goes out without its note, which would vouch for the content.
+An instruction part speaks with the operator's authority, so it needs a trusted source, and its content is a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText]: text your code builds from its own values, your configuration, or a file read with [`OperatorText.from_workspace`][pydantic_ai.messages.OperatorText.from_workspace], which will refuse a workspace whose files the operator doesn't control once workspaces report that (#11836). A type checker rejects any other string, and creating one from an untrusted source raises a [`UserError`][pydantic_ai.exceptions.UserError]. From a source that isn't trusted, a data part goes out without its note, which would vouch for the content.
 
 Text in a data part that looks like a framework frame (such as a `<system>` tag) gets a note in the application's voice naming who wrote it: the tool, the file's author or the user, by the part's source. Text from an `OperatorSource` is the application's own and gets none.
 

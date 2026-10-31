@@ -4362,7 +4362,8 @@ class OperatorText(str):
     literal in your code (a `LiteralString`) or an `OperatorText`: text from the operator's own configuration, or a
     file in a workspace the operator trusts. Wrapping a string in `OperatorText(...)` is how your code says it's
     the operator's. Build one from a workspace file with [`from_workspace`][pydantic_ai.messages.OperatorText.from_workspace],
-    which refuses a workspace whose files the operator doesn't control.
+    which refuses a workspace whose files the operator doesn't control, as the workspace reports it. Workspaces
+    don't report that yet (#11836), so for now every workspace counts as trusted.
     """
 
     __slots__ = ()
@@ -4418,7 +4419,10 @@ class WorkspaceSource:
 
     @classmethod
     def from_workspace(cls, workspace: Workspace, path: str) -> WorkspaceSource:
-        """The source for content read from `path` in `workspace`, trusted when the operator controls its files."""
+        """The source for content read from `path` in `workspace`, trusted when the operator controls its files.
+
+        Workspaces don't report that yet (#11836), so for now every workspace counts as trusted.
+        """
         source = cls.__new__(cls)
         # Frozen, and with no generated `__init__`, so the fields are set the way a frozen dataclass sets them.
         object.__setattr__(source, 'path', path)
@@ -4769,12 +4773,14 @@ def _class_render(
         attributes=tuple(attributes) if attributes is not None else inherited.attributes,
     )
     _check_capability_render(f'Capability part {cls.__qualname__}', render)
+    # A kind's own typed fields: `content` and the other fields every part has can't be attributes, which an unknown
+    # part would then have nowhere to read from.
     declared = {
         field_name
         for klass in cls.__mro__
         if issubclass(klass, CapabilityPart) and klass is not CapabilityPart
         for field_name in _utils.own_annotations(klass)
-    }
+    } - _CAPABILITY_PART_ENVELOPE_FIELDS
     if missing := [attribute for attribute in render.attributes if attribute not in declared]:
         raise UserError(
             f'Capability part {cls.__qualname__} renders {", ".join(map(repr, missing))} as attributes, but declares '
@@ -4787,9 +4793,9 @@ def _class_render(
 class DataCapabilityPart(CapabilityPart, _register=False):
     """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] holding data the application or a capability inserts.
 
-    Such as a state update, a memory snapshot, a late tool result or a sub-agent's report. It reaches the model in a
-    frame on the user channel, whose tags mark it as placed by the application, and never in the application's voice:
-    only a kind's optional note is, and only for content from a trusted source.
+    Such as a state update, a memory snapshot, a late tool result or a sub-agent's report. Its content reaches the model
+    in the kind's tag on the user channel, never in the application's voice: only a kind's optional note is, and only
+    for content from a trusted source.
 
     ```python
     from dataclasses import dataclass
@@ -6022,11 +6028,11 @@ def sanitize_messages(
 
     By default it strips:
 
-    - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, instruction records and
-      [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]s (disable with `strip_system_prompts=False`).
-      The system prompt is the server's to own; a client that can inject one can override the agent's
-      behavior. The UI adapters never send a capability part to a client, and one can speak in the system
-      voice. If stripping leaves a `ModelRequest` with no
+    - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and instruction records (disable with
+      `strip_system_prompts=False`). The system prompt is the server's to own; a client that can inject one can
+      override the agent's behavior. [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]s are always
+      dropped: the UI adapters never send one to a client, one can speak in the system voice, and its content
+      isn't checked like a user prompt's. If stripping leaves a `ModelRequest` with no
       parts, the request is dropped from history entirely.
       [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s are kept, so the model still
       sees why it corrected itself: feedback that reaches the model in the user voice is kept as
@@ -6409,10 +6415,10 @@ def _sanitize_request_parts(
     stripped_system_prompt = False
     new_parts: list[ModelRequestPart] = []
     for part in parts:
-        # A capability part can speak in the system voice, and the UI adapters never send one to a client, so one a
-        # client sends back is dropped like a system prompt (#11029).
-        if strip_system_prompts and isinstance(
-            part, SystemPromptPart | InstructionDeltaPart | InstructionBaselinePart | CapabilityPart
+        # The UI adapters never send a capability part to a client, so one a client sends is forged: it could speak
+        # in the system voice, or carry file references the checks below don't reach. Dropped whatever the setting.
+        if isinstance(part, CapabilityPart) or (
+            strip_system_prompts and isinstance(part, SystemPromptPart | InstructionDeltaPart | InstructionBaselinePart)
         ):
             stripped_system_prompt = True
             continue

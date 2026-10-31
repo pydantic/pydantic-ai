@@ -331,7 +331,18 @@ def _with_late_registration(
         if isinstance(value, unknown_type) or (cls := late_class(value)) is None:
             # The wrapped schema's own serializer flattens the unknown envelope.
             return serialize_unknown(value)
-        return _late_adapter(cls, frozen).dump_python([value], mode='json' if info.mode == 'json' else 'python')[0]
+        # The adapter dumps a one-item list, so the field selection applies to its only item.
+        return _late_adapter(cls, frozen).dump_python(
+            [value],
+            mode='json' if info.mode == 'json' else 'python',
+            include=None if info.include is None else {0: info.include},
+            exclude=None if info.exclude is None else {0: info.exclude},
+            by_alias=info.by_alias,
+            exclude_unset=info.exclude_unset,
+            exclude_defaults=info.exclude_defaults,
+            exclude_none=info.exclude_none,
+            round_trip=info.round_trip,
+        )[0]
 
     return pydantic_core.core_schema.with_info_wrap_validator_function(
         validate,

@@ -1058,7 +1058,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 warnings.warn(
                     f'Capability {capability_id!r} enqueued {reason}. Define a `CapabilityPart` subclass for what it '
                     'says, so the framework renders it in the right voice and your code can find it again by type: '
-                    'see https://ai.pydantic.dev/capabilities/custom/#capability-parts',
+                    'see https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts',
                     UserWarning,
                     stacklevel=2,
                 )
