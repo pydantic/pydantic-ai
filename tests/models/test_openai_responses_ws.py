@@ -805,9 +805,14 @@ def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
             raise harness.connect_error
         harness.urls.append(uri)
         headers = {key.lower(): value for key, value in additional_headers.items()}
-        authorization = headers.pop('authorization')
-        assert authorization.startswith('Bearer ')
-        harness.authorization_headers.append(authorization)
+        authorization = headers.pop('authorization', None)
+        if authorization is None:
+            assert uri == 'wss://example.openai.azure.com/openai/responses?api-version=2024-12-01-preview'
+            api_key = headers.pop('api-key', None)
+            assert api_key == 'test'
+        else:
+            assert authorization.startswith('Bearer ')
+            harness.authorization_headers.append(authorization)
         harness.headers.append(headers)
         harness.options.append(options)
         socket = harness.pending.popleft()
@@ -2953,15 +2958,31 @@ async def test_setup_that_can_never_use_a_socket_warns_and_uses_http(
     assert sockets.connect_count == 0
 
 
-@pytest.mark.parametrize('setup', OVERRIDABLE_NEVER_SOCKET_SETUPS)
+@pytest.mark.parametrize(
+    ('setup', 'api_key_only'),
+    [pytest.param(setup, False, id=setup) for setup in OVERRIDABLE_NEVER_SOCKET_SETUPS]
+    + [pytest.param('azure-client', True, id='azure-client-api-key-only')],
+)
 async def test_profile_flag_overrides_a_setup_that_can_never_use_a_socket(
-    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, setup: str
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    http: HTTPResponses,
+    setup: str,
+    api_key_only: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """`openai_responses_supports_websocket=True` in `profile=` wins over the Azure and gateway defaults."""
+    if api_key_only:
+        # Exercise the API-key-only handshake even with SDKs that also send Bearer authentication.
+        auth_headers: dict[str, str] = {}
+        monkeypatch.setattr(AsyncAzureOpenAI, 'auth_headers', property(lambda _: auth_headers))
     model = never_socket_model(setup, http.client, WEBSOCKET_PROFILE)
     assert (await Agent(model).run('hello')).output == 'ready'
     assert sockets.connect_count == 1
     assert http.requests == []
+    if api_key_only:
+        assert sockets.authorization_headers == []
+        assert 'api-key' not in sockets.headers[0]
 
 
 async def test_azure_named_provider_can_advertise_socket_support(
