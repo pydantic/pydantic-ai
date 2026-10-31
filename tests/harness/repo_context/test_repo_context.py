@@ -105,6 +105,24 @@ class TestDiscoverInstructionFiles:
         assert await discover_instruction_files(workspace, directory, None, ('AGENTS.md',)) == []
         assert await find_dir_context_file(workspace, directory, ('AGENTS.md',)) is None
 
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_does_not_load_a_link_to_a_file_that_is_not_an_instruction_file(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        _write(tmp_path / '.env', 'SECRET=1')
+        (tmp_path / 'AGENTS.md').symlink_to('.env')
+        assert await discover_instruction_files(workspace, tmp_path, None, ('AGENTS.md', 'CLAUDE.md')) == []
+        assert await find_dir_context_file(workspace, tmp_path, ('AGENTS.md', 'CLAUDE.md')) is None
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_loads_a_link_to_an_instruction_file_left_out_of_filenames(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'shared')
+        (tmp_path / 'CLAUDE.md').symlink_to('AGENTS.md')
+        files = await discover_instruction_files(workspace, tmp_path, None, ('CLAUDE.md',))
+        assert [(f.path.name, f.content) for f in files] == [('AGENTS.md', 'shared')]
+
     async def test_walk_up_ancestor_first(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'root')
         workspace_dir = tmp_path / 'a' / 'b'
@@ -650,6 +668,75 @@ class TestNestedTraversal:
                 '<context-file path="packages/AGENTS.md">\nPACKAGES BODY\n</context-file>',
                 '<context-file path="packages/foo/AGENTS.md">\nFOO BODY\n</context-file>',
             ]
+        )
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_a_nested_link_to_a_denied_file_is_not_surfaced(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'pkg' / '.env', 'SECRET=1')
+        _write(tmp_path / 'pkg' / 'public.py', 'x = 1')
+        (tmp_path / 'pkg' / 'AGENTS.md').symlink_to('.env')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"pkg/public.py"}', tool_call_id='x')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path, denied_patterns=['**/.env*']),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == []
+        assert 'SECRET' not in str(result.all_messages())
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    @pytest.mark.parametrize(
+        'via',
+        [
+            pytest.param('directory', id='symlinked-intermediate-directory'),
+            pytest.param('file', id='symlinked-file-whose-parent-resolves-outside'),
+        ],
+    )
+    async def test_a_symlink_in_the_path_does_not_surface_files_outside_the_working_directory(
+        self, tmp_path: Path, via: Literal['directory', 'file']
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'OUTSIDE BODY')
+        repo = tmp_path / 'repo'
+        _write(repo / 'README.md', 'readme')
+        _write(repo / 'pkg' / 'AGENTS.md', 'PKG BODY')
+        _write(repo / 'pkg' / 'x.py', 'x')
+        (repo / 'bounce').symlink_to(tmp_path)
+        if via == 'directory':
+            path = f'bounce/{repo.name}/README.md'
+        else:
+            # The file resolves inside the repo, but its lexical parent `bounce` resolves outside it.
+            (tmp_path / 'link').symlink_to(repo / 'README.md')
+            path = 'bounce/link'
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            returns = _tool_returns(messages)
+            if returns == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args=f'{{"path":"{path}"}}', tool_call_id='x')}
+            elif returns == 1:
+                # A read with no symlink in its path, so the chain still surfaces files inside the working directory.
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"pkg/x.py"}', tool_call_id='pkg')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=repo),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=repo))
+        # The read itself is allowed, since the file resolves inside the repo; `bounce` resolves outside it.
+        assert 'readme' in str(result.all_messages())
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context-file path="pkg/AGENTS.md">\nPKG BODY\n</context-file>']
         )
 
     @pytest.mark.parametrize(

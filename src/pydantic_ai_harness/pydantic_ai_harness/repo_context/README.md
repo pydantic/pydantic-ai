@@ -48,6 +48,12 @@ sharing identical content load once. Where the workspace can resolve symlinks, a
 symlinked file is labeled with its target's name, so `CLAUDE.md -> AGENTS.md`
 reaches the model as `AGENTS.md`. A file in an ancestor is labeled relative to the
 working directory, such as `../AGENTS.md`, not by its absolute path.
+A symlinked instruction file loads only when it points to another instruction file
+in the same directory, one named in `filenames` or `AGENTS.md`/`CLAUDE.md`:
+`CLAUDE.md -> AGENTS.md` works, while a link to any other file, such as `AGENTS.md
+-> CONTRIBUTING.md` or `AGENTS.md -> .env`, is skipped, so a repository can't use
+one to hand the model a file the file tools may deny. Make such a file a regular
+file, or rename its target, to load it.
 
 When `home_dir` is `None` (the default), only the working directory is scanned -- no
 walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
