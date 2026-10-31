@@ -33,10 +33,12 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ToolAvailabilityDeltaPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -112,6 +114,25 @@ def test_call_unknown_tool_has_clear_error() -> None:
 
     with pytest.raises(UserError, match=r"TestModel was configured to call unknown tool 'missing'"):
         agent.run_sync('call missing')
+
+
+def test_native_tool_gated_on_profile_runs() -> None:
+    """`TestModel`'s profile claims native tool support, so a native tool gated on that profile
+    reaches the request, which must then run rather than raise."""
+
+    model = TestModel()
+
+    def native(ctx: RunContext) -> WebSearchTool | None:
+        supported = model.profile.get('supported_native_tools', frozenset())
+        return WebSearchTool() if WebSearchTool in supported else None
+
+    agent = Agent(model, capabilities=[WebSearch(native=native, local=False)])
+
+    result = agent.run_sync('search')
+
+    assert result.output == snapshot('success (no tool calls)')
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.native_tools == snapshot([WebSearchTool()])
 
 
 def _native_addition_agent(call_tools: list[str] | Literal['all']) -> Agent:
