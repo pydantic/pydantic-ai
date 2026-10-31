@@ -866,6 +866,114 @@ class TestNestedTraversal:
             ['<context-file path="AGENTS.md">\nWRITTEN DURING THE RUN\n</context-file>']
         )
 
+    async def test_no_budget_inlines_every_file(self, tmp_path: Path) -> None:
+        for name in 'ab':
+            _write(tmp_path / name / 'AGENTS.md', name.upper() * 20_000)
+            _write(tmp_path / name / 'x.py', 'x')
+        result = await self._read_files(tmp_path, ['a/x.py', 'b/x.py'], nested_max_chars=None)
+        notes = _repo_notes(result.all_messages())
+        assert [note.count('A') + note.count('B') >= 20_000 for note in notes] == [True, True]
+
+    async def test_contents_past_the_budget_are_surfaced_as_pointers(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'a' / 'AGENTS.md', 'A' * 10)
+        _write(tmp_path / 'b' / 'AGENTS.md', 'B' * 30)
+        _write(tmp_path / 'c' / 'AGENTS.md', 'C' * 10)
+        for name in 'abc':
+            _write(tmp_path / name / 'x.py', 'x')
+        result = await self._read_files(tmp_path, ['a/x.py', 'b/x.py', 'c/x.py'], nested_max_chars=25)
+        parts = [
+            (type(part), part.content if isinstance(part, SystemPromptPart) else _user_text(part))
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart | UserPromptPart) and part.content != 'go'
+        ]
+        assert parts == snapshot(
+            [
+                (
+                    UserPromptPart,
+                    """\
+<context-file path="a/AGENTS.md">
+AAAAAAAAAA
+</context-file>\
+""",
+                ),
+                (
+                    SystemPromptPart,
+                    'A directory you just accessed has an instruction file, not loaded here. Its path is in the `<context-file>` tag that follows. Read the file if it is relevant to your task.',
+                ),
+                (UserPromptPart, '<context-file path="b/AGENTS.md" />'),
+                (
+                    UserPromptPart,
+                    """\
+<context-file path="c/AGENTS.md">
+CCCCCCCCCC
+</context-file>\
+""",
+                ),
+            ]
+        )
+
+    async def test_notes_queued_by_one_read_count_against_the_budget_before_reaching_history(
+        self, tmp_path: Path
+    ) -> None:
+        # One deep read enqueues `a/` and `a/b/` together, so `a/`'s note isn't in history yet when `a/b/` is weighed.
+        _write(tmp_path / 'a' / 'AGENTS.md', 'A' * 20)
+        _write(tmp_path / 'a' / 'b' / 'AGENTS.md', 'B' * 20)
+        _write(tmp_path / 'a' / 'b' / 'x.py', 'x')
+        result = await self._read_files(tmp_path, ['a/b/x.py'], nested_max_chars=30)
+        assert _repo_notes(result.all_messages()) == snapshot(
+            [
+                """\
+<context-file path="a/AGENTS.md">
+AAAAAAAAAAAAAAAAAAAA
+</context-file>\
+""",
+                '<context-file path="a/b/AGENTS.md" />',
+            ]
+        )
+
+    async def test_budget_is_accepted_and_ignored_with_pointers(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        # Pointers inline nothing, so a budget smaller than the file is no error and changes nothing.
+        result = await self._read_files(tmp_path, ['sub/one.py'], nested_inject='pointer', nested_max_chars=5)
+        assert _repo_notes(result.all_messages()) == snapshot(['<context-file path="sub/AGENTS.md" />'])
+
+    async def test_a_later_run_counts_earlier_inlined_notes_against_the_budget(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'one' / 'AGENTS.md', 'O' * 20)
+        _write(tmp_path / 'two' / 'AGENTS.md', 'T' * 20)
+        _write(tmp_path / 'one' / 'x.py', 'x')
+        _write(tmp_path / 'two' / 'x.py', 'x')
+        first = await self._read_files(tmp_path, ['one/x.py'], nested_max_chars=30)
+        second = await self._read_files(
+            tmp_path, ['two/x.py'], nested_max_chars=30, message_history=first.all_messages()
+        )
+        assert _repo_notes(first.all_messages()) == snapshot(
+            ['<context-file path="one/AGENTS.md">\nOOOOOOOOOOOOOOOOOOOO\n</context-file>']
+        )
+        # The first run's note is still in the window, so it counts: 20 + 20 is past 30.
+        assert _repo_notes(second.new_messages()) == snapshot(['<context-file path="two/AGENTS.md" />'])
+
+    async def test_a_file_pointed_at_for_the_budget_is_inlined_once_a_compaction_appears(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'one' / 'AGENTS.md', 'O' * 20)
+        _write(tmp_path / 'two' / 'AGENTS.md', 'T' * 20)
+        _write(tmp_path / 'one' / 'x.py', 'x')
+        _write(tmp_path / 'two' / 'x.py', 'x')
+        _write(tmp_path / 'two' / 'y.py', 'y')
+        first = await self._read_files(tmp_path, ['one/x.py', 'two/x.py'], nested_max_chars=30)
+        assert _repo_notes(first.all_messages())[1:] == snapshot(['<context-file path="two/AGENTS.md" />'])
+        compacted = [*first.all_messages(), ModelRequest(parts=[CompactionPart('The agent read one/ and two/.')])]
+        second = await self._read_files(tmp_path, ['two/y.py'], nested_max_chars=30, message_history=compacted)
+        # The compaction took the inlined note out of the window, so the budget has room again.
+        assert _repo_notes(second.new_messages()) == snapshot(
+            ['<context-file path="two/AGENTS.md">\nTTTTTTTTTTTTTTTTTTTT\n</context-file>']
+        )
+
+    def test_negative_budget_is_rejected(self) -> None:
+        with pytest.raises(UserError, match=r'`RepoContext\.nested_max_chars` must not be negative'):
+            RepoContext(nested_max_chars=-1)
+
     async def test_working_directory_file_is_surfaced_when_autoload_is_off(self, tmp_path: Path) -> None:
         _write(tmp_path / 'AGENTS.md', 'ROOT BODY')
         _write(tmp_path / 'README.md', 'readme')
@@ -909,7 +1017,8 @@ class TestNestedTraversal:
             if isinstance(item, SystemPromptPart | TextContent)
         ]
         expected = {'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': str(tmp_path / 'sub')}
-        assert metadata == [expected] * (2 if nested_inject == 'pointer' else 1)
+        # An inlined note also records its size, which `nested_max_chars` counts across runs.
+        assert metadata == ([expected] * 2 if nested_inject == 'pointer' else [{**expected, 'chars': 11}])
 
     async def test_a_later_run_does_not_repeat_a_note_still_in_history(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
@@ -1051,6 +1160,7 @@ class TestNestedTraversal:
         paths: list[str],
         *,
         nested_inject: Literal['pointer', 'contents'] = 'contents',
+        nested_max_chars: int | None = 32_000,
         message_history: list[ModelMessage] | None = None,
     ) -> AgentRunResult[str]:
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
@@ -1065,7 +1175,12 @@ class TestNestedTraversal:
             FunctionModel(stream_function=stream),
             capabilities=[
                 FileSystem(root_dir=root),
-                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject=nested_inject),
+                RepoContext(
+                    autoload_instructions=False,
+                    nested_traversal=True,
+                    nested_inject=nested_inject,
+                    nested_max_chars=nested_max_chars,
+                ),
             ],
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=root), message_history=message_history)
 
