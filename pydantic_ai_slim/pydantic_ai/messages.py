@@ -4349,12 +4349,6 @@ CapabilityPartVoice: TypeAlias = Literal['data', 'instruction']
 """
 
 
-def _workspace_is_trusted(workspace: Workspace) -> bool:
-    """Whether the operator controls `workspace`'s files."""
-    # TODO(#11836): read `workspace.trusted` directly once `Workspace.trusted` lands; until then every workspace is.
-    return getattr(workspace, 'trusted', True) is not False
-
-
 class OperatorText(str):
     """Text the operator controls, for the `content` of an [`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart].
 
@@ -4362,8 +4356,9 @@ class OperatorText(str):
     literal in your code (a `LiteralString`) or an `OperatorText`: text from the operator's own configuration, or a
     file in a workspace the operator trusts. Wrapping a string in `OperatorText(...)` is how your code says it's
     the operator's. Build one from a workspace file with [`from_workspace`][pydantic_ai.messages.OperatorText.from_workspace],
-    which refuses a workspace whose files the operator doesn't control, as the workspace reports it. Workspaces
-    don't report that yet (#11836), so for now every workspace counts as trusted.
+    which refuses a workspace whose files the operator doesn't control
+    ([`Workspace.trusted`][pydantic_ai.workspaces.Workspace.trusted], such as an
+    [`UntrustedWorkspace`][pydantic_ai.workspaces.UntrustedWorkspace]).
     """
 
     __slots__ = ()
@@ -4376,7 +4371,7 @@ class OperatorText(str):
             UserError: If the operator doesn't control the workspace's files, such as a cloned third-party
                 repository. Put such content in a `DataCapabilityPart` instead.
         """
-        if not _workspace_is_trusted(workspace):
+        if not workspace.trusted:
             raise UserError(
                 f'{path!r} is in a workspace whose files the operator does not control, so its text cannot speak in '
                 "the application's voice. Put it in a `DataCapabilityPart` instead."
@@ -4421,12 +4416,13 @@ class WorkspaceSource:
     def from_workspace(cls, workspace: Workspace, path: str) -> WorkspaceSource:
         """The source for content read from `path` in `workspace`, trusted when the operator controls its files.
 
-        Workspaces don't report that yet (#11836), so for now every workspace counts as trusted.
+        That's [`workspace.trusted`][pydantic_ai.workspaces.Workspace.trusted], read when the content is read and stored
+        with the part.
         """
         source = cls.__new__(cls)
         # Frozen, and with no generated `__init__`, so the fields are set the way a frozen dataclass sets them.
         object.__setattr__(source, 'path', path)
-        object.__setattr__(source, 'trusted', _workspace_is_trusted(workspace))
+        object.__setattr__(source, 'trusted', workspace.trusted)
         object.__setattr__(source, 'source_kind', 'workspace')
         return source
 
