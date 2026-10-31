@@ -7,8 +7,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
+from opentelemetry.trace import get_current_span
+
 from pydantic_ai import _utils
 
+from .._instrumentation import record_exception
 from ..exceptions import RunCancelled
 from ..messages import (
     INTERRUPTED_TOOL_RETURN_CONTENT,
@@ -269,8 +272,16 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                         yield e
 
                     if on_complete is not None:
-                        async for e in self._dispatch_callback(on_complete, result):
-                            yield e
+                        try:
+                            async for e in self._dispatch_callback(on_complete, result):
+                                yield e
+                        except Exception as complete_error:
+                            # The agent run's span has already ended, so record the failure on the span that's
+                            # current now (the HTTP request's on an instrumented server), as `on_error` below only
+                            # tells the client. The stream doesn't know the run's `include_content` setting, and
+                            # the message can quote the run's output, so only the exception's type is recorded.
+                            record_exception(get_current_span(), complete_error, include_content=False, escaped=False)
+                            raise
                 elif isinstance(event, FinalResultEvent):
                     self._final_result_event = event
 
