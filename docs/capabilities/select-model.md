@@ -29,9 +29,11 @@ def select_model(ctx: ModelSelectionContext[Deps]) -> str:
 agent = Agent(deps_type=Deps, capabilities=[SelectModel(select_model)])
 ```
 
-`SelectModel` always receives a callable, which is evaluated before each new logical model request step. The callable may be synchronous or asynchronous. When it returns the same model ID on multiple steps, the resolved model/provider instance is reused for the rest of that run. Provider-side continuation polling within the same step remains pinned to the selected model. The context also holds the run's output retry count and budget, as [`retry`][pydantic_ai.models.ModelSelectionContext.retry] and [`max_retries`][pydantic_ai.models.ModelSelectionContext.max_retries]; see [Route an output retry to another model](#route-an-output-retry-to-another-model).
+`SelectModel` always receives a callable, which is evaluated before each new logical model request step while it controls selection. The callable may be synchronous or asynchronous. When it returns the same model ID on multiple steps, the resolved model/provider instance is reused for the rest of that run. Provider-side continuation polling within the same step remains pinned to the selected model. The context also holds the run's output retry count and budget, as [`retry`][pydantic_ai.models.ModelSelectionContext.retry] and [`max_retries`][pydantic_ai.models.ModelSelectionContext.max_retries]; see [Route an output retry to another model](#route-an-output-retry-to-another-model).
 
 See [Selecting the model](custom.md#selecting-the-model) to implement the hook in a custom capability and for precedence and lifecycle details.
+
+When combined with [`ModelFallback`](model-fallback.md), `SelectModel` keeps control of selection throughout the run. `ModelFallback` still handles request-level failures; its [`output_retry_threshold`](model-fallback.md#output-validation-retries) policy yields to the selector.
 
 ## Route an output retry to another model
 

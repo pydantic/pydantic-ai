@@ -328,6 +328,7 @@ async def process_tool_calls(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
     output_final_result: deque[result.FinalResult[NodeRunEndT]] | None = None,
+    output_retry_parts: list[_messages.ToolReturnPart] | None = None,
 ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
     """Process a model response's tool calls, honoring the `end_strategy`.
 
@@ -359,11 +360,14 @@ async def process_tool_calls(
     Deferred tools (`external`, `unapproved`) without supplied results are collected during
     the walk and resolved as a single batch at the end of the step.
 
-    Because async iterators can't have return values, we use `output_parts` and
-    `output_final_result` as output arguments.
+    Because async iterators can't have return values, we use `output_parts`,
+    `output_final_result`, and `output_retry_parts` as output arguments. The retry ledger
+    includes accepted charges even when a terminal sibling prevents message-part emission.
     """
     if output_final_result is None:
         output_final_result = deque(maxlen=1)
+    if output_retry_parts is None:
+        output_retry_parts = []
     end_strategy = ctx.deps.end_strategy
     if end_strategy == 'exhaustive':
         processor_class: type[_ToolCallProcessor[DepsT, NodeRunEndT]] = _ExhaustiveProcessor
@@ -381,6 +385,7 @@ async def process_tool_calls(
         ctx=ctx,
         output_parts=output_parts,
         final_result=final_result,
+        output_retry_parts=output_retry_parts,
     )
     async with aclosing(processor.run()) as events:
         async for event in events:
@@ -409,6 +414,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     output_parts: list[_messages.ModelRequestPart]
     final_result: result.FinalResult[NodeRunEndT] | None
+    output_retry_parts: list[_messages.ToolReturnPart]
 
     # Derived from the inputs in `__post_init__`.
     call_kinds: list[ToolDefinitionKind | Literal['unknown']] = dataclasses.field(init=False)
@@ -433,6 +439,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     final_result_was_set_externally: bool = dataclasses.field(init=False)
     retry_wins_triggered: bool = dataclasses.field(default=False, init=False)
     output_retries_increment: int = dataclasses.field(default=0, init=False)
+    settled_output_retries: list[_messages.ToolReturnPart] = dataclasses.field(
+        default_factory=list[_messages.ToolReturnPart], init=False
+    )
     winning_output_part: _messages.ToolReturnPart | None = dataclasses.field(default=None, init=False)
     deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = dataclasses.field(
         init=False
@@ -622,7 +631,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         else:
             r = await self._run_output_tool_call(call)
             if r.raise_exc is not None:
-                self.ctx.state.output_retries_used += self.output_retries_increment
+                self._accept_output_retries()
                 self.ctx.state.check_incomplete_tool_call()  # pragma: lax no cover
                 raise r.raise_exc
             if r.final_result is not None:
@@ -643,6 +652,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 part = self._status_part(r.call, _OUTPUT_NOT_FINAL_RESULT)
                 yield from self._record_output_part(r.call, part, args_valid=True)
         elif r.retry_part is not None:
+            self.settled_output_retries.append(r.retry_part)
             yield from self._record_output_part(r.call, r.retry_part, args_valid=r.args_valid)
         else:
             # Absorbed failure: another output won, so this one's max-retries error is recorded
@@ -651,6 +661,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             message = _OUTPUT_EXECUTION_FAILED if r.args_valid else _OUTPUT_VALIDATION_FAILED
             part = self._status_part(r.call, message)
             yield from self._record_output_part(r.call, part, args_valid=r.args_valid)
+
+    def _accept_output_retries(self) -> None:
+        """Publish notifications only for retries charged to the core budget."""
+        self.ctx.state.output_retries_used += self.output_retries_increment
+        self.output_retry_parts.extend(self.settled_output_retries)
 
     # --- Function tool helpers ----------------------------------------------
 
@@ -1200,7 +1215,7 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             # `_run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
             async for event in self._run_output(self.tool_calls[i]):  # pragma: no branch
                 yield event
-        self.ctx.state.output_retries_used += self.output_retries_increment
+        self._accept_output_retries()
 
         function_calls = [self.tool_calls[i] for i in self.function_indices]
         if self.final_result is not None:
@@ -1244,7 +1259,7 @@ class _GracefulProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         async with aclosing(flush_pending()) as events:
             async for event in events:
                 yield event
-        self.ctx.state.output_retries_used += self.output_retries_increment
+        self._accept_output_retries()
 
 
 @dataclasses.dataclass
@@ -1368,7 +1383,12 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                 for i in self.output_indices:
                     r = output_results.get(i)
                     if r is not None and r.raise_exc is not None:
-                        self.ctx.state.output_retries_used += self.output_retries_increment
+                        self.settled_output_retries.extend(
+                            settled.retry_part
+                            for index in self.output_indices
+                            if (settled := output_results.get(index)) is not None and settled.retry_part is not None
+                        )
+                        self._accept_output_retries()
                         self.ctx.state.check_incomplete_tool_call()  # pragma: lax no cover
                         raise r.raise_exc
 
@@ -1430,4 +1450,4 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             deferred_calls=self.deferred_calls,
             deferred_metadata=self.deferred_metadata,
         )
-        self.ctx.state.output_retries_used += self.output_retries_increment
+        self._accept_output_retries()
