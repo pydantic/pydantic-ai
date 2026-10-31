@@ -1,11 +1,12 @@
+# description: Asks pydantic/unified-docs to validate a pull request's navigation manifest and referenced Markdown when trigger:docs-preview is applied.
 name: Docs Navigation Check
 
-# Label-triggered navigation validation. Adding `trigger:docs` to a PR asks
+# Label-triggered navigation validation. Adding `trigger:docs-preview` to a PR asks
 # pydantic/unified-docs to validate this PR's navigation manifest and referenced
 # Markdown files without executing pull-request content.
 #
 # This workflow is purely a dispatcher. The data-only validation and final
-# comment happen in unified-docs. The `trigger:docs` label is removed at the
+# comment happen in unified-docs. The `trigger:docs-preview` label is removed at the
 # end so re-adding it reruns the check.
 
 on:
@@ -24,11 +25,11 @@ concurrency:
 jobs:
   dispatch:
     name: Dispatch Docs Navigation Check
-    if: github.event.label.name == 'trigger:docs'
+    if: github.event.label.name == 'trigger:docs-preview'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      # Needed to post the "queued" comment and to remove the trigger:docs label.
+      # Needed to post the "queued" comment and to remove the trigger:docs-preview label.
       pull-requests: write
 
     steps:
@@ -50,7 +51,7 @@ jobs:
 
       - name: Generate app token (for dispatching to unified-docs)
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.DOCS_CLIENT_ID }}
           private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
@@ -115,7 +116,7 @@ jobs:
 
           The navigation check could not be queued. See [the workflow run](${RUN_URL}) for details.
 
-          <sub>Re-add the \`trigger:docs\` label to retry.</sub>
+          <sub>Re-add the \`trigger:docs-preview\` label to retry.</sub>
           EOF
           )
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" -f body="$body"
@@ -136,10 +137,10 @@ jobs:
           )
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" -f body="$body"
 
-      - name: Remove trigger:docs label
+      - name: Remove trigger:docs-preview label
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-        run: gh api -X DELETE "repos/${REPO}/issues/${PR_NUMBER}/labels/trigger:docs" || true
+        run: gh api -X DELETE "repos/${REPO}/issues/${PR_NUMBER}/labels/trigger:docs-preview" || true

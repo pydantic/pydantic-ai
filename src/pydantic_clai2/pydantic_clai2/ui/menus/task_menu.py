@@ -14,7 +14,7 @@ from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2.runtime.tasks import Tasks, task_tree
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 
@@ -59,7 +59,8 @@ class TaskMenu:
         text = (
             f'{record.agent_name} · {record.id}\n{record.outcome or record.status} · '
             f'{"background" if record.background else "foreground"}\n'
-            f'{self.notice}\n\nTask: {record.prompt}\n\n'
+            + (f'Directory: {record.working_directory}\n' if record.working_directory is not None else '')
+            + f'{self.notice}\n\nTask: {record.prompt}\n\n'
             + conversation_text(record.messages)
             + (f'\n\nResult ({record.outcome}):\n{record.output}' if record.status == 'finished' else '')
         )
@@ -91,7 +92,7 @@ class TaskMenu:
             .preview(self.preview)
             .list_width(42)
             .initial_index(next((index for index, item in enumerate(self.items()) if item.value == self.selected), 0))
-            .footer_hint('Enter transcript · ↑↓ task · b background · x stop tree · Esc close')
+            .footer_hint('Enter transcript - ↑↓ task - b background - x stop tree - Esc close')
             .on_key('b', lambda menu, item: self.act(menu, item, 'background'))
             .on_key('x', lambda menu, item: self.act(menu, item, 'stop'))
             .on_key(']', lambda menu, item: self.scroll(10))
@@ -139,7 +140,7 @@ class TaskDetail:
             .items(self.items())
             .searchable(False)
             .size(self.size)
-            .footer_hint('↑↓ scroll · Home/End · b background · x stop tree · Esc tasks')
+            .footer_hint('↑↓ scroll - Home/End - b background - x stop tree - Esc tasks')
             .on_key('enter', lambda menu, item: None)
             .on_key('b', lambda menu, item: self.picker.act(menu, item, 'background'))
             .on_key('x', lambda menu, item: self.picker.act(menu, item, 'stop'))
@@ -171,7 +172,7 @@ async def open_tasks(tasks: Tasks, *, runners: Runners = TERMINAL) -> str:
             await tasks.owner.cancel(task_id)
             await tasks.owner.save(tasks.owner.records[task_id])
         else:
-            tasks.owner.background(task_id)
+            tasks.background(task_id)
 
     def run() -> None:
         picker = TaskMenu(

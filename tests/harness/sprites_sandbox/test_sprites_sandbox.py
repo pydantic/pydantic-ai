@@ -65,6 +65,19 @@ def _handshake(status: int) -> InvalidStatus:
     return InvalidStatus(Response(status, 'status', Headers()))
 
 
+async def test_fake_exec_close_without_stdin_eof_closes_the_pipe(transport: SpriteTransport) -> None:
+    """The fake owns the host pipe even when the SDK never sends EOF; no live request can test this."""
+    transport.names.add('remote')
+    socket = await transport.connect('wss://api.sprites.dev/v1/sprites/remote/exec?cmd=cat')
+    await socket.close()
+    assert socket.process.wait(timeout=1) == -signal.SIGKILL
+    assert socket.process.stdin is not None
+    try:
+        assert socket.process.stdin.closed
+    finally:
+        socket.process.stdin.close()
+
+
 class TestSpritesSandbox:
     def test_env_values_are_not_represented(self) -> None:
         secret = 'secret-environment-value-123'
@@ -258,12 +271,13 @@ class TestSpritesSandbox:
         await backend.write_bytes(note, b'hi')
         assert await backend.read_bytes(note) == b'hi'
         assert (await backend.run(['true'])).exit_code == 0
-        # Each operation closed its own client, and none looked up the Sprite this process just created.
-        assert (len(transport.clients), transport.close_calls, transport.gets) == (4, 3, 0)
+        # Each operation closed its own client, and none looked the Sprite up through the cache;
+        # the only lookups are each command's post-run deletion check.
+        assert (len(transport.clients), transport.close_calls, transport.gets) == (4, 3, 3)
 
         # The public handle is always a fetched one.
         assert (await backend.get_sandbox()).name == native.name
-        assert transport.gets == 1
+        assert transport.gets == 4
 
         await native.delete()
         with pytest.raises(WorkspaceUnavailableError):
@@ -271,7 +285,7 @@ class TestSpritesSandbox:
         # A Sprite reported unavailable is looked up again before the next operation.
         with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
             await backend.exists(note)
-        assert transport.gets == 2
+        assert transport.gets == 5
 
     async def test_backends_for_one_sprite_share_its_lookup(self, transport: SpriteTransport) -> None:
         transport.names.add('shared')
@@ -283,12 +297,12 @@ class TestSpritesSandbox:
             assert isinstance(backend, SpritesSandboxBackend)
             assert await backend.working_dir() == str(transport.root.resolve())
             assert (await backend.run(['true'])).exit_code == 0
-        # One lookup, then each backend's own `pwd -P` and command.
-        assert (transport.gets, len(transport.execs)) == (1, 4)
+        # One lookup, then each backend's own `pwd -P`, its command, and each command's deletion check.
+        assert (transport.gets, len(transport.execs)) == (5, 4)
         # Other credentials may not see the Sprite, so they look it up themselves.
         other = SpritesSandboxBackend(client=transport.client('other-token'), ref=ref)
         assert (await other.run(['true'])).exit_code == 0
-        assert transport.gets == 2
+        assert transport.gets == 7
         # Deleted outside this process: the cached lookup must not hide it from `working_dir()`.
         transport.names.discard('shared')
         backend = capability.get_workspace(context(), ref=ref)
@@ -306,19 +320,20 @@ class TestSpritesSandbox:
         backend = capability.get_workspace(context(), ref=ref)
         assert isinstance(backend, SpritesSandboxBackend)
         await backend.run(['true'])
-        assert transport.gets == 1
+        # The initial lookup plus the run's deletion check.
+        assert transport.gets == 2
         if end == 'destroyed':
             await capability.destroy(ref)
         else:
             transport.names.discard('ending')
-            # Found gone by an operation of a backend that trusted the cache.
+            # Found gone by an operation of a backend that trusted the cache; the failed exec reaches no deletion check.
             with pytest.raises(WorkspaceUnavailableError):
                 await capability.backend(ref).run(['true'])
-            assert transport.gets == 1
+            assert transport.gets == 2
         # Recreated under the same name, as only a fresh lookup would notice.
         transport.names.add('ending')
         await capability.backend(ref).run(['true'])
-        assert transport.gets == 2
+        assert transport.gets == 4
 
     async def test_an_expired_lookup_is_repeated(self, transport: SpriteTransport) -> None:
         now = [0.0]
@@ -328,11 +343,11 @@ class TestSpritesSandbox:
         await SpritesSandboxBackend(ref=ref).working_dir()
         now[0] = 59.0
         await SpritesSandboxBackend(ref=ref).working_dir()
-        # Each backend runs its own `pwd -P`; only the lookup is shared.
-        assert (transport.gets, len(transport.execs)) == (1, 2)
+        # Each backend runs its own `pwd -P` and deletion check; only the lookup is shared.
+        assert (transport.gets, len(transport.execs)) == (3, 2)
         now[0] = 61.0
         await SpritesSandboxBackend(ref=ref).working_dir()
-        assert (transport.gets, len(transport.execs)) == (2, 3)
+        assert (transport.gets, len(transport.execs)) == (5, 3)
 
     async def test_a_failed_lookup_is_not_cached(self, transport: SpriteTransport) -> None:
         transport.names.add('flaky')
@@ -341,7 +356,8 @@ class TestSpritesSandbox:
         with pytest.raises(NetworkError):
             await SpritesSandboxBackend(ref=ref).run(['true'])
         await SpritesSandboxBackend(ref=ref).run(['true'])
-        assert transport.gets == 2
+        # The retried lookup plus the retrying run's deletion check.
+        assert transport.gets == 3
 
     async def test_an_operation_during_the_last_close_opens_its_own_client(self, transport: SpriteTransport) -> None:
         backend = SpritesSandbox[None]().get_workspace(context(), ref=None)
@@ -820,6 +836,33 @@ class TestSpritesSandbox:
         transport.delete_on_exit = True
         with pytest.raises(WorkspaceUnavailableError, match=sprite.name):
             await backend.run(['true'])
+
+    async def test_destroyed_sprite_with_normal_exit_raises_unavailable(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        sprite = await backend.get_sandbox()
+        transport.delete_on_exit = True
+        with pytest.raises(WorkspaceUnavailableError, match=sprite.name):
+            await backend.run(['echo', 'ok'])
+
+    async def test_deletion_check_ends_by_the_command_deadline(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Longer than the command's timeout, so only the command's deadline can bound the lookup.
+        monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._DELETION_CHECK_TIMEOUT', 3600)
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        deadlines: list[float] = []
+        get = transport.get
+
+        async def observed_get(*args: Any, **kwargs: Any) -> Any:
+            deadlines.append(anyio.current_effective_deadline())
+            return await get(*args, **kwargs)
+
+        monkeypatch.setattr(transport, 'get', observed_get)
+
+        assert (await backend.run(['echo', 'ok'], timeout=60)).stdout == 'ok\n'
+        assert len(deadlines) == 1
+        assert deadlines[0] < anyio.current_time() + 60
 
     async def test_sigkill_with_live_sprite_returns_exit(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()

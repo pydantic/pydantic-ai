@@ -5,16 +5,16 @@ description: "Give a Pydantic AI agent Exa web search: relevant excerpts per res
 
 # Exa Search
 
-`ExaSearch` gives an agent web research tools backed by the
-[Exa](https://exa.ai) search API: search that returns the most relevant
-excerpts from each hit (with an optional synthesized text summary), full-page
-retrieval for digging into a specific URL, and opt-in deep search that
-synthesizes a cited answer in one call. The separate `ExaAgent` capability
-delegates long-running research to the Exa Agent API as deferred tool calls.
+`ExaSearch` gives an agent web search backed by the [Exa](https://exa.ai) API.
+`web_search` returns excerpts per hit, `get_page` reads one URL in full, and
+opt-in `deep_search` returns a cited answer. `ExaAgent` hands long research
+tasks to the Exa Agent API as deferred tool calls.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/exa/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+
+![The model calls tools added by ExaSearch. web_search calls Exa search and returns the top five hits with title, URL and excerpts; get_page calls Exa get_contents for one URL, capped at 10,000 characters; the opt-in deep_search calls Exa search with type deep and returns one cited answer. The separate ExaAgent capability adds exa_agent, which creates an Exa Agent run and defers until it completes. Every tool returns a ToolReturn: the text goes to the model and the sources entry of its metadata holds ExaSource records for your app.](../img/harness/exa-search.svg)
 
 ## The problem
 
@@ -44,7 +44,7 @@ Then pass `ExaSearch` to an `Agent` via the `capabilities` parameter:
 from pydantic_ai import Agent
 from pydantic_ai_harness import ExaSearch
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaSearch()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[ExaSearch()])
 
 result = agent.run_sync('What changed in the latest stable Python release?')
 print(result.output)
@@ -66,29 +66,42 @@ text, following [Exa's own guidance for agents](https://exa.ai/docs/reference/se
 so surveying several sources stays cheap; the agent reads a chosen page with
 `get_page`.
 
-`get_page` text is capped at `max_text_chars` characters, keeping the **head**
-(a page's lead carries the substance). One character of headroom above the cap
-is requested from Exa, so when a page exceeds the cap the output ends with a
-`[... page text truncated at N characters]` marker; at the API ceiling of
-10,000 characters no headroom exists, so the marker cannot appear there. The
-result count is bounded the same way: `num_results` is requested from Exa and
-re-applied to the response.
+`get_page` returns the first `max_text_chars` characters of the page. A longer
+page ends with `[... page text truncated at N characters]`. At the
+10,000-character API maximum Exa cannot return the extra character that reveals
+truncation, so no marker appears. `web_search` returns at most `num_results`
+results, even if Exa returns more.
 
-A URL or question that returns no content, a rate limit, or a transient API or
-network failure surfaces to the model as a
-[`ModelRetry`](../tools-advanced.md#tool-retries) rather than a
-hard error: the run continues and the model can correct the URL, rephrase, or
-try again. Authentication failures (401/403) are configuration errors and
-propagate.
+A `web_search` query with no matches returns `No results found for {query!r}.`,
+which the model can relay to the user. An empty page or deep search answer, an
+HTTP error response such as a rate limit, or a network failure is returned to
+the model as a [retry prompt](../tools-advanced.md#tool-retries), up to the tool's retry
+limit; after that the run raises. Errors 401 and 403 (API key) and 402
+(credits) are raised, and so is any other `exa_py` error, such as an option it
+rejects or a response it can't parse.
+
+## Untrusted content
+
+Titles, excerpts, page text, and deep search answers come from third-party
+pages, so they can carry instructions aimed at the model. Each title, URL,
+author, date, and excerpt is rendered on one line, so those fields can't fake
+another result's `Title:` or `URL:` line. Page text is passed through as
+returned, and the `text_summary` summary and the `deep_search` answer are
+Exa's own synthesized text, so any of them can still contain such lines.
+
+`include_domains` and `exclude_domains` don't restrict `get_page`: it reads any
+URL the model passes, including one a page told it to read, and the URL can
+carry data from the conversation to that site's owner. To screen tool output,
+add [`PromptInjectionDefender`](prompt-injection-defender.md); to vet each read,
+require [approval](../deferred-tools.md#human-in-the-loop-tool-approval) for `get_page`.
 
 ## Deep search
 
 `deep_search` calls Exa search with `type='deep'` and a plain-text output
-schema: Exa expands the question into multiple queries, searches, and returns
-an answer grounded in citations -- all in **one tool call**, with the cited
-sources listed under the answer. Each call invests more time and search depth
-than `web_search` (Exa's research-grade mode), and the model decides when to
-invoke tools, so the tool is off by default -- enable it explicitly:
+schema: Exa expands the question into several queries, searches, and returns
+one answer with its cited sources listed below it. A call takes longer and
+costs more than `web_search`, and the model decides when to call it, so it is
+off by default:
 
 ```python
 from pydantic_ai_harness import ExaSearch
@@ -97,9 +110,8 @@ ExaSearch(include_deep_search=True)
 ```
 
 When enabled, the capability's instructions tell the model to treat it as an
-escalation from `web_search`, not a replacement. The synthesized answer is
-returned in full (it is Exa-generated and inherently bounded); `max_text_chars`
-only applies to `get_page`.
+escalation from `web_search`, not a replacement. `deep_search` returns Exa's
+answer untruncated; `max_text_chars` applies only to `get_page`.
 
 ## Text summary
 
@@ -115,18 +127,17 @@ from pydantic_ai_harness import ExaSearch
 ExaSearch(text_summary='One concise sentence with the requested facts.')
 ```
 
-The tool's return shape is unchanged and backward compatible: the result list
-is returned as before, and when Exa returns a summary it is prepended as a
-`Summary:` line.
+When Exa returns a summary, it is prepended to the results as a `Summary:`
+line.
 
 ## Structured citations
 
 Every tool returns a
 [`ToolReturn`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#advanced-tool-returns):
-`return_value` carries the readable text the model sees (unchanged from
-previous releases, including the `Sources:` blocks), and `metadata` carries
-the sources as structured `ExaSource` records (`{'url': ..., 'title': ...}`)
-under the `'sources'` key. Metadata is never sent to the model; the
+`return_value` carries the text the model sees, including any `Sources:`
+block, and `metadata` carries the sources as structured `ExaSource` records
+(`{'url': ..., 'title': ...}`, one per URL, with `title=None` when the page has
+none) under the `'sources'` key. Metadata is never sent to the model; the
 application reads it from the `ToolReturnPart` in the message history, so
 rendering citations needs no text parsing:
 
@@ -165,17 +176,18 @@ ExaSearch(
     max_text_chars=10_000,      # get_page text cap, in characters (1 to 10,000)
     text_summary=False,         # web_search also returns a synthesized text summary
     include_deep_search=False,  # also expose the deep_search tool
-    include_domains=[],         # only search these domains (allowlist)
-    exclude_domains=[],         # never search these domains (denylist)
+    include_domains=[],         # search only these domains (not get_page)
+    exclude_domains=[],         # never search these domains (not get_page)
     native=False,               # prefer the model's native web search, Exa as fallback
     guidance=None,              # None = default instructions, '' = none, str = custom
-    client=None,                # ExaClient -- None builds exa_py.AsyncExa from EXA_API_KEY
+    client=None,                # ExaClient -- None wraps exa_py.AsyncExa from EXA_API_KEY
 )
 ```
 
-`include_domains` and `exclude_domains` apply to `web_search` and `deep_search`,
-and are mutually exclusive -- set one, not both. Out-of-range limits and
-setting both domain lists raise at construction.
+`include_domains` and `exclude_domains` apply to `web_search` and
+`deep_search`, not `get_page` (see [Untrusted content](#untrusted-content)),
+and are mutually exclusive: set one, not both. Out-of-range limits and setting
+both domain lists raise at construction.
 
 ## Exa agent runs
 
@@ -191,7 +203,7 @@ deferred call's metadata.
 from pydantic_ai import Agent
 from pydantic_ai_harness import ExaAgent
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaAgent()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[ExaAgent()])
 ```
 
 By default (`execution='inline'`) the capability resolves its own deferred
@@ -210,35 +222,54 @@ from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai_harness import ExaAgent
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     output_type=[str, DeferredToolRequests],
     capabilities=[ExaAgent(execution='external')],
 )
 ```
 
-Render a finished run with the `agent_run_result` helper, passing the same
-`output_schema` the capability was constructed with so external resolution
-applies the same validation and produces the same tool result shape as inline
-execution, then feed the results and the original message history back into
-the agent to resume the deferred run:
+Render a finished run with the `agent_run_result` helper, passing the
+`output_schema` the capability was constructed with, so external resolution
+validates and renders results the way inline execution does. A schema mismatch
+raises `ModelRetry`; store it as the call's result so the model gets a retry
+prompt, as it does inline. Skip deferred calls from other tools, which carry no
+run ID. Then feed the results and the original message history back into the
+agent to resume the deferred run:
 
 ```python
-from pydantic_ai.tools import DeferredToolResults
+from pydantic import BaseModel
 
-from pydantic_ai_harness.exa import RUN_ID_METADATA_KEY, agent_run_result
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
+
+from pydantic_ai_harness.exa import RUN_ID_METADATA_KEY, ExaAgentRuns, agent_run_result
 
 
-async def resolve(requests, runs, output_schema=None):  # e.g. in a worker process
+async def resolve(
+    requests: DeferredToolRequests,
+    runs: ExaAgentRuns,
+    output_schema: type[BaseModel] | dict[str, object] | None = None,
+) -> DeferredToolResults:  # e.g. in a worker process
     results = DeferredToolResults()
     for call in requests.calls:
-        run_id = requests.metadata[call.tool_call_id][RUN_ID_METADATA_KEY]
+        run_id = requests.metadata.get(call.tool_call_id, {}).get(RUN_ID_METADATA_KEY)
+        if not isinstance(run_id, str):
+            continue  # another tool's deferred call
         run = await runs.poll_until_finished(run_id)
-        results.calls[call.tool_call_id] = agent_run_result(run, output_schema=output_schema)
+        try:
+            results.calls[call.tool_call_id] = agent_run_result(run, output_schema=output_schema)
+        except ModelRetry as retry:
+            results.calls[call.tool_call_id] = retry
     return results
 
 
-async def resume(agent, messages, results):
-    return await agent.run(message_history=messages, deferred_tool_results=results)
+async def resume(
+    agent: Agent[None, str | DeferredToolRequests], messages: list[ModelMessage], results: DeferredToolResults
+) -> str | DeferredToolRequests:
+    result = await agent.run(message_history=messages, deferred_tool_results=results)
+    return result.output
 ```
 
 Every field of `ExaAgent` with its default:
@@ -247,14 +278,14 @@ Every field of `ExaAgent` with its default:
 from pydantic_ai_harness import ExaAgent
 
 ExaAgent(
-    effort=None,            # 'low' | 'medium' | 'high' | 'xhigh' | 'auto' -- None = API default
+    effort=None,            # an exa_py AgentEffort, e.g. 'low' or 'auto' -- None = API default
     execution='inline',     # 'inline' polls to completion; 'external' bubbles DeferredToolRequests
     output_schema=None,     # BaseModel class or dict schema for structured output
     system_prompt=None,     # forwarded to the Exa agent run
-    poll_interval=1000,     # ms between polls when resolving inline
-    timeout_ms=3_600_000,   # ms to wait for a run when resolving inline
+    poll_interval=1000,     # ms between polls when resolving inline (positive)
+    timeout_ms=3_600_000,   # ms to wait for each run when resolving inline (positive)
     guidance=None,          # None = default instructions, '' = none, str = custom
-    runs=None,              # ExaAgentRuns -- None builds AsyncExa().agent.runs from EXA_API_KEY
+    runs=None,              # ExaAgentRuns -- None wraps exa_py.AsyncExa from EXA_API_KEY
 )
 ```
 
@@ -265,6 +296,20 @@ agent-spec form. Terminal failures (`failed`, `cancelled`) are returned to the
 model as a structured message rather than raised, so the agent can decide how
 to proceed. Each result includes the run ID, which the model can pass back as
 `previous_run_id` to ask follow-up questions in the context of a previous run.
+
+Inline execution polls the runs one after another, and `timeout_ms` applies to
+each, so a response that starts several runs can wait up to `timeout_ms` per
+run. A run whose polling times out keeps running on Exa, and the retry prompt
+gives the model its run ID to follow up on. When the agent run is cancelled
+while it polls, or polling fails with an error the model can't fix, the
+capability cancels the Exa runs nothing will read: the ones it hasn't finished
+polling and the ones it was leaving for the model to follow up on. This needs a
+`cancel` method on the `runs` client, as `exa_py`'s has, and holds the agent
+run up to about 5 seconds while Exa accepts the cancellations. Under durable
+execution the runs are left running, since the engine can resume the wait. If
+creating a run fails in a way that Exa may have acted on (a 5xx response, or a
+network failure after the request was sent), the error is raised instead of
+retried, so the model can't start a second run.
 
 ## Multiple instances
 
@@ -282,7 +327,7 @@ from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai_harness import ExaSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         ExaSearch(),  # web_search, get_page
         PrefixTools(
@@ -304,7 +349,7 @@ calls.
 
 ## Durable execution
 
-Under [durable execution](durable-execution.md), each Exa request is recorded, so a
+Under [durable execution](../durable_execution/overview.md), each Exa request is recorded, so a
 recovered run reuses the result instead of making the request again. Temporal
 and Prefect record each tool call in its own activity or task. DBOS runs
 function tools in workflow code, so there the request runs as its own step.
@@ -315,7 +360,7 @@ On Temporal an activity has 60 seconds by default, which `deep_search` can
 exceed. Give the tool calls longer with
 `TemporalDurability(toolset_activity_config={'exa_search': ActivityConfig(...)})`,
 keyed by the capability's `id`,
-as in [Temporal timeouts](durable-execution.md#temporal-timeouts). `ExaAgent` polls its run in a capability
+as in [Temporal timeouts](../durable_execution/temporal.md#harness-command-timeouts). `ExaAgent` polls its run in a capability
 activity, which takes the base `activity_config`, so set its
 `start_to_close_timeout` above `timeout_ms`.
 
@@ -326,11 +371,17 @@ in-flight runs then cannot find.
 
 ## Custom client
 
-The default client is `exa_py.AsyncExa`, configured from the `EXA_API_KEY`
-environment variable; when the variable is missing, construction fails with a
-setup hint. Pass any object satisfying the `ExaClient` protocol -- the subset of
-`AsyncExa` the toolset calls -- to configure authentication or the base URL
-explicitly, or to substitute a fake in tests:
+The default client wraps an `exa_py.AsyncExa` configured from the
+`EXA_API_KEY` environment variable, and offers only the calls the capabilities
+make, not the rest of `AsyncExa`. When the variable is missing, building the
+`Agent` fails with a setup hint; the capability itself constructs without it.
+An `AsyncExa` connection pool belongs to the event loop that opened it, so the
+default client builds a new `AsyncExa` when the agent runs on a new asyncio
+event loop after the previous one has stopped, for example in a second
+`asyncio.run`. Under Trio, which has no asyncio event loop to compare, it keeps
+the one it has. A client you pass is used as is. Pass any object satisfying the
+`ExaClient` protocol (the subset of `AsyncExa` the toolset calls) to configure
+authentication or the base URL explicitly, or to substitute a fake in tests:
 
 ```python
 from exa_py import AsyncExa
@@ -339,7 +390,6 @@ from pydantic_ai_harness import ExaSearch
 
 ExaSearch(client=AsyncExa(api_key='...'))
 ```
-
 
 ## ExaSearch vs core WebSearch
 
@@ -358,8 +408,10 @@ To use the provider's search where there is one and Exa's elsewhere, either:
   and Exa's `web_search` is only sent to models without one. `get_page` and `deep_search` stay available on every model.
   `include_domains` and `exclude_domains` become the native tool's
   `allowed_domains` and `blocked_domains`.
-  Whether the native search applies them depends on the provider: Gemini's
-  native search ignores them, so on Gemini they only restrict the fallback.
+  A model whose native search can't apply a domain filter you set gets
+  Exa's `web_search` instead, so the filter still holds: on Gemini, whose
+  native search takes no domain filters, setting either list means Exa
+  searches.
 - Or pass Exa's search as the fallback of core `WebSearch`, to configure the
   native search with `WebSearch`'s own options:
 
@@ -382,10 +434,9 @@ default it exposes `web_search_exa` and `web_fetch_exa`; the full catalog adds
 `web_search_advanced_exa` and an agent-run set (`agent_create_run`,
 `agent_wait_for_run`, `agent_get_run_output`, `agent_cancel_run`).
 
-`ExaSearch` is the curated, typed path: bounded output, a retry-on-empty
-contract, bundled research instructions, and a client seam that makes it
-testable offline. The MCP server is how you get Exa's full catalog with zero
-wrapper code, via Pydantic AI core's MCP capability. Their agent runs are
+`ExaSearch` caps output size, turns empty results into retry prompts, adds
+research instructions, and accepts a fake client for tests. The MCP server
+exposes Exa's full tool catalog through core's `MCP` capability. Its agent runs are
 create-then-poll (`agent_create_run` returns an ID immediately;
 `agent_wait_for_run` polls it), where `deep_search` returns the answer in a
 single call. The two compose in one `capabilities` list, and none of the MCP
@@ -396,7 +447,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP
 from pydantic_ai_harness import ExaSearch
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaSearch(), MCP('https://mcp.exa.ai/mcp')])
+agent = Agent('{{ anthropic:medium }}', capabilities=[ExaSearch(), MCP('https://mcp.exa.ai/mcp')])
 ```
 
 ## Agent spec (YAML/JSON)
@@ -407,7 +458,7 @@ file instead of Python:
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - ExaSearch:
       num_results: 3
@@ -429,8 +480,15 @@ spec-loaded instances always build the default client from `EXA_API_KEY`. In
 specs, `output_schema` takes the JSON-schema dict form; Pydantic model
 classes are only available when constructing the capability in Python.
 
+## Telemetry
+
+`ExaSearch` and `ExaAgent` emit no spans of their own. Core's tool-call spans
+cover each Exa search, page read, and run creation, and inline `exa_agent`
+polling runs inside the agent run's span.
+
 ## Further reading
 
+- [A research agent, three ways](https://pydantic.dev/articles/harness-exa) (Pydantic): from `WebSearch` to `ExaAgent` to a composed `ExaSearch` research loop
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Toolsets](../toolsets.md)
 - [Exa API documentation](https://docs.exa.ai)

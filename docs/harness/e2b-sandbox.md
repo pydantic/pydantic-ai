@@ -11,13 +11,15 @@ Run your agent's commands and file edits in an isolated [E2B](https://e2b.dev) c
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. E2BSandbox's get_workspace hook gives the run an E2B cloud sandbox as ctx.workspace, so each command and file operation goes over the E2B API, authenticated with E2B_API_KEY, and runs in the sandbox as the user account; output comes back to the tool. The first use creates the sandbox, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) kills it. When sandbox_timeout runs out, 1 hour by default, E2B pauses the sandbox with its files, and the next run with the ref resumes it.](../img/harness/e2b-sandbox.svg)
+
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[e2b,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,e2b,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -26,13 +28,13 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ```
 
 `Coder`'s shell and file tools now run in the sandbox, not on your machine. With `Coder`, `RepoContext` creates the sandbox when the run starts, even without a tool call; use `Coder(repo_context=False)` for lazy creation. It keeps running, and billing, after the run ends; see [Clean up](#clean-up).
 
-A sandbox lives for 1 hour by default. When that runs out it pauses, and the next run resumes it. On E2B's Pro plan you can pass up to `E2BSandbox(sandbox_timeout=86400)`. A plan-limit hint is added only when E2B rejects the requested lifetime; other create errors, including network timeouts, retain the upstream error.
+A sandbox lives for 1 hour (`sandbox_timeout=3600`, the most E2B's Hobby plan allows), then pauses; the next run resumes it. Pro plans allow up to `E2BSandbox(sandbox_timeout=86400)`. A lifetime over your plan's limit raises `WorkspaceUnavailableError`, with the limit in the message.
 
 Commands start in the home directory, `/home/user`, which holds dotfiles and the pip cache. Pass a project directory, such as `E2BSandbox(working_dir='/home/user/project')`, so the project is not the home directory; it is created for you on a new sandbox.
 
@@ -41,19 +43,10 @@ E2B's default template does not include ripgrep (`rg`). `Coder` can search witho
 ```text
 from e2b import AsyncTemplate, Template
 await AsyncTemplate.build(Template().from_base_image().apt_install(['ripgrep']), 'my-rg-template')
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(template='my-rg-template'), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(template='my-rg-template'), Coder()])
 ```
 
-The build snippet is illustrative and not part of the runnable agent examples below.
-
 The default template has Python and git but not your project's dependencies, not even pytest. Install them in a custom template, or with `await workspace.run(['pip', 'install', ...])` before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run).
-
-| Default template | Value |
-| --- | --- |
-| User | `user` |
-| `HOME` and default working directory | `/home/user` |
-| `rg` | Not installed |
-| `pytest` | Not installed |
 
 ## Continue in the same sandbox
 
@@ -62,7 +55,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 
 followup = agent.run_sync(
@@ -83,7 +76,7 @@ from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Shell(), FileSystem()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Shell(), FileSystem()])
 
 
 @agent.tool
@@ -95,13 +88,13 @@ async def run_python(ctx: RunContext, code: str) -> str:
 
 Shell commands run as the `user` account, and files the backend creates are owned by it. E2B's file service still reads and writes with its own root privileges, so Unix permissions do not restrict file operations; do not rely on them to keep file tools out of a path.
 
-E2B file reads reject FIFOs rather than waiting for a writer. An ordinary read performs a shell FIFO check before downloading the file. E2B's file API omits looping symlinks from directory listings.
+Reading a FIFO raises `OSError` instead of waiting for a writer. E2B's file API leaves looping symlinks out of directory listings.
 
 A background child that inherits stdout or stderr can keep `run()` waiting for the SDK stream to close after the main command exits. Redirect background output to a file when starting a long-running job; `Shell.start_command` manages its own output log.
 
 ### What a timeout stops
 
-On a command deadline or cancellation, the backend sends TERM then KILL to the command's foreground process group, including children that have not detached into a separate session. Custom templates and attached sandboxes are probed once for `setsid` (util-linux); without it, only the command leader is stopped, so child processes may continue. Custom templates also need `/bin/bash` and `/bin/sh`. Intentionally detached background jobs are not stopped. It does not destroy the shared sandbox. Stop is best effort: if E2B cannot be reached, or a start won registration but does not respond to the stop request, work may still be running. A cancelled start that arrives after stop is fenced before user code runs. Retain the sandbox ref to inspect or kill it explicitly.
+On a timeout or cancellation, the backend sends TERM, then KILL, to the command's process group, which includes its children unless they move to another process group or session. Custom templates need `/bin/bash` and `/bin/sh`; without `setsid` (util-linux), only the command's own process is stopped. The sandbox keeps running. Stopping is best effort: if E2B cannot be reached, the command may keep running, so keep the ref to inspect or kill the sandbox.
 
 A command whose combined output passes 10 MiB is stopped the same way and raises `WorkspaceOutputLimitError`, with the first 65,536 characters of each stream in `stdout` and `stderr`. Redirect large output to a file instead.
 
@@ -120,7 +113,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ref = result.workspace.ref  # store this, e.g. in your database
@@ -146,7 +139,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 
 
 async def main() -> None:
@@ -173,11 +166,11 @@ The `finally` kills the sandbox even when setup or the run fails. To keep it ins
 
 ## Preview a dev server
 
-With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, connect with `sandbox = await e2b.AsyncSandbox.connect(ref.id)` and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then delete the sandbox with `await E2BSandbox().destroy(ref)`. Do not leave a public preview running longer than necessary.
+With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, get the sandbox with `sandbox = await capability.backend(ref).get_sandbox()`, where `capability` is the `E2BSandbox` the agent runs with, so its `sandbox_timeout` applies, and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then delete the sandbox with `await E2BSandbox().destroy(ref)`. Do not leave a public preview running longer than necessary.
 
 ## Clean up
 
-The sandbox keeps running, and billing, after the run ends. Pydantic AI never kills it. If acquisition is cancelled while creation is in flight, the backend finishes recording the ref when E2B responds; a lost response may still leave a sandbox without a ref. Kill it with the ref you stored:
+The sandbox keeps running, and billing, after the run ends. Pydantic AI does not kill it. If a run is cancelled while E2B creates the sandbox, the ref is still recorded once E2B answers; the id is also logged (see [Telemetry](#telemetry)). If E2B's answer never arrives, the sandbox can exist with no ref or log entry; find and kill it in the E2B dashboard. Kill the others with the ref you stored:
 
 ```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef
@@ -195,6 +188,8 @@ A failed run returns no result, so there is no ref to store. To terminate its sa
 ```python
 from typing import Any
 
+import anyio
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.run import AgentRunResult
@@ -207,11 +202,14 @@ hooks = Hooks()
 @hooks.on.run_error
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await E2BSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the kill short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await E2BSandbox().destroy(ctx.workspace.ref)
     raise error
 
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), hooks])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hooks])
 ```
 
 ## Configuration
@@ -222,16 +220,16 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
 | `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user` on the default template, where commands run as `user`); prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
-| `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. |
+| `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. The agent's commands can read these values, and a new sandbox keeps them for every process, so leave out secrets the agent should not see. |
 
-Commands run on the asyncio event loop only: the E2B SDK reads their output with asyncio tasks, so under Trio `run` raises `UserError`.
+`E2BSandbox` needs asyncio: the E2B SDK runs every request on asyncio, so under Trio every operation, including `destroy`, raises `UserError` before it reaches E2B.
 
 ## Durable execution
 
 Install the `temporal` extra too:
 
 ```bash
-pip/uv-add "pydantic-ai-harness[e2b,anthropic,temporal]"
+pip/uv-add "pydantic-ai-harness[coder,e2b,anthropic,temporal]"
 ```
 
 Run a Temporal dev server on `localhost:7233` first. The agent and workflow must be defined at module level for activity registration.
@@ -249,7 +247,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     name='e2b_coder',
     capabilities=[E2BSandbox(), Coder(), TemporalDurability()],
 )
@@ -284,6 +282,10 @@ Removing a capability while workflows using it are still running changes their r
 ## Telemetry
 
 `E2BSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a sandbox also logs `Created E2B sandbox <id>` at INFO on the `pydantic_ai_harness.e2b_sandbox._backend` logger, so the id is on record even if the run ends before it is stored.
+
+## Further reading
+
+- [Run Pydantic AI coding agents in E2B sandboxes](https://pydantic.dev/articles/pydantic-ai-e2b-sandboxes) (Pydantic): a coding agent in an E2B sandbox
 
 ## API reference
 

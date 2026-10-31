@@ -34,6 +34,7 @@ from pydantic_clai2.config.credential_store import (
     load_codex_credentials,
     save_codex_credentials,
 )
+from pydantic_clai2.ui.browser import open_browser
 
 REFRESH_MARGIN = 300
 """Seconds before expiry at which a token is refreshed, so a run does not start with one about to lapse."""
@@ -247,7 +248,7 @@ class PKCESignIn:
         account: str,
         service: str,
         setup: str,
-        open_browser: Callable[[str], bool] = webbrowser.open,
+        open_browser: Callable[[str], bool] = open_browser,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 300,
     ) -> None:

@@ -8,6 +8,8 @@ lookup cannot settle.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/youdotcom/)
 
+![The model calls tools from two capabilities. YouSearch adds web_search, which returns the top ten hits with excerpts, and get_page, which returns one page as markdown capped at 10,000 characters. YouResearch adds answer, research and finance_research, which return cited answers. Each tool calls one method of the You.com API. Every tool returns a ToolReturn: the text goes to the model and the sources entry of its metadata holds YouSource records for your app. Authentication, billing and permission errors stop the run; other failures come back as a retry.](https://pydantic.dev/docs/ai/img/harness/youdotcom.svg)
+
 ## Installation
 
 The examples below use an Anthropic model and `Agent.from_file`, so they also
@@ -237,7 +239,7 @@ contributes the same default research guidance.
 
 ## Durable execution
 
-Under [durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/), each You.com request is recorded, so a
+Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each You.com request is recorded, so a
 recovered run reuses the result instead of making the request again. Temporal
 and Prefect record each tool call in its own activity or task. DBOS runs
 function tools in workflow code, so there the request runs as its own step.
@@ -247,7 +249,7 @@ exceed: it waits up to `timeout_ms`, 600 seconds by default. Give the tool calls
 longer with
 `TemporalDurability(toolset_activity_config={'you_research': ActivityConfig(...)})`,
 keyed by the capability's `id`,
-as in [Temporal timeouts](https://pydantic.dev/docs/ai/harness/durable-execution/#temporal-timeouts).
+as in [Temporal timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts).
 
 The records are named after the capability's `id`, which defaults to
 `you_search` for `YouSearch` and `you_research` for `YouResearch`, so durable
@@ -287,8 +289,10 @@ To use the provider's search where there is one and You.com's elsewhere, either:
   `get_page` stays available on every model. `include_domains` and
   `exclude_domains` become the native tool's `allowed_domains` and
   `blocked_domains`.
-  Whether the native search applies them depends on the provider: Gemini's
-  native search ignores them, so on Gemini they only restrict the fallback.
+  A model whose native search can't apply a domain filter you set gets
+  You.com's `web_search` instead, so the filter still holds: on Gemini, whose
+  native search takes no domain filters, setting either list means You.com
+  searches.
 - Or pass You.com's search as the fallback of core `WebSearch`, to configure the
   native search with `WebSearch`'s own options:
 

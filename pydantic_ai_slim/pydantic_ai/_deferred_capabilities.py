@@ -3,26 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Sequence
-from dataclasses import KW_ONLY, dataclass
-from typing import TYPE_CHECKING, Annotated, Literal, NotRequired, Union, cast
+from dataclasses import KW_ONLY, dataclass, field
+from typing import TYPE_CHECKING, Annotated, Literal, NotRequired
 
 import pydantic
 from typing_extensions import TypedDict
 
-from ._utils import copy_dataclass_fields
-
 # Imported late by `messages.py`; avoid imports that would re-enter it.
 from .messages import (
-    _TOOL_CALL_NARROWERS,  # pyright: ignore[reportPrivateUsage]
-    _TOOL_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
+    CapabilityLoadDeltaPart,
     ToolCallPart,
+    ToolKind,
     ToolReturnPart,
 )
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage
+    from .messages import ModelMessage, ModelRequestPart, ModelResponsePart
 
 
 class LoadCapabilityArgs(TypedDict):
@@ -40,12 +38,30 @@ class LoadCapabilityArgs(TypedDict):
 class LoadCapabilityReturn(TypedDict):
     """Typed return value for the `load_capability` tool."""
 
+    message: NotRequired[str]
+    """Confirms the load to the model, and says whether the capability's instructions follow.
+
+    Absent from histories recorded by earlier versions.
+    """
+
     instructions: NotRequired[str]
-    """Instructions for the loaded capability."""
+    """Instructions for the loaded capability, as they were when it loaded, in a realtime session only.
+
+    Elsewhere the load returns only its `message`, and the instructions are recorded as
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s for the capability's block,
+    `capability:<id>`, on the request after the load. Histories from earlier versions carry them here, and
+    those still seed the block's value without being sent again.
+    """
+
+
+CAPABILITY_LOAD_KIND = ToolKind._core(  # pyright: ignore[reportPrivateUsage]
+    'capability-load', args=LoadCapabilityArgs, content=LoadCapabilityReturn
+)
+"""The kind of the `load_capability` tool."""
 
 
 @dataclass(repr=False)
-class LoadCapabilityCallPart(ToolCallPart):
+class LoadCapabilityCallPart(ToolCallPart[LoadCapabilityArgs], kind=CAPABILITY_LOAD_KIND):
     """Typed `ToolCallPart` for the `load_capability` tool."""
 
     _: KW_ONLY
@@ -60,16 +76,6 @@ class LoadCapabilityCallPart(ToolCallPart):
     """Discriminator for the typed subclass."""
 
     @property
-    def typed_args(self) -> LoadCapabilityArgs | None:
-        """Parsed load-capability arguments, or `None` for incomplete streaming args."""
-        if self.args is None:
-            return None
-        try:
-            return cast('LoadCapabilityArgs', self.args_as_dict(raise_if_invalid=True))
-        except (ValueError, AssertionError):
-            return None
-
-    @property
     def capability_id(self) -> str | None:
         """Capability id from the parsed args, if available."""
         typed = self.typed_args
@@ -79,7 +85,7 @@ class LoadCapabilityCallPart(ToolCallPart):
 
 
 @dataclass(repr=False)
-class LoadCapabilityReturnPart(ToolReturnPart):
+class LoadCapabilityReturnPart(ToolReturnPart[LoadCapabilityReturn], kind=CAPABILITY_LOAD_KIND):
     """Typed `ToolReturnPart` for the `load_capability` tool."""
 
     _: KW_ONLY
@@ -101,32 +107,6 @@ class LoadCapabilityReturnPart(ToolReturnPart):
         """Loaded capability instructions, if any."""
         return self.content.get('instructions')
 
-
-_LOAD_CAPABILITY_CALL_ARGS_TA: pydantic.TypeAdapter[str | LoadCapabilityArgs | None] = pydantic.TypeAdapter(
-    Union[str, LoadCapabilityArgs, None]  # noqa: UP007
-)
-_LOAD_CAPABILITY_RETURN_CONTENT_TA: pydantic.TypeAdapter[LoadCapabilityReturn] = pydantic.TypeAdapter(
-    LoadCapabilityReturn
-)
-
-
-def _narrow_load_capability_call(part: ToolCallPart) -> LoadCapabilityCallPart:
-    if isinstance(part, LoadCapabilityCallPart):
-        return part
-    validated_args = _LOAD_CAPABILITY_CALL_ARGS_TA.validate_python(part.args)
-    return copy_dataclass_fields(part, LoadCapabilityCallPart, args=validated_args, tool_kind='capability-load')
-
-
-def _narrow_load_capability_return(part: ToolReturnPart) -> LoadCapabilityReturnPart:
-    if isinstance(part, LoadCapabilityReturnPart):
-        return part
-    validated_content = _LOAD_CAPABILITY_RETURN_CONTENT_TA.validate_python(part.content)
-    return copy_dataclass_fields(part, LoadCapabilityReturnPart, content=validated_content, tool_kind='capability-load')
-
-
-# Narrow on `tool_kind` so user tools named `load_capability` are not promoted.
-_TOOL_CALL_NARROWERS['capability-load'] = _narrow_load_capability_call
-_TOOL_RETURN_NARROWERS['capability-load'] = _narrow_load_capability_return
 
 _TYPED_PART_TAGS[('tool-call', 'capability-load')] = 'capability-load-call'
 _TYPED_PART_TAGS[('tool-return', 'capability-load')] = 'capability-load-return'
@@ -174,15 +154,37 @@ def registered_loaded_capability_ids(messages: Sequence[ModelMessage], capabilit
 
 def _parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     """Parse capability-load evidence from an already-selected message window."""
-    call_id_by_tool_call_id: dict[str, str] = {}
-    loaded: set[str] = set()
-    for msg in messages:
-        for part in msg.parts:
-            if isinstance(part, LoadCapabilityCallPart):
-                if part.capability_id is not None:
-                    call_id_by_tool_call_id[part.tool_call_id] = part.capability_id
-            elif isinstance(part, LoadCapabilityReturnPart):
-                cap_id = call_id_by_tool_call_id.get(part.tool_call_id)
-                if cap_id is not None:
-                    loaded.add(cap_id)
-    return loaded
+    exchanges = LoadExchanges()
+    return {capability_id for message in messages for part in message.parts for capability_id in exchanges.loads(part)}
+
+
+@dataclass
+class LoadExchanges:
+    """The one rule for which capabilities a part of history loads.
+
+    A capability is loaded by a `load_capability` return completing its call, the model's load, or by a
+    [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] naming it, which
+    [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] records without a call. A return
+    loads the capability its call named, when the call was seen first and its arguments parsed. A failed load is a
+    plain `ToolReturnPart`, so it loads nothing.
+    """
+
+    _calls: dict[str, str] = field(default_factory=dict[str, str])
+
+    def observe(self, part: ModelRequestPart | ModelResponsePart) -> str | None:
+        """Fold in `part`, returning the capability it loads if it's a `load_capability` return completing a load.
+
+        Only the call/return pairing: `loads` also counts a capability loaded without a `load_capability` call.
+        """
+        if isinstance(part, LoadCapabilityCallPart):
+            if part.capability_id is not None:
+                self._calls[part.tool_call_id] = part.capability_id
+        elif isinstance(part, LoadCapabilityReturnPart):
+            return self._calls.get(part.tool_call_id)
+        return None
+
+    def loads(self, part: ModelRequestPart | ModelResponsePart) -> list[str]:
+        """Fold in `part`, returning the capabilities it loads, in order."""
+        if isinstance(part, CapabilityLoadDeltaPart):
+            return list(part.loaded)
+        return [capability_id] if (capability_id := self.observe(part)) is not None else []

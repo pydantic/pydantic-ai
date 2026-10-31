@@ -15,17 +15,19 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext
 from pydantic_ai._agent_graph import GraphAgentState
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -54,6 +56,7 @@ from pydantic_ai_harness.step_persistence import (
 )
 from pydantic_ai_harness.step_persistence._context import current_run_id
 from pydantic_ai_harness.step_persistence._store import _validate_id  # pyright: ignore[reportPrivateUsage]
+from tests.conftest import legacy_retry_prompt_part
 
 
 def build_run_context(
@@ -135,10 +138,13 @@ class TestIsProviderValid:
         ]
         assert is_provider_valid(messages) is False
 
-    def test_retry_prompt_resolves_a_tool_call(self) -> None:
+    def test_retried_tool_return_resolves_a_tool_call(self) -> None:
+        """A retry that answers a call travels as that call's return, so it settles the pairing."""
         messages: list[ModelMessage] = [
             ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
-            ModelRequest(parts=[RetryPromptPart(content='try again', tool_name='add', tool_call_id='c1')]),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='add', content='try again', tool_call_id='c1', outcome='retried')]
+            ),
         ]
         assert is_provider_valid(messages) is True
 
@@ -174,12 +180,29 @@ class TestIsProviderValid:
         ]
         assert is_provider_valid(messages) is False
 
-    def test_orphan_retry_prompt_is_invalid(self) -> None:
-        """`RetryPromptPart` with no matching open call is also rejected."""
+    def test_orphan_retried_tool_return_is_invalid(self) -> None:
+        """A retried return with no matching open call is rejected like any other orphan."""
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[RetryPromptPart(content='retry', tool_name='add', tool_call_id='ghost')]),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='add', content='retry', tool_call_id='ghost', outcome='retried')]
+            ),
         ]
         assert is_provider_valid(messages) is False
+
+    @pytest.mark.parametrize(
+        ('call_id', 'tool_name', 'expected'),
+        [('c1', 'add', True), ('ghost', 'add', False), ('c1', None, False)],
+    )
+    def test_legacy_retry_prompt_part_pairs_like_a_retried_return(
+        self, call_id: str, tool_name: str | None, expected: bool
+    ) -> None:
+        """A caller-passed history can still hold the deprecated part: a tool-bound one settles its
+        call, and a tool-less one answers no call."""
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
+            ModelRequest(parts=[legacy_retry_prompt_part('try again', tool_name=tool_name, tool_call_id=call_id)]),
+        ]
+        assert is_provider_valid(messages) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -1408,6 +1431,76 @@ class TestOnRunErrorSnapshot:
         assert await store.latest_snapshot(run_id='r1') is None
         assert [e.kind for e in await store.list_events(run_id='r1')] == ['run_failed']
 
+    async def test_failure_writes_survive_anyio_cancel(self, tmp_path: Path) -> None:
+        """An `anyio` scope cancelling the run does not cut the error-path writes short.
+
+        `FileStepStore` writes through `anyio.to_thread.run_sync`, which checkpoints
+        before it runs, so an unshielded save under the cancelled scope is lost.
+        """
+        store = FileStepStore(tmp_path)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('work', {}, tool_call_id='work-1')])
+
+        agent: Agent[object, str] = Agent(FunctionModel(model), capabilities=[StepPersistence(store=store)])
+
+        with anyio.CancelScope() as scope:
+
+            @agent.tool_plain
+            async def work() -> str:
+                scope.cancel()
+                await anyio.sleep_forever()
+                raise AssertionError('unreachable')  # pragma: no cover
+
+            await agent.run('go')
+
+        assert scope.cancelled_caught
+        rid = await first_run_id(store)
+        failed = (await store.list_events(run_id=rid))[-1]
+        assert failed.kind == 'run_failed'
+        assert failed.error is not None and failed.error.startswith('CancelledError')
+        snap = await store.latest_snapshot(run_id=rid, include_interrupted=True)
+        assert snap is not None
+        assert snap.state == 'interrupted'
+
+    async def test_failure_writes_survive_cancel_during_error_path(self, tmp_path: Path) -> None:
+        """A scope cancelled while a non-cancellation failure is being saved does not cut the writes short.
+
+        A `run_error` hook that runs before `StepPersistence`'s cancels the scope,
+        standing in for a deadline that fires mid-save, so `on_run_error` writes
+        the tool's `ValueError` under a cancelled scope.
+        """
+        store = FileStepStore(tmp_path)
+        hooks: Hooks[object] = Hooks()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('work', {}, tool_call_id='work-1')])
+
+        agent: Agent[object, str] = Agent(FunctionModel(model), capabilities=[StepPersistence(store=store), hooks])
+
+        @agent.tool_plain
+        def work() -> str:
+            raise ValueError('tool failed')
+
+        with anyio.CancelScope() as scope:
+
+            @hooks.on.run_error
+            async def cancel_scope(ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[Any]:
+                scope.cancel()
+                raise error
+
+            with pytest.raises(ValueError, match='tool failed'):
+                await agent.run('go')
+
+        assert scope.cancel_called
+        rid = await first_run_id(store)
+        failed = (await store.list_events(run_id=rid))[-1]
+        assert failed.kind == 'run_failed'
+        assert failed.error == "ValueError('tool failed')"
+        snap = await store.latest_snapshot(run_id=rid, include_interrupted=True)
+        assert snap is not None
+        assert snap.state == 'interrupted'
+
 
 # ---------------------------------------------------------------------------
 # Hook-level branches awkward to reach through Agent
@@ -1536,25 +1629,27 @@ class TestCapabilityHookBranches:
 
 
 # ---------------------------------------------------------------------------
-# Round-2 review fixes (RetryPromptPart, list_runs ordering, effect metadata,
+# Round-2 review fixes (retry parts, list_runs ordering, effect metadata,
 # from_spec validation, annotate_tool_effect)
 # ---------------------------------------------------------------------------
 
 
-class TestNonToolRetryPrompt:
-    def test_non_tool_retry_prompt_is_valid(self) -> None:
-        """`RetryPromptPart(tool_name=None)` is an output-validation retry, not a tool result."""
+class TestRetryFeedback:
+    def test_retry_feedback_is_valid(self) -> None:
+        """`RetryFeedbackPart` answers no call, so it settles nothing and needs nothing open."""
         messages: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content='hi')]),
             ModelResponse(parts=[TextPart(content='wrong shape')]),
-            ModelRequest(parts=[RetryPromptPart(content='try again', tool_name=None)]),
+            ModelRequest(parts=[RetryFeedbackPart(content='try again', retry=RetryInfo(cause='validation_error'))]),
         ]
         assert is_provider_valid(messages) is True
 
-    def test_tool_retry_prompt_still_needs_open_call(self) -> None:
-        """`RetryPromptPart(tool_name=...)` still requires a matching open `ToolCallPart`."""
+    def test_a_retried_return_still_needs_an_open_call(self) -> None:
+        """The tool-bound half is a `ToolReturnPart`, which still requires a matching call."""
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[RetryPromptPart(content='retry', tool_name='add', tool_call_id='ghost')]),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='add', content='retry', tool_call_id='ghost', outcome='retried')]
+            ),
         ]
         assert is_provider_valid(messages) is False
 

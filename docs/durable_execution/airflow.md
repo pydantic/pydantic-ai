@@ -111,9 +111,10 @@ Streaming is not yet supported under `durable=True`. The durable model wrapper r
 When running a Pydantic AI agent as a durable Airflow task:
 
 * The durable unit is the Airflow task; recovery happens through Airflow task retries, so set `retries` (and a `retry_delay`) on the task.
-* Define the agent with a concrete model, for example via a connection that resolves to `Agent('openai:gpt-5-nano', ...)`. The model must be set when `durable=True`.
+* Define the agent with a concrete model, for example via a connection that resolves to `Agent('{{ openai:small }}', ...)`. The model must be set when `durable=True`.
 * On Airflow 3.3 and above with `apache-airflow-providers-common-ai` 0.7.0 or newer, no cache storage configuration is needed, since the step cache uses the task state store. Otherwise (older Airflow, or an older provider), set `[common.ai] durable_cache_path` to an object-storage location the workers can read and write.
 * On a retry, a cached model request or tool call is replayed when its stored fingerprint matches the current request, and re-runs live when it diverges. Requests that can't be serialized to a fingerprint fall back to unverified positional replay, so keep runs deterministic across retries.
 * `durable=True` and `enable_hitl_review=True` are mutually exclusive.
 * Streaming is not supported under `durable=True`.
+* [Batched model requests](../batch.md#durable-execution) aren't cached, so a retry submits a request that was waiting on its batch again, in a new batch that's billed too.
 * The step cache is scoped to a single task instance and is deleted when the task succeeds. On Airflow 3.3 and above it lives in the task state store, and entries left by a run that ultimately fails are removed when the DAG run is deleted.

@@ -22,9 +22,11 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGuardrail
-from pydantic_clai2 import _app, open_stock_agent
+from pydantic_clai2 import app, open_stock_agent
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.customization import customization_guide
+from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins.loader import PluginSettingsError
 
 
@@ -64,16 +66,39 @@ async def test_tools_and_instructions_come_from_the_workspace(
     assert f'Rules from the {root}.' in instructions[0]
 
 
+async def test_skills_come_from_the_workspaces_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skills at the root of the repository `workspace` is in reach the model, wherever the process runs."""
+    repository = tmp_path / 'repository'
+    (repository / '.git').mkdir(parents=True)
+    (repository / 'package').mkdir()
+    skill = repository / '.agents' / 'skills' / 'release'
+    skill.mkdir(parents=True)
+    (skill / 'SKILL.md').write_text('---\ndescription: Release from the repository.\n---\n\nRelease it.\n')
+    (tmp_path / 'elsewhere').mkdir()
+    monkeypatch.chdir(tmp_path / 'elsewhere')
+    model = TestModel(call_tools=[], custom_output_text='done')
+    async with open_stock_agent(workspace=repository / 'package', model=model) as agent:
+        await agent.run('hello')
+    parameters = model.last_model_request_parameters
+    assert parameters is not None
+    assert 'release: Release from the repository.' in '\n'.join(
+        part.content for part in parameters.instruction_parts or ()
+    )
+
+
 @pytest.mark.parametrize(
-    'coder, delegates, disk_agents',
+    'coder, delegates, disk_agents, task_tools',
     [
-        ({}, True, True),
-        ({'agent_folders': []}, True, False),
-        ({'sub_agents': False}, False, False),
+        ({}, True, True, False),
+        ({'agent_folders': []}, True, False, False),
+        ({'sub_agents': False}, False, False, False),
+        # Task control is the application's to turn on, unlike in the CLI.
+        ({'task_control': True}, True, True, True),
+        ({'sub_agents': False, 'task_control': True}, False, False, False),
     ],
 )
 async def test_plugin_settings_override_the_stock_coder(
-    tmp_path: Path, coder: dict[str, JsonValue], delegates: bool, disk_agents: bool
+    tmp_path: Path, coder: dict[str, JsonValue], delegates: bool, disk_agents: bool, task_tools: bool
 ) -> None:
     # The stock `agent_folders` reads personal agents from the home directory, which conftest isolates.
     personal = tmp_path / 'home' / '.claude' / 'agents'
@@ -87,9 +112,44 @@ async def test_plugin_settings_override_the_stock_coder(
     tools = {tool.name for tool in parameters.function_tools}
     instructions = '\n'.join(part.content for part in parameters.instruction_parts or ())
     assert 'read_file' in tools
-    assert 'read_clai_customization_guide' not in tools
+    assert 'load_capability' not in tools
     assert ('delegate_task' in tools) is delegates
+    assert ('list_tasks' in tools) is task_tools
     assert ('Reviews diffs' in instructions) is disk_agents
+
+
+async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
+    """Everything else, starting with the customization guide, is one catalog line until the model loads it."""
+    seen: list[AgentInfo] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        seen.append(info)
+        if len(seen) == 1:
+            yield {0: DeltaToolCall(name='list_files', json_args='{}')}
+        else:
+            yield 'done'
+
+    # The CLI adds the guide to this stock set, as `create_stock_agent` does.
+    async with open_stock_agent(
+        workspace=tmp_path, model=FunctionModel(stream_function=stream), capabilities=[customization_guide()]
+    ) as agent:
+        await agent.run('hello')
+    first, second = seen
+    assert sorted(tool.name for tool in first.function_tools) == snapshot(
+        ['delegate_task', 'edit_file', 'grep', 'list_files', 'load_capability', 'read_file', 'shell', 'write_file']
+    )
+    catalog = [
+        part.content
+        for part in first.model_request_parameters.instruction_parts or ()
+        if 'capability:deferred_capabilities' in part.content
+    ]
+    assert len(catalog) == 1
+    assert '- clai_customization: Use when asked to customize CLAI itself' in catalog[0]
+    assert catalog == [
+        part.content
+        for part in second.model_request_parameters.instruction_parts or ()
+        if 'capability:deferred_capabilities' in part.content
+    ]
 
 
 async def test_plugin_settings_are_validated(tmp_path: Path) -> None:
@@ -169,7 +229,7 @@ async def test_model_names_resolve_through_clai(tmp_path: Path, monkeypatch: pyt
 
         return FunctionModel(stream_function=stream, model_name=name)
 
-    monkeypatch.setattr(_app._ModelResolver, 'resolve', resolve)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(ModelResolver, 'resolve', resolve)
     # A setting saved for the CLI's runs on this model stays out.
     SettingsStore().save_model_settings('anthropic:claude-sonnet-4-6', {'temperature': 0.5})
     async with open_stock_agent(workspace=tmp_path, model='anthropic:claude-sonnet-4-6') as agent:
@@ -177,14 +237,7 @@ async def test_model_names_resolve_through_clai(tmp_path: Path, monkeypatch: pyt
         await agent.run('hello', model='openai:gpt-6')
     assert requests == snapshot(
         [
-            (
-                'anthropic:claude-sonnet-4-6',
-                {
-                    'anthropic_cache': '5m',
-                    'anthropic_cache_instructions': '5m',
-                    'anthropic_cache_tool_definitions': '5m',
-                },
-            ),
+            ('anthropic:claude-sonnet-4-6', {}),
             (
                 'openai:gpt-6',
                 {
@@ -223,7 +276,7 @@ async def test_plugins_get_their_settings_and_close_on_exit(
     stock = PluginSettings(
         id='compaction', factory='lifecycle', path=str(plugin), settings={'greeting': 'stock', 'target': 'stock'}
     )
-    monkeypatch.setattr(_app, 'STOCK_PLUGINS', (stock,))
+    monkeypatch.setattr(app, 'STOCK_PLUGINS', (stock,))
     with pytest.raises(RuntimeError, match='host failed') if fail else nullcontext():
         async with open_stock_agent(workspace=tmp_path, plugin_settings={'compaction': {'target': 'host'}}):
             assert log.read_text() == 'stock host'
@@ -256,7 +309,7 @@ async def test_approval_gated_host_configuration(tmp_path: Path, monkeypatch: py
     def ask_first(call: ToolCallInfo) -> GuardrailResult:
         return GuardrailResult.approve() if call.name == 'shell' else GuardrailResult.allow()
 
-    monkeypatch.setattr(_app._ModelResolver, 'resolve', resolve)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(ModelResolver, 'resolve', resolve)
     async with open_stock_agent(
         workspace=tmp_path,
         model='gateway/anthropic:claude-opus-5-5',
@@ -273,14 +326,7 @@ async def test_approval_gated_host_configuration(tmp_path: Path, monkeypatch: py
         )
     [(name, settings, tools)] = requests
     assert name == 'gateway/anthropic:claude-opus-5-5'
-    assert settings == snapshot(
-        {
-            'anthropic_cache': '5m',
-            'anthropic_cache_instructions': '5m',
-            'anthropic_cache_tool_definitions': '5m',
-            'thinking': 'high',
-        }
-    )
+    assert settings == snapshot({'thinking': 'high'})
     assert 'delegate_task' not in tools
     assert isinstance(result.output, str)
     assert 'HOST_VARIABLE=forwarded' in result.output

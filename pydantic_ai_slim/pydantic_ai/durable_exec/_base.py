@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import uuid
 from abc import abstractmethod
 from collections.abc import (
     AsyncGenerator,
@@ -12,13 +13,14 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import replace
 from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, Self, TypeVar, cast, runtime_checkable
 from weakref import ReferenceType, ref
 
+import anyio
 from opentelemetry.trace import get_current_span
 from pydantic_core import PydanticSerializationError
 
@@ -29,7 +31,7 @@ from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import Instrumentation, ProcessEventStream
+from pydantic_ai.capabilities import Instrumentation, ModelFallback, ProcessEventStream
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -48,8 +50,10 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    StreamedResponse,
     infer_model,
 )
+from pydantic_ai.models._request_timeout import open_durable_unit_stream
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
@@ -61,6 +65,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
+from ..models.wrapper import serving_wrapper_scope
 from ._capability_operation import (
     CapabilityBoundOperation,
     CapabilityCacheIdentity,
@@ -84,14 +89,12 @@ from ._operation import (
     DynamicToolsetCallToolParams,
     EventStreamHandlerId,
     EventStreamHandlerParams,
-    IdentityParameterTransport,
     ModelCancelSuspendedResponseId,
     ModelCancelSuspendedResponseParams,
     ModelCompactMessagesId,
     ModelCompactMessagesParams,
     ModelRequestId,
     ModelRequestParams,
-    ParameterTransport,
     ResultCodec,
     ToolsetCallToolId,
     ToolsetCallToolParams,
@@ -106,6 +109,7 @@ from ._operation_backend import (
     BoundDurableOperation,
     DurableOperationBackend,
     RegisteredOperationBackend,
+    durable_unit_scope,
     in_durable_unit,
 )
 from ._runtime_toolsets import (
@@ -132,7 +136,14 @@ from ._toolset import (
     validate_dynamic_tool_args,
     wrap_tool_call_result,
 )
-from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, managed_model_scope, unwrap_model
+from ._utils import (
+    DurableModel,
+    StreamedModelRequestResult,
+    consume_event_stream,
+    managed_model_scope,
+    mark_streamed_before_failing,
+    unwrap_model,
+)
 from ._workspace import (
     WORKSPACE_OPERATION_ID,
     DurableWorkspace,
@@ -174,10 +185,27 @@ class _RestrictedRunContext(Protocol):
 
 MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
+_CONVERSATION_ID_NAMESPACE = uuid.UUID('b4a5470b-7dc5-4744-b6d4-27f7c81a3775')
+"""Namespace for the UUID5 a durable run derives its default `conversation_id` from."""
+
+
+def conversation_id_from_run_id(run_id: str) -> str:
+    """Derive a run's default `conversation_id` from its `run_id`.
+
+    Return this from
+    [`get_default_conversation_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_conversation_id]
+    inside the durable context when
+    [`get_default_run_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_run_id] is replay-stable:
+    a replayed or recovered run then gets the same `conversation_id` without drawing randomness. The
+    derivation is deterministic, also for a caller-supplied `run_id`, and matches what the Temporal,
+    DBOS and Prefect capabilities return.
+    """
+    return str(uuid.uuid5(_CONVERSATION_ID_NAMESPACE, run_id))
+
 
 class _BoundModelOperations(NamedTuple):
     request: BoundDurableOperation[ModelRequestParams, Any, ModelResponse]
-    request_stream: BoundDurableOperation[ModelRequestParams, Any, StreamedActivityResult]
+    request_stream: BoundDurableOperation[ModelRequestParams, Any, StreamedModelRequestResult]
     compact_messages: BoundDurableOperation[ModelCompactMessagesParams, Any, ModelResponse]
     cancel_suspended_response: BoundDurableOperation[ModelCancelSuspendedResponseParams, Any, None]
 
@@ -300,6 +328,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     # would not add durability, it would take over dispatch from the first without either saying so.
     _one_per_agent: ClassVar[str | None] = 'durable execution engine'
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # The model-request hooks only route a run's model calls through the engine inside a durable
+        # context and pass through outside one; a realtime session makes no such calls to route.
+        # Measured against this class, so a subclass that adds its own hooks still warns.
+        return self._realtime_uncalled_hooks_overriding(BaseDurabilityCapability)
+
     @property
     def engine_name(self) -> str:
         """Human-readable engine name used in error messages."""
@@ -417,19 +451,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         async def handler(params: WorkspaceCallParams) -> WorkspaceCallResult:
             return await execute_call(self._unit_workspace(params), params.call)
 
-        self._bound_workspace_operation = self.get_durable_operation_backend().bind(
+        backend = self.get_durable_operation_backend()
+        self._bound_workspace_operation = backend.bind(
             DurableOperation(
                 operation_id=WORKSPACE_OPERATION_ID,
                 handler=handler,
-                parameter_transport=self._workspace_call_transport(),
+                parameter_transport=backend.parameter_transports.workspace_call(),
                 cache_identity=WorkspaceCallCacheIdentity(),
                 result_codec=self._typed_result_codec(WorkspaceCallResult),
                 config_role='capability',
             )
         )
-
-    def _workspace_call_transport(self) -> ParameterTransport[WorkspaceCallParams, Any]:
-        return IdentityParameterTransport[WorkspaceCallParams]()
 
     async def _call_workspace(self, params: WorkspaceCallParams) -> WorkspaceCallResult:
         assert self._bound_workspace_operation is not None
@@ -614,7 +646,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 operation = DurableOperation(
                     operation_id=CapabilityOperationId(capability_id, operation=operation_name),
                     handler=handler,
-                    parameter_transport=self._capability_operation_parameter_transport(declaration),
+                    parameter_transport=backend.parameter_transports.capability_operation(declaration),
                     cache_identity=CapabilityCacheIdentity(),
                     result_codec=TypedResultCodec(
                         capability_operation_result_type(declaration.result_type),
@@ -727,16 +759,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             value: Any = _ResolvedModelRequestContext(projection=projection, model=resolved_model)
         else:
             value = result.value
-        if not (ctx.usage - usage_before).has_values():
+        usage_delta = ctx.usage - usage_before
+        if not usage_delta.has_values() and not usage_delta.unmeasured_requests:
             # Recorded, not incremented: the operation accumulated this delta across the durable
             # boundary, where the activity's context can't reach the spans open back here.
             _usage_attribution.record_usage(ctx.usage, result.usage_delta)
         return value
-
-    def _capability_operation_parameter_transport(
-        self, declaration: CapabilityMethodDeclaration
-    ) -> ParameterTransport[CapabilityOperationParams, Any]:
-        return IdentityParameterTransport[CapabilityOperationParams]()
 
     def _check_bindable(self) -> None:
         """Validate that the capability can be bound in the current context."""
@@ -905,7 +933,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             toolset.visit_and_replace(self._wrap_and_register_leaf)
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        ts_id = ts.id
+        # Only an `id` chosen for the toolset names its durable units: one derived from a server URL could
+        # change with the URL and strand in-flight workflows.
+        ts_id = ts._explicit_id  # pyright: ignore[reportPrivateUsage]
         if ts_id is None and isinstance(ts, DynamicToolset):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
@@ -983,7 +1013,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     @asynccontextmanager
     async def _durable_model_scope(
-        self, model_id: str | None, run_context: RunContext[AgentDepsT]
+        self, model_id: str | None, run_context: RunContext[AgentDepsT], *, serving: bool = False
     ) -> AsyncGenerator[tuple[Model, RunContext[AgentDepsT]]]:
         """Enter a model durable unit: guard the run context, then rebuild the request's model.
 
@@ -992,19 +1022,39 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         replayed on recovery or a cache hit without re-running its body, so a `ctx.enqueue()` from
         the model -- or from a `resolve_model_id` capability rebuilding it -- would be dropped.
         Models rebuilt inside the unit are owned and context-managed here; the agent's default and
-        `models=` registry instances keep their existing external lifecycle owner.
+        `models=` registry instances keep their existing external lifecycle owner. A unit that sends a model request
+        passes `serving`, so the yielded model is wrapped by the capabilities'
+        [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model], as the core wraps it
+        outside durable execution.
         Pairing the two here means a unit can't get its model without the guard, instead of each
         engine remembering to install it per unit (Temporal has its own chokepoint in
-        `deserialize_run_context`, so it doesn't use this).
+        `deserialize_run_context`, so it doesn't use this). The unit scope tells the model it serves one request, on
+        every engine, so it doesn't open a connection to keep for the next unless an explicit outer
+        model or agent scope owns that connection on the same event loop.
         """
-        with self._durable_run_context_scope(run_context) as ctx, self._request_policy_scope(ctx):
+        with (
+            self._durable_run_context_scope(run_context) as ctx,
+            self._request_policy_scope(ctx),
+            durable_unit_scope(),
+        ):
             model = await self._resolve_model_for_request(model_id, ctx)
             registered, _ = self._registered_model_id(model)
             async with managed_model_scope(model, owned=not registered) as active_model:
                 ctx.model = active_model
                 if isinstance(ctx, _RestrictedRunContext):
                     ctx._expose_field('model')  # pyright: ignore[reportPrivateUsage]
-                yield active_model, ctx
+                # The workflow side applied the capabilities' model wrappers to its own copy of the model, which
+                # doesn't send requests, so they're applied again to the model that does.
+                root_capability = ctx.root_capability
+                serving_model = (
+                    root_capability.get_wrapper_model(active_model) if serving and root_capability is not None else None
+                )
+                if serving_model is None:
+                    yield active_model, ctx
+                    return
+                # Entered around the request it sends, as the core enters it outside durable execution.
+                async with serving_wrapper_scope(serving_model, active_model) as entered:
+                    yield entered, ctx
 
     @contextmanager
     def _request_policy_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[None]:
@@ -1109,12 +1159,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return unwrap_recorded_tool_call_result(payload)
         return unwrap_tool_call_result(payload)
 
-    async def _prepare_function_call_params(
-        self, toolset: FunctionToolset[AgentDepsT], params: ToolsetCallToolParams
-    ) -> ToolsetCallToolParams:
-        """Prepare engine-transported function call parameters for the common handler."""
-        return params
-
     @contextmanager
     def _tool_call_payload_errors(self, tool_name: str) -> Generator[None]:
         """Map engine-specific failures while dispatching a tool call."""
@@ -1125,34 +1169,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Install the durable run-context policy used by common tool handlers."""
         with self._durable_run_context_scope(ctx) as durable_ctx:
             yield durable_ctx
-
-    def _function_call_parameter_transport(
-        self, toolset: FunctionToolset[AgentDepsT]
-    ) -> ParameterTransport[ToolsetCallToolParams, Any]:
-        return IdentityParameterTransport[ToolsetCallToolParams]()
-
-    def _get_tools_parameter_transport(
-        self, toolset: AbstractToolset[AgentDepsT]
-    ) -> ParameterTransport[ToolsetGetToolsParams, Any]:
-        return IdentityParameterTransport[ToolsetGetToolsParams]()
-
-    def _get_instructions_parameter_transport(
-        self, toolset: AbstractToolset[AgentDepsT]
-    ) -> ParameterTransport[ToolsetGetToolsParams, Any]:
-        return IdentityParameterTransport[ToolsetGetToolsParams]()
-
-    def _dynamic_get_tools_parameter_transport(
-        self, toolset: DynamicToolset[AgentDepsT]
-    ) -> ParameterTransport[ToolsetGetToolsParams, Any]:
-        return IdentityParameterTransport[ToolsetGetToolsParams]()
-
-    def _dynamic_call_parameter_transport(
-        self, toolset: DynamicToolset[AgentDepsT]
-    ) -> ParameterTransport[DynamicToolsetCallToolParams, Any]:
-        return IdentityParameterTransport[DynamicToolsetCallToolParams]()
-
-    def _validation_context(self, ctx: RunContext[Any]) -> Any:
-        return ctx.validation_context
 
     def _bind_validate_tool_arguments_operation(
         self,
@@ -1166,16 +1182,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         cache_identity: Any
         if kind == 'function':
             function_toolset = cast(FunctionToolset[AgentDepsT], toolset)
-            parameter_transport = self._function_call_parameter_transport(function_toolset)
+            parameter_transport = backend.parameter_transports.function_call(function_toolset)
             cache_identity = _FunctionCallToolCacheIdentity()
         else:
             dynamic_toolset = cast(DynamicToolset[AgentDepsT], toolset)
-            parameter_transport = self._dynamic_call_parameter_transport(dynamic_toolset)
+            parameter_transport = backend.parameter_transports.dynamic_call(dynamic_toolset)
             cache_identity = _DynamicCallToolCacheIdentity()
 
         async def handler(params: ToolsetCallToolParams | DynamicToolsetCallToolParams) -> CallToolResult:
             if isinstance(params, ToolsetCallToolParams):
-                function_params = await self._prepare_function_call_params(
+                function_params = await backend.parameter_transports.prepare_function_call(
                     cast(FunctionToolset[AgentDepsT], toolset), params
                 )
                 assert function_params.tool is not None
@@ -1191,7 +1207,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         params.tool_args,
                         durable_ctx,
                         tool_def=params.tool_def,
-                        validation_context=self._validation_context,
                     )
                 )
 
@@ -1206,11 +1221,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 invocation_label=lambda params: params.name,
             )
         )
-
-    def _mcp_call_parameter_transport(
-        self, toolset: AbstractToolset[AgentDepsT]
-    ) -> ParameterTransport[ToolsetCallToolParams, Any]:
-        return IdentityParameterTransport[ToolsetCallToolParams]()
 
     def _mcp_discovery_registrations(
         self, get_tools: object, get_instructions: object | None
@@ -1262,7 +1272,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         base_config = self._toolset_operation_config('function', cast(str, toolset.id))
 
         async def call_tool_handler(params: ToolsetCallToolParams) -> CallToolResult:
-            params = await self._prepare_function_call_params(toolset, params)
+            params = await backend.parameter_transports.prepare_function_call(toolset, params)
             assert params.tool is not None
             with self._tool_run_context_scope(params.ctx) as durable_ctx:
                 return await wrap_tool_call_result(
@@ -1273,7 +1283,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         operation = DurableOperation(
             operation_id=ToolsetCallToolId('function', toolset_id=cast(str, toolset.id)),
             handler=call_tool_handler,
-            parameter_transport=self._function_call_parameter_transport(toolset),
+            parameter_transport=backend.parameter_transports.function_call(toolset),
             cache_identity=_FunctionCallToolCacheIdentity(),
             result_codec=self._typed_result_codec(CallToolResult),
             config_role='tool',
@@ -1344,7 +1354,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         params.tool_args,
                         durable_ctx,
                         tool_def=params.tool_def,
-                        validation_context=self._validation_context,
                     )
                 )
 
@@ -1353,7 +1362,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             DurableOperation(
                 operation_id=ToolsetGetToolsId('dynamic', toolset_id=cast(str, toolset.id)),
                 handler=get_tools_handler,
-                parameter_transport=self._dynamic_get_tools_parameter_transport(toolset),
+                parameter_transport=backend.parameter_transports.dynamic_get_tools(toolset),
                 cache_identity=_GetToolsCacheIdentity(),
                 result_codec=self._typed_result_codec(DynamicToolsResult),
                 config_role='tool',
@@ -1362,7 +1371,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         call_operation = DurableOperation(
             operation_id=ToolsetCallToolId('dynamic', toolset_id=cast(str, toolset.id)),
             handler=call_tool_handler,
-            parameter_transport=self._dynamic_call_parameter_transport(toolset),
+            parameter_transport=backend.parameter_transports.dynamic_call(toolset),
             cache_identity=_DynamicCallToolCacheIdentity(),
             result_codec=self._typed_result_codec(CallToolResult),
             config_role='tool',
@@ -1460,15 +1469,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     tools = await unit_toolset.get_tools(durable_ctx)
             return {name: tool.tool_def for name, tool in tools.items()}
 
+        backend = self.get_durable_operation_backend()
         operation = DurableOperation(
             operation_id=ToolsetGetToolsId('mcp', toolset_id=cast(str, toolset.id)),
             handler=get_tools_handler,
-            parameter_transport=self._get_tools_parameter_transport(toolset),
+            parameter_transport=backend.parameter_transports.get_tools(toolset),
             cache_identity=_GetToolsCacheIdentity(),
             result_codec=self._typed_result_codec(dict[str, ToolDefinition]),
             config_role='tool',
         )
-        return self.get_durable_operation_backend().bind(operation)
+        return backend.bind(operation)
 
     def _build_mcp_toolset_after_get_tools(
         self,
@@ -1508,15 +1518,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 async with toolset_for_unit(toolset, durable_ctx) as unit_toolset:
                     return await unit_toolset.get_instructions(durable_ctx)
 
+        backend = self.get_durable_operation_backend()
         operation = DurableOperation(
             operation_id=ToolsetGetInstructionsId(cast(str, toolset.id)),
             handler=get_instructions_handler,
-            parameter_transport=self._get_instructions_parameter_transport(toolset),
+            parameter_transport=backend.parameter_transports.get_instructions(toolset),
             cache_identity=_GetToolsCacheIdentity(),
             result_codec=self._typed_result_codec(Instructions),
             config_role='tool',
         )
-        return self.get_durable_operation_backend().bind(operation)
+        return backend.bind(operation)
 
     def _build_mcp_toolset_after_discovery(
         self,
@@ -1539,7 +1550,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         call_operation = DurableOperation(
             operation_id=ToolsetCallToolId('mcp', toolset_id=cast(str, toolset.id)),
             handler=call_tool_handler,
-            parameter_transport=self._mcp_call_parameter_transport(toolset),
+            parameter_transport=backend.parameter_transports.mcp_call(toolset),
             cache_identity=_FunctionCallToolCacheIdentity(),
             result_codec=self._typed_result_codec(CallToolResult),
             config_role='tool',
@@ -1615,6 +1626,25 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Validate the final request and repair durability after an outer hook swaps the model."""
+        return await self._ensure_durable_model(ctx, request_context)
+
+    async def prepare_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Repair durability for each attempt: another attempt may be on a model a hook asked for.
+
+        [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] swaps in the requested model
+        as-is, so without this a fallback or retry attempt would call it inline in workflow code.
+        """
+        return await self._ensure_durable_model(ctx, request_context)
+
+    async def _ensure_durable_model(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
         if not self.in_durable_context:
             return request_context
 
@@ -1659,8 +1689,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 )
             )
 
-        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
-            result = await operations.request_stream(
+        async def request_stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult:
+            return await operations.request_stream(
                 ModelRequestParams(
                     model_id,
                     messages=request.messages,
@@ -1669,7 +1699,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     run_context=ctx,
                 )
             )
-            return await self._load_streamed_activity_result(result, request.model_request_parameters)
 
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
             await operations.cancel_suspended_response(
@@ -1696,11 +1725,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
 
-    async def _load_streamed_activity_result(
-        self, result: object, model_request_parameters: ModelRequestParameters
-    ) -> StreamedActivityResult:
-        return cast(StreamedActivityResult, result)
-
     def _bind_model_operations(
         self, backend: DurableOperationBackend[Any], *, model_id: str | None, model_name: str
     ) -> _BoundModelOperations:
@@ -1708,19 +1732,20 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             DurableOperation(
                 operation_id=ModelRequestId(model_id, streaming=False, model_name=model_name),
                 handler=self._model_request_operation,
-                parameter_transport=self._model_request_parameter_transport(ModelResponse),
+                parameter_transport=backend.parameter_transports.model_request(ModelResponse),
                 cache_identity=_ModelRequestCacheIdentity(),
                 result_codec=self._typed_result_codec(ModelResponse),
                 config_role='model',
             )
         )
         request_stream_operation = backend.bind(
-            DurableOperation(
+            # The result type admits the `StreamedActivityResult` recorded before 2.60, which still replays.
+            DurableOperation[ModelRequestParams, Any, StreamedModelRequestResult](
                 operation_id=ModelRequestId(model_id, streaming=True, model_name=model_name),
                 handler=self._model_request_stream_operation,
-                parameter_transport=self._model_request_parameter_transport(StreamedActivityResult),
+                parameter_transport=backend.parameter_transports.model_request(StreamedModelRequestResult),
                 cache_identity=_ModelRequestCacheIdentity(),
-                result_codec=self._typed_result_codec(StreamedActivityResult),
+                result_codec=self._typed_result_codec(StreamedModelRequestResult),
                 config_role='model',
             )
         )
@@ -1728,7 +1753,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             DurableOperation(
                 operation_id=ModelCompactMessagesId(model_id, model_name=model_name),
                 handler=self._compact_messages_operation,
-                parameter_transport=self._compact_messages_parameter_transport(),
+                parameter_transport=backend.parameter_transports.compact_messages(),
                 cache_identity=_CompactMessagesCacheIdentity(),
                 result_codec=self._typed_result_codec(ModelResponse),
                 config_role='model',
@@ -1738,7 +1763,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             DurableOperation(
                 operation_id=ModelCancelSuspendedResponseId(model_id, model_name=model_name),
                 handler=self._cancel_suspended_response_operation,
-                parameter_transport=self._cancel_suspended_response_parameter_transport(),
+                parameter_transport=backend.parameter_transports.cancel_suspended_response(),
                 cache_identity=_CancelSuspendedResponseCacheIdentity(),
                 result_codec=self._typed_result_codec(type(None)),
                 config_role='model',
@@ -1752,42 +1777,79 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             cancel_suspended_response_operation,
         )
 
-    def _model_request_parameter_transport(self, result_type: object) -> ParameterTransport[ModelRequestParams, Any]:
-        return IdentityParameterTransport[ModelRequestParams]()
-
-    def _cancel_suspended_response_parameter_transport(
-        self,
-    ) -> ParameterTransport[ModelCancelSuspendedResponseParams, Any]:
-        return IdentityParameterTransport[ModelCancelSuspendedResponseParams]()
-
-    def _compact_messages_parameter_transport(self) -> ParameterTransport[ModelCompactMessagesParams, Any]:
-        return IdentityParameterTransport[ModelCompactMessagesParams]()
-
     async def _model_request_operation(self, params: ModelRequestParams) -> ModelResponse:
-        async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
-            response = await model.request(params.messages, params.model_settings, params.model_request_parameters)
+        response: ModelResponse | None = None
+        try:
+            async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, _):
+                response = await model.request(params.messages, params.model_settings, params.model_request_parameters)
+        except BaseException:
+            await self._withdraw_unreturned_response(params, response)
+            raise
         self._stamp_response(response, params.messages)
         return response
 
-    async def _model_request_stream_operation(self, params: ModelRequestParams) -> StreamedActivityResult:
-        async with self._durable_model_scope(params.model_id, params.run_context) as (model, durable_ctx):
-            async with model.request_stream(
-                params.messages, params.model_settings, params.model_request_parameters, durable_ctx
-            ) as streamed:
-                events = await capture_event_stream(
-                    run_context=durable_ctx,
-                    stream=streamed,
-                    handler=self._model_stream_event_handler(),
-                )
-        response = streamed.get()
+    async def _model_request_stream_operation(self, params: ModelRequestParams) -> ModelResponse:
+        response: ModelResponse | None = None
+        streamed: StreamedResponse | None = None
+        produced_output = False
+
+        async def events(stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
+            nonlocal produced_output
+            async for event in stream:
+                produced_output = True
+                yield event
+
+        try:
+            async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (
+                model,
+                durable_ctx,
+            ):
+                async with open_durable_unit_stream(
+                    model, params.messages, params.model_settings, params.model_request_parameters, durable_ctx
+                ) as streamed:
+                    await consume_event_stream(
+                        run_context=durable_ctx,
+                        stream=events(streamed),
+                        handler=self._model_stream_event_handler(),
+                    )
+                    # Before the stream is closed, so the request is still withdrawn if closing it fails.
+                    response = streamed.get()
+                # Read again, for what closing the stream filled in.
+                response = streamed.get()
+        except BaseException as error:
+            if response is None and streamed is not None:
+                # The stream failed while it was consumed: its request may already have been submitted.
+                with suppress(Exception):
+                    response = streamed.get()
+            await self._withdraw_unreturned_response(params, response)
+            if produced_output and response is not None and isinstance(error, Exception):
+                # Its events may already have reached an event handler in the unit, so the run mustn't retry or fall
+                # back from it as from a stream that failed to open, and should count the usage of what it produced.
+                mark_streamed_before_failing(error, response)
+            raise
         self._stamp_response(response, params.messages)
-        return StreamedActivityResult(response=response, events=events)
+        return response
+
+    async def _withdraw_unreturned_response(self, params: ModelRequestParams, response: ModelResponse | None) -> None:
+        """Withdraw a pending batch request whose unit failed after the request returned it, once it was sent.
+
+        Exiting a capability's model wrapper can fail after the request returned, and the response then never reaches
+        the run to be left for a later one or withdrawn, as the core does with a pending response a hook rejected. Like
+        that withdrawal, it's best effort and shielded, so the unit's own error is the one raised.
+        """
+        if response is None or response.state != 'suspended':
+            return
+        with anyio.CancelScope(shield=True), suppress(Exception):
+            async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, _):
+                # Other models' suspended jobs are left running, as when the core can't settle them.
+                if model._withdraws_rejected_suspended_response(response):  # pyright: ignore[reportPrivateUsage]
+                    await model.cancel_suspended_response(response)
 
     async def _cancel_suspended_response_operation(self, params: ModelCancelSuspendedResponseParams) -> None:
         if params.run_context is None:
             await self._cancel_suspended_response_without_run_context(params.model_id, params.response)
             return
-        async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
+        async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, _):
             await model.cancel_suspended_response(params.response)
 
     async def _compact_messages_operation(self, params: ModelCompactMessagesParams) -> ModelResponse:
@@ -1814,7 +1876,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return None
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            ts_id = ts.id
+            ts_id = ts._explicit_id  # pyright: ignore[reportPrivateUsage]
             if ts_id is None or (registered := self._toolsets_by_id.get(ts_id)) is None:
                 return ts
             if registered.wrapped is not ts:
@@ -1845,8 +1907,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost: install durable dispatch before outer before-hooks may perform model I/O,
-        # then run the final before-hook repair after every outer request rewrite.
-        return CapabilityOrdering(position='innermost')
+        # then run the final before-hook repair after every outer request rewrite. Inside `ModelFallback`,
+        # which is innermost too, so the per-attempt repair sees the model `ModelFallback` moved to.
+        return CapabilityOrdering(position='innermost', wrapped_by=(ModelFallback,))
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -1877,15 +1940,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         operation = DurableOperation(
             operation_id=EventStreamHandlerId(),
             handler=self._event_stream_handler_operation,
-            parameter_transport=self._event_stream_handler_parameter_transport(),
+            parameter_transport=backend.parameter_transports.event_stream_handler(),
             cache_identity=_EventStreamHandlerCacheIdentity(),
             result_codec=self._typed_result_codec(type(None)),
             config_role='event',
         )
         return backend.bind(operation)
-
-    def _event_stream_handler_parameter_transport(self) -> ParameterTransport[EventStreamHandlerParams, Any]:
-        return IdentityParameterTransport[EventStreamHandlerParams]()
 
     async def _event_stream_handler_operation(self, params: EventStreamHandlerParams) -> None:
         handler = self._effective_event_stream_handler()
@@ -1912,21 +1972,32 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         sibling [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] gets to reinterpret it.
         Instead no `'default'` is registered; every request for the default carries the raw string
         and re-resolves through the capability chain (or `infer_model`) on the worker.
+
+        An agent without a model of its own can still be bound when a capability can supply one, such as
+        [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] or
+        [`SelectModel`][pydantic_ai.capabilities.SelectModel]. Its requests then carry the model the agent
+        resolves from that capability at run time, like a request a capability moves to another model does,
+        so no `'default'` is registered.
         """
-        if agent.model is None:
+        agent_model = agent.model
+        # Which model a capability supplies may only be known once every capability has bound, or at run
+        # time, so only whether one can supply it is asked here.
+        if agent_model is None and not agent.root_capability._can_supply_model:  # pyright: ignore[reportPrivateUsage]
             raise UserError(
                 f'An agent needs to have a `model` in order to be used with {self.engine_name}, '
                 'it cannot be set at agent run time.'
             )
-        self._default_model_id = agent.model if isinstance(agent.model, str) else None
+        self._default_model_id = agent_model if isinstance(agent_model, str) else None
         default_model: Model | None
-        if isinstance(agent.model, str):
+        if agent_model is None:
+            default_model = None
+        elif isinstance(agent_model, str):
             # Only a `models=` mapping resolves the string to a concrete default here; any other
             # string defers to run-time resolution (a sibling `ResolveModelId`, this capability's
             # registry, or `infer_model`) so it's built worker-side with the run's deps.
-            default_model = self._extra_models.get(agent.model)
+            default_model = self._extra_models.get(agent_model)
         else:
-            default_model = agent.model
+            default_model = agent_model
 
         self._models_by_id = {} if default_model is None else {'default': default_model}
         for model_id, model_instance in self._extra_models.items():

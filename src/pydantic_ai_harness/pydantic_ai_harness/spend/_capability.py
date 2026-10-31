@@ -17,17 +17,25 @@ from __future__ import annotations
 
 import inspect
 import warnings
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
+from functools import cache, partial
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
+from pydantic import TypeAdapter
+
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
-from pydantic_ai.models._continuation import merge_responses, observe_continuation_segments
+from pydantic_ai.exceptions import UsageLimitUnavailableWarning, UserError
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestAttempt, ModelResponse
+from pydantic_ai.models._continuation import (
+    billed_beyond,
+    merge_responses,
+    observe_continuation_segments,
+    resumed_response,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend._budget import Budget, BudgetSpec, bucket, delimited, scope_key, store_key
@@ -57,6 +65,7 @@ PriceFunc = Callable[[ModelResponse], Decimal | None]
 
 _RUN_SCOPED_WINDOWS = ('run', 'conversation')
 _UNPRICED_POLICIES = frozenset({'zero', 'raise'})
+_ATTEMPTS_ADAPTER = TypeAdapter(list[ModelRequestAttempt])
 
 
 @dataclass
@@ -132,10 +141,12 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     on_unpriced: Literal['zero', 'raise'] = 'zero'
     """What to do when a response cannot be priced.
 
-    `'zero'` counts it as free and increments `Spent.unpriced_requests`, so the
-    gap shows up instead of disappearing. `'raise'` fails the run with
-    `UnpricedModelError`. Tokens are counted either way, so a token ceiling
-    still holds for a model the registry does not know.
+    When usage is incomplete, any known cost is still counted and the response
+    is marked unpriced because its full cost is unknown. Otherwise, `'zero'`
+    counts an unpriced response as free and increments `Spent.unpriced_requests`,
+    so the gap shows up instead of disappearing. `'raise'` fails the run with
+    `UnpricedModelError`. Token totals still accumulate either way; when usage is
+    incomplete, they are lower bounds.
     """
 
     expose_tools: bool = False
@@ -298,10 +309,17 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         and never sees a response a hook made up without calling the model (a cache hit or
         `SkipModelRequest`).
 
+        Billed attempts that did not produce the response, such as responses a `FallbackModel`
+        rejected, are accrued too: from `ModelResponse.failed_attempts` ahead of the response that
+        carries them, and from the attempts core records on the request context when every model
+        failed, whether or not a hook then recovered from the error. A response a hook rejected to
+        make another attempt, as the `ModelFallback` capability does, is accrued as a failed attempt too.
+
         The segments of a continuation chain are observed too, so the merged response they
         produce can be accrued boundary by boundary: see `_accrue_response`.
         """
         usage_response_offset = len(request_context._usage_responses)  # pyright: ignore[reportPrivateUsage]
+        usage_attempt_offset = len(request_context._usage_attempts)  # pyright: ignore[reportPrivateUsage]
         segments: list[ModelResponse] = []
         response: ModelResponse | None = None
         try:
@@ -311,14 +329,34 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             usage_responses = request_context._usage_responses[usage_response_offset:]  # pyright: ignore[reportPrivateUsage]
             # Segments are attributed only to a lifecycle's single committed response, which core merged them into.
             boundaries = _continuation_boundaries(request_context, segments) if len(usage_responses) == 1 else []
-            first_error: Exception | None = None
+            # A response a hook rejected to make another attempt, such as one the `ModelFallback` capability rejected,
+            # is a failed attempt like one a `FallbackModel` rejected, though core lists it as a billed response.
+            rejected = request_context._rejected_usage_responses  # pyright: ignore[reportPrivateUsage]
+            errors: list[Exception | None] = []
             for response_index, usage_response in enumerate(usage_responses, start=usage_response_offset):
-                try:
-                    error = await self._accrue_response(ctx, usage_response, response_index, boundaries)
-                except Exception as exc:
-                    error = exc
-                if first_error is None:
-                    first_error = error
+                response_token = cache(partial(self._dedup_token, ctx, usage_response, response_index))
+                boundary_tokens = [
+                    (boundary, cache(partial(self._dedup_token, ctx, boundary, response_index)))
+                    for boundary in boundaries
+                ]
+                anchors = [*boundary_tokens, (usage_response, response_token)]
+                for billed in _billed_attempts(usage_response.failed_attempts or (), partial(_anchored_token, anchors)):
+                    errors.append(await self._accrue_safely(ctx, *billed, failed_attempt=True))
+                errors.append(
+                    await self._accrue_safely(
+                        ctx,
+                        usage_response,
+                        response_token,
+                        boundary_tokens,
+                        failed_attempt=any(usage_response is response for response in rejected),
+                    )
+                )
+            unanswered = request_context._usage_attempts[usage_attempt_offset:]  # pyright: ignore[reportPrivateUsage]
+            if unanswered:
+                unanswered_token = cache(partial(_unanswered_token, ctx, unanswered))
+                for billed in _billed_attempts(unanswered, partial(_attempt_token, unanswered_token)):
+                    errors.append(await self._accrue_safely(ctx, *billed, failed_attempt=True))
+            first_error = next((error for error in errors if error is not None), None)
             # Only on the success path: pricing-policy and callback errors have never been
             # able to outrank the request's own exception, and a retryable failure such as
             # `ModelRetry` must keep propagating so the run retries instead of dying on a
@@ -328,23 +366,57 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         assert response is not None
         return response
 
+    async def _accrue_safely(
+        self,
+        ctx: RunContext[AgentDepsT],
+        response: ModelResponse,
+        token: Callable[[], str],
+        boundaries: Sequence[tuple[ModelResponse, Callable[[], str]]] = (),
+        *,
+        failed_attempt: bool = False,
+    ) -> Exception | None:
+        """Accrue one billed response, returning rather than raising what went wrong.
+
+        One failure must not stop the other responses of the lifecycle from accruing.
+        """
+        try:
+            error = await self._accrue_response(ctx, response, token, boundaries, failed_attempt=failed_attempt)
+            if (
+                error is None
+                and response.usage.unmeasured_requests
+                and any(budget.tokens is not None for budget in self.budgets)
+            ):
+                warnings.warn(
+                    'Some responses omitted usage information, so `SpendLimits` token totals are lower bounds '
+                    'and token ceilings cannot be fully enforced. A custom price does not restore missing tokens; '
+                    'check the provider usage reporting or promote `UsageLimitUnavailableWarning` to an error.',
+                    UsageLimitUnavailableWarning,
+                    stacklevel=3,
+                )
+            return error
+        except Exception as exc:
+            return exc
+
     async def _accrue_response(
         self,
         ctx: RunContext[AgentDepsT],
         response: ModelResponse,
-        response_index: int,
-        boundaries: Sequence[ModelResponse] = (),
+        token: Callable[[], str],
+        boundaries: Sequence[tuple[ModelResponse, Callable[[], str]]] = (),
+        *,
+        failed_attempt: bool = False,
     ) -> Exception | None:
         """Accrue one billed response, then report it once.
 
         `boundaries` are what a continuation chain had merged into after each segment before
-        its last. Each accrues its USD and token growth over what is already applied, and
-        `response` last, so the tokens add up to `response` itself. Under durable execution
-        each segment is its own durable model request, and a non-streamed lifecycle that
-        failed partway accrued the merged response up to the failure. A retry replays those
-        segments and reaches the same boundaries in the same order, so the recorded accruals
-        replay and only the segments it newly requested reach the store. Accruing the whole
-        merged response in one call would replay the recorded accrual in its place instead.
+        its last, each with its replay token. Each accrues its USD and token growth over what is
+        already applied, and `response` last, so the tokens add up to `response` itself. Under
+        durable execution each segment is its own durable model request, and a non-streamed
+        lifecycle that failed partway accrued the merged response up to the failure. A retry
+        replays those segments and reaches the same boundaries in the same order, so the
+        recorded accruals replay and only the segments it newly requested reach the store.
+        Accruing the whole merged response in one call would replay the recorded accrual in
+        its place instead.
 
         The request and, when `response` is unpriced, the unpriced request are counted with
         the first accrual. A boundary that cannot be priced adds no USD and `response` catches
@@ -355,11 +427,11 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         always written: it carries the request, and a retry must write it at the same position
         the failed attempt did.
         """
-        usd, priced, price_error = self._price_of(response)
+        usd, priced, price_error = self._price_of(response, failed_attempt=failed_attempt)
         keyed = await self._keyed(ctx)
         applied_usd, applied_tokens = Decimal(0), 0
         accrued: Mapping[str, Spent] | None = None
-        for boundary in (*boundaries, response):
+        for boundary, boundary_token in (*boundaries, (response, token)):
             boundary_usd = usd if boundary is response else self._price_of(boundary)[0]
             with money_precision():
                 usd_growth = max(Decimal(0), boundary_usd - applied_usd)
@@ -381,7 +453,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                         requests=1 if first else 0,
                         unpriced=0 if priced or not first else 1,
                         ttl=budget.ttl,
-                        token=self._dedup_token(ctx, boundary, response_index),
+                        token=boundary_token(),
                     )
             # Every window in one call, so a failure cannot leave the response counted
             # against the day and not the month. Nothing to apply is not a call: see `_read`.
@@ -414,6 +486,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 usage=snapshot.usage,
                 usd=snapshot.usd,
                 priced=snapshot.priced,
+                failed_attempt=failed_attempt,
                 budgets=tuple(
                     SpendBudgetStatus(
                         name=status.budget.name,
@@ -451,37 +524,47 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             if error is None:
                 error = UserError(f'`SpendLimits.price` {price_error} for a response.')
 
-        if (
-            not priced
-            and self.on_unpriced == 'zero'
-            and error is None
-            and any(budget.usd is not None for budget in self.budgets)
-        ):
-            # Only this combination is silent: the response adds nothing in dollars, so a
-            # USD ceiling can never be reached by requests the registry cannot price. A
-            # token ceiling still holds, so it is not warned about.
-            model = response.model_name or '<unnamed>'
-            if model not in self._warned_unpriced:
-                self._warned_unpriced.add(model)
-                warnings.warn(
-                    f'No price for model {model}, so it counts as $0 against a USD budget. '
-                    "Supply `SpendLimits.price` to price it, or set `on_unpriced='raise'` to "
-                    'stop the run instead. Token ceilings are unaffected.',
-                    UnpricedModelWarning,
-                    stacklevel=2,
-                )
-
-        if not priced and self.on_unpriced == 'raise' and error is None:
-            # Raised last, after the store is updated and `on_spend` has seen the
-            # response. The request happened and its tokens were really spent, so
-            # dropping them would leave a token ceiling understating what the
-            # model was asked to do, and an audit that skipped exactly the
-            # unpriced responses would be missing the ones worth knowing about.
-            error = UnpricedModelError(
-                f'No price for model {response.model_name or "<unnamed>"}. Supply `SpendLimits.price`, '
-                "or set on_unpriced='zero' to count the request as free."
-            )
+        if not priced and error is None:
+            error = self._handle_unpriced(response, usd)
         return error
+
+    def _handle_unpriced(self, response: ModelResponse, usd: Decimal) -> Exception | None:
+        """Apply `on_unpriced` to a response whose full price is unknown, returning the error to raise, if any."""
+        model = response.model_name or '<unnamed>'
+        if self.on_unpriced == 'zero':
+            if any(budget.usd is not None for budget in self.budgets) and model not in self._warned_unpriced:
+                # A response without a registered price adds nothing in dollars. Incomplete
+                # usage can add a known subtotal, but still leaves the USD total understated.
+                self._warned_unpriced.add(model)
+                if response.usage.unmeasured_requests:
+                    warning_message = (
+                        f'Usage was incomplete for model {model}; only the known subtotal ${usd} was recorded '
+                        'against USD budgets, and known token totals are lower bounds. Supply `SpendLimits.price` '
+                        "for the complete price, or set `on_unpriced='raise'` to stop the run."
+                    )
+                else:
+                    warning_message = (
+                        f'No price for model {model}, so it counts as $0 against a USD budget. '
+                        "Supply `SpendLimits.price` to price it, or set `on_unpriced='raise'` to "
+                        'stop the run instead. Token ceilings are unaffected.'
+                    )
+                warnings.warn(warning_message, UnpricedModelWarning, stacklevel=3)
+            return None
+        # Raised last, after the store is updated and `on_spend` has seen the
+        # response. The request happened and its tokens were really spent, so
+        # dropping them would leave a token ceiling understating what the
+        # model was asked to do, and an audit that skipped exactly the
+        # unpriced responses would be missing the ones worth knowing about.
+        if response.usage.unmeasured_requests:
+            return UnpricedModelError(
+                f'Usage was incomplete for model {model}; only the known subtotal ${usd} was recorded, and known '
+                'token totals are lower bounds. Supply `SpendLimits.price` for the complete price, or set '
+                "`on_unpriced='zero'` to continue with the known subtotal."
+            )
+        return UnpricedModelError(
+            f'No price for model {model}. Supply `SpendLimits.price`, '
+            "or set on_unpriced='zero' to count the request as free."
+        )
 
     async def status(
         self,
@@ -658,9 +741,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         from different sources. This also distinguishes responses when a provider repeats an id.
 
         Provider details and metadata are deliberately excluded because providers may put
-        arbitrary non-serializable objects there. Timestamp is excluded because core creates it
-        from the local clock, and the response's run stamp is excluded because core adds it only
-        after this wrapper returns. Length-prefixing prevents boundary collisions.
+        arbitrary non-serializable objects there. Timestamps and attempt durations are excluded
+        because core measures them on the local clock, and the response's run stamp is excluded
+        because core adds it only after this wrapper returns. Length-prefixing prevents boundary
+        collisions.
         """
         stable_response = replace(
             response,
@@ -669,6 +753,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 for part in response.parts
             ],
             timestamp=datetime.min.replace(tzinfo=response.timestamp.tzinfo),
+            failed_attempts=response.failed_attempts and [_stable_attempt(a) for a in response.failed_attempts],
             run_id=None,
             conversation_id=None,
             metadata=None,
@@ -723,13 +808,21 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         now = await self._now()
         return [(budget, self._key(budget, ctx, now, None)) for budget in self.budgets]
 
-    def _price_of(self, response: ModelResponse) -> tuple[Decimal, bool, str | None]:
-        """What the response cost, whether that number is real, and why it was rejected.
+    def _price_of(self, response: ModelResponse, *, failed_attempt: bool = False) -> tuple[Decimal, bool, str | None]:
+        """What cost to record, whether it prices the whole response, and why it was rejected.
 
         A rejected amount is reported rather than raised so the caller can finish
         accruing the response first. The request happened and its tokens were really
         spent, so dropping them would leave a token ceiling understating what the model
-        was asked to do -- the same reasoning `on_unpriced='raise'` already follows.
+        was asked to do -- the same reasoning `on_unpriced='raise'` already follows. A
+        response with incomplete usage can still carry a known cost subtotal; that amount
+        is recorded while `on_unpriced` handles the missing portion.
+
+        A failed attempt's response only summarizes the rejected one, so the `usage.cost` core
+        put on it is used when `price` gives none: core priced it with the provider URL the
+        rejected response carried, which the summary does not. Core never overwrites a cost
+        the model set itself, so a negative or non-finite one is not trusted and the summary
+        is priced from the registry instead.
         """
         if self.price is not None:
             try:
@@ -748,6 +841,13 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     # closes. Corrections belong in the store, not here.
                     return Decimal(0), False, f'returned a negative amount ({supplied})'
                 return supplied, True, None
+        known_cost = response.usage.cost
+        if known_cost is not None and not (known_cost.is_finite() and known_cost >= 0):
+            known_cost = None
+        if response.usage.unmeasured_requests:
+            return known_cost or Decimal(0), False, None
+        if failed_attempt and known_cost is not None:
+            return known_cost, True, None
         if response.model_name:
             try:
                 return response.cost().total_price, True, None
@@ -759,6 +859,65 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return Decimal(0), False, None
 
 
+def _billed_attempts(
+    attempts: Sequence[ModelRequestAttempt], token: Callable[[int], str]
+) -> Iterator[tuple[ModelResponse, Callable[[], str]]]:
+    """Each attempt the provider billed, as a response to accrue and its replay token.
+
+    The response carries what `price` and the registry read, so a user's `price` prices an attempt the
+    same way it would have priced the response had it been accepted. `token` gives an attempt's replay
+    token from its position among `attempts`.
+    """
+    for index, attempt in enumerate(attempts):
+        if attempt.usage is None:
+            continue
+        billed = ModelResponse(
+            parts=[],
+            usage=attempt.usage,
+            model_name=attempt.model_name,
+            provider_name=attempt.provider_name,
+            timestamp=attempt.timestamp,
+        )
+        yield billed, partial(token, index)
+
+
+def _attempt_token(token: Callable[[], str], index: int) -> str:
+    """Extend `token`, which identifies what the attempts were recorded on, with an attempt's position among them."""
+    return delimited(token(), 'attempt', str(index))
+
+
+def _anchored_token(anchors: Sequence[tuple[ModelResponse, Callable[[], str]]], index: int) -> str:
+    """The replay token of a committed response's attempt at `index`, anchored to the first of `anchors` carrying it.
+
+    `anchors` are a continuation chain's boundaries followed by the response it was merged into. Merging keeps
+    earlier segments' attempts first, so the first boundary carrying an attempt is the earliest response it
+    could have been committed on: a retry of a chain that failed partway reaches that boundary again and
+    replays the attempt's recorded accrual, rather than keying it to a merged response the failed run never
+    reached. Without boundaries the anchor is the response itself.
+    """
+    token = next(token for response, token in anchors if len(response.failed_attempts or ()) > index)
+    return _attempt_token(token, index)
+
+
+def _unanswered_token(ctx: RunContext[Any], attempts: Sequence[ModelRequestAttempt]) -> str:
+    """Identify attempts that failed with no response to carry them, the way `_dedup_token` identifies a response."""
+    digest = sha256(_ATTEMPTS_ADAPTER.dump_json([_stable_attempt(attempt) for attempt in attempts])).hexdigest()
+    return delimited(ctx.run_id or '', str(ctx.run_step), 'unanswered', digest)
+
+
+def _stable_attempt(attempt: ModelRequestAttempt) -> ModelRequestAttempt:
+    """`attempt` without what can differ when the same request is made again.
+
+    That is the local-clock readings, and the error text, which can carry a provider request id.
+    """
+    return replace(
+        attempt,
+        timestamp=datetime.min.replace(tzinfo=attempt.timestamp.tzinfo),
+        duration=timedelta(0),
+        error=None,
+    )
+
+
 def _continuation_boundaries(
     request_context: ModelRequestContext, segments: Sequence[ModelResponse]
 ) -> list[ModelResponse]:
@@ -766,18 +925,18 @@ def _continuation_boundaries(
 
     Folded the way core's continuation loop folds them, starting from the suspended response
     a resumed request ends in, so each boundary is the response core would have committed had
-    the chain failed right after that segment.
+    the chain failed right after that segment. That suspended response was charged by the run
+    that produced it, so it is the baseline: each boundary carries only what was billed beyond it,
+    as the response core records for the request does.
     """
     if len(segments) < 2:
         return []
-    messages = request_context.messages
-    merged = messages[-1] if messages else None
-    if not (isinstance(merged, ModelResponse) and merged.state == 'suspended'):
-        merged = None
+    resumed = resumed_response(request_context.messages)
+    merged = resumed
     boundaries: list[ModelResponse] = []
     for segment in segments[:-1]:
         merged = segment if merged is None else merge_responses(merged, segment)
-        boundaries.append(merged)
+        boundaries.append(billed_beyond(merged, resumed))
     return boundaries
 
 

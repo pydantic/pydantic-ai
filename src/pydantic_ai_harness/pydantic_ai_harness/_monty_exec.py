@@ -129,11 +129,14 @@ class MontyRunState:
     """A Monty worker pool and its checked-out REPL session, opened lazily and closed together.
 
     Workers are local subprocesses from `AsyncMonty`, or remote ones dialed through
-    `AsyncMontyWebsocket` when `monty_sandbox_url` is set. Inside a Temporal workflow every Monty
-    call goes through `portal`, opened with the pool and closed after it.
+    `AsyncMontyWebsocket` when `monty_sandbox_url` or `pool_factory` is set. Inside a Temporal workflow
+    every Monty call goes through `portal`, opened with the pool and closed after it.
     """
 
-    monty_sandbox_url: str | None = None
+    monty_sandbox_url: str | None = field(default=None, repr=False)
+    """May carry credentials, so it stays out of `repr`."""
+    pool_factory: Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = None
+    """Builds the remote pool, sync or async, in place of `monty_sandbox_url`, with its own URL, headers, and timeouts."""
     pool: AsyncMonty | AsyncMontyWebsocket | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
@@ -154,7 +157,11 @@ class MontyRunState:
             try:
                 if in_temporal_workflow:
                     self.portal = self._pool_stack.enter_context(start_blocking_portal())
-                if self.monty_sandbox_url is None:
+                if self.pool_factory is not None:
+                    pool = self.pool_factory()
+                    if inspect.isawaitable(pool):
+                        pool = await pool
+                elif self.monty_sandbox_url is None:
                     pool = AsyncMonty()
                 else:
                     max_feed_duration_secs = limits.get('max_feed_duration_secs')
@@ -432,7 +439,11 @@ class MontyExecutor:
         for cid in pending_ids:
             if cid in self._pre_resolved:
                 results[cid] = self._pre_resolved.pop(cid)
-            elif self.global_sequential:
+
+        # Sequential modes resume the deferred calls in dispatch order: `_pending` is
+        # insertion-ordered, but `pending_call_ids` may list the ids in any order.
+        if self.global_sequential:
+            for cid in [cid for cid in self._pending if cid in pending_ids]:
                 results[cid] = await _await_external(self._pending.pop(cid))
 
         # Gather any remaining parallel tasks concurrently. They stay in `_pending` until
@@ -463,6 +474,6 @@ def _wrap_gathered(outcome: Any) -> ExternalReturnValue | ExternalException:
     """Wrap an `asyncio.gather(return_exceptions=True)` outcome for Monty."""
     if isinstance(outcome, Exception):
         return ExternalException(exception=outcome)
-    if isinstance(outcome, BaseException):  # pragma: no cover
+    if isinstance(outcome, BaseException):
         raise outcome
     return ExternalReturnValue(return_value=outcome)

@@ -7,15 +7,18 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.capabilities import AbstractCapability, Caching, LocalWorkspace, ValidatedToolArgs
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import CacheSetting, ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
+from pydantic_ai_harness.subagents import TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
@@ -121,6 +124,17 @@ class TestCoder:
         tools = [tool.name for tool in model.last_model_request_parameters.function_tools]
         assert tools == ['read_file', 'write_file', 'edit_file', 'list_files', 'grep', 'shell']
 
+    async def test_task_control_adds_the_task_tools(self, tmp_path: Path) -> None:
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[LocalWorkspace(tmp_path), Coder(task_control=TaskControl())]).run(
+            'Inspect tools'
+        )
+        assert model.last_model_request_parameters is not None
+        tools = [tool.name for tool in model.last_model_request_parameters.function_tools]
+        assert tools[-5:] == ['delegate_task', 'list_tasks', 'message_task', 'answer_task', 'cancel_task']
+        with pytest.raises(ValueError, match='`task_control` requires `sub_agents=True`'):
+            Coder(sub_agents=False, task_control=TaskControl())
+
     async def test_the_delegate_carries_capabilities_bound_next_to_coder(self, tmp_path: Path) -> None:
         """The delegate is the agent `Coder` is bound to, so a host hook sees the commands it runs."""
         log = _ToolLog()
@@ -136,19 +150,70 @@ class TestCoder:
         result = await agent.run('Inspect tools', capabilities=[Coder(sub_agents=False)])
         assert result.output == 'success (no tool calls)'
 
+    @pytest.mark.parametrize(
+        ('caching', 'before', 'after', 'model_settings', 'agent_settings', 'run_settings', 'expected'),
+        [
+            pytest.param(True, [], [], None, None, None, True, id='default'),
+            pytest.param(False, [], [], None, None, None, None, id='left-out'),
+            pytest.param(True, [], [], {'cache': False}, None, None, False, id='model-disables'),
+            pytest.param(True, [], [], None, {'cache': False}, None, False, id='agent-disables'),
+            pytest.param(True, [], [], None, {'cache': '1h'}, None, '1h', id='agent-configures'),
+            pytest.param(True, [Caching('1h')], [], None, None, None, '1h', id='caching-before'),
+            pytest.param(True, [], [Caching(False)], None, None, None, False, id='caching-after'),
+            pytest.param(True, [], [], None, None, {'cache': False}, False, id='run-disables'),
+        ],
+    )
+    async def test_caching(
+        self,
+        tmp_path: Path,
+        caching: bool,
+        before: list[AbstractCapability[object]],
+        after: list[AbstractCapability[object]],
+        model_settings: ModelSettings | None,
+        agent_settings: ModelSettings | None,
+        run_settings: ModelSettings | None,
+        expected: CacheSetting | None,
+    ) -> None:
+        """Prompt caching is on unless the model, the agent, a capability, or the run configures `cache`."""
+        seen: list[CacheSetting | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.model_request_parameters.cache)
+            return ModelResponse(parts=[TextPart('done')])
+
+        model = FunctionModel(
+            respond,
+            profile=ModelProfile(supports_cache=True, supported_cache_retentions=('5m', '1h')),
+            settings=model_settings,
+        )
+        coder = Coder[object](repo_context=False, caching=caching)
+        agent = Agent(
+            model,
+            model_settings=agent_settings,
+            capabilities=[LocalWorkspace(tmp_path), *before, coder, *after],
+        )
+        await agent.run('go', model_settings=run_settings)
+        assert seen == [expected]
+
     @pytest.mark.parametrize('extra_instructions', [None, '', 'Keep new files under 400 lines.'])
     async def test_instructions(self, tmp_path: Path, extra_instructions: str | None) -> None:
         model = TestModel(call_tools=[])
-        await Agent(model, capabilities=[Coder(instructions=extra_instructions, repo_context=False)]).run(
-            'Inspect instructions', workspace=LocalWorkspaceBackend(tmp_path)
-        )
+        coder = Coder(instructions=extra_instructions, repo_context=False, sub_agents=False)
+        await Agent(model, capabilities=[coder]).run('Inspect instructions', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         parts = model.last_model_request_parameters.instruction_parts or []
         guidance = next(part.content for part in parts if 'Zen of Python' in part.content)
         default = guidance.removesuffix('\n' + extra_instructions) if extra_instructions else guidance
-        assert len(default.split()) < 180
-        assert all(principle in default for principle in ('DRY', 'YAGNI', 'SOLID'))
+        assert len(default.split()) < 500
+        assert all(principle in default for principle in ('DRY', 'YAGNI', 'Zen of Python'))
+        assert 'SOLID' not in default
+        assert "Match the surrounding code's style,\nstructure, and imports" in default
         assert 'delete any scratch files you created' in default
+        assert 'in full with `read_file` rather than batched `cat` in the shell' in default
+        assert 'batch independent searches into one\nshell call' in default
+        assert 'once the relevant tests pass, broaden or\nrepeat testing only when new changes' in default
+        assert 'measure the result against that target before finishing' in default
+        assert 'first\nassume your model of the problem is wrong' in default
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
 
@@ -160,8 +225,58 @@ class TestCoder:
         results = await call_tools([coder], [denied] * MAX_FILE_TOOL_RETRIES, workspace=workspace)
         assert len(results) == MAX_FILE_TOOL_RETRIES
         assert all('the file tools only work inside it' in result for result in results)
-        with pytest.raises(UnexpectedModelBehavior, match=f'exceeded max retries count of {MAX_FILE_TOOL_RETRIES}'):
-            await call_tools([coder], [denied] * (MAX_FILE_TOOL_RETRIES + 1), workspace=workspace)
+
+    async def test_exhausted_tool_retries_come_back_to_the_model(self, tmp_path: Path) -> None:
+        """Once a tool's retries are spent, its error is a failed tool result and the run continues."""
+        denied: tuple[str, dict[str, object]] = ('write_file', {'path': '/elsewhere/probe.py', 'content': 'x'})
+        allowed: tuple[str, dict[str, object]] = ('write_file', {'path': 'probe.py', 'content': 'x'})
+        coder = Coder[None](repo_context=False, sub_agents=False)
+        workspace = LocalWorkspaceBackend(working_dir=tmp_path)
+        calls = [denied] * (MAX_FILE_TOOL_RETRIES + 2) + [allowed]
+        results = await call_tools([coder], calls, workspace=workspace)
+        assert len(results) == len(calls)
+        assert all('the file tools only work inside it' in result for result in results[:-1])
+        assert not any('failed several times in a row' in result for result in results[:MAX_FILE_TOOL_RETRIES])
+        assert all('failed several times in a row' in result for result in results[MAX_FILE_TOOL_RETRIES:-1])
+        assert (tmp_path / 'probe.py').read_text() == 'x'
+
+    async def test_other_tool_errors_still_end_the_run(self, tmp_path: Path) -> None:
+        """Only an exhausted retry comes back to the model; any other tool error still ends the run."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('boom', {})])
+
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[Coder[None](repo_context=False, sub_agents=False)],
+        )
+
+        @agent.tool_plain
+        def boom() -> str:
+            raise RuntimeError('tool crashed')
+
+        with pytest.raises(RuntimeError, match='tool crashed'):
+            await agent.run('Use the tools', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+
+    @pytest.mark.parametrize('repo_context', [False, True])
+    @pytest.mark.parametrize('sub_agents', [False, True])
+    async def test_instructions_follow_the_composition(
+        self, tmp_path: Path, repo_context: bool, sub_agents: bool
+    ) -> None:
+        """The repo-file note comes with `RepoContext`, which loads them; the delegation rule with `delegate_task`."""
+        model = TestModel(call_tools=[])
+        coder = Coder(repo_context=repo_context, sub_agents=sub_agents)
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
+        assert ('instruction files (AGENTS.md, CLAUDE.md) in the project directory are' in text) is repo_context
+        rule = (
+            'spawn sub-agents with `delegate_task` unless the user or applicable AGENTS.md\ninstructions explicitly ask'
+        )
+        assert (rule in text) is sub_agents
+        assert ('delegate_task' in tools) is sub_agents
 
     @pytest.mark.parametrize(
         ('unrestricted', 'files'),

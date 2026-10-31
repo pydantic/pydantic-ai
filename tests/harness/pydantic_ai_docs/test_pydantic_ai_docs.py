@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs, PydanticAIDocsToolset, PydanticAIDocsTopic
+from tests.docs_model_aliases import ALIAS_RE, resolve_model_aliases
 
 
 def _run_context(workspace: Workspace | None = None) -> RunContext[None]:
@@ -44,12 +47,15 @@ def workspace(tmp_path: Path) -> Workspace:
 
 
 class _FakeClient:
-    """Stand-in for `httpx.AsyncClient` that returns a canned response or raises."""
+    """Stand-in for `httpx.AsyncClient` that returns a canned response or raises.
+
+    `text` is the body for every URL, or a body per URL.
+    """
 
     def __init__(
         self,
         *,
-        text: str = '',
+        text: str | Mapping[str, str] = '',
         status: int = 200,
         error: httpx.HTTPError | None = None,
         requested: list[str],
@@ -69,13 +75,14 @@ class _FakeClient:
         self._requested.append(url)
         if self._error is not None:
             raise self._error
-        return httpx.Response(self._status, text=self._text, request=httpx.Request('GET', url))
+        text = self._text if isinstance(self._text, str) else self._text[url]
+        return httpx.Response(self._status, text=text, request=httpx.Request('GET', url))
 
 
 def _install_fake_httpx(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    text: str = '',
+    text: str | Mapping[str, str] = '',
     status: int = 200,
     error: httpx.HTTPError | None = None,
 ) -> list[str]:
@@ -98,6 +105,11 @@ _UPSTREAM_DOCS_LAYOUT = {
     PydanticAIDocsTopic.toolsets: 'toolsets.md',
     PydanticAIDocsTopic.agent: 'agent.md',
 }
+
+_REMOTE_DOCS = 'https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs'
+_ALIASES_JSON = json.dumps({'openai:medium': 'openai:some-model'})
+_ALIASED_PAGE = "Agent('{{ openai:medium }}')  # {{ openai:medium.name }}"
+_RESOLVED_PAGE = "Agent('openai:some-model')  # some-model"
 
 
 class TestPydanticAIDocsToolset:
@@ -210,6 +222,64 @@ class TestPydanticAIDocsToolset:
         assert requested == [
             f'https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/{_UPSTREAM_DOCS_LAYOUT[topic]}'
         ]
+
+    async def test_resolves_model_aliases_like_the_docs_site(self) -> None:
+        # The repository's own docs, so a moved alias file or a changed alias syntax fails here.
+        root = Path(__file__).parents[3]
+        page = (root / 'docs' / 'agent.md').read_text(encoding='utf-8')
+        assert ALIAS_RE.search(page)
+        toolset = PydanticAIDocsToolset[object](local_docs_path=Path('docs'), cache=None)
+        workspace = Workspace(LocalWorkspaceBackend(working_dir=root))
+
+        result = await _call_docs_tool(toolset, workspace, 'read_pyai_docs', topic=PydanticAIDocsTopic.agent)
+
+        assert result == resolve_model_aliases(page)
+
+    async def test_resolves_model_aliases_from_the_remote_source(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        page_url = f'{_REMOTE_DOCS}/agent.md'
+        aliases_url = f'{_REMOTE_DOCS}/model_aliases/aliases.json'
+        requested = _install_fake_httpx(monkeypatch, text={page_url: _ALIASED_PAGE, aliases_url: _ALIASES_JSON})
+        toolset = PydanticAIDocsToolset[object](local_docs_path=None, cache=None)
+
+        result = await _call_docs_tool(toolset, None, 'read_pyai_docs', topic=PydanticAIDocsTopic.agent)
+
+        assert result == _RESOLVED_PAGE
+        assert requested == [page_url, aliases_url]
+
+    async def test_leaves_unknown_model_aliases_as_written(self, tmp_path: Path, workspace: Workspace) -> None:
+        (tmp_path / 'agent.md').write_text('{{ openai:huge }} or ' + _ALIASED_PAGE, encoding='utf-8')
+        (tmp_path / 'model_aliases').mkdir()
+        (tmp_path / 'model_aliases' / 'aliases.json').write_text(_ALIASES_JSON, encoding='utf-8')
+        toolset = PydanticAIDocsToolset[object](local_docs_path=tmp_path, cache=None)
+
+        result = await _call_docs_tool(toolset, workspace, 'read_pyai_docs', topic=PydanticAIDocsTopic.agent)
+
+        assert result == '{{ openai:huge }} or ' + _RESOLVED_PAGE
+
+    async def test_returns_aliases_as_written_without_the_alias_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        requested = _install_fake_httpx(monkeypatch, error=httpx.ConnectError('offline'))
+        (tmp_path / 'agent.md').write_text(_ALIASED_PAGE, encoding='utf-8')
+        toolset = PydanticAIDocsToolset[object](local_docs_path=tmp_path, cache=None)
+
+        result = await _call_docs_tool(toolset, workspace, 'read_pyai_docs', topic=PydanticAIDocsTopic.agent)
+
+        assert result == _ALIASED_PAGE
+        assert requested == [f'{_REMOTE_DOCS}/model_aliases/aliases.json']
+
+    async def test_page_without_model_aliases_reads_no_alias_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        # A checkout from before the alias file existed: nothing is fetched to make up for it.
+        requested = _install_fake_httpx(monkeypatch)
+        (tmp_path / 'agent.md').write_text("Agent('openai:gpt-5')", encoding='utf-8')
+        toolset = PydanticAIDocsToolset[object](local_docs_path=tmp_path, cache=None)
+
+        result = await _call_docs_tool(toolset, workspace, 'read_pyai_docs', topic=PydanticAIDocsTopic.agent)
+
+        assert result == "Agent('openai:gpt-5')"
+        assert requested == []
 
     async def test_relative_local_path_uses_workspace_working_dir(self, tmp_path: Path, workspace: Workspace) -> None:
         (tmp_path / 'hooks.md').write_text('# Hooks home', encoding='utf-8')

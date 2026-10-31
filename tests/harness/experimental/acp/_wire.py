@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import socket
 from types import TracebackType
+from typing import Generic, TypeVar, cast, overload
 
 import acp
 from acp.client.connection import ClientSideConnection
@@ -42,31 +43,38 @@ class WireClient(RecordingClientBase):
         return ''.join(out)
 
 
-class wire_agent:
+ClientT = TypeVar('ClientT', bound=RecordingClientBase)
+
+
+class wire_agent(Generic[ClientT]):
     """Serve `adapter` over an in-memory socket pair; `async with` yields a connected client connection.
 
     The agent runs as a background task for the lifetime of the context; on exit the task is
     cancelled and both stream ends are closed. Set `unstable=False` to drive the agent without
     `use_unstable_protocol`, the configuration in which the SDK router rejects unstable methods.
+    Pass `client` to answer permission, filesystem or terminal requests; it defaults to a `WireClient`.
 
     A class rather than an `@asynccontextmanager` generator only because the bundled type stubs
     flag that decorator as deprecated under strict checking.
     """
 
+    @overload
     def __init__(
-        self,
-        adapter: acp.Agent,
-        client: WireClient | None = None,
-        *,
-        unstable: bool = True,
-    ) -> None:
+        self: wire_agent[WireClient], adapter: acp.Agent, client: None = None, *, unstable: bool = True
+    ) -> None: ...
+
+    @overload
+    def __init__(self, adapter: acp.Agent, client: ClientT, *, unstable: bool = True) -> None: ...
+
+    def __init__(self, adapter: acp.Agent, client: ClientT | None = None, *, unstable: bool = True) -> None:
         self._adapter = adapter
-        self._client = client or WireClient()
+        # Only the first overload omits `client`, and it pins `ClientT` to `WireClient`.
+        self._client = client if client is not None else cast(ClientT, WireClient())
         self._unstable = unstable
         self._server: asyncio.Task[None] | None = None
         self._writers: tuple[asyncio.StreamWriter, asyncio.StreamWriter] | None = None
 
-    async def __aenter__(self) -> tuple[ClientSideConnection, WireClient]:
+    async def __aenter__(self) -> tuple[ClientSideConnection, ClientT]:
         agent_sock, client_sock = socket.socketpair()
         # Each side's `input_stream` is the writer it sends to the peer with; `output_stream` is
         # the reader it receives on -- the order both SDK connection constructors require.

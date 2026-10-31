@@ -17,8 +17,8 @@ def resolve_tool_choice(  # noqa: C901
 
     Pydantic AI distinguishes between function tools (e.g. user-registered via @agent.tool)
     and output tools (framework-internal for structured output). The user-facing
-    `tool_choice` setting controls function tools only - this function resolves that
-    into a canonical form that providers can use, incorporating output tools as needed.
+    `tool_choice` setting controls which tools the model may call, and this function resolves
+    that into a canonical form that providers can use.
 
     Args:
         model_settings: Optional settings containing the tool_choice value.
@@ -30,7 +30,8 @@ def resolve_tool_choice(  # noqa: C901
         - `'none'` / `[]`: Disables function tools. If output tools exist, returns them with
             appropriate mode. Otherwise returns `'none'`.
         - `'required'`: Requires function tool use. Raises if no function tools are defined.
-        - `list[str]`: Restricts to specified tools with `'required'` mode. Validates tool names.
+        - `list[str]`: Restricts to the specified function and/or output tools with `'required'` mode,
+            so the model must call one of them. Validates tool names against all known tools.
         - `ToolOrOutput`: Combines specified function tools with all output tools.
             Returns `'auto'` mode if direct output is allowed, otherwise `'required'`.
 
@@ -60,8 +61,10 @@ def resolve_tool_choice(  # noqa: C901
         # Named for the `ToolVisibility` literal it filters on rather than the looser "hidden":
         # only `'withheld'` names are absent from the wire. A `'deferred'` declaration sits in the
         # `tools` collection and a `'via_history'` definition travels on the tool-addition channel,
-        # and OpenAI honors `tool_choice` forcing for both, so neither is withheld here — though
-        # prose elsewhere would call all three "hidden from the model".
+        # so neither is withheld here — though prose elsewhere would call all three "hidden from the
+        # model". Making a chosen name acceptable to the provider is the adapter's job: one whose
+        # provider rejects a `tool_choice` naming a tool-addition definition redeclares it, as
+        # `OpenAIResponsesModel._build_responses_request_params` does.
         withheld_tool_names = {
             tool.name
             for tool in model_request_parameters.function_tools

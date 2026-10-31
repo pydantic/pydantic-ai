@@ -1,15 +1,22 @@
 """Isolate settings and provider access for every CLAI test."""
 
+import os
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import keyring
 import pytest
 from keyring.errors import PasswordDeleteError
+from rich.style import Style
 
 from pydantic_ai import models
-from pydantic_clai2.config import credential_store
+from pydantic_clai2.config import Settings, credential_store
+from tests.clai2.cli_runner import CliRunner
+
+# Keep browser-only fixtures out of ordinary test collection.
+collect_ignore: list[str] = ['browser'] if os.environ.get('CLAI2_BROWSER_TESTS') != '1' else []
 
 
 @pytest.fixture
@@ -69,10 +76,23 @@ def no_native_clipboard(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def fresh_rich_styles() -> None:
+    """Build styles afresh: Rich keeps a cached style's first escape codes, whatever colour system a later console uses."""
+    Style.parse.cache_clear()
+    Style._add.cache_clear()  # pyright: ignore[reportPrivateUsage] -- `Style + Style` caches its result here.
+
+
+@pytest.fixture(autouse=True)
+def isolated_environment(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Redirect default databases, including subprocesses, away from user data."""
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    # State such as the web UI's orchestrator chat, which `XDG_STATE_HOME` would otherwise keep outside `HOME`.
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    # Away from this repository's own files, such as the Agent Skills the `coder` plugin would load.
+    monkeypatch.chdir(tmp_path_factory.mktemp('work'))
     monkeypatch.delenv('CLAI_MODEL', raising=False)
     # Claude Code and Codex sessions are read from the isolated home, never the developer's own.
     monkeypatch.delenv('CLAUDE_CONFIG_DIR', raising=False)
@@ -109,6 +129,24 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     credential_store._NO_OLDER_ENTRY.clear()  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.fixture(autouse=True)
+def native_tools() -> Iterator[None]:
+    """Default code mode to off, so shells run native tools unless a test turns it on.
+
+    CLAI turns code mode on by default, folding tools into `run_code`, but most shell tests script
+    native tool calls with `TestModel`. Override this fixture to test the real default.
+    """
+    setting = Settings.model_fields['code_mode']
+    shipped = setting.default
+    setting.default = False
+    Settings.model_rebuild(force=True)
+    try:
+        yield
+    finally:
+        setting.default = shipped
+        Settings.model_rebuild(force=True)
+
+
 def stored_accounts() -> set[str]:
     """Accounts with a saved credential: each is an encrypted file, while the keyring only holds their key."""
     directory = credential_store.credentials_path().parent
@@ -135,3 +173,9 @@ def vault(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
     monkeypatch.setattr(keyring, 'set_password', set_value)
     monkeypatch.setattr(keyring, 'delete_password', delete)
     return entries
+
+
+@pytest.fixture
+def run_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> CliRunner:
+    """Run `clai2` in this process; see `CliRunner`."""
+    return CliRunner(monkeypatch=monkeypatch, capsys=capsys)

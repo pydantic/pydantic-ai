@@ -14,13 +14,19 @@ Checked after every step:
 
 - `history.mutated`: a message object that appeared in a snapshot changed afterwards;
 - `history.removed`: a message disappeared, other than a refused input taken back or the request of a
-  send that failed;
+  send that failed. A response the user barged in on after it was recorded is the one message that can be
+  replaced, by a copy cut off where the listener stopped (`is_cut_off_copy`): that counts as the same message;
 - `history.reordered` / `history.inserted`: recorded messages changed order, or a message appeared
   anywhere but the end, other than a tool return placed after its call (every snapshot should be a
   prefix of the next);
 - `response.duplicated`: one server response is recorded as two `ModelResponse`s;
 - `response.mixed`: one `ModelResponse` holds what two server responses said;
-- `wait.early`: a `wait_for_reply()` returned while a reply it was owed was still coming;
+- `wait.early`: a `wait_for_reply()` returned while a reply it was owed was still coming: only the response that
+  answers an input, as the server saw it, settles it (not one already under way when it arrived);
+- `obligation.misattributed`: the session settled an input's reply with a response the server started before it had
+  the input (where the server names both, by the client's index and the response's id);
+- `turn_complete.while_owed`: the session streamed a `RealtimeTurnCompleteEvent` while a reply it was owed was still
+  coming, judged as `wait.early` judges a wait that returned there;
 - `codec.*`: the connection broke the lifecycle contract (`_conformance.py`);
 - `lifecycle.*`: a connection on version 2 of the contract broke a rule its lifecycle events promise
   (`_conformance.py`), checked on its lifecycle stream;
@@ -43,9 +49,15 @@ Checked at rest (`settle()`):
   calls' results reached the server is recorded after those results (asynchronous tool calls, where
   the model keeps talking after the call);
 - `history.rejected_kept`: an input the provider refused is still in history;
-- `history.turn_missing`: fewer spoken user turns are recorded than the provider committed, as the client read;
+- `history.turn_missing`: fewer spoken user turns are recorded than the provider committed, as the client read
+  or committed with `commit_audio()` (whether or not it read the provider's acknowledgement); for a session that
+  ended on its own, once it closes;
 - `history.not_restored`: a re-dialed provider conversation started a response without something history
   records and an earlier conversation held, other than the turn the drop cut off (which is settled instead);
+- `history.replayed_as_heard`: a re-dialed provider conversation holds the plain transcript of a reply an earlier
+  one truncated, as though the user had heard all of it;
+- `prune.unanswered` / `prune.dropped_from_history`: the session deleted a tool call's items from the server
+  conversation before the model answered its result, or history lost what it deleted (history keeps everything);
 - `response.missing` / `response.truncated`: a response the server completed is missing from history,
   or recorded without all of what it said;
 - `usage.total`: `session.usage` tokens differ from what the server billed in the reports the client read;
@@ -54,6 +66,8 @@ Checked at rest (`settle()`):
   that reports its requests with usage, the number it reported);
 - `playback.cut_beyond_audio` / `playback.bad_truncate`: a reply is marked cut past the audio it had,
   or the provider had to refuse a truncation the session sent;
+- `playback.cut_not_recorded`: the provider truncated a reply's item, but history records the reply as heard
+  further than that (or as not interrupted at all), whether or not it had finished generating;
 - `wire.duplicate` / `wire.order`: the server got a send twice, or one caller's sends out of order;
 - `send.failed_across_reconnect`: a send failed on a dropped connection the session went on to replace;
 - `history.roundtrip` / `history.handoff`: history doesn't survive serialization, or a standard
@@ -66,6 +80,7 @@ import asyncio
 import os
 from collections import Counter
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
@@ -75,18 +90,17 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RealtimeTurnCompleteEvent,
     SpeechPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models._speech import assistant_speech_text
 from pydantic_ai.realtime import RealtimeError, RealtimeSession
-from pydantic_ai.realtime._core import Owed, SessionCore
 from pydantic_ai.realtime._lifecycle import LifecycleEvent
 from pydantic_ai.realtime.codec import RealtimeCodecEvent
-from pydantic_ai.usage import RunUsage
 
 from ._conformance import ConformanceIssue, LifecycleChecker
 from ._truth import TruthInput, TruthResponse, response_numbers
@@ -138,14 +152,14 @@ def request_keys(message: ModelRequest) -> list[str]:
             keys += [item if isinstance(item, str) else getattr(item, 'base64', '')[-12:] for item in contents]
         elif isinstance(part, SpeechPart) and part.transcript:
             keys.append(part.transcript)
-        elif isinstance(part, (ToolReturnPart, RetryPromptPart)):
+        elif isinstance(part, ToolReturnPart):
             keys.append(part.tool_call_id)
     return keys
 
 
 def is_tool_return_request(message: ModelMessage) -> bool:
     """A request carrying tool returns (and the content that follows them), which is placed after its call."""
-    return isinstance(message, ModelRequest) and isinstance(message.parts[0], (ToolReturnPart, RetryPromptPart))
+    return isinstance(message, ModelRequest) and isinstance(message.parts[0], ToolReturnPart)
 
 
 def conversation_fingerprints(messages: list[ModelMessage]) -> set[str]:
@@ -160,19 +174,55 @@ def conversation_fingerprints(messages: list[ModelMessage]) -> set[str]:
                     fingerprints.add(f'user:{" ".join(first.split())}')
             elif isinstance(part, ToolReturnPart):
                 fingerprints.add(f'function_call_output:{part.tool_call_id}')
-            elif isinstance(part, RetryPromptPart):
-                # Replayed as the call's output, or (not about a tool call) as a user message.
-                fingerprints.add(
-                    f'function_call_output:{part.tool_call_id}'
-                    if part.tool_name is not None
-                    else f'user:{" ".join(part.model_response().split())}'
-                )
             elif isinstance(part, ToolCallPart):
                 fingerprints.add(f'function_call:{part.tool_call_id}')
         said = [part.content for part in message.parts if isinstance(part, TextPart)]
         said += [part.transcript for part in message.parts if isinstance(part, SpeechPart) and part.speaker != 'user']
         fingerprints |= {f'assistant:{" ".join(text.split())}' for text in said if text}
     return fingerprints
+
+
+def cut_off_replays(messages: list[ModelMessage]) -> dict[str, str]:
+    """How history replays each reply it records as cut off: its marked text, keyed by the plain transcript's fingerprint.
+
+    A reply the listener cut off is replayed with a marker (see `assistant_speech_text`), whether or not the provider
+    applied the truncation (a truncation whose send failed may not have reached it).
+    """
+    return {
+        f'assistant:{" ".join(part.transcript.split())}': f'assistant:{" ".join(replayed.split())}'
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for index, part in enumerate(message.parts)
+        if isinstance(part, SpeechPart)
+        and part.speaker != 'user'
+        and part.transcript
+        and (replayed := assistant_speech_text(message, index)) != part.transcript
+    }
+
+
+def is_cut_off_copy(old: ModelMessage, new: ModelMessage) -> bool:
+    """Whether `new` is `old` recorded as cut off by a barge-in: the same response, marked interrupted, and nothing else changed.
+
+    A cut can only move back: a part already cut keeps its cut or an earlier one.
+    """
+    if not isinstance(old, ModelResponse) or not isinstance(new, ModelResponse) or new.state != 'interrupted':
+        return False
+    if any(
+        isinstance(before, SpeechPart)
+        and isinstance(after, SpeechPart)
+        and before.interrupted_at_ms is not None
+        and (after.interrupted_at_ms is None or after.interrupted_at_ms > before.interrupted_at_ms)
+        for before, after in zip(old.parts, new.parts)
+    ):
+        return False
+
+    def uncut(message: ModelResponse) -> bytes:
+        parts = [
+            replace(part, interrupted_at_ms=None) if isinstance(part, SpeechPart) else part for part in message.parts
+        ]
+        return ModelMessagesTypeAdapter.dump_json([replace(message, parts=parts, state='complete')])
+
+    return uncut(old) == uncut(new)
 
 
 def is_user_speech_request(message: ModelMessage) -> bool:
@@ -198,19 +248,17 @@ class Checker:
         self._seen: dict[int, tuple[ModelMessage, bytes]] = {}
         self._previous: list[int] = []
         self._judged_waiters: set[int] = set()
+        self._judged_turn_completes = 0
+        self._judged_attributions: set[tuple[int, str]] = set()
         self._judged_operations: set[int] = set()
         """`id()`s of the finished operations already judged (they can finish in any order)."""
         self._judged_events = 0
         self._judged_truncations = 0
-        self._consumer_error_judged = False
+        self._judged_consumer_errors = 0
         self._codec_issues: list[ConformanceIssue] = []
-        self.shadow: ShadowChecker | None = None
-        """The same invariants on the new session core running in shadow of this one, when it runs one."""
 
     def attach(self, session: RealtimeSession) -> None:
         """Observe the codec events the connection yields, on their way into the session."""
-        if (core := session._core) is not None:  # pyright: ignore[reportPrivateUsage]
-            self.shadow = ShadowChecker(self.sim, core)
         handle = session._handle_pump_event  # pyright: ignore[reportPrivateUsage]
 
         async def observed(event: RealtimeCodecEvent) -> bool:
@@ -220,12 +268,33 @@ class Checker:
             return await handle(event)
 
         session._handle_pump_event = observed  # pyright: ignore[reportPrivateUsage]
+        queue_put = session._queue_put  # pyright: ignore[reportPrivateUsage]
+
+        def queued(item: object) -> None:
+            if isinstance(item, RealtimeTurnCompleteEvent):
+                from ._simulation import Waiter
+
+                # Nothing the session owed was still to come: what a wait taken now would return at once for.
+                sim = self.sim
+                now = sim.truth.clock
+                done = frozenset(
+                    operation.key
+                    for operation in sim.operations
+                    if operation.done and operation.key is not None and operation.error is None
+                )
+                sim.turn_completes.append(
+                    Waiter(index=len(sim.turn_completes), started=now, returned=now, snapshot=done)
+                )
+            queue_put(item)
+
+        session._queue_put = queued  # pyright: ignore[reportPrivateUsage]
 
     def observe_lifecycle_stream(
         self, inputs_sent: Callable[[], int]
     ) -> Callable[[RealtimeCodecEvent | LifecycleEvent | None], None]:
         """Check a version 2 connection's lifecycle stream: feed the returned callback each event, and `None` at its end."""
         checker = self.lifecycle_stream = LifecycleChecker(lifecycle=True, inputs_sent=inputs_sent)
+        self.lifecycle.brackets_responses = True
 
         def observe(event: RealtimeCodecEvent | LifecycleEvent | None) -> None:
             self._codec_issues += checker.finish() if event is None else checker.feed(event)
@@ -249,22 +318,6 @@ class Checker:
 
     # --- every step -------------------------------------------------------------------------------
 
-    def messages(self) -> list[ModelMessage]:
-        """The history the invariants judge."""
-        session = self.sim.session
-        assert session is not None
-        return session.all_messages()
-
-    def new_messages(self) -> list[ModelMessage]:
-        session = self.sim.session
-        assert session is not None
-        return session.new_messages()
-
-    def usage(self) -> RunUsage:
-        session = self.sim.session
-        assert session is not None
-        return session.usage
-
     def check_step(self) -> None:
         session = self.sim.session
         assert session is not None
@@ -276,17 +329,55 @@ class Checker:
             )
         self._check_errors()
         self._check_simulator_frames()
-        self._check_history()
+        messages = session.all_messages()
+        self._check_history_stability(messages)
+        self._check_response_identity(messages)
+        self._check_attribution(session)
         waiters = [w for w in self.sim.waiters if w.returned is not None and w.index not in self._judged_waiters]
         self._judged_waiters.update(waiter.index for waiter in waiters)
         self.report('wait.early', [violation for waiter in waiters for violation in self._early_return(waiter)])
-        if self.shadow is not None:
-            self.shadow.check_step()
+        completes, self._judged_turn_completes = (
+            self.sim.turn_completes[self._judged_turn_completes :],
+            len(self.sim.turn_completes),
+        )
+        self.report(
+            'turn_complete.while_owed',
+            [
+                (detail.replace('wait_for_reply()', 'turn complete'), context)
+                for complete in completes
+                for detail, context in self._early_return(complete)
+            ],
+        )
 
-    def _check_history(self) -> None:
-        messages = self.messages()
-        self._check_history_stability(messages)
-        self._check_response_identity(messages)
+    def _check_attribution(self, session: RealtimeSession) -> None:
+        """Whether the session settles an input's reply with a response the server started before it had the input.
+
+        Judged where the server names its inputs by the client's index and its responses by the ids the session
+        records (the OpenAI protocol): such a response never saw the input, so it can't be the input's answer.
+        """
+        truth = self.sim.truth
+        inputs = {input_.client_index: input_ for input_ in truth.inputs if input_.client_index is not None}
+        answered_by = session._core._answered_by  # pyright: ignore[reportPrivateUsage]
+        violations: list[Violation] = []
+        for input_id, response_id in answered_by.items():
+            if (input_id, response_id) in self._judged_attributions:
+                continue
+            self._judged_attributions.add((input_id, response_id))
+            input_ = inputs.get(input_id)
+            response = truth.responses.get(response_id)
+            if (
+                input_ is not None
+                and response is not None
+                and input_.answered_by != response.key
+                and response.seq_start < input_.seq
+            ):
+                violations.append(
+                    (
+                        f'{input_.key!r} is settled by {response.key}, which the server started before it had the input',
+                        {'input': input_.key, 'response': response.key},
+                    )
+                )
+        self.report('obligation.misattributed', violations)
 
     def _check_simulator_frames(self) -> None:
         """The simulated server must only send frames the real connection can parse; anything else is a harness bug."""
@@ -311,13 +402,16 @@ class Checker:
             for operation in judged
             if operation.error is not None and not _expected_error(operation.error)
         ]
-        if (error := sim.consumer_error) is not None and not self._consumer_error_judged:
-            self._consumer_error_judged = True
-            if not _expected_error(error):
-                unexpected.append((f'iterating the session raised {error!r}', {'operation': 'iterate'}))
+        errors = sim.consumer_errors[self._judged_consumer_errors :]
+        self._judged_consumer_errors = len(sim.consumer_errors)
+        unexpected += [
+            (f'iterating the session raised {error!r}', {'operation': 'iterate'})
+            for error in errors
+            if not _expected_error(error)
+        ]
         self.report('api.unexpected_error', unexpected)
 
-    def _removal_allowed(self, message: ModelMessage) -> bool:
+    def _removal_allowed(self, message: ModelMessage) -> bool:  # pragma: lax no cover (the session core never removes)
         """A refused input taken back, or the request of a send that failed."""
         truth = self.sim.truth
         failed_sends = {operation.key for operation in self.sim.operations if operation.error is not None}
@@ -327,7 +421,19 @@ class Checker:
         )
 
     def _check_history_stability(self, messages: list[ModelMessage]) -> None:
-        current = [id(message) for message in messages]
+        actual = [id(message) for message in messages]
+        # A response replaced by its cut-off copy is judged as the response it replaced.
+        previous_set, actual_set = set(self._previous), set(actual)
+        replaced = [self._seen[message_id][0] for message_id in self._previous if message_id not in actual_set]
+        copies: dict[int, int] = {}
+        for message in messages:
+            if id(message) not in previous_set and isinstance(message, ModelResponse):
+                old = next(
+                    (old for old in replaced if is_cut_off_copy(old, message) and id(old) not in copies.values()), None
+                )
+                if old is not None:
+                    copies[id(message)] = id(old)
+        current = [copies.get(message_id, message_id) for message_id in actual]
         mutated: list[Violation] = []
         for message in messages:
             dumped = ModelMessagesTypeAdapter.dump_json([message])
@@ -366,10 +472,11 @@ class Checker:
                 if current[position] not in previous_set and not is_tool_return_request(messages[position])
             ],
         )
-        self._previous = current
+        self._previous = actual
 
     def _describe(self, message: ModelMessage) -> str:
-        if isinstance(message, ModelRequest):
+        # Only for a violation's message: which of these a run reaches depends on what it finds.
+        if isinstance(message, ModelRequest):  # pragma: lax no cover
             return f'request {request_keys(message) or [part.part_kind for part in message.parts]}'
         return f'response {message.provider_response_id} {response_text(message)!r}'  # pragma: lax no cover
 
@@ -433,7 +540,21 @@ class Checker:
             if call.read and response.status == 'completed' and not call.cancelled_by_server
         ]
         outputs = [truth.input(call.call_id) for call in calls]
-        return all(output is not None and self._input_resolved(output, by, seen) for output in outputs)
+        return all(
+            self._input_resolved(output, by, seen) if output is not None else self._round_cut_by_drop(response, by)
+            for output in outputs
+        )
+
+    def _round_cut_by_drop(self, response: TruthResponse, by: int) -> bool:
+        """Whether a drop after `response` started had settled its tool calls still running, by `by`.
+
+        Where a reconnect doesn't restore what was in flight, it interrupts the calls still running: their results
+        never go out, and nothing more is owed for them.
+        """
+        session = self.sim.session
+        assert session is not None
+        settled_by_drop = not session._connection.reconnect_restores_in_flight_state  # pyright: ignore[reportPrivateUsage]
+        return settled_by_drop and any(response.seq_start < loss <= by for loss in self.sim.truth.connection_losses)
 
     def _input_resolved(self, input_: TruthInput, by: int, seen: set[str]) -> bool:
         if (input_.refused_read is not None and input_.refused_read <= by) or input_.answer_lost:
@@ -442,12 +563,13 @@ class Checker:
             input_.refused_at < loss <= by for loss in self.sim.truth.connection_losses
         ):  # pragma: lax no cover (a refusal lost with its connection: no reply is coming)
             return True
-        # The response that answers it, or any the model gave after it arrived: a request the connection
-        # folded into another (a merged or superseded `response.create`) is answered by whichever came next.
+        # The response that answers it, and only that one: a response already under way when it arrived, which
+        # neither saw it nor spoke to it, doesn't. One the server names no answer for (a request the connection
+        # folded into another, a merged or superseded `response.create`) is answered by whichever came next.
         return any(
             self._exchange_resolved(response, by, set(seen))
             for response in self.sim.truth.responses.values()
-            if response.key == input_.answered_by or response.seq_start > input_.seq
+            if response.key == input_.answered_by or (input_.answered_by is None and response.seq_start > input_.seq)
         )
 
     def _early_return(self, waiter: Waiter) -> list[Violation]:
@@ -462,12 +584,22 @@ class Checker:
             or any(loss >= waiter.started for loss in truth.connection_losses)
             # Every connection was lost and none replaced (GPT-Live doesn't reconnect): the session is over.
             or len(truth.connection_losses) >= truth.connections
-            or 'error' in sim.tools.settled.values()
             or sim.receive_ended
         ):
-            # The session ended, lost state to a drop, or a tool failure ended the exchange: returning is right.
+            # The session ended or lost state to a drop: returning is right. (A failure that ended only an exchange is
+            # judged per exchange, below.)
             return []
         context = {'waiter': waiter.index, 'started': waiter.started}
+
+        def ended_by_failure(since: int) -> bool:
+            """Whether a failure the session parked ended an exchange begun at `since` before the wait returned.
+
+            A usage limit a tool's result would pass, or a tool result that failed to send, ends the exchange in
+            progress, though the session goes on receiving. (Not a tool that raised, whose failure result goes out on
+            every provider: the model answers it, so the exchange goes on.)
+            """
+            return any(since < at <= returned for at in sim.exchanges_abandoned_at)
+
         # A reply to a turn it had asked for, by the time the wait began, before the provider saw it...
         soliciting = [
             operation.key
@@ -478,7 +610,7 @@ class Checker:
         violations: list[Violation] = [
             (f'wait_for_reply() #{waiter.index} returned before the reply to {key!r} ended', {**context, 'input': key})
             for key, input_ in inputs
-            if input_ is None or not self._input_resolved(input_, returned, set())
+            if input_ is None or not (self._input_resolved(input_, returned, set()) or ended_by_failure(input_.seq))
         ]
         # ...or a response it could see was under way when the wait began (unless the client cut it off).
         interrupted = [operation.issued for operation in sim.operations if operation.name.startswith('interrupt_')]
@@ -500,6 +632,7 @@ class Checker:
             and not (settled_by_drop and any(loss > response.seq_start for loss in truth.connection_losses))
             and not self._exchange_resolved(response, waiter.started, set())
             and not self._exchange_resolved(response, returned, set())
+            and not ended_by_failure(response.seq_start)
         ]
         return violations
 
@@ -510,29 +643,70 @@ class Checker:
         self.check_step()
         session = sim.session
         assert session is not None
-        self._check_history_at_rest()
-        self._check_playback(self.messages())
-        self._check_wire()
-        if not session.closed:
-            # Also once the event stream has ended: `wait_for_reply()` must never outlive the session's ability to reply.
-            self._check_sends_survived()
-            self._check_wait_liveness()
-        if self.shadow is not None:
-            self.shadow.check_at_rest()
-
-    def _check_history_at_rest(self) -> None:
-        messages = self.messages()
+        messages = session.all_messages()
         self._check_tool_pairing(messages)
         self._check_tool_round_order(messages)
         self._check_order(messages)
         self._check_completeness(messages)
         self._check_spoken_turns(messages)
         self._check_restored(messages)
+        self._check_pruned(messages)
         self._check_usage(messages)
+        self._check_playback(messages)
         roundtrip = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
         self.report(
             'history.roundtrip',
             [('history did not survive a serialization round trip', {})] if roundtrip != messages else [],
+        )
+        self._check_transcripts(messages)
+        self._check_wire()
+        if not session.closed:
+            # Also once the event stream has ended: `wait_for_reply()` must never outlive the session's ability to reply.
+            self._check_sends_survived()
+            self._check_wait_liveness()
+
+    def _check_transcripts(self, messages: list[ModelMessage]) -> None:
+        """A spoken turn's transcript the session read before it was asked to close is in history, and history has
+        no spoken turn the provider never had."""
+        sim = self.sim
+        truth = sim.truth
+        if truth.models_every_spoken_turn:
+            spoken = sum(input_.kind == 'speech' for input_ in truth.inputs)
+            if sim.close_requested is not None:
+                # Closing records what the user was still saying, though the provider never committed it.
+                inputs = {input_.key for input_ in truth.inputs}
+                spoken += sum(
+                    key not in inputs  # (xAI adds the turn at speech start: it's counted above.)
+                    and key not in truth.speech_committed
+                    and key not in truth.speech_stopped_uncommitted
+                    # A clear the session never heard back about (its send failed) leaves the turn as it was.
+                    and (key not in truth.speech_cleared or key not in truth.speech_cleared_read)
+                    for key in truth.speech_started
+                )
+            recorded_turns = sum(is_user_speech_request(message) for message in messages)
+            self.report(
+                'history.phantom_turn',
+                [
+                    (
+                        f'history has {recorded_turns} spoken turns, but the provider had {spoken}',
+                        {'extra': recorded_turns - spoken},
+                    )
+                ]
+                if recorded_turns > spoken
+                else [],
+            )
+        if sim.receive_ended and sim.close_requested is None:
+            # The session ended on its own: what it holds back for a response it will never read the end of is
+            # recorded when it closes.
+            return
+        recorded = {key for message in messages if isinstance(message, ModelRequest) for key in request_keys(message)}
+        self.report(
+            'history.transcript_lost',
+            [
+                (f"the transcript of spoken turn {key!r} was read but isn't in history", {'input': key})
+                for key, read in sim.truth.transcripts_read.items()
+                if key not in recorded and (sim.close_requested is None or read < sim.close_requested)
+            ],
         )
 
     def _check_tool_round_order(self, messages: list[ModelMessage]) -> None:
@@ -577,7 +751,7 @@ class Checker:
             for position, message in enumerate(messages)
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, (ToolReturnPart, RetryPromptPart))
+            if isinstance(part, ToolReturnPart)
         ]
         violations: list[Violation] = [
             (f'a return for {call_id!r}, which no recorded response called', {'call': call_id})
@@ -658,6 +832,10 @@ class Checker:
         self.report('history.order', violations)
 
     def _check_spoken_turns(self, messages: list[ModelMessage]) -> None:
+        if self.sim.receive_ended and self.sim.close_requested is None:
+            # The session ended on its own: a turn it holds back for a response it will never read the end of is
+            # recorded when it closes, and checked then.
+            return
         # By count: a turn recorded without its transcript can't be told apart from another.
         committed = [
             input_.key
@@ -665,6 +843,8 @@ class Checker:
             if input_.kind == 'speech'
             and (input_.committed_read is not None or input_.committed_by_client)
             and not input_.rejected
+            # A commit whose send raised, though the provider had it, is one the client was told failed.
+            and input_.key not in self.sim.truth.ambiguous_inputs
         ]
         recorded = sum(1 for message in messages if is_user_speech_request(message))
         self.report(
@@ -672,6 +852,26 @@ class Checker:
             [(f'{len(committed)} spoken turns committed ({committed}), but {recorded} recorded', {'inputs': committed})]
             if recorded < len(committed)
             else [],
+        )
+
+    def _check_pruned(self, messages: list[ModelMessage]) -> None:
+        """Tool rounds deleted from the server conversation were answered, and history still holds them."""
+        truth = self.sim.truth
+        self.report(
+            'prune.unanswered',
+            [
+                (f'{call} was deleted before the model answered its result', {'call': call})
+                for call in truth.pruned_unanswered
+            ],
+        )
+        recorded = conversation_fingerprints(messages)
+        self.report(
+            'prune.dropped_from_history',
+            [
+                (f'{fingerprint} was deleted from the server conversation and from history', {'item': fingerprint})
+                for fingerprint in truth.pruned
+                if fingerprint not in recorded
+            ],
         )
 
     def _check_restored(self, messages: list[ModelMessage]) -> None:
@@ -697,10 +897,37 @@ class Checker:
                     for call in response.tool_calls
                     for kind in ('function_call', 'function_call_output')
                 }
+        cut_off = cut_off_replays(messages)
         missing = [
-            (restoration, sorted((restoration.before & recorded) - restoration.held - settled))
+            (
+                restoration,
+                sorted(
+                    fingerprint
+                    for fingerprint in (restoration.before & recorded) - restoration.held - settled
+                    # (Restored as cut off, which is how history records it.)
+                    if cut_off.get(fingerprint) not in restoration.held
+                ),
+            )
             for restoration in sim.truth.restorations
         ]
+        truncated = {
+            f'assistant:{" ".join(response.items[item_id])}': (item_id, response)
+            for item_id, _ in sim.truth.truncations
+            if (response := sim.truth.item_responses.get(item_id)) is not None and response.items[item_id]
+        }
+        self.report(
+            'history.replayed_as_heard',
+            [
+                (
+                    f'connection {restoration.connection} holds {fingerprint!r} as heard, '
+                    f'but {response.key} was truncated at {item_id}',
+                    {'response': response.key},
+                )
+                for restoration in sim.truth.restorations
+                for fingerprint, (item_id, response) in truncated.items()
+                if response.connection < restoration.connection and fingerprint in restoration.held
+            ],
+        )
         self.report(
             'history.not_restored',
             [
@@ -752,16 +979,19 @@ class Checker:
 
     def _check_usage(self, messages: list[ModelMessage]) -> None:
         sim = self.sim
-        if sim.receive_ended and sim.close_requested is None:
-            # The session ended on its own (an exceeded usage limit, a lost connection): whatever it read
-            # after that point was never going to be accounted.
+        session = sim.session
+        assert session is not None
+        ended = sim.receive_ended_at
+        if ended is not None and (sim.close_requested is None or ended < sim.close_requested):
+            # The session ended on its own (an exceeded usage limit, a lost connection), before any close: whatever
+            # the connection read after that point, closing included, was never going to be accounted.
             return
         truth = sim.truth
         billed = (
             sum(tokens[0] for tokens in truth.usage_read.values()),
             sum(tokens[1] for tokens in truth.usage_read.values()),
         )
-        usage = self.usage()
+        usage = session.usage
         recorded = (usage.input_tokens, usage.output_tokens)
         # Closing stops the session mid-frame: a report the connection had read ahead may go unaccounted, but
         # nothing may ever be counted twice.
@@ -773,25 +1003,34 @@ class Checker:
             if wrong
             else [],
         )
+        # A response the server identified is recorded with exactly the usage reported under its id: none, if the client
+        # read no report for it, rather than another response's.
+        billed_by_id = {
+            message.provider_response_id: truth.usage_read.get(message.provider_response_id, (0, 0))
+            for message in messages
+            if isinstance(message, ModelResponse)
+            and message.provider_response_id is not None
+            and (message.provider_response_id in truth.usage_read or message.provider_response_id in truth.responses)
+        }
         self.report(
             'usage.attribution',
             [
                 (
                     f'{message.provider_response_id} is recorded with {message.usage.input_tokens} / '
-                    f'{message.usage.output_tokens} tokens, but was billed {truth.usage_read[message.provider_response_id]}',
+                    f'{message.usage.output_tokens} tokens, but was billed {billed_by_id[message.provider_response_id]}',
                     {'response': message.provider_response_id},
                 )
                 for message in messages
                 if isinstance(message, ModelResponse)
-                and message.provider_response_id in truth.usage_read
+                and message.provider_response_id in billed_by_id
                 and (message.usage.input_tokens, message.usage.output_tokens)
-                != truth.usage_read[message.provider_response_id]
+                != billed_by_id[message.provider_response_id]
             ],
         )
         # A model that reports its requests with usage (GPT-Live's delegated backend) counts those instead.
         expected = sim.expected_requests()
         if expected is None:
-            expected = sum(isinstance(message, ModelResponse) for message in self.new_messages())
+            expected = sum(isinstance(message, ModelResponse) for message in session.new_messages())
         self.report(
             'usage.requests',
             [(f'usage.requests is {usage.requests}, but {expected} were made', {})]
@@ -832,6 +1071,37 @@ class Checker:
                 if at_ms > generated[id(message)]
             ],
         )
+        heard: dict[str, int] = {}
+        for item_id, audio_end_ms in truth.truncations:
+            heard[item_id] = min(audio_end_ms, heard.get(item_id, audio_end_ms))
+        spoken = {
+            (number, part.transcript): (message, part)
+            for message in messages
+            if isinstance(message, ModelResponse)
+            for number in self.response_numbers(message)
+            for part in message.parts
+            if isinstance(part, SpeechPart) and part.transcript
+        }
+        not_recorded: list[Violation] = []
+        for item_id, heard_ms in heard.items():
+            response = truth.item_responses.get(item_id)
+            recorded = (
+                spoken.get((response.number, ' '.join(response.items[item_id]))) if response is not None else None
+            )
+            if response is None or recorded is None:  # pragma: lax no cover (depends on what exploration reaches)
+                # Not recorded as the provider said it (lost with its connection, say): other invariants judge that.
+                continue
+            message, part = recorded
+            cut = part.interrupted_at_ms
+            if message.state != 'interrupted' or cut is None or cut > heard_ms:  # pragma: lax no cover (a violation)
+                not_recorded.append(
+                    (
+                        f'{response.key} was truncated at {heard_ms} ms, but history records it as '
+                        f'{message.state} with a cut at {cut}',
+                        {'response': response.key},
+                    )
+                )
+        self.report('playback.cut_not_recorded', not_recorded)
 
     def _check_wire(self) -> None:
         """Each caller's sends reach the server once each, in the order they were made."""
@@ -903,124 +1173,3 @@ class Checker:
             if stuck
             else [],
         )
-
-
-SHADOW_PENDING: frozenset[str] = frozenset(
-    {
-        'SIM-1',
-        'SIM-4',
-        'SIM-10',
-        'SIM-15',
-        'SIM-22',
-        'SIM-23',
-        'SIM-24',
-        'SIM-25',
-        'SIM-27',
-        'SIM-28',
-        'SIM-30',
-        'SIM-34',
-        'SIM-35',
-        'SIM-36',
-        '8763c #3',
-    }
-)
-"""Known findings the new session core does not fix yet, which the shadow checks tolerate like the others.
-
-They are the session's and the connection's to fix, not the core's, since the core only sees what the
-connection reports:
-
-- `SIM-1`: a reply lost with a dropped connection is not asked for again by the reconnect;
-- `SIM-4`, `SIM-23`: the connection drops a whole frame when a request it sends from its receive loop fails,
-  or is cancelled by a close, so the core never sees that response's usage or terminal either;
-- `SIM-10`: the connection drops what a response said after a cancel that reached the server too late;
-- `SIM-15`: a tool that raises leaves the session unable to get the replies still owed after it: the
-  connection holds a later request behind the calling response, which the provider never ends;
-- `SIM-22`: a terminal read as the connection drops is discarded with it;
-- `SIM-24` (accepted): until the server echoes request metadata, the connection infers which response answers
-  a request, and can take one server VAD started for it.
-- `SIM-25`: a spoken turn committed with transcription on is recorded only once its transcript comes, so one
-  whose transcript never does (the session closes, ends, or drops first) is lost; the core records it the same way;
-- `SIM-28`: a reconnect replays history as it stands at the re-dial, without an input still held back behind
-  the reply the drop cut off;
-- `SIM-30`: on xAI push-to-talk, the connection sends a deferred request without the clear xAI needs to answer it;
-- `SIM-27`: a hand commit under server VAD splits the user's turn in two, and only one is recorded;
-- `SIM-34`: unlike the rest, mostly the core's own: it loses a turn `commit_audio()` committed when the connection
-  drops, or the session closes or ends, before its reply is over (the current session records it, except on xAI);
-- `SIM-35`: without transcription, a clear made after server VAD committed a turn, before the session read the
-  commit, drops that turn;
-- `SIM-36`: on xAI push-to-talk, audio sent after a repeated `response.done` is held behind a reply that ended;
-- `8763c #3`: a response already under way takes a turn's reservation; the core still does this where server VAD
-  is set not to answer (`create_response: False`).
-"""
-
-
-class ShadowChecker(Checker):
-    """The session invariants, judged on the new core running in shadow of the session.
-
-    History, usage, and waits come from the core instead of the session, so every check says what the core
-    would get right or wrong in its place. Its violations are reported as `shadow.<code>`, and only the
-    findings in `SHADOW_PENDING` are tolerated: whatever else the session gets wrong, the core must not.
-    Its waits mirror the session's: each `wait_for_reply()` the trace starts takes what the core owed at that
-    moment, and returns once the core says all of it came.
-    """
-
-    def __init__(self, sim: Simulation, core: SessionCore) -> None:
-        super().__init__(sim, strict=sim.strict, enforce=sim.enforce)
-        self.core = core
-        self.waits: dict[int, tuple[Waiter, frozenset[Owed]]] = {}
-
-    def messages(self) -> list[ModelMessage]:
-        return self.core.all_messages()
-
-    def new_messages(self) -> list[ModelMessage]:
-        return self.core.new_messages()
-
-    def usage(self) -> RunUsage:
-        return self.core.usage
-
-    def report(self, code: str, violations: Iterable[Violation]) -> None:
-        from ._findings import matching_findings
-        from ._simulation import FindingReproduced, InvariantViolation
-
-        for detail, context in violations:
-            violation = InvariantViolation(f'shadow.{code}', detail, self.sim.trace, context)
-            findings = [f.id for f in matching_findings(self.sim, InvariantViolation(code, detail, [], context))]
-            violation.findings = findings
-            if self.enforce.intersection(findings):
-                # A pinned scenario for a finding the core has (and the current session may not).
-                raise FindingReproduced(f'shadow.{code}', detail, self.sim.trace, context, findings=findings)
-            pending = [finding for finding in findings if finding in SHADOW_PENDING]
-            if self.strict or not pending:  # pragma: no cover (only when the core breaks an invariant)
-                raise violation
-            self.known_hits.append((pending[0], f'shadow.{code}'))
-
-    def waiter_started(self, waiter: Waiter) -> None:
-        from ._simulation import Waiter
-
-        mirror = Waiter(index=waiter.index, started=waiter.started, snapshot=waiter.snapshot)
-        self.waits[waiter.index] = (mirror, self.core.wait_tokens())
-
-    def check_step(self) -> None:
-        self._check_history()
-        judged: list[Waiter] = []
-        for mirror, tokens in self.waits.values():
-            if mirror.returned is None and not self.core.still_owed(tokens):
-                mirror.returned = self.sim.truth.tick()
-                judged.append(mirror)
-        self.report('wait.early', [violation for waiter in judged for violation in self._early_return(waiter)])
-
-    def check_at_rest(self) -> None:
-        self.check_step()
-        self._check_history_at_rest()
-        session = self.sim.session
-        assert session is not None
-        if not session.closed:
-            stuck = [mirror.index for mirror, _ in self.waits.values() if mirror.returned is None]
-            if self.core.reply_outstanding():
-                stuck.append(len(self.sim.waiters))
-            self.report(
-                'wait.hang',
-                [(f'wait_for_reply() {stuck} still waiting with nothing left to wait for', {'waiters': stuck})]
-                if stuck
-                else [],
-            )

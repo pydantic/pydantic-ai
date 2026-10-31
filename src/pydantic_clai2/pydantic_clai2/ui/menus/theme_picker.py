@@ -17,7 +17,7 @@ from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 from pydantic_clai2.ui.rendering.tool_output import print_tool_header
 
 
@@ -72,7 +72,7 @@ def build_theme_picker(context: CommandContext) -> Menu:
         .list_width(list_width)
         .preview(lambda item: theme_preview(str(item.value), width=max(20, terminal_size()[0] - list_width - 4)))
     )
-    return slash_search(builder, footer='enter apply · esc close', key_source=menu_key)
+    return slash_search(builder, footer='Enter apply - Esc close', key_source=menu_key)
 
 
 async def theme_command(context: CommandContext, args: list[str], *, runners: Runners = TERMINAL) -> str:

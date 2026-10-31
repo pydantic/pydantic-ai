@@ -3,8 +3,10 @@ from __future__ import annotations as _annotations
 import asyncio
 import contextlib
 import contextvars
+import copy
 import functools
 import importlib.util
+import itertools
 import os
 import sys
 import threading
@@ -13,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
 from types import ModuleType
-from typing import Any
+from typing import Any, Literal, cast
 
 import anyio
 import pytest
@@ -23,6 +25,7 @@ from pydantic_ai import Agent, UserError
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
+    ScopedTask,
     await_maybe,
     check_object_json_schema,
     dataclasses_no_defaults_repr,
@@ -30,6 +33,8 @@ from pydantic_ai._utils import (
     get_first_param_type,
     group_by_temporal,
     is_async_callable,
+    is_google_files_api_url,
+    is_str_dict,
     merge_json_schema_defs,
     replace_no_init,
     run_in_executor,
@@ -39,8 +44,36 @@ from pydantic_ai._utils import (
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import undrivable_event_loop
+from .conftest import no_leaked_tasks, undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
+
+READINESS_WAIT_TIMEOUT = 5
+
+
+@pytest.mark.parametrize(
+    'url,expected',
+    [
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/files/abc123', True, id='file'),
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/files', True, id='bare-prefix'),
+        # Current prefix behavior, not a URL-validity requirement.
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/filesOther', True, id='prefix-only'),
+        pytest.param(
+            'https://generativelanguage.googleapis.com/v1beta/files/abc?alt=media#ref', True, id='query-fragment'
+        ),
+        pytest.param('', False, id='empty'),
+        pytest.param('http://generativelanguage.googleapis.com/v1beta/files/abc123', False, id='http'),
+        pytest.param('https://generativelanguage.googleapis.com/v1/files/abc123', False, id='other-version'),
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/file/abc123', False, id='other-path'),
+        pytest.param('https://GENERATIVELANGUAGE.googleapis.com/v1beta/files/abc123', False, id='case-sensitive'),
+        pytest.param('https://generativelanguage.googleapis.com.evil/v1beta/files/abc123', False, id='other-host'),
+        pytest.param('https://generativelanguage.googleapis.com:443/v1beta/files/abc123', False, id='explicit-port'),
+        pytest.param(' https://generativelanguage.googleapis.com/v1beta/files/abc123', False, id='leading-space'),
+        pytest.param('gs://bucket/file.png', False, id='cloud-storage'),
+    ],
+)
+def test_is_google_files_api_url(url: str, expected: bool):
+    """Pin classification directly: cassette matching alone does not protect prefix edge cases."""
+    assert is_google_files_api_url(url) is expected
 
 
 async def test_await_maybe():
@@ -314,7 +347,6 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
         await asyncio.Event().wait()
 
     bystander_task = loop.create_task(bystander())
-    tasks_before = asyncio.all_tasks(loop)
 
     real_run_until_complete = loop.run_until_complete
     calls = 0
@@ -330,14 +362,13 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
             raise KeyboardInterrupt
         return real_run_until_complete(future)
 
-    with pytest.MonkeyPatch.context() as mp:
+    with no_leaked_tasks(loop), pytest.MonkeyPatch.context() as mp:
         mp.setattr(loop, 'run_until_complete', interrupt_once)
         with pytest.raises(KeyboardInterrupt):
             utils_module.run_until_complete(coro())
 
     assert cleaned == ['cleaned']  # our coroutine's cleanup ran
     assert not bystander_task.cancelled()  # the unrelated task was left alone
-    assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
 
     bystander_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
@@ -1036,6 +1067,93 @@ def test_merge_json_schema_defs_additional_properties_allof_not():
     )
 
 
+def test_merge_json_schema_defs_pattern_properties_property_names():
+    """$refs under patternProperties and propertyNames must be rewritten during merge."""
+    schema_a = {
+        '$defs': {
+            'Key': {'enum': ['a', 'b'], 'type': 'string'},
+            'Value': {'type': 'object', 'properties': {'v': {'type': 'string'}}},
+        },
+        'properties': {
+            'by_key': {'type': 'object', 'propertyNames': {'$ref': '#/$defs/Key'}},
+            'by_pattern': {'type': 'object', 'patternProperties': {'^x_': {'$ref': '#/$defs/Value'}}},
+        },
+        'type': 'object',
+        'title': 'SchemaA',
+    }
+    schema_b = {
+        '$defs': {
+            'Key': {'enum': ['c', 'd'], 'type': 'string'},
+            'Value': {'type': 'object', 'properties': {'v': {'type': 'integer'}}},
+        },
+        'properties': {
+            'by_key': {'type': 'object', 'propertyNames': {'$ref': '#/$defs/Key'}},
+            'by_pattern': {'type': 'object', 'patternProperties': {'^x_': {'$ref': '#/$defs/Value'}, '^y_': True}},
+        },
+        'type': 'object',
+        'title': 'SchemaB',
+    }
+
+    rewritten_schemas, _ = merge_json_schema_defs([schema_a, schema_b])
+
+    # SchemaB's refs should all be rewritten to the renamed defs
+    assert rewritten_schemas[1] == snapshot(
+        {
+            'properties': {
+                'by_key': {'type': 'object', 'propertyNames': {'$ref': '#/$defs/SchemaB_Key_1'}},
+                'by_pattern': {
+                    'type': 'object',
+                    'patternProperties': {'^x_': {'$ref': '#/$defs/SchemaB_Value_1'}, '^y_': True},
+                },
+            },
+            'type': 'object',
+            'title': 'SchemaB',
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    'body, expected_body',
+    [
+        ({'contains': {'$ref': '#/$defs/Item'}}, {'contains': {'$ref': '#/$defs/SchemaB_Item_1'}}),
+        ({'if': {'$ref': '#/$defs/Item'}}, {'if': {'$ref': '#/$defs/SchemaB_Item_1'}}),
+        ({'then': {'$ref': '#/$defs/Item'}}, {'then': {'$ref': '#/$defs/SchemaB_Item_1'}}),
+        ({'else': {'$ref': '#/$defs/Item'}}, {'else': {'$ref': '#/$defs/SchemaB_Item_1'}}),
+        (
+            {'dependentSchemas': {'trigger': {'$ref': '#/$defs/Item'}, 'allowed': True, 'denied': False}},
+            {'dependentSchemas': {'trigger': {'$ref': '#/$defs/SchemaB_Item_1'}, 'allowed': True, 'denied': False}},
+        ),
+        (
+            {'items': [{'$ref': '#/$defs/Item'}, True, False]},
+            {'items': [{'$ref': '#/$defs/SchemaB_Item_1'}, True, False]},
+        ),
+    ],
+    ids=['contains', 'if', 'then', 'else', 'dependentSchemas', 'tuple-items'],
+)
+def test_merge_json_schema_defs_nested_subschemas(body: dict[str, Any], expected_body: dict[str, Any]):
+    """Pin ref rewriting directly, including shared defs that transitively depend on a renamed def."""
+    schema_a = {
+        **body,
+        'title': 'SchemaA',
+        'properties': {'payload': {'$ref': '#/$defs/Wrapper'}},
+        '$defs': {'Item': {'type': 'integer'}, 'Wrapper': copy.deepcopy(body)},
+    }
+    schema_b: dict[str, Any] = copy.deepcopy(schema_a)
+    schema_b['title'] = 'SchemaB'
+    schema_b['$defs']['Item'] = {'type': 'string'}
+    originals = copy.deepcopy([schema_a, schema_b])
+
+    rewritten, defs = merge_json_schema_defs([schema_a, schema_b])
+
+    assert rewritten[1] == {
+        **expected_body,
+        'title': 'SchemaB',
+        'properties': {'payload': {'$ref': '#/$defs/SchemaB_Wrapper_1'}},
+    }
+    assert defs['SchemaB_Wrapper_1'] == expected_body
+    assert [schema_a, schema_b] == originals
+
+
 def test_merge_json_schema_defs_structurally_equal_with_different_ref_targets():
     """Defs that are structurally equal but whose $refs resolve to different types need separate copies."""
     schema_a = {
@@ -1085,6 +1203,147 @@ def test_merge_json_schema_defs_structurally_equal_with_different_ref_targets():
                 'title': 'SchemaB',
             },
         ]
+    )
+
+
+def _chain_schema(
+    names: tuple[str, str, str, str],
+    value_type: str,
+    *,
+    defs_layout: Literal['sorted', 'chain'],
+    title: str,
+) -> dict[str, Any]:
+    d1, d2, d3, leaf = names
+    chain_defs = {
+        d1: {'type': 'object', 'properties': {'next': {'$ref': f'#/$defs/{d2}'}}},
+        d2: {'type': 'object', 'properties': {'next': {'$ref': f'#/$defs/{d3}'}}},
+        d3: {'type': 'object', 'properties': {'next': {'$ref': f'#/$defs/{leaf}'}}},
+        leaf: {'type': 'object', 'properties': {'value': {'type': value_type}}},
+    }
+    if defs_layout == 'sorted':
+        chain_defs = {name: chain_defs[name] for name in sorted(chain_defs)}
+
+    return {
+        '$defs': chain_defs,
+        'title': title,
+        'type': 'object',
+        'properties': {'root': {'$ref': f'#/$defs/{d1}'}},
+    }
+
+
+def _assert_all_json_schema_refs_resolve(value: Any, defs: dict[str, dict[str, Any]]) -> None:
+    if is_str_dict(value):
+        if ref := value.get('$ref'):
+            assert str(ref).removeprefix('#/$defs/') in defs
+        for nested in value.values():
+            _assert_all_json_schema_refs_resolve(nested, defs)
+    elif isinstance(value, list):
+        for nested in cast(list[Any], value):
+            _assert_all_json_schema_refs_resolve(nested, defs)
+
+
+def _resolve_branch_leaf_value_type(branch: dict[str, Any], defs: dict[str, dict[str, Any]]) -> str:
+    """Follow `$ref`s from a merged branch down to its leaf model's `value` field."""
+    node: dict[str, Any] = branch
+    while True:
+        props: dict[str, Any] = node.get('properties', {})
+        next_props = [prop for prop in props.values() if '$ref' in prop]
+        if not next_props:
+            return str(node['properties']['value']['type'])
+        node = defs[str(next_props[0]['$ref']).removeprefix('#/$defs/')]
+
+
+@pytest.mark.parametrize('names', list(itertools.permutations(('A', 'B', 'C', 'D'))))
+@pytest.mark.parametrize('defs_layout', ['sorted', 'chain'])
+def test_merge_json_schema_defs_transitive_rename_all_orderings(
+    names: tuple[str, str, str, str], defs_layout: Literal['sorted', 'chain']
+) -> None:
+    """Every 4-level chain ordering keeps branch types; too many cases to run through `Agent.output_json_schema()`."""
+    schemas = [
+        _chain_schema(names, 'string', defs_layout=defs_layout, title='StringRoot'),
+        _chain_schema(names, 'integer', defs_layout=defs_layout, title='IntegerRoot'),
+    ]
+    original_schemas = copy.deepcopy(schemas)
+
+    rewritten_schemas, all_defs = merge_json_schema_defs(schemas)
+
+    assert _resolve_branch_leaf_value_type(rewritten_schemas[0], all_defs) == 'string'
+    assert _resolve_branch_leaf_value_type(rewritten_schemas[1], all_defs) == 'integer'
+    _assert_all_json_schema_refs_resolve(rewritten_schemas, all_defs)
+    _assert_all_json_schema_refs_resolve(all_defs, all_defs)
+    assert schemas == original_schemas
+
+
+def test_merge_json_schema_defs_transitive_rename_snapshot():
+    """Pins the names for one previously broken ordering; the Agent-level test covers the user-facing path."""
+    names = ('A', 'C', 'B', 'D')
+    schemas = [
+        _chain_schema(names, 'string', defs_layout='sorted', title='StringRoot'),
+        _chain_schema(names, 'integer', defs_layout='sorted', title='IntegerRoot'),
+    ]
+
+    rewritten_schemas, all_defs = merge_json_schema_defs(schemas)
+
+    assert (all_defs, rewritten_schemas) == snapshot(
+        (
+            {
+                'A': {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/C'}}},
+                'B': {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/D'}}},
+                'C': {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/B'}}},
+                'D': {'type': 'object', 'properties': {'value': {'type': 'string'}}},
+                'IntegerRoot_D_1': {'type': 'object', 'properties': {'value': {'type': 'integer'}}},
+                'IntegerRoot_B_1': {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/IntegerRoot_D_1'}}},
+                'IntegerRoot_C_1': {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/IntegerRoot_B_1'}}},
+                'IntegerRoot_A_1': {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/IntegerRoot_C_1'}}},
+            },
+            [
+                {'title': 'StringRoot', 'type': 'object', 'properties': {'root': {'$ref': '#/$defs/A'}}},
+                {'title': 'IntegerRoot', 'type': 'object', 'properties': {'root': {'$ref': '#/$defs/IntegerRoot_A_1'}}},
+            ],
+        )
+    )
+
+
+def test_merge_json_schema_defs_shared_chain_not_renamed_for_unrelated_collision():
+    """Shared defs that do not reach a renamed def are reused, not copied; a merge-level detail of the def names."""
+    shared_defs = {
+        'SharedRoot': {'type': 'object', 'properties': {'leaf': {'$ref': '#/$defs/SharedLeaf'}}},
+        'SharedLeaf': {'type': 'object', 'properties': {'value': {'type': 'boolean'}}},
+    }
+    schemas = [
+        {
+            '$defs': {
+                **shared_defs,
+                'Collision': {'type': 'object', 'properties': {'value': {'type': 'string'}}},
+            },
+            'title': 'First',
+            'properties': {'shared': {'$ref': '#/$defs/SharedRoot'}},
+        },
+        {
+            '$defs': {
+                **shared_defs,
+                'Collision': {'type': 'object', 'properties': {'value': {'type': 'integer'}}},
+            },
+            'title': 'Second',
+            'properties': {'shared': {'$ref': '#/$defs/SharedRoot'}},
+        },
+    ]
+
+    rewritten_schemas, all_defs = merge_json_schema_defs(schemas)
+
+    assert (all_defs, rewritten_schemas) == snapshot(
+        (
+            {
+                'SharedRoot': {'type': 'object', 'properties': {'leaf': {'$ref': '#/$defs/SharedLeaf'}}},
+                'SharedLeaf': {'type': 'object', 'properties': {'value': {'type': 'boolean'}}},
+                'Collision': {'type': 'object', 'properties': {'value': {'type': 'string'}}},
+                'Second_Collision_1': {'type': 'object', 'properties': {'value': {'type': 'integer'}}},
+            },
+            [
+                {'title': 'First', 'properties': {'shared': {'$ref': '#/$defs/SharedRoot'}}},
+                {'title': 'Second', 'properties': {'shared': {'$ref': '#/$defs/SharedRoot'}}},
+            ],
+        )
     )
 
 
@@ -1252,3 +1511,25 @@ def test_replace_no_init() -> None:
     with pytest.raises(TypeError, match='its `__copy__` does not return a new instance'):
         replace_no_init(self_copying, name='b')
     assert self_copying.name == 'a', 'the original must not be mutated in place'
+
+
+async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation_as_context() -> None:
+    # Directly on `ScopedTask`: its callers in the run set the run error's `__context__` themselves. `result()` reads
+    # the task's outcome outside the `except` block that caught the awaiter's cancellation, so the task's error doesn't
+    # get that cancellation as its context.
+    started = asyncio.Event()
+
+    async def body() -> int:
+        started.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await anyio.sleep_forever()
+        raise ValueError('boom')
+
+    awaiter = asyncio.create_task(ScopedTask(body()).result())
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        await started.wait()
+        awaiter.cancel('stop')
+        await asyncio.wait((awaiter,))
+    with pytest.raises(ValueError, match='boom') as exc_info:
+        awaiter.result()
+    assert exc_info.value.__context__ is None

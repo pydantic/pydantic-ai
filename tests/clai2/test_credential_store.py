@@ -312,7 +312,7 @@ async def test_login_reports_plaintext_location(no_keyring: None, monkeypatch: p
         return credentials
 
     monkeypatch.setattr('pydantic_ai.providers.openai_codex.OpenAICodexOAuthFlow.exchange_code_from_callback', exchange)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     auth = CodexAuth(Console(file=io.StringIO()))
     message = await auth.login([])
     path = credentials_path()

@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryInfo,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -44,7 +44,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts
+from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, legacy_retry_prompt_part
 
 TS = datetime(2024, 1, 1, tzinfo=UTC)
 
@@ -437,11 +437,11 @@ async def test_trailing_incomplete_tool_call_resumed_with_retry():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=[
                             {
                                 'type': 'json_invalid',
-                                'loc': (),
+                                'loc': [],
                                 'msg': 'Invalid JSON: EOF while parsing a string at line 1 column 13',
                                 'input': '{"city": "Mex',
                             }
@@ -449,6 +449,8 @@ async def test_trailing_incomplete_tool_call_resumed_with_retry():
                         tool_name='get_weather',
                         tool_call_id='call_1',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -799,7 +801,11 @@ async def test_duplicate_result_ignored():
 
 
 async def test_retry_prompt_answers_tool_call():
-    """A tool-bound `RetryPromptPart` answers its call, so the call is not repaired."""
+    """A tool-bound `RetryPromptPart` answers its call, so the call is not repaired.
+
+    The model is handed the retried tool return the part is translated into rather than the part
+    itself, so the assertion is on what repair did (nothing) and not on byte identity.
+    """
     agent, received = capture_agent()
 
     message_history: list[ModelMessage] = [
@@ -807,7 +813,7 @@ async def test_retry_prompt_answers_tool_call():
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Atlantis'}, tool_call_id='call_1')], timestamp=TS),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     'Unknown city, try again.', tool_name='get_weather', tool_call_id='call_1', timestamp=TS
                 )
             ],
@@ -818,7 +824,28 @@ async def test_retry_prompt_answers_tool_call():
 
     await agent.run('Thanks.', message_history=message_history)
 
-    assert received[0][: len(message_history)] == message_history
+    assert received[0][: len(message_history)] == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='What is the weather?', timestamp=TS)], timestamp=TS),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Atlantis'}, tool_call_id='call_1')],
+                timestamp=TS,
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='Unknown city, try again.',
+                        tool_call_id='call_1',
+                        timestamp=TS,
+                        outcome='retried',
+                    )
+                ],
+                timestamp=TS,
+            ),
+            ModelResponse(parts=[TextPart(content='I could not find that city.')], timestamp=TS),
+        ]
+    )
 
 
 async def test_plain_retry_prompt_does_not_answer_tool_call():
@@ -833,7 +860,7 @@ async def test_plain_retry_prompt_does_not_answer_tool_call():
         ModelRequest(parts=[UserPromptPart('What is the weather?', timestamp=TS)], timestamp=TS),
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Atlantis'}, tool_call_id='call_1')], timestamp=TS),
         ModelRequest(
-            parts=[RetryPromptPart('Response was not valid, try again.', tool_call_id='call_1', timestamp=TS)],
+            parts=[legacy_retry_prompt_part('Response was not valid, try again.', tool_call_id='call_1', timestamp=TS)],
             timestamp=TS,
         ),
         ModelResponse(parts=[TextPart('Let me try again.')], timestamp=TS),
@@ -853,7 +880,15 @@ async def test_plain_retry_prompt_does_not_answer_tool_call():
                 timestamp=TS,
                 outcome='interrupted',
             ),
-            RetryPromptPart(content='Response was not valid, try again.', tool_call_id='call_1', timestamp=TS),
+            UserPromptPart(
+                content="""\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Response was not valid, try again.
+</retry_feedback>\
+""",
+                timestamp=TS,
+            ),
         ]
     )
 
@@ -932,6 +967,117 @@ async def test_reused_tool_call_id_shadowed_open_call_repaired():
     later_result = received[0][4]
     assert isinstance(later_result, ModelRequest)
     assert later_result.parts == [ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_1', timestamp=TS)]
+
+
+async def test_same_response_repeated_tool_call_id_both_answered_no_synthesized_return():
+    """Both calls repeating an ID within one response are answered FIFO by their real results."""
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather?', timestamp=TS)], timestamp=TS),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1'),
+                ToolCallPart('get_weather', {'city': 'Amsterdam'}, tool_call_id='call_1'),
+            ],
+            timestamp=TS,
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS),
+                ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_1', timestamp=TS),
+            ],
+            timestamp=TS,
+        ),
+        ModelResponse(parts=[TextPart('Rainy!')], timestamp=TS),
+    ]
+
+    result = await agent.run('Thanks.', message_history=message_history)
+
+    assert result.output == 'All done.'
+    request = received[0][2]
+    assert isinstance(request, ModelRequest)
+    # Both real results reach the model, in order, and no synthesized return is inserted anywhere.
+    assert request.parts == [
+        ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS),
+        ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_1', timestamp=TS),
+    ]
+    all_parts = [part for message in received[0] for part in message.parts]
+    assert not any(
+        isinstance(part, ToolReturnPart) and part.metadata and SYNTHESIZED_TOOL_RETURN_METADATA_KEY in part.metadata
+        for part in all_parts
+    )
+
+
+async def test_repair_messages_idempotent_with_same_response_repeated_tool_call_id():
+    """Repeated `repair_messages` calls on a same-response repeated-ID history are stable."""
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1'),
+                ToolCallPart('get_weather', {'city': 'Amsterdam'}, tool_call_id='call_1'),
+            ],
+            timestamp=TS,
+        ),
+    ]
+
+    repaired = repair_messages(history)
+    repaired_again = repair_messages(repaired)
+
+    assert repaired_again == repaired
+    assert len(repaired) == 2
+    request = repaired[-1]
+    assert isinstance(request, ModelRequest)
+    assert request.parts == [
+        ToolReturnPart(
+            'get_weather',
+            'The tool call was interrupted before a result was produced.',
+            tool_call_id='call_1',
+            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
+            timestamp=TS,
+            outcome='interrupted',
+        ),
+        ToolReturnPart(
+            'get_weather',
+            'The tool call was interrupted before a result was produced.',
+            tool_call_id='call_1',
+            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
+            timestamp=TS,
+            outcome='interrupted',
+        ),
+    ]
+
+
+async def test_same_response_repeated_tool_call_id_partially_answered_binds_fifo():
+    """A single result answers the first same-response call FIFO; the second is the dangling one."""
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1'),
+                ToolCallPart('get_forecast', {'city': 'Amsterdam'}, tool_call_id='call_1'),
+            ],
+            timestamp=TS,
+        ),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS)], timestamp=TS),
+    ]
+
+    repaired = repair_messages(history)
+
+    assert len(repaired) == 2
+    request = repaired[-1]
+    assert isinstance(request, ModelRequest)
+    # FIFO: the real result answers the first call; the synthesized return closes the second.
+    assert request.parts == [
+        ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS),
+        ToolReturnPart(
+            'get_forecast',
+            'The tool call was interrupted before a result was produced.',
+            tool_call_id='call_1',
+            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
+            timestamp=TS,
+            outcome='interrupted',
+        ),
+    ]
 
 
 async def test_dangling_tool_call_followed_by_response():
@@ -1155,6 +1301,7 @@ async def test_cancelled_stream_with_incomplete_tool_call_round_trips():
                 ],
                 usage=RequestUsage(input_tokens=50, output_tokens=6),
                 model_name='function:model_function:stream_function',
+                model_id='function:function:model_function:stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),

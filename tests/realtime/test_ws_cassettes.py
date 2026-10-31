@@ -18,6 +18,7 @@ from .ws_cassettes import (
     CassettePlan,
     ProviderName,
     RealtimeCassette,
+    RealtimeCassetteInteraction,
     RecordingWebSocket,
     ReplayWebSocket,
     patched_ws_connect,
@@ -68,6 +69,7 @@ async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path, monk
             'api-key': 'sk-fake_api_key_123456',
             'google-api-key': 'AIzaFakeApiKey123456',
             'xai-key': 'xai-fake_api_key_123456',
+            'xi-api-key': 'sk_0123456789abcdef0123456789abcdef',
         },
         # A WebRTC ephemeral client secret a provider echoes back inside a frame body.
         'client_secret': 'ek_fake_secret_123456',
@@ -100,6 +102,7 @@ async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path, monk
         'sk-fake_api_key_123456',
         'AIzaFakeApiKey123456',
         'xai-fake_api_key_123456',
+        'sk_0123456789abcdef0123456789abcdef',
         'ek_fake_secret_123456',
         '0paque-azure-key-value-42',
         'internal.service:443',
@@ -116,6 +119,7 @@ async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path, monk
                     'api-key': '<scrubbed>',
                     'google-api-key': '<scrubbed>',
                     'xai-key': '<scrubbed>',
+                    'xi-api-key': '<scrubbed>',
                 },
                 'client_secret': '<scrubbed>',
                 'note': 'the key is <scrubbed> here',
@@ -384,6 +388,33 @@ async def test_audio_turn_wait_is_a_no_op_while_recording() -> None:
     await RealtimeCassette().before_audio_send()
 
 
+async def test_recording_truncates_elevenlabs_audio() -> None:
+    """Unit test: both ElevenLabs audio shapes are truncated when recorded.
+
+    The outbound microphone chunk is the one client message without a `type` field, and the inbound
+    `audio` event keeps the per-character `alignment` the session times words by.
+    """
+    long_audio = 'A' * 400  # far longer than the retained byte budget
+    inbound = {
+        'type': 'audio',
+        'audio_event': {'audio_base_64': long_audio, 'event_id': 7, 'alignment': {'chars': ['H', 'i']}},
+    }
+    fake_ws = _FakeWebSocket([json.dumps(inbound)])
+    cassette = RealtimeCassette()
+    recording = RecordingWebSocket(fake_ws, cassette)
+
+    await recording.send(json.dumps({'user_audio_chunk': long_audio}))
+    await recording.recv()
+
+    outbound_stored, inbound_stored = cassette.interactions
+    assert isinstance(outbound_stored, CassetteMessage) and isinstance(inbound_stored, CassetteMessage)
+    assert 0 < len(outbound_stored.data['user_audio_chunk']) < len(long_audio)
+    audio_event = inbound_stored.data['audio_event']
+    assert 0 < len(audio_event['audio_base_64']) < len(long_audio)
+    assert audio_event['event_id'] == 7
+    assert audio_event['alignment'] == {'chars': ['H', 'i']}
+
+
 async def test_recording_records_clean_close_while_iterating() -> None:
     """Unit test: async iteration records inbound frames and persists a clean terminal close."""
     frame = json.dumps({'type': 'server.event'})
@@ -459,6 +490,41 @@ async def test_replay_waits_for_a_direct_recv_reader() -> None:
     await asyncio.sleep(0)
     assert json.loads(await replay.recv()) == {'type': 'server.event'}
     await send
+
+
+async def test_replay_session_close_overtakes_unread_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit test: GPT-Live's `session.close` doesn't wait for a reader to take the frames recorded before it.
+
+    The session sends it once it has stopped reading, and only reads the rest (up to `session.closed`)
+    after the send returns, so waiting for a reader would stall until the grace period ran out.
+    """
+    monkeypatch.setattr(ws_cassettes, '_REPLAY_PROGRESS_GRACE', 0.01)
+    close = {'type': 'session.close'}
+    cassette = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='received', data={'type': 'server.event'}),
+            CassetteMessage(direction='sent', data=close),
+            CassetteMessage(direction='received', data={'type': 'session.closed'}),
+        ]
+    )
+    replay = ReplayWebSocket(cassette)
+    await replay.send(json.dumps(close))
+    assert [json.loads(await replay.recv()) for _ in range(2)] == [{'type': 'server.event'}, {'type': 'session.closed'}]
+    # The recording itself is left as it was recorded.
+    assert cassette.interactions[1] == CassetteMessage(direction='sent', data=close)
+
+    # It never overtakes a close, nor turns into a send the recording doesn't have.
+    stalled: list[list[RealtimeCassetteInteraction]] = [
+        [CassetteMessage(direction='received', data={'type': 'server.event'})],
+        [
+            CassetteMessage(direction='received', data={'type': 'server.event'}),
+            CassetteClose(code=1000, reason='', ok=True),
+            CassetteMessage(direction='sent', data=close),
+        ],
+    ]
+    for interactions in stalled:
+        with pytest.raises(AssertionError, match='no matching recorded send'):
+            await ReplayWebSocket(RealtimeCassette(interactions=interactions)).send(json.dumps(close))
 
 
 @pytest.mark.parametrize(
@@ -618,3 +684,46 @@ async def test_live_turn_clock_moves_as_each_frame_is_mapped_not_read() -> None:
         assert openai_live._now() == 0.5  # pyright: ignore[reportPrivateUsage]
         assert connection._map_frame(raw_second) == []  # pyright: ignore[reportPrivateUsage]
         assert openai_live._now() == 3.0  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_replay_holds_other_sends_behind_recorded_idle_audio() -> None:
+    """A recorded frame of GPT-Live's idle audio is the pump's to send: another send waits for it to go out."""
+    silence = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
+    context = {'type': 'session.commentary.append', 'delegation_id': None, 'content': 'hi'}
+    replay = ReplayWebSocket(
+        RealtimeCassette(
+            interactions=[
+                CassetteMessage(direction='sent', data=silence),
+                CassetteMessage(direction='received', data={'type': 'server.event'}),
+                CassetteMessage(direction='sent', data=context),
+            ]
+        )
+    )
+    replay.pumps_audio = True
+
+    send_context = asyncio.create_task(replay.send(json.dumps(context)))
+    await asyncio.sleep(0)  # the context send is waiting behind the silence
+    assert not send_context.done()
+    await replay.wait_for_pumped_audio_turn()
+    await replay.send(json.dumps(silence))
+    # A provider frame recorded after the silence is drained before the context send claims its slot.
+    assert json.loads(await replay.recv()) == {'type': 'server.event'}
+    await asyncio.wait_for(send_context, timeout=5)
+
+
+async def test_the_idle_pump_waits_for_its_recorded_turn() -> None:
+    """The pump sends nothing until the recording's next interaction is one of its frames."""
+    replay = ReplayWebSocket(
+        RealtimeCassette(
+            interactions=[
+                CassetteMessage(direction='received', data={'type': 'server.event'}),
+                CassetteMessage(direction='sent', data={'type': 'session.input_audio.append', 'audio': 'AAAA'}),
+            ]
+        )
+    )
+    turn = asyncio.create_task(replay.wait_for_pumped_audio_turn())
+    await asyncio.sleep(0)
+    assert not turn.done()
+
+    await replay.recv()
+    await asyncio.wait_for(turn, timeout=5)

@@ -74,6 +74,8 @@ class TruthResponse:
     words: list[str] = field(default_factory=list[str])
     audio_bytes: int = 0
     tool_calls: list[str] = field(default_factory=list[str])
+    items: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    """The words of each assistant message item it spoke, by item id."""
     input_tokens: int = 0
     output_tokens: int = 0
     started_read: int | None = None
@@ -99,6 +101,8 @@ class ToolCallTruth:
     cancelled_by_server: bool = False
     read: bool = False
     """Whether the client read the call (a cancelled response's calls can be dropped as stragglers)."""
+    read_seq: int | None = None
+    """When the client read it (the Gemini simulator records it, for the accepted in-flight finding)."""
 
 
 @dataclass
@@ -134,6 +138,12 @@ class GroundTruth:
     next_user_number: int = 1
     truncations: list[tuple[str, int]] = field(default_factory=list[tuple[str, int]])
     """`(item id, audio_end_ms)` for every truncation the server applied."""
+    pruned: list[str] = field(default_factory=list[str])
+    """The fingerprint of every item the session deleted from a server conversation (`openai_prune_tool_items`)."""
+    pruned_unanswered: list[str] = field(default_factory=list[str])
+    """Calls whose items the session deleted before the model answered their results."""
+    item_responses: dict[str, TruthResponse] = field(default_factory=dict[str, TruthResponse])
+    """The response that spoke each assistant message item."""
     refused_truncations: list[str] = field(default_factory=list[str])
     """Why the server refused each truncation it was asked for."""
     connection_losses: list[int] = field(default_factory=list[int])
@@ -150,6 +160,16 @@ class GroundTruth:
     """When server VAD heard each spoken user turn start, on the shared clock."""
     speech_committed: set[str] = field(default_factory=set[str])
     """The spoken user turns whose audio was committed (xAI adds a turn's item before it commits it)."""
+    speech_cleared: set[str] = field(default_factory=set[str])
+    """Spoken user turns whose buffered audio was cleared while the user was still saying them."""
+    speech_cleared_read: set[str] = field(default_factory=set[str])
+    """Those whose `input_audio_buffer.cleared` the client read."""
+    speech_stopped_uncommitted: set[str] = field(default_factory=set[str])
+    """Spoken user turns server VAD heard stop without committing them (the user went on, as one turn)."""
+    transcripts_read: dict[str, int] = field(default_factory=dict[str, int])
+    """When the client read each spoken user turn's completed transcript."""
+    models_every_spoken_turn: bool = False
+    """Whether every spoken user turn the provider has is an input here, so history can have no other."""
     word_seq: dict[str, int] = field(default_factory=dict[str, int])
     """When the server generated each word a response said, on the shared clock."""
     word_read: dict[str, int] = field(default_factory=dict[str, int])
@@ -196,6 +216,13 @@ class GroundTruth:
             if input_.key in response.answers and input_.answered_by is None:
                 input_.answered_by = response.key
         return response
+
+    def answer(self, response: TruthResponse, keys: list[str]) -> None:
+        """`response`, already under way, answers the inputs `keys` too."""
+        response.answers.extend(keys)
+        for input_ in self.inputs:
+            if input_.key in keys and input_.answered_by is None:
+                input_.answered_by = response.key
 
     def new_call_id(self) -> str:
         call_id = f'call_{self.next_call_number}'

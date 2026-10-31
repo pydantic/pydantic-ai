@@ -3,7 +3,9 @@
 DBOS runs function tools in workflow code, so a capability's tool I/O is only recorded when the
 capability routes it through a `durable_operation`. Each scenario runs one capability's tools in a
 DBOS workflow, then re-executes the workflow from after its last recorded step, the way recovering a
-committed run does, and checks that no request was made again.
+committed run does, and checks that no request was made again. Planning's tools also run with an
+event stream handler, whose steps for the events a tool emits must replay in their recorded order.
+Shell's `shell` tool names its job in workflow code, so a recovered workflow must report the job it started.
 
 The other engines run function tools in their own durable unit, which needs the toolset's `id`; the
 construction tests below check every capability supplies one.
@@ -11,25 +13,45 @@ construction tests below check every capability supplies one.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import stat
 import tempfile
 import uuid
 from collections import Counter
-from collections.abc import Awaitable, Callable, Collection, Generator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Generator,
+    Mapping,
+    Sequence,
+)
 from pathlib import Path
 from typing import Any, Literal
 
+import anyio
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai import Agent, AgentStreamEvent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs, durable_operation
+from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.capability_creation import CapabilityCreation, CapabilityStore
 from pydantic_ai_harness.localstack import LocalStack
 from pydantic_ai_harness.memory import InMemoryStore, Memory
-from pydantic_ai_harness.planning import Planning, SqlitePlanStore
+from pydantic_ai_harness.planning import (
+    InMemoryPlanStore,
+    PlanCompletedEvent,
+    PlanItem,
+    Planning,
+    PlanStatusChangedEvent,
+    SqlitePlanStore,
+)
+from pydantic_ai_harness.shell import Shell
 from tests.conftest import detach_dbos_logging
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
@@ -370,7 +392,8 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
     # Re-execute the workflow function from after its last step, the way recovery does. Calling it
     # again under the same ID is no replay: DBOS returns the stored result without running it.
     handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
-    assert await handle.get_result() == 'done'
+    # The default 1s result poll would add up to a second on top of the internal queue's own poll.
+    assert await handle.get_result(polling_interval_sec=0.01) == 'done'
     assert count_requests() == first_run, 'recovery made a request again'
 
     step_names = {step['function_name'] for step in steps}
@@ -378,6 +401,196 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
     for operation in _EXPECTED_STEPS[scenario]:
         capability_id, name = operation.split('.')
         assert f'{agent_name}__capability__{capability_id}.{name}' in step_names
+
+
+_SHELL_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_shell_'))
+_SHELL_AGENT = Agent(
+    _call_tools(('shell', {'command': 'echo one >> side-effects.txt', 'mode': 'background'})),
+    name='shell_agent',
+    deps_type=type(None),
+    capabilities=[LocalWorkspace[None](str(_SHELL_DIRECTORY)), Shell[None](tools=['shell']), DBOSDurability[None]()],
+)
+_shell_returns: list[str] = []
+
+
+class _ProcessCrash(BaseException):
+    """Stands in for the process dying: DBOS leaves the workflow `PENDING` for recovery."""
+
+
+@DBOS.workflow(name='shell_agent_workflow')
+async def _shell_workflow() -> str:
+    result = await _SHELL_AGENT.run('go')
+    _shell_returns.extend(
+        str(part.content)
+        for message in result.new_messages()
+        for part in message.parts
+        if part.part_kind == 'tool-return'
+    )
+    if len(_shell_returns) == 1:
+        raise _ProcessCrash
+    return result.output
+
+
+async def test_dbos_recovery_reports_the_same_shell_job(dbos: DBOS) -> None:
+    """The `shell` tool runs in workflow code, so a recovered workflow must name the job its replayed launch started."""
+    _shell_returns.clear()
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await _shell_workflow()
+
+    # Resuming the pending workflow re-executes it under the same ID, the way recovery does.
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert await handle.get_result(polling_interval_sec=0.01) == 'done'
+    first, recovered = _shell_returns
+    assert recovered == first
+    status = next(line for line in first.splitlines() if line.startswith('Status: '))
+    assert Path(status.removeprefix('Status: ')).exists()
+    assert (_SHELL_DIRECTORY / 'side-effects.txt').read_text().splitlines() == ['one']
+
+
+_READINESS_WAIT_TIMEOUT = 5.0
+
+
+class _SlowReadPlanStore(InMemoryPlanStore):
+    """A plan store whose `get_item` waits, once a plan tool has emitted `last_event`, until it's handled.
+
+    It stands in for a read slow enough that the event stream handler's steps for the tool's events
+    all start while it is in flight. A replay returns the recorded read without calling the store.
+    The status tools read before emitting, so only a regression makes the wait.
+    """
+
+    def __init__(self, last_event: tuple[type[PlanStatusChangedEvent | PlanCompletedEvent], str]) -> None:
+        super().__init__()
+        self.last_event = last_event
+        self.released = asyncio.Event()
+        """Cleared when the tool emits `last_event` and set again once the handler has handled it."""
+        self.released.set()
+
+    def is_last_event(self, event: object) -> bool:
+        event_type, task_id = self.last_event
+        return isinstance(event, event_type) and event.item.id == task_id
+
+    async def get_item(self, item_id: str) -> PlanItem | None:
+        with anyio.fail_after(_READINESS_WAIT_TIMEOUT):
+            await self.released.wait()
+        return await super().get_item(item_id)
+
+
+class _AuditToolCalls(AbstractCapability[None]):
+    """Makes one durable call after each tool call, as an auditing capability would."""
+
+    id = 'audit'
+
+    @durable_operation('record')
+    async def record(self, tool_name: str) -> None:
+        pass
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[None],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: Any,
+    ) -> Any:
+        await self.record(call.tool_name)
+        return result
+
+
+def _plan_event_agent(
+    name: str,
+    update: tuple[str, dict[str, Any]],
+    last_event: tuple[type[PlanStatusChangedEvent | PlanCompletedEvent], str],
+    *extra: AbstractCapability[None],
+) -> tuple[Agent[None, str], _SlowReadPlanStore]:
+    """An agent that writes a two-step plan, makes the `update` plan tool call, then answers."""
+    calls = [('write_plan', {'items': [{'id': 'a', 'content': 'Survey'}, {'id': 'b', 'content': 'Draft'}]}), update]
+
+    # An `event_stream_handler` makes the run stream its model responses.
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        del info
+        turn = len([message for message in messages if isinstance(message, ModelRequest)]) - 1
+        if turn < len(calls):
+            tool_name, args = calls[turn]
+            yield {0: DeltaToolCall(name=tool_name, json_args=json.dumps(args), tool_call_id=tool_name)}
+        else:
+            yield 'done'
+
+    store = _SlowReadPlanStore(last_event)
+
+    async def handle(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            if store.is_last_event(event):
+                store.released.set()
+
+    agent = Agent(
+        FunctionModel(stream_function=stream),
+        name=name,
+        deps_type=type(None),
+        capabilities=[Planning[None](store=store), *extra, DBOSDurability[None](event_stream_handler=handle)],
+    )
+    return agent, store
+
+
+_PLAN_EVENT_AGENTS: dict[str, tuple[Agent[None, str], _SlowReadPlanStore]] = {
+    'update_task_statuses': _plan_event_agent(
+        'plan_statuses_agent',
+        (
+            'update_task_statuses',
+            {'updates': [{'task_id': 'a', 'status': 'completed'}, {'task_id': 'b', 'status': 'in_progress'}]},
+        ),
+        (PlanStatusChangedEvent, 'b'),
+    ),
+    # A single update reads one step back, so another capability's hook supplies the second durable
+    # call that could follow the tool's events.
+    'update_task_status': _plan_event_agent(
+        'plan_status_agent',
+        ('update_task_status', {'task_id': 'a', 'status': 'completed'}),
+        (PlanCompletedEvent, 'a'),
+        _AuditToolCalls(),
+    ),
+}
+_PLAN_EVENT_WORKFLOWS = {key: _workflow(agent) for key, (agent, _) in _PLAN_EVENT_AGENTS.items()}
+
+
+@pytest.mark.parametrize('scenario', sorted(_PLAN_EVENT_AGENTS))
+async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
+    scenario: str, dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plan tool emits its events after its last store call, so their handler steps keep their order.
+
+    DBOS runs a function tool in workflow code and starts a handler step for each event the tool
+    emits while the tool is still running. Both draw step numbers from one counter. The first
+    durable call the tool call makes after emitting is numbered before any handler step, but a
+    second one is numbered after however many handler steps fit into the first one's I/O: a store
+    round trip live, a journal lookup on replay.
+    """
+    _, store = _PLAN_EVENT_AGENTS[scenario]
+    # A replay re-emits `last_event` without rerunning the handler, so a previous run can leave it closed.
+    store.released.set()
+    emit = RunContext.emit
+    last_event_emits = 0
+
+    async def emit_marking_last_event(self: RunContext[None], event: CapabilityEvent, /) -> CapabilityEvent:
+        nonlocal last_event_emits
+        if store.is_last_event(event):
+            last_event_emits += 1
+            store.released.clear()
+        return await emit(self, event)
+
+    monkeypatch.setattr(RunContext, 'emit', emit_marking_last_event)
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await _PLAN_EVENT_WORKFLOWS[scenario]() == 'done'
+    # The status tools read before emitting, so the wait never engages: pin both sides of the
+    # scaffolding before the fork's replay re-emits `last_event` without rerunning the handler.
+    assert last_event_emits == 1, 'the tool should emit `last_event` once through the patched `emit`'
+    assert store.released.is_set(), 'the handler never handled `last_event`'
+
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
+    assert await handle.get_result(polling_interval_sec=0.01) == 'done'
 
 
 @pytest.mark.parametrize('durability', [TemporalDurability, PrefectDurability])

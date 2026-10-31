@@ -1,21 +1,12 @@
 from __future__ import annotations
 
-import base64
-import json
-
 from pydantic import JsonValue
 
 from ...conftest import try_import
+from ..oauth_helpers import make_jwt
 
 with try_import():
     from pydantic_ai.providers.openai_codex import OpenAICodexCredentials
-
-
-def make_jwt(payload: dict[str, JsonValue]) -> str:
-    def encode(part: dict[str, JsonValue]) -> str:
-        return base64.urlsafe_b64encode(json.dumps(part).encode()).rstrip(b'=').decode()
-
-    return f'{encode({"alg": "none"})}.{encode(payload)}.signature'
 
 
 def make_credentials(*, exp: float | None = None, access_token: str = 'access-old') -> OpenAICodexCredentials:

@@ -1,6 +1,5 @@
 """Malformed and unmatched tool events remain safe to display."""
 
-import asyncio
 import io
 from dataclasses import dataclass
 
@@ -17,7 +16,6 @@ from pydantic_ai import (
     PartStartEvent,
 )
 from pydantic_ai.messages import (
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -29,6 +27,8 @@ from pydantic_ai.messages import (
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.rendering import theme
+from tests.conftest import no_leaked_tasks
 
 
 @dataclass(kw_only=True)
@@ -54,13 +54,15 @@ async def test_render_edge_events(show_tool_output: bool) -> None:
         await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart(tool, '{', tool_call_id=tool)))
     await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart('read_file', {})))
     for content in (
-        RetryPromptPart('retry', tool_name='grep', tool_call_id='g'),
+        ToolReturnPart('grep', 'retry', tool_call_id='g', outcome='retried'),
         ToolReturnPart('grep', {}, tool_call_id='g'),
     ):
         await renderer.on_stream_event(
             FunctionToolCallEvent(part=ToolCallPart('grep', {'pattern': 'x'}, tool_call_id='g'))
         )
         await renderer.on_stream_event(FunctionToolResultEvent(part=content))
+    # A retried call carries the error, not matches, so it is not rendered as search results.
+    assert output.getvalue().count('tool did not return text results') == (2 if show_tool_output else 0)
     for operation in ('write', 'create_directory'):
         await renderer.on_stream_event(
             FileChangeRequestEvent(
@@ -120,40 +122,52 @@ async def test_thinking_deltas_and_abort() -> None:
     await renderer.abort()
 
 
+async def test_a_part_follows_its_console_to_another_file() -> None:
+    """The terminal showing another session hands its console a new file mid-part: the rest of the part goes there."""
+    before, after = io.StringIO(), io.StringIO()
+    console = Console(file=before, force_terminal=False)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('shown before\nhalf a ')))
+    console.file = after
+    await renderer.on_stream_event(PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='line\n')))
+    await renderer.finish()
+    assert 'shown before' in before.getvalue() and 'half a' not in before.getvalue()
+    assert 'half a line' in after.getvalue() and 'shown before' not in after.getvalue()
+
+
 @pytest.mark.parametrize('terminal', [False, True])
 @pytest.mark.parametrize('thinking', [False, True])
 async def test_echo_prompt_resumes_active_part(thinking: bool, terminal: bool) -> None:
     """Steering drains pending Markdown, then keeps same-index deltas and later parts."""
-    tasks = asyncio.all_tasks()
-    output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output, force_terminal=terminal), stop_loading=lambda: None)
-    part = ThinkingPart('before\nunfinished') if thinking else TextPart('before\nunfinished')
-    await renderer.on_stream_event(PartStartEvent(index=7, part=part))
-    await renderer.echo_prompt('[bold]steer[/bold]\x1b[2J\r\x00')
-    echoed = Text.from_ansi(output.getvalue()).plain
-    assert 'before' in echoed
-    assert 'unfinished' in echoed
-    assert '> [bold]steer[/bold]\\x1b[2J\\x0d\\x00' in echoed
-    assert output.getvalue().endswith('\n\n')
-    assert echoed.index('before') < echoed.index('unfinished') < echoed.index('> ')
+    with no_leaked_tasks():
+        output = io.StringIO()
+        renderer = StreamRenderer(Console(file=output, force_terminal=terminal), stop_loading=lambda: None)
+        part = ThinkingPart('before\nunfinished') if thinking else TextPart('before\nunfinished')
+        await renderer.on_stream_event(PartStartEvent(index=7, part=part))
+        await renderer.echo_prompt('[bold]steer[/bold]\x1b[2J\r\x00')
+        echoed = Text.from_ansi(output.getvalue()).plain
+        assert 'before' in echoed
+        assert 'unfinished' in echoed
+        assert '> [bold]steer[/bold]\\x1b[2J\\x0d\\x00' in echoed
+        assert output.getvalue().endswith('\n\n')
+        assert echoed.index('before') < echoed.index('unfinished') < echoed.index('> ')
 
-    # A delta for another index must not enter the restarted pipeline.
-    await renderer.on_stream_event(PartDeltaEvent(index=6, delta=TextPartDelta('wrong index')))
-    delta = ThinkingPartDelta(content_delta='continued') if thinking else TextPartDelta('continued')
-    await renderer.on_stream_event(PartDeltaEvent(index=7, delta=delta))
-    await renderer.on_stream_event(PartEndEvent(index=7, part=part))
-    await renderer.on_stream_event(PartDeltaEvent(index=7, delta=TextPartDelta('ended part')))
-    await renderer.on_stream_event(PartStartEvent(index=8, part=TextPart('future')))
-    await renderer.on_stream_event(PartDeltaEvent(index=8, delta=TextPartDelta(' delta')))
-    await renderer.finish()
-    rendered = Text.from_ansi(output.getvalue()).plain
-    assert 'continued' in rendered
-    assert 'future delta' in rendered
-    assert rendered.index('> ') < rendered.index('continued') < rendered.index('future delta')
-    assert 'wrong index' not in rendered
-    assert 'ended part' not in rendered
-    assert rendered.count('Thinking ') == (2 if thinking else 0)
-    assert asyncio.all_tasks() == tasks
+        # A delta for another index must not enter the restarted pipeline.
+        await renderer.on_stream_event(PartDeltaEvent(index=6, delta=TextPartDelta('wrong index')))
+        delta = ThinkingPartDelta(content_delta='continued') if thinking else TextPartDelta('continued')
+        await renderer.on_stream_event(PartDeltaEvent(index=7, delta=delta))
+        await renderer.on_stream_event(PartEndEvent(index=7, part=part))
+        await renderer.on_stream_event(PartDeltaEvent(index=7, delta=TextPartDelta('ended part')))
+        await renderer.on_stream_event(PartStartEvent(index=8, part=TextPart('future')))
+        await renderer.on_stream_event(PartDeltaEvent(index=8, delta=TextPartDelta(' delta')))
+        await renderer.finish()
+        rendered = Text.from_ansi(output.getvalue()).plain
+        assert 'continued' in rendered
+        assert 'future delta' in rendered
+        assert rendered.index('> ') < rendered.index('continued') < rendered.index('future delta')
+        assert 'wrong index' not in rendered
+        assert 'ended part' not in rendered
+        assert rendered.count('Thinking ') == (2 if thinking else 0)
 
 
 @pytest.mark.parametrize('show_thinking', [False, True])
@@ -183,6 +197,23 @@ async def test_echo_prompt_idle_is_literal() -> None:
     await renderer.echo_prompt('[bold]first[/bold]\nsecond\tline\x07')
     await renderer.finish()
     assert output.getvalue() == '> [bold]first[/bold]\nsecond  line\\x07\n\n'
+
+
+async def test_echo_prompt_stands_apart_from_answers() -> None:
+    """The echoed prompt has an accent marker and bold text, unlike the plain answer around it."""
+    output = io.StringIO()
+    # Fixed colours: otherwise Rich reads `COLORTERM` and `NO_COLOR`, and may downsample or drop the accent.
+    console = Console(file=output, force_terminal=True, color_system='truecolor', no_color=False, width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    await renderer.echo_prompt('first\nsecond')
+    echoed = Text.from_ansi(output.getvalue())
+    assert echoed.plain.rstrip('\n') == '> first\nsecond'
+    assert output.getvalue().endswith('\n\n')
+    marker, first, second = (echoed.get_style_at_offset(Console(), offset) for offset in (0, 2, 8))
+    assert marker.bold and marker.color is not None and marker.color.triplet is not None
+    assert marker.color.triplet.hex == theme.LITHIUM.lower()
+    assert first.bold and first.color is None
+    assert second.bold
 
 
 @pytest.mark.parametrize('surface_output', [False, True])

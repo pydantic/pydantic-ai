@@ -15,6 +15,7 @@ from collections.abc import Callable
 import pytest
 from inline_snapshot import snapshot
 
+import pydantic_ai.agent
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
@@ -77,6 +78,8 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
         # and the hazard this gate exists for cannot reach it. Listed only because the walk used to
         # be blind to `*args` and so never surfaced it.
         'pydantic_ai.models.fallback.FallbackModel',
+        # The capability counterpart, variadic for the same reason: `ModelFallback(m1, m2)`.
+        'pydantic_ai.capabilities.model_fallback.ModelFallback',
         'pydantic_ai.models.function.DeltaToolCall',
         'pydantic_ai.models.instrumented.InstrumentedModel',
         'pydantic_ai.output.OutputContext',
@@ -133,6 +136,16 @@ def test_new_public_dataclasses_are_keyword_only(public_dataclasses: dict[str, l
         assert stale_entries == set(), (
             f'`_KW_ONLY_ALLOWLIST` entries no longer offend and must be removed: {sorted(stale_entries)}'
         )
+
+
+def test_agent_module_all_exports_resolve_at_runtime():
+    """Every name in `pydantic_ai.agent.__all__` must be bound at runtime, not only under `TYPE_CHECKING`.
+
+    A star-import resolves each `__all__` entry with `getattr`, so an entry that type checkers can see but
+    the module never binds makes `from pydantic_ai.agent import *` raise `AttributeError`.
+    """
+    unresolved = [name for name in pydantic_ai.agent.__all__ if not hasattr(pydantic_ai.agent, name)]
+    assert unresolved == []
 
 
 _AGENT_IMPLEMENTATIONS: dict[str, type] = {
@@ -247,25 +260,27 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     # `None` inside a workflow) and that result is what `super().iter()` receives. `cancellation_token`
     # is consumed locally: it is a same-process handle that cannot cross the durable boundary, so
     # every durable-wrapper entry point rejects it up front with a `UserError` instead of forwarding.
-    ('TemporalAgent', 'iter'): frozenset({'model', 'cancellation_token'}),
+    # `timeout` is rejected the same way: the deprecated wrappers have no replay-safe clock to keep the
+    # run's deadline across replay or recovery, which the durability capabilities do.
+    ('TemporalAgent', 'iter'): frozenset({'model', 'cancellation_token', 'timeout'}),
     # Defaulted before forwarding: `event_stream_handler or self.event_stream_handler`.
     # `cancellation_token` rejected locally (see the `TemporalAgent.iter` note).
-    ('TemporalAgent', 'run'): frozenset({'event_stream_handler', 'cancellation_token'}),
-    ('TemporalAgent', 'run_sync'): frozenset({'cancellation_token'}),
-    ('TemporalAgent', 'run_stream'): frozenset({'cancellation_token'}),
-    ('TemporalAgent', 'run_stream_events'): frozenset({'cancellation_token'}),
-    ('DBOSAgent', 'run'): frozenset({'cancellation_token'}),
-    ('DBOSAgent', 'run_sync'): frozenset({'cancellation_token'}),
-    ('DBOSAgent', 'run_stream'): frozenset({'cancellation_token'}),
-    ('PrefectAgent', 'run'): frozenset({'cancellation_token'}),
-    ('PrefectAgent', 'run_sync'): frozenset({'cancellation_token'}),
-    ('PrefectAgent', 'run_stream'): frozenset({'cancellation_token'}),
-    ('PrefectAgent', 'run_stream_events'): frozenset({'cancellation_token'}),
+    ('TemporalAgent', 'run'): frozenset({'event_stream_handler', 'cancellation_token', 'timeout'}),
+    ('TemporalAgent', 'run_sync'): frozenset({'cancellation_token', 'timeout'}),
+    ('TemporalAgent', 'run_stream'): frozenset({'cancellation_token', 'timeout'}),
+    ('TemporalAgent', 'run_stream_events'): frozenset({'cancellation_token', 'timeout'}),
+    ('DBOSAgent', 'run'): frozenset({'cancellation_token', 'timeout'}),
+    ('DBOSAgent', 'run_sync'): frozenset({'cancellation_token', 'timeout'}),
+    ('DBOSAgent', 'run_stream'): frozenset({'cancellation_token', 'timeout'}),
+    ('PrefectAgent', 'run'): frozenset({'cancellation_token', 'timeout'}),
+    ('PrefectAgent', 'run_sync'): frozenset({'cancellation_token', 'timeout'}),
+    ('PrefectAgent', 'run_stream'): frozenset({'cancellation_token', 'timeout'}),
+    ('PrefectAgent', 'run_stream_events'): frozenset({'cancellation_token', 'timeout'}),
     # `toolsets` is applied through the engine's override context instead of the run argument, which
     # is explicitly passed as `toolsets=None` so the runtime toolsets are not added twice.
     # `cancellation_token` rejected locally (see the `TemporalAgent.iter` note).
-    ('DBOSAgent', 'iter'): frozenset({'toolsets', 'cancellation_token'}),
-    ('PrefectAgent', 'iter'): frozenset({'toolsets', 'cancellation_token'}),
+    ('DBOSAgent', 'iter'): frozenset({'toolsets', 'cancellation_token', 'timeout'}),
+    ('PrefectAgent', 'iter'): frozenset({'toolsets', 'cancellation_token', 'timeout'}),
     # Forwarded only when set, through a `**` splat this walk deliberately does not read. The
     # conditional is residue of the removed `output_retries` deprecation shim (`24c8cdca7`) rather
     # than a compatibility mechanism; the other nine keywords forward unconditionally.

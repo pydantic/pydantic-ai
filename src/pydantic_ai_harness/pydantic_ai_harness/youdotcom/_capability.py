@@ -113,8 +113,9 @@ class YouSearch(AbstractCapability[AgentDepsT]):
     tool, and You.com's `web_search` is only sent to models that do not support
     it, so the two never share a request. `get_page` stays You.com's on every
     model. `include_domains` and `exclude_domains` are passed to the native tool
-    as `allowed_domains` and `blocked_domains`; the other search options only
-    apply to You.com's search.
+    as `allowed_domains` and `blocked_domains`, and a model whose native search
+    can't apply them (such as Gemini) gets You.com's `web_search` instead. The
+    other search options only apply to You.com's search.
 
     To use You.com as the fallback of a core `WebSearch` instead, with its native
     options and no `get_page`, pass `WebSearch(local=YouSearch().web_search_tool())`.
@@ -223,6 +224,8 @@ class YouSearch(AbstractCapability[AgentDepsT]):
         timeout_ms: int = DEFAULT_SEARCH_TIMEOUT_MS,
         native: bool = False,
         id: str | None = 'you_search',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> YouSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -242,4 +245,6 @@ class YouSearch(AbstractCapability[AgentDepsT]):
             timeout_ms=timeout_ms,
             native=native,
             id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

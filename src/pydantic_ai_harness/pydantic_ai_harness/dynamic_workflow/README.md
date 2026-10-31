@@ -4,6 +4,8 @@ Let one agent coordinate a whole team of sub-agents by writing a small Python sc
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/dynamic_workflow/)
 
+![The orchestrator agent has one tool, run_workflow. Its model writes a Python script that runs in the Monty sandbox, where each sub-agent is an async function: the script runs reviewer twice in parallel with asyncio.gather, then passes both reports to summarizer. Each call is a separate sub-agent run with its own model loop. Only the script's final value, the summary, goes back to the orchestrator's next model request.](https://pydantic.dev/docs/ai/img/harness/dynamic-workflow.svg)
+
 ## The idea
 
 Say you have a few specialist agents. One reviews code. One summarizes findings. One writes the
@@ -46,8 +48,9 @@ sub-agent runs, but they work at different altitudes:
   into context, then decides the next step. It is simple to reason about. It is the right fit when
   delegations are occasional, or when each result needs the parent's judgment before the next one.
 - `DynamicWorkflow` moves the choreography into a script. Fan-out, chaining, voting, and retry loops
-  all run inside one tool call, and intermediate results never enter the parent's context. It is the
-  right fit when the coordination between sub-agents is the actual work.
+  all run inside one tool call, and only what the script returns or prints (plus bounded previews of
+  completed results on failure or budget exhaustion) reaches the parent. It is the right fit when the
+  coordination between sub-agents is the actual work.
 
 Start with `SubAgents` if you are not sure. A `delegate_task` orchestrator converts to a workflow
 catalog without changing the sub-agents themselves.
@@ -162,6 +165,17 @@ result["value"]   # not result.value
 
 The catalog the model sees renders each output type as a `TypedDict`, so it knows the fields and
 reads them by subscript on its own.
+
+An `output_type` can include
+[`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) so a top-level
+caller can approve tools and resume the run, or
+[`PendingModelResponse`](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits) so
+it can check on a model request the provider is still processing later. A workflow script cannot do
+either, so the catalog leaves both out of the sub-agent's return type, and a sub-agent run that ends
+with one raises a `RuntimeError` in the script, like any other sub-agent failure. A model request
+it left pending is cancelled, best effort: a
+[batch](https://pydantic.dev/docs/ai/core-concepts/batch/) is only cancelled once no other request in
+it is still waiting.
 
 ## A complete, runnable example
 
@@ -335,12 +349,10 @@ gives depends on `forward_usage`, which controls whether the whole tree shares o
 | `True` (default) | the parent's `usage` is shared across the tree | a tree-wide cap, checked against the shared counter. Under concurrent fan-out it is best-effort: several sub-agents can pass the check before any of them adds to the count. |
 | `False` | each sub-agent run counts on its own | per-run limits. A per-run `total_tokens_limit` of `T` with `max_agent_calls` of `N` bounds the tree to roughly `N * T` tokens. |
 
-> **Warning**
->
-> The `usage_limits` you pass to the parent `run()` is not forwarded into sub-agents. Core does not
-> expose that limit value to the capability, so it is re-checked only at the parent's own request
-> boundaries. If you want to bound sub-agents, set `sub_agent_usage_limits`. If you want an exact
-> ceiling on the number of runs, use `max_agent_calls`.
+Without `sub_agent_usage_limits`, sub-agents sharing the counter (`forward_usage=True`) run under
+the `usage_limits` you pass to the parent `run()`, so the parent's budget bounds the whole tree. With
+`forward_usage=False` they fall back to pydantic-ai's default `request_limit` of 50 per run. If you
+want an exact ceiling on the number of runs, use `max_agent_calls`.
 
 ### `resource_limits`: guarding the script itself
 
@@ -365,9 +377,10 @@ There is no default duration cap. To see why, it helps to know what the timer ac
 > most of its time waiting, so the cap will not fire on it, no matter how long the sub-agents take.
 >
 > So what is the cap for? One thing: a pure-CPU runaway. Picture a `while True:` loop that never
-> awaits. It burns a whole core and blocks the event loop, and none of the sub-agent budgets
-> (`max_agent_calls`, `sub_agent_usage_limits`) can stop it, because it never calls a sub-agent. If
-> you want that guard, set `max_duration_secs` yourself.
+> awaits. It burns a whole core in the sandbox worker (and blocks the workflow thread under
+> Temporal), and none of the sub-agent budgets (`max_agent_calls`, `sub_agent_usage_limits`) can
+> stop it, because it never calls a sub-agent. If you want that guard, set `max_duration_secs`
+> yourself.
 >
 > Two more knobs. Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB
 > print cap remains. Pass a partial dict like `{'max_memory': ...}` and it merges onto the backstop,
@@ -375,8 +388,8 @@ There is no default duration cap. To see why, it helps to know what the timer ac
 
 ### Workflows do not nest
 
-A sub-agent cannot start its own workflow. If one tries, the nested `run_workflow` call returns a
-terminal error instead of running.
+A sub-agent cannot start its own workflow. A sub-agent that has the `DynamicWorkflow` capability is
+not offered `run_workflow` while it runs inside a workflow.
 
 > **Tip**
 >
@@ -461,8 +474,8 @@ worth knowing where the edges are:
 
 - No third-party libraries.
 - Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
-  `unicodedata`, `datetime`, `time`, `random`, `os`, and `pathlib`. Import what you use.
-  Filesystem, environment, and clock operations are not configured for workflow scripts.
+  `unicodedata`, `datetime`, `time`, and `random`. Import what you use. There is no filesystem
+  or environment access.
 - No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
   unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_secs` set,
   a script may sleep for at most that long in total.
@@ -511,7 +524,7 @@ DynamicWorkflow(                  # all parameters are keyword-only
     max_retries=3,
     forward_usage=True,
     inherit_model=False,          # True -> sub-agents run with the parent run's resolved model
-    sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> pydantic-ai default
+    sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> parent run's limits when forwarding usage
     resource_limits=None,         # None -> backstop (256 MB, no time cap);
                                   # 'unlimited' -> sandbox limits off; a dict merges onto the backstop
     id=None,                      # required when defer_loading=True
@@ -524,7 +537,7 @@ workflow.reveal(agent)            # AbstractAgent | WorkflowAgent; validates bef
 WorkflowAgent(
     agent,                        # AbstractAgent, required, positional
     name=None,                    # sandbox function name; falls back to agent.name
-    description=None,             # function docstring; falls back to agent.description
+    description=None,             # function docstring; None falls back to agent.description, '' hides it
 )
 ```
 

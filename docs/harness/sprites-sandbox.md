@@ -11,13 +11,15 @@ Run your agent's commands and file edits in a persistent [Fly.io Sprite](https:/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SpritesSandbox's get_workspace hook gives the run a persistent Fly.io Sprite as ctx.workspace, so each command and file operation goes over the Sprites API, authenticated with SPRITE_TOKEN, and runs in the Sprite as the sprite user; output comes back to the tool. The first use creates the Sprite, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. A Sprite has no lifetime limit: it sleeps when idle, keeps its files and installed packages, and wakes on the next command.](../img/harness/sprites-sandbox.svg)
+
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[sprites,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,sprites,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `SPRITE_TOKEN` to your Sprites API token, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `SPRITE_TOKEN` to your Sprites API token, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -26,7 +28,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ```
 
@@ -43,7 +45,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 
 followup = agent.run_sync(
@@ -52,7 +54,7 @@ followup = agent.run_sync(
 )
 ```
 
-The follow-up run finds the Sprite in the message history and works in it, so the clone is still there. Without the history, a run starts a new Sprite. If the Sprite has been deleted, the run raises `WorkspaceUnavailableError` instead of starting over in an empty one. A command exiting 137 after confirmed Sprite deletion also raises this error; a SIGKILLed command in a live Sprite returns exit 137.
+The follow-up run finds the Sprite in the message history and works in it, so the clone is still there. Without the history, a run starts a new Sprite. If the Sprite has been deleted, the run raises `WorkspaceUnavailableError` instead of starting over in an empty one. If the Sprite is deleted while a command runs, the command raises this error too, whatever exit code it reported: after each command, the backend asks the Sprites control plane whether the Sprite still exists. That lookup counts against the command's `timeout`, and a lookup that fails or runs out of time returns the command's result, so a SIGKILLed command in a live Sprite still returns exit 137.
 
 ## Choose the tools
 
@@ -64,7 +66,7 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Shell(), FileSystem()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Shell(), FileSystem()])
 
 
 @agent.tool
@@ -74,7 +76,7 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-A Sprite pauses processes between commands unless you run them as a [Sprites service](https://docs.sprites.dev/working-with-sprites/services/).
+A Sprite pauses processes between commands unless you run them as a [Sprites service](https://docs.fly.io/sprites/concepts/services/).
 
 Commands run as the non-root `sprite` user, but Unix permissions do not restrict it: a file with mode `000` is still readable. Do not rely on them to keep tools out of a path.
 
@@ -97,7 +99,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder()])
 
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ref = result.workspace.ref  # store this, e.g. in your database
@@ -123,7 +125,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder()])
 
 
 async def run_in_prepared_sprite() -> str:
@@ -161,6 +163,8 @@ A failed run returns no result, so there is no ref to store. To terminate its sa
 ```python
 from typing import Any
 
+import anyio
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.run import AgentRunResult
@@ -173,11 +177,14 @@ hooks = Hooks()
 @hooks.on.run_error
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await SpritesSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the kill short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await SpritesSandbox().destroy(ctx.workspace.ref)
     raise error
 
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder(), hooks])
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder(), hooks])
 ```
 
 Unlike Modal and E2B sandboxes, a Sprite has no lifetime timeout: it persists until deleted. So a run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the Sprite behind. Its id is logged at INFO as `Created Sprite <id>` when it is created; delete it with `await SpritesSandbox().destroy(WorkspaceRef(provider='sprites', id=...))`.
@@ -219,7 +226,7 @@ with workflow.unsafe.imports_passed_through():
 
 CLIENT = AsyncSpritesClient(token=os.environ['SPRITE_TOKEN'])
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     name='sprites_coder',
     capabilities=[SpritesSandbox(client=CLIENT), Coder(), TemporalDurability()],
 )

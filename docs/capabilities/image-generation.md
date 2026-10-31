@@ -16,7 +16,7 @@ from pydantic_ai.capabilities import ImageGeneration
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 
 image_generator = ImageGenerator(
-    'openai:gpt-image-2',
+    '{{ openai:image }}',
     settings=OpenAIImageGenerationSettings(
         openai_output_format='png',
         openai_quality='low',
@@ -24,7 +24,7 @@ image_generator = ImageGenerator(
 )
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         ImageGeneration(
             native=False,
@@ -45,7 +45,7 @@ native image generation — or on every call, with `native=False`. `ImageGenerat
 `local` otherwise takes a tool of your own.
 
 Two of the fields name an image model and they are not interchangeable: `image_model` configures the provider's native
-tool and is unprefixed (`image_model='gpt-image-2'`), while `fallback_image_model` selects the direct model and carries
+tool and is unprefixed (`image_model='{{ openai:image.name }}'`), while `fallback_image_model` selects the direct model and carries
 its provider:
 
 ```python {title="image_generation_routing.py"}
@@ -54,14 +54,14 @@ from pydantic_ai.capabilities import ImageGeneration
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 
 # Native preferred; use the direct model when native generation is unavailable
-ImageGeneration(fallback_image_model='openai:gpt-image-1.5')
+ImageGeneration(fallback_image_model='{{ openai:image }}')
 
 # Always use the direct image API
-ImageGeneration(native=False, fallback_image_model='google:gemini-3.1-flash-lite-image')
+ImageGeneration(native=False, fallback_image_model='{{ google:image }}')
 
 # Supply reusable direct settings through an explicit generator, which goes on `local`
 generator = ImageGenerator(
-    'openai:gpt-image-2',
+    '{{ openai:image }}',
     settings=OpenAIImageGenerationSettings(
         openai_output_format='jpeg',
         openai_quality='low',
@@ -129,7 +129,7 @@ it, or switch it on globally with
 from pydantic_ai import ImageGenerator
 from pydantic_ai.capabilities import ImageGeneration
 
-ImageGeneration(native=False, local=ImageGenerator('openai:gpt-image-2', instrument=True))
+ImageGeneration(native=False, local=ImageGenerator('{{ openai:image }}', instrument=True))
 ```
 
 See [Instrumentation](../image-generation.md#instrumentation) for what those spans carry.
@@ -159,8 +159,8 @@ from pydantic_ai.capabilities import ImageGeneration
 from pydantic_ai.messages import ModelResponse, ToolReturnPart
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
-    capabilities=[ImageGeneration(fallback_image_model='openai:gpt-image-2')],
+    '{{ anthropic:medium }}',
+    capabilities=[ImageGeneration(fallback_image_model='{{ openai:image }}')],
 )
 result = agent.run_sync('Generate an illustration of a cafe, then write alt text for it.')
 
@@ -234,7 +234,7 @@ direct model raises it. Using
 
 ## Agent Specs
 
-Direct model names such as `fallback_image_model='openai:gpt-image-1.5'` can be represented in JSON or YAML agent
+Direct model names such as `fallback_image_model='{{ openai:image }}'` can be represented in JSON or YAML agent
 specs. Runtime objects accepted by the Python constructor — `ImageGenerationModel` on `fallback_image_model`, and the
 `ImageGenerator`, `Tool`, toolsets and callables `local` takes — are not serializable and must be configured in Python.
 [`from_spec()`][pydantic_ai.capabilities.ImageGeneration.from_spec] keeps that serializable subset explicit while
@@ -242,10 +242,10 @@ exposing the same setting names. Write `dimensions` as the two-item array used b
 it to the `(width, height)` tuple used by the Python API:
 
 ```yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - ImageGeneration:
       native: false
-      fallback_image_model: openai:gpt-image-2
+      fallback_image_model: {{ openai:image }}
       dimensions: [1280, 720]
 ```

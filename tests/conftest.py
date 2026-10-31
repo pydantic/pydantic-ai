@@ -2,12 +2,14 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import gc
 import importlib.util
 import logging
 import os
 import re
 import secrets
 import sys
+import warnings
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
@@ -20,17 +22,20 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
 import httpx
 import httpx2
+import pydantic_core
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from cassetter import Cassette, RecordMode
+from coverage import Coverage
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 
 import pydantic_ai._http
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
+from pydantic_ai import Agent, BinaryContent, BinaryImage, DeferredToolRequests, Embedder, ImageGenerator
 from pydantic_ai._cache_health import ConversationCacheMarkStore
 from pydantic_ai.capabilities import instrumentation as instrumentation_capability
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -40,7 +45,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -50,11 +56,14 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from . import cassette_hooks
+from . import cassette_hooks, cost_guards
 from ._inline_snapshot import Builder, Custom, customize
 from .cassette_utils import check_cache_prefix_stability
+from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
 
 # `logfire` builds its JSON schema lookup table on first use with a lazy `import pandas`
 # (`logfire/_internal/json_schema.py`), and importing pandas reads timezone data from disk. When
@@ -101,6 +110,7 @@ os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
@@ -109,10 +119,20 @@ def pytest_configure(config: pytest.Config) -> None:
         'markers',
         'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
     )
-    config.addinivalue_line(
-        'markers',
-        'shadow_divergence(reason): the realtime session cores are known to disagree on this trace; reason required',
-    )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Save an `xdist` worker's coverage before the controller starts tearing the workers down.
+
+    Coverage saves at interpreter exit, but the worker first runs pytest's unconfigure cleanup, whose
+    repeated full `gc.collect()` takes seconds on a large heap. `pytest-xdist` kills a worker still
+    alive 10 seconds after it reports finishing, so a slow cleanup lost the worker's whole coverage
+    data. This hook runs before the worker reports finishing; the exit-time save still adds whatever
+    runs after it.
+    """
+    if hasattr(session.config, 'workerinput') and (coverage := Coverage.current()) is not None:
+        coverage.save()
 
 
 if TYPE_CHECKING:
@@ -354,6 +374,27 @@ class TestEnv:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value  # pragma: lax no cover
+
+
+@pytest.fixture
+def transport_limits(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Limits | httpx2.Limits]:
+    """Record the `limits` every HTTPX transport (either family, sync or async) is constructed with.
+
+    HTTPX keeps the limits on its transport without a public accessor, so tests of connection pool
+    defaults record what each transport is handed instead.
+    """
+    recorded: list[httpx.Limits | httpx2.Limits] = []
+
+    for transport_class in (httpx2.HTTPTransport, httpx2.AsyncHTTPTransport, httpx.AsyncHTTPTransport):
+        original_init = transport_class.__init__
+
+        def recording_init(self: Any, *args: Any, _original_init: Any = original_init, **kwargs: Any) -> None:
+            recorded.append(kwargs['limits'])
+            _original_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(transport_class, '__init__', recording_init)
+
+    return recorded
 
 
 @pytest.fixture
@@ -657,6 +698,42 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
         asyncio.set_event_loop(original_loop)
 
 
+@pytest.fixture
+def young_gc() -> Iterator[None]:
+    """Limit the test's `gc.collect()` calls to the objects it creates.
+
+    A full collection walks every object the worker has accumulated, which takes seconds per call
+    late in a CI run. Freezing everything that exists before the test keeps it out of the collector's
+    reach until teardown, so collections stay cheap, and garbage leaked by an earlier test can't be
+    finalized (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
+    """
+    gc.freeze()
+    try:
+        yield
+    finally:
+        gc.unfreeze()
+
+
+@contextmanager
+def no_leaked_tasks(loop: asyncio.AbstractEventLoop | None = None) -> Generator[None]:
+    """Fail if a task started inside the block is still running at its end.
+
+    Freezes every existing object out of the cyclic collector's reach for the block, as `young_gc` does, so an
+    earlier test's garbage can't be finalized here and queue tasks on the running loop. Tasks already running at
+    entry are ignored. Pass `loop` when the test drives that loop itself instead of running on it.
+
+    Don't use it in a test that requests `young_gc`: `gc.unfreeze()` thaws every frozen object, so leaving the
+    block would undo the fixture's freeze for the rest of the test.
+    """
+    gc.freeze()
+    try:
+        before = asyncio.all_tasks(loop)
+        yield
+        assert asyncio.all_tasks(loop) - before == set()
+    finally:
+        gc.unfreeze()
+
+
 @pytest.fixture(autouse=True)
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
@@ -704,6 +781,35 @@ try:
 
 except ImportError:
     pass
+
+
+@pytest.fixture(scope='session')
+def prefect_test_server() -> Iterator[None]:
+    """A Prefect test server with an isolated database, shared by every Prefect test in the worker.
+
+    Starting one takes 15-25s on a CI runner, so tests that run Prefect flows request this fixture
+    and share the `prefect` xdist group, starting a single server per job instead of one per module
+    or test. The implicit ephemeral server would instead use the shared default `PREFECT_HOME` and a
+    short connect timeout that flakes on slow runners.
+    """
+    pytest.importorskip('prefect')
+    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
+    from prefect.testing.utilities import prefect_test_harness
+
+    # The task-run recorder is a background writer against the same sqlite file the flows write to.
+    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
+    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
+    # here reads what it records: task run states reach the API through the task engine.
+    with (
+        temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}),
+        prefect_test_harness(server_startup_timeout=120),
+    ):
+        yield
+    # Prefect's test server leaves client sockets for GC on Python 3.14; collect them here, where the
+    # warning is expected, rather than in whichever test the collector happens to run in.
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='unclosed.*socket', category=ResourceWarning)
+        gc.collect()
 
 
 def raise_if_exception(e: Any) -> None:
@@ -805,8 +911,35 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
     check_cache_prefix_stability(request.node, vcr)
 
 
+@pytest.fixture(autouse=True)
+def fail_function_model_prefix_violations(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """Check the prompt-cache prefix of `FunctionModel` and `TestModel` conversations, which no cassette records."""
+    if request.node.get_closest_marker('benchmark') is not None:
+        # Recording copies every request inside the code a benchmark measures.
+        yield
+        return
+    recorder = RequestRecorder()
+    patch_models(monkeypatch, recorder)
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    check_function_model_prefix_stability(request.node, recorder.requests)
+
+
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
+
+
+def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:
+    """Decode a wire request using HTTPX's content-encoding support."""
+    return httpx2.Response(200, content=content, headers=headers).content
+
 
 # What `httpx2.AsyncClient()` uses when no timeout is passed.
 _HTTPX_DEFAULT_TIMEOUT = 5.0
@@ -856,8 +989,8 @@ class RequestCapture:
     def bodies(self, path_suffix: str = '') -> list[dict[str, JsonValue]]:
         """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
         return [
-            _REQUEST_BODY_ADAPTER.validate_json(raw)
-            for path, raw in zip(self.paths, self.raw_bodies)
+            _REQUEST_BODY_ADAPTER.validate_json(decode_request_body(raw, headers))
+            for path, raw, headers in zip(self.paths, self.raw_bodies, self.headers)
             if path.endswith(path_suffix)
         ]
 
@@ -1068,6 +1201,11 @@ def openai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def moonshotai_api_key() -> str:
+    return os.getenv('MOONSHOTAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def azure_api_key() -> str:
     return os.getenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 
@@ -1173,6 +1311,11 @@ def xai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def elevenlabs_api_key() -> str:
+    return os.getenv('ELEVENLABS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def tavily_api_key() -> str:
     return os.getenv('TAVILY_API_KEY', 'mock-api-key')
 
@@ -1185,6 +1328,16 @@ def zai_api_key() -> str:
 @pytest.fixture(scope='session')
 def crusoe_api_key() -> str:
     return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def fireworks_api_key() -> str:
+    return os.getenv('FIREWORKS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def meta_api_key() -> str:
+    return os.getenv('META_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')
@@ -1246,6 +1399,7 @@ async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvi
 def bedrock_provider():
     try:
         import boto3
+        from botocore.config import Config
 
         from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -1258,10 +1412,14 @@ def bedrock_provider():
             yield provider
             provider.client.close()
         else:  # pragma: lax no cover
+            # `BedrockProvider`'s default read timeout; botocore's 60s cuts off a Nova code-interpreter
+            # sandbox timeout, which takes longer to come back.
+            config = Config(read_timeout=300)
             if os.getenv('AWS_PROFILE'):
                 bedrock_client = boto3.client(
                     'bedrock-runtime',
                     region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                    config=config,
                 )
             else:
                 bedrock_client = boto3.client(
@@ -1272,6 +1430,7 @@ def bedrock_provider():
                         'AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'
                     ),
                     aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
+                    config=config,
                 )
             yield BedrockProvider(bedrock_client=bedrock_client)
             bedrock_client.close()
@@ -1305,9 +1464,9 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
 
 @pytest.fixture()
-async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
-    # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI', False):
+def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None):  # pragma: lax no cover
+    record_mode = cast(Any, request.config).getoption('record_mode')
+    if not os.getenv('CI', False) and record_mode not in {'all', 'new_episodes', 'rewrite'}:
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
@@ -1347,7 +1506,7 @@ def model(
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider
 
-            return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+            return AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
         elif request.param == 'mistral':
             from pydantic_ai.models.mistral import MistralModel
             from pydantic_ai.providers.mistral import MistralProvider
@@ -1410,7 +1569,37 @@ def disable_ssrf_protection_for_vcr():
         yield
 
 
-_RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
+def legacy_retry_prompt_part(
+    content: list[pydantic_core.ErrorDetails] | str,
+    *,
+    tool_name: str | None = None,
+    tool_call_id: str | None = None,
+    timestamp: datetime | None = None,
+) -> RetryPromptPart:  # pyright: ignore[reportDeprecated]
+    """Build the deprecated `RetryPromptPart` for a test that exercises how a legacy part is handled.
+
+    `filterwarnings = ["error"]` turns the deprecation into a failure, and every one of these tests
+    wants the part, not the warning — `test_retry_feedback.py` owns proving that it fires.
+    """
+    # TODO(v3): remove `legacy_retry_prompt_part` along with `RetryPromptPart`
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+        part = RetryPromptPart(content=content, tool_name=tool_name)  # pyright: ignore[reportDeprecated]
+    if tool_call_id is not None:
+        part.tool_call_id = tool_call_id
+    if timestamp is not None:
+        part.timestamp = timestamp
+    return part
+
+
+_RequestPartT = TypeVar(
+    '_RequestPartT',
+    bound=SystemPromptPart
+    | UserPromptPart
+    | ToolReturnPart
+    | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    | RetryFeedbackPart,
+)
 _ResponsePartT = TypeVar(
     '_ResponsePartT',
     bound=TextPart | ToolCallPart | NativeToolCallPart | NativeToolReturnPart | ThinkingPart | FilePart,
@@ -1461,6 +1650,56 @@ def message_part(
     part = msg.parts[part_index]
     assert isinstance(part, part_type)
     return part
+
+
+def conversation_view(messages: Sequence[ModelMessage]) -> list[str]:
+    """One line per prompt, text, tool call and tool return part in `messages`, as the model is shown them."""
+    view: list[str] = []
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolCallPart):
+                view.append(f'call {part.tool_call_id}')
+            elif isinstance(part, ToolReturnPart):
+                view.append(f'return {part.tool_call_id}: {part.content}')
+            elif isinstance(part, (UserPromptPart, SystemPromptPart, TextPart)):  # pragma: no branch
+                view.append(f'{part.part_kind}: {part.content}')
+    return view
+
+
+def server_history_agent(
+    toolsets: Sequence[AbstractToolset[None]] = (),
+) -> tuple[Agent[None, str | DeferredToolRequests], list[list[ModelMessage]], list[str]]:
+    """An agent for the UI adapters' server-held history tests, with the model requests and tool runs it records.
+
+    It calls `get_location` for "where am I?" and the approval-gated `delete_file` for "delete a.txt", and answers
+    `ok` otherwise. Pass the frontend `get_location` tool as `toolsets` for a protocol that doesn't send it.
+    """
+    requests: list[list[ModelMessage]] = []
+    deleted: list[str] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        last = messages[-1].parts[-1]
+        if isinstance(last, UserPromptPart) and last.content == 'where am I?':
+            yield {0: DeltaToolCall(name='get_location', json_args='{}', tool_call_id='loc-1')}
+        elif isinstance(last, UserPromptPart) and last.content == 'delete a.txt':
+            yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='del-1')}
+        else:
+            yield 'ok'
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        toolsets=toolsets,
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        deleted.append(path)
+        return f'Deleted {path}'
+
+    return agent, requests, deleted
 
 
 # endregion

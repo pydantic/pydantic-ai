@@ -1,0 +1,12 @@
+--- expected
++++ actual
+@@ -96,4 +95,0 @@
+-   "role": "system",
+-   "content": "The job runs in the background."
+-  },
+-  {
+@@ -149,4 +144,0 @@
+-   "role": "system",
+-   "content": "The job runs in the background."
+-  },
+-  {

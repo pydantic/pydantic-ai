@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, field
 from inspect import isawaitable
@@ -35,7 +36,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -100,15 +100,32 @@ def _finish_reason_to_stop_reason(finish_reason: FinishReason | None) -> schema.
     return 'end_turn'
 
 
+_USAGE_LIMIT_STOP_REASONS: dict[str, schema.StopReason] = {
+    'request_limit': 'max_turn_requests',
+    'tool_calls_limit': 'max_turn_requests',
+    'input_tokens_limit': 'max_tokens',
+    'output_tokens_limit': 'max_tokens',
+    'total_tokens_limit': 'max_tokens',
+    'per_request_input_tokens_limit': 'max_tokens',
+    # ACP has no budget stop reason; a cost ceiling bounds how much work the turn may do.
+    'cost_limit': 'max_turn_requests',
+}
+"""The ACP stop reason for each `UsageLimits` field, keyed by the field name its exception names."""
+
+_USAGE_LIMIT_NAME = re.compile(rf'\b({"|".join(_USAGE_LIMIT_STOP_REASONS)})\b')
+
+
 def _usage_limit_stop_reason(exc: UsageLimitExceeded) -> schema.StopReason:
     """Map a run's exceeded usage limit to the ACP stop reason ending the turn.
 
-    Token-based limits report `max_tokens`; the request/tool-call count limits report
-    `max_turn_requests`. The exception carries no structured detail, so this reads its message; an
-    unrecognized wording falls back to `max_turn_requests` (the limit pydantic-ai's default
-    configuration can hit).
+    Token limits report `max_tokens`; the request, tool-call, and cost limits report
+    `max_turn_requests`. The exception carries no structured detail, so this finds the exceeded
+    `UsageLimits` field named in its message, matched as a whole identifier so
+    `input_tokens_limit` is not confused with `per_request_input_tokens_limit`. A message naming no
+    known field (a custom subclass such as a spend budget) falls back to `max_turn_requests`.
     """
-    return 'max_tokens' if 'tokens_limit' in str(exc) else 'max_turn_requests'
+    match = _USAGE_LIMIT_NAME.search(str(exc))
+    return _USAGE_LIMIT_STOP_REASONS[match.group(1)] if match else 'max_turn_requests'
 
 
 def _committable_history(messages: list[ModelMessage], ran_calls: set[str]) -> list[ModelMessage]:
@@ -134,7 +151,7 @@ def _committable_history(messages: list[ModelMessage], ran_calls: set[str]) -> l
                 committed.pop()
                 continue
             break
-        if any(isinstance(part, ToolReturnPart | RetryPromptPart) and part.tool_name for part in last.parts):
+        if any(isinstance(part, ToolReturnPart) for part in last.parts):
             break
         previous = committed[-2] if len(committed) > 1 else None
         if (
@@ -839,8 +856,11 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             )
         elif isinstance(event, FunctionToolResultEvent):
             part = event.part
-            if isinstance(part, RetryPromptPart):
-                status, raw_output = 'failed', part.model_response()
+            if part.outcome == 'retried':
+                # The call has to be made again, which is a failure from the client's point of
+                # view. `model_response_str` reports the feedback the model itself was handed,
+                # unwrapped because the `{"error": ...}` envelope is a wire detail.
+                status, raw_output = 'failed', part.model_response_str(wrap_if_error=False)
             elif part.tool_call_id in turn.denied:
                 status, raw_output = 'failed', part.content
             else:

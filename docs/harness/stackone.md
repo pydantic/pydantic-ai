@@ -13,6 +13,8 @@ Salesforce, or Zendesk. Each instance is scoped to one linked account, which is 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the StackOne capability connects to StackOne's MCP endpoint at api.stackone.com/mcp with your API key and an x-account-id header naming one linked account, and StackOne runs actions against that account's provider, such as BambooHR or Salesforce. In the default search_execute mode the model sees two tools: one ending in _search_actions that returns action ids, and one ending in _execute_action that runs an action by id. Passing actions switches to individual mode, with one tool per matching action, such as bamboohr_list_employees.](../img/harness/stackone.svg)
+
 ## Before you start
 
 Follow the [StackOne docs](https://docs.stackone.com) to:
@@ -52,7 +54,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import StackOne
 
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[
         StackOne(account_id=os.environ['STACKONE_ACCOUNT_ID']),
     ],
@@ -127,7 +129,7 @@ from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai_harness import StackOne
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[
         PrefixTools(StackOne(account_id='hr-account'), prefix='hr'),
         PrefixTools(StackOne(account_id='crm-account'), prefix='crm'),
@@ -150,7 +152,7 @@ from pydantic_ai_harness import StackOne, ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[
         StackOne(account_id='your-linked-account-id'),
         ToolOutputLimits(store=LocalFileStore()),
@@ -174,7 +176,7 @@ stackone_tools = StackOneToolset(
     actions=['workday_create_worker'],
 ).approval_required()
 
-agent = Agent('openai:gpt-5', toolsets=[stackone_tools])
+agent = Agent('{{ openai:medium }}', toolsets=[stackone_tools])
 ```
 
 Handle the resulting deferred approval requests as described in the linked guide.
@@ -186,7 +188,7 @@ Keep the API key in `STACKONE_API_KEY` rather than storing it in the file:
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5
+model: {{ openai:medium }}
 capabilities:
   - StackOne:
       account_id: 'your-linked-account-id'
@@ -210,6 +212,10 @@ Custom `base_url` and URL-valued `client` values must use HTTPS. The toolset add
 with the configured mode because rewriting would invalidate signed URLs. When using `search_execute` with a signed
 URL, include `tool-mode=search_execute` before signing. Prebuilt clients are used as-is; configure their HTTPS
 transport, auth, account selection, and tool mode yourself.
+
+## Further reading
+
+- [StackOne is now a Pydantic AI capability](https://pydantic.dev/articles/stackone-pydantic-ai-harness) (Pydantic)
 
 ## API reference
 

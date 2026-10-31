@@ -82,6 +82,7 @@ async def test_same_length_after_run_rewrite_gets_final_checkpoint(tmp_path: Pat
     assert snapshot.messages == result.all_messages()
 
 
+@pytest.mark.subprocess(reason='hard-kills a process mid-run to check what it leaves persisted')
 async def test_hard_kill_leaves_model_frontier_and_unknown_effects(tmp_path: Path) -> None:
     database = tmp_path / 'steps.db'
     script = """

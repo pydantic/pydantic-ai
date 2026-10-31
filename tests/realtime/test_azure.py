@@ -2,36 +2,47 @@
 
 from __future__ import annotations as _annotations
 
+import json
+import warnings
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UnsupportedSettingWarning, UserError
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
+from .ws_helpers import collect_codec_events
 
 with try_import() as imports_successful:
     from openai.types.realtime.realtime_audio_config_output import VoiceID
 
+    from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
-    from pydantic_ai.realtime import RealtimeSessionErrorEvent, TurnDetection
+    from pydantic_ai.realtime import RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent, TurnDetection
     from pydantic_ai.realtime.azure import (
+        AzureEndOfUtteranceDetection,
         AzureRealtimeConnection,
         AzureRealtimeModel,
         AzureRealtimeModelProfile,
         AzureRealtimeModelSettings,
+        AzureSemanticVAD,
+        AzureServerVAD,
         AzureVoiceLiveVoice,
         SemanticVAD,
         ServerVAD,
         _default_azure_realtime_apis,  # pyright: ignore[reportPrivateUsage]
         _map_voice_live_event,  # pyright: ignore[reportPrivateUsage]
+        _VoiceLiveRealtimeConnection,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.realtime.codec import OutputTranscript
+
+    from .test_openai import FakeWebSocket
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
 
@@ -221,6 +232,181 @@ def test_voice_live_session_config_options() -> None:
     assert config['input_audio_transcription'] == {'model': 'azure-speech'}
 
 
+def _voice_live_config(
+    model_name: str, profile: AzureRealtimeModelProfile | None = None, **settings: Any
+) -> dict[str, Any]:
+    provider = AzureProvider(
+        azure_endpoint='https://resource.services.ai.azure.com', api_version='2026-04-10', api_key='azure-key'
+    )
+    model = AzureRealtimeModel(model_name, provider=provider, profile=profile)
+    return model._session_config(  # pyright: ignore[reportPrivateUsage]
+        '', None, model_settings=AzureRealtimeModelSettings(azure_voice_live=True, **settings)
+    )
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'settings'),
+    [
+        ('gpt-realtime', {'azure_voice_live_voice': 'en-US-AvaNeural'}),
+        ('gpt-realtime', {'azure_voice_live_voice': {'type': 'azure-custom', 'name': 'mine', 'endpoint_id': 'e'}}),
+        ('gpt-4.1-mini', {}),
+    ],
+    ids=['azure-voice', 'custom-voice', 'cascade-default-voice'],
+)
+def test_voice_live_times_speech_in_an_azure_voice(model_name: str, settings: dict[str, Any]) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        config = _voice_live_config(model_name, output_speech_timestamps=True, **settings)
+    assert config['output_audio_timestamp_types'] == ['word']
+    assert 'output_audio_timestamp_types' not in _voice_live_config(model_name, **settings)
+
+
+def _warn_unsupported_settings(model: AzureRealtimeModel, **settings: Any) -> None:
+    model._warn_unsupported_settings(  # pyright: ignore[reportPrivateUsage]
+        AzureRealtimeModelSettings(output_speech_timestamps=True, **settings), ModelRequestParameters()
+    )
+
+
+@pytest.mark.parametrize(
+    'settings',
+    [
+        {},
+        {'openai_voice': 'alloy'},
+        {'azure_voice_live_voice': {'type': 'azure-realtime-native', 'name': 'ava'}},
+    ],
+    ids=['default-voice', 'openai-voice', 'native-voice'],
+)
+def test_voice_live_warns_when_its_voice_is_not_timed(settings: dict[str, Any]) -> None:
+    """Voice Live accepts the setting with any voice, but times only Azure voices, so it isn't asked to."""
+    model = AzureRealtimeModel('gpt-realtime', provider=_azure_provider())
+    with pytest.warns(UnsupportedSettingWarning, match='`output_speech_timestamps`.*no timestamps'):
+        _warn_unsupported_settings(model, azure_voice_live=True, **settings)
+    assert 'output_audio_timestamp_types' not in _voice_live_config(
+        'gpt-realtime', output_speech_timestamps=True, **settings
+    )
+
+
+def test_only_voice_live_reports_speech_timestamps() -> None:
+    """Which API a session uses decides whether it can time speech, even when the session picks it."""
+    model = AzureRealtimeModel('gpt-realtime', provider=_azure_provider())
+    assert model.profile.get('output_speech_timestamp_granularity') == 'word'
+    with pytest.warns(UnsupportedSettingWarning, match='`output_speech_timestamps`'):
+        _warn_unsupported_settings(model, azure_voice_live_voice='en-US-AvaNeural')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        _warn_unsupported_settings(model, azure_voice_live=True, azure_voice_live_voice='en-US-AvaNeural')
+    ga_only = AzureRealtimeModel('gpt-4o-realtime-preview', provider=_azure_provider())
+    assert ga_only.profile.get('output_speech_timestamp_granularity') is None
+
+
+def test_a_profile_override_turns_voice_live_speech_timestamps_off() -> None:
+    profile = AzureRealtimeModelProfile(output_speech_timestamp_granularity=None)
+    model = AzureRealtimeModel('gpt-realtime', provider=_azure_provider(), profile=profile)
+    with pytest.warns(UnsupportedSettingWarning, match='`output_speech_timestamps`'):
+        _warn_unsupported_settings(model, azure_voice_live=True, azure_voice_live_voice='en-US-AvaNeural')
+    config = _voice_live_config(
+        'gpt-realtime', profile=profile, azure_voice_live_voice='en-US-AvaNeural', output_speech_timestamps=True
+    )
+    assert 'output_audio_timestamp_types' not in config
+
+
+def test_voice_live_azure_turn_detection() -> None:
+    """Voice Live's own turn detection options are sent as given, with the response defaults filled in."""
+    eou = AzureEndOfUtteranceDetection(model='semantic_detection_v1', threshold_level='low', timeout_ms=800)
+    semantic = AzureSemanticVAD(
+        type='azure_semantic_vad_multilingual', languages=['en', 'fr'], remove_filler_words=True
+    )
+    assert _voice_live_config('gpt-realtime', azure_voice_live_turn_detection=semantic)['turn_detection'] == {
+        'create_response': True,
+        'interrupt_response': True,
+        'type': 'azure_semantic_vad_multilingual',
+        'languages': ['en', 'fr'],
+        'remove_filler_words': True,
+    }
+    server = AzureServerVAD(type='server_vad', speech_duration_ms=300, end_of_utterance_detection=eou)
+    assert _voice_live_config('gpt-4.1', azure_voice_live_turn_detection=server)['turn_detection'] == {
+        'create_response': True,
+        'interrupt_response': True,
+        'type': 'server_vad',
+        'speech_duration_ms': 300,
+        'end_of_utterance_detection': eou,
+    }
+    # OpenAI's semantic VAD through the Azure setting still becomes Voice Live's own on a cascade.
+    semantic_vad = SemanticVAD(type='semantic_vad', eagerness='high', interrupt_response=False)
+    assert _voice_live_config('gpt-4.1', azure_voice_live_turn_detection=semantic_vad)['turn_detection'] == {
+        'type': 'azure_semantic_vad',
+        'create_response': True,
+        'interrupt_response': False,
+    }
+    assert (
+        _voice_live_config('gpt-realtime', azure_voice_live_turn_detection=semantic_vad)['turn_detection']['eagerness']
+        == 'high'
+    )
+    # `None` isn't in the type, but disables VAD like it does for the sibling settings.
+    assert _voice_live_config('gpt-realtime', azure_voice_live_turn_detection=None)['turn_detection'] is None
+    # An `AzureServerVAD` is a `ServerVAD`, so `openai_turn_detection` carries its Azure-only options too.
+    assert (
+        _voice_live_config('gpt-4.1', openai_turn_detection=server)['turn_detection']['end_of_utterance_detection']
+        == eou
+    )
+    with pytest.raises(UserError, match='End-of-utterance detection works only'):
+        _voice_live_config('gpt-realtime', openai_turn_detection=server)
+    # A cascade deployed under another name opts in through its profile.
+    cascade = AzureRealtimeModelProfile(azure_voice_live_cascade=True)
+    config = _voice_live_config(
+        'my-voice-bot',
+        cascade,
+        azure_voice_live_turn_detection=AzureSemanticVAD(type='azure_semantic_vad', end_of_utterance_detection=eou),
+    )
+    assert config['turn_detection']['end_of_utterance_detection'] == eou
+
+
+@pytest.mark.parametrize('model_name', ['gpt-realtime', 'azure-realtime', 'my-voice-bot'])
+def test_voice_live_rejects_end_of_utterance_detection_on_native_models(model_name: str) -> None:
+    """Voice Live rejects it for a non-cascade model and then refuses the rest of the session, so fail early."""
+    eou = AzureEndOfUtteranceDetection(model='semantic_detection_v1')
+    with pytest.raises(UserError, match='End-of-utterance detection works only on an Azure AI Voice Live cascade'):
+        _voice_live_config(
+            model_name,
+            azure_voice_live_turn_detection=AzureServerVAD(type='server_vad', end_of_utterance_detection=eou),
+        )
+
+
+@pytest.mark.parametrize(
+    'model_name,settings,expected',
+    [
+        # Azure's own suppression works everywhere and wins over the OpenAI setting.
+        (
+            'gpt-realtime',
+            {
+                'azure_voice_live_noise_reduction': 'azure_deep_noise_suppression',
+                'openai_input_noise_reduction': 'near_field',
+            },
+            'azure_deep_noise_suppression',
+        ),
+        # The Azure setting is sent as given, even where Microsoft documents it as unsupported.
+        ('gpt-5', {'azure_voice_live_noise_reduction': 'far_field'}, 'far_field'),
+        # OpenAI's near/far field is for the native-audio models; a cascade gets Azure's instead.
+        ('gpt-realtime', {'openai_input_noise_reduction': 'near_field'}, 'near_field'),
+        ('gpt-5', {'openai_input_noise_reduction': 'near_field'}, 'azure_deep_noise_suppression'),
+        ('gpt-5', {}, None),
+    ],
+)
+def test_voice_live_noise_reduction(model_name: str, settings: dict[str, Any], expected: str | None) -> None:
+    config = _voice_live_config(model_name, **settings)
+    assert config.get('input_audio_noise_reduction') == ({'type': expected} if expected else None)
+
+
+@pytest.mark.parametrize(
+    'echo_cancellation,expected', [(True, {'type': 'server_echo_cancellation'}), (False, None), (None, None)]
+)
+def test_voice_live_echo_cancellation(echo_cancellation: bool | None, expected: dict[str, str] | None) -> None:
+    settings: dict[str, Any] = (
+        {} if echo_cancellation is None else {'azure_voice_live_echo_cancellation': echo_cancellation}
+    )
+    assert _voice_live_config('gpt-realtime', **settings).get('input_audio_echo_cancellation') == expected
+
+
 def test_voice_live_maps_session_settings() -> None:
     """The settings Voice Live has a counterpart for reach its session config; unset, they're left out."""
     provider = AzureProvider(
@@ -363,6 +549,8 @@ def test_voice_live_temperature_dropped_while_reasoning(
         # Reasoning cascade chat models take their thinking support from the chat model profile.
         ('gpt-5', 'high', 'high'),
         ('gpt-5', False, 'none'),
+        # Voice Live gets the effort the realtime path maps `max` to, never `max` itself.
+        ('gpt-5.2', 'max', 'xhigh'),
         ('gpt-5.2', True, 'medium'),
         # Non-reasoning models: Voice Live accepts the effort for `gpt-4.1`, then fails every response.
         ('gpt-4.1', 'high', None),
@@ -714,3 +902,72 @@ def test_infer_provider_with_v1_endpoint_env(monkeypatch: pytest.MonkeyPatch) ->
     assert model._realtime_url() == (  # pyright: ignore[reportPrivateUsage]
         'wss://resource.openai.azure.com/openai/v1/realtime?model=gpt-realtime'
     )
+
+
+async def test_voice_live_ignores_tool_item_pruning() -> None:
+    """Voice Live's beta protocol isn't known to delete items, so `openai_prune_tool_items` is one it ignores."""
+    frames = [
+        json.dumps(
+            {
+                'type': 'conversation.item.created',
+                'item': {'id': f'item_{kind}', 'type': kind, 'call_id': 'c1', 'name': 'lookup'},
+            }
+        )
+        for kind in ('function_call', 'function_call_output')
+    ]
+    ws = FakeWebSocket(frames)
+    connection = _VoiceLiveRealtimeConnection(cast(Any, ws), prune_tool_items=True)
+    await collect_codec_events(connection)
+    call = ToolCallPart(tool_name='lookup', args='{}', tool_call_id='c1')
+    assert await connection._prune_tool_calls([call]) == []  # pyright: ignore[reportPrivateUsage]
+    assert not [frame for frame in ws.sent if 'item.delete' in frame]
+
+
+# Recorded from Azure AI Voice Live: the server sends this, then closes the socket with `1008 (policy violation)`.
+_OUTPUT_OVERFLOW_FRAME = {
+    'event_id': 'event_2crZrZhfqSUqFqKzApWLB1',
+    'type': 'error',
+    'error': {
+        'message': 'The session was closed because its outbound buffer exceeded the server limit; the client was not consuming the audio stream fast enough.',
+        'type': 'invalid_request_error',
+        'code': 'session_output_overflow',
+        'param': None,
+        'event_id': None,
+    },
+}
+
+
+def _output_overflow_error(*, recoverable: bool) -> RealtimeSessionErrorEvent:
+    return RealtimeSessionErrorEvent(
+        message='The session was closed because its outbound buffer exceeded the server limit; the client was not consuming the audio stream fast enough.',
+        type='invalid_request_error',
+        code='session_output_overflow',
+        recoverable=recoverable,
+    )
+
+
+async def test_voice_live_output_overflow_ends_the_session() -> None:
+    """Voice Live closes the socket right after `session_output_overflow`, so without a reconnect policy it's fatal.
+
+    The error already says why the session ended, so the close that follows isn't reported again.
+    """
+    connection = _VoiceLiveRealtimeConnection(cast(Any, FakeWebSocket([json.dumps(_OUTPUT_OVERFLOW_FRAME)])))
+    assert [event async for event in connection] == [_output_overflow_error(recoverable=False)]
+
+
+async def test_voice_live_output_overflow_reconnects_with_a_policy() -> None:
+    """With a reconnect policy, the close after `session_output_overflow` re-dials, so the error is recoverable."""
+
+    async def dial() -> Any:
+        return FakeWebSocket([])
+
+    connection = _VoiceLiveRealtimeConnection(
+        cast(Any, FakeWebSocket([json.dumps(_OUTPUT_OVERFLOW_FRAME)])),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_reconnects': 1},
+    )
+    events = await collect_codec_events(connection)
+    assert events[:2] == [
+        _output_overflow_error(recoverable=True),
+        RealtimeSessionReconnectEvent(state_restored=False),
+    ]

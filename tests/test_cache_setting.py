@@ -240,9 +240,16 @@ class TestAnthropicCacheTranslation:
         provider = AnthropicProvider(api_key='test') if client is None else AnthropicProvider(anthropic_client=client)
         return AnthropicModel('claude-sonnet-4-5', provider=provider)
 
-    def test_cache_true_uses_automatic_caching(self):
+    def test_cache_true_uses_automatic_caching_and_stable_prefix_breakpoints(self):
+        """Automatic caching only breakpoints the end of the conversation, and Anthropic only reads cache
+        entries written at a breakpoint, so the instructions and tool definitions get their own for a new
+        conversation to share them."""
         settings, params = self._model().prepare_request(ModelSettings(cache=True), ModelRequestParameters())
-        assert settings == {'anthropic_cache': '5m'}
+        assert settings == {
+            'anthropic_cache_instructions': '5m',
+            'anthropic_cache_tool_definitions': '5m',
+            'anthropic_cache': '5m',
+        }
         assert params.cache is True
 
     def test_cache_unset_sends_nothing(self):

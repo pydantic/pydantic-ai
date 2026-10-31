@@ -1,5 +1,5 @@
 ---
-description: "Connect a Pydantic AI agent to xAI Grok Voice with XaiRealtimeModel: setup, grok-voice model names, voices, turn detection, reasoning and session resumption."
+description: "Connect a Pydantic AI agent to xAI Grok Voice with XaiRealtimeModel: setup, grok-voice model names, voices, turn detection, reasoning and reconnects."
 ---
 
 # xAI Grok Voice
@@ -57,7 +57,8 @@ back but still responds when the user stops speaking, so use `turn_detection=Fal
 [push-to-talk](turns.md#push-to-talk) instead.
 
 xAI accepts the shared `max_tokens` and `parallel_tool_calls` settings but ignores them: replies
-aren't capped, and the model can still call several tools at once.
+aren't capped, and the model can still call several tools at once, so `parallel_tool_calls=False` warns
+with an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning].
 
 [Input transcription](audio.md#input-transcription) defaults to `'auto'`. Unlike the incremental
 deltas described in [live captions](audio.md#live-captions), xAI sends cumulative transcript
@@ -85,7 +86,7 @@ Other Grok Voice models ignore the setting.
 | Native tools | Unsupported | xAI offers web search, X search, file search, and MCP tools, which Pydantic AI does not expose yet; configure [local fallbacks](tools.md#native-tools) for web capabilities |
 | Async tool calls | Full feature support | Grok Voice keeps talking, and answers the user, while a [tool runs](tools.md#concurrent-tool-execution) |
 | Usage | Full feature support | Audio-token buckets and `billable_audio_seconds` in `RunUsage.details` |
-| State-restoring reconnect | Full feature support | Native [resumption](#session-resumption) is automatic with a reconnect policy |
+| Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new conversation; in-flight media is lost |
 
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
 [Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
@@ -95,18 +96,15 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
 Grok Voice is not currently available through the [Pydantic AI Gateway](../gateway.md). Connect
 through `provider='xai'` or an `XaiProvider`.
 
-## Session resumption
+## Session length
 
-With a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy], xAI automatically enables native
-resumption for [state-restoring reconnects](lifecycle.md#state-restoration): it restores prior
-turns and suppresses the provider's replay burst from the local event stream. The handle is xAI's
-conversation ID, and xAI keeps the conversation for 30 minutes of inactivity, but Pydantic AI holds
-the ID only in memory, so another process can't resume it yet
-([#7302](https://github.com/pydantic/pydantic-ai/issues/7302)).
-
-A conversation that runs past xAI's maximum duration ends with a `max_duration` error. Resuming it
-would only run into the same limit, so the session raises a
-[`RealtimeError`][pydantic_ai.realtime.RealtimeError] instead of reconnecting.
+A conversation that runs past xAI's maximum duration ends with a `max_duration` error. With a
+[reconnect policy](lifecycle.md#reconnecting), the error is reported as a recoverable
+[`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] and the session reconnects
+right away, without waiting for xAI to close the connection: the new conversation gets the
+[replayed local history](lifecycle.md#state-restoration), so the call carries on past the limit.
+Without one, or once the policy's reconnects are used up, the session raises a
+[`RealtimeError`][pydantic_ai.realtime.RealtimeError] with xAI's message.
 
 ## Provider-specific quirks
 
@@ -115,8 +113,19 @@ would only run into the same limit, so the session raises a
 - xAI documents `conversation.item.truncate` and confirms it with `conversation.item.truncated`,
   but in our testing it only takes effect once the response has ended, and not reliably even then.
   Sent just before the cancel, as barge-in needs, it changes nothing, so the profile reports
-  `supports_output_truncation=False`. `interrupt(played_bytes=...)` still discards the unheard audio
-  and cancels the response, while a plain `interrupt()` only cancels. Either way xAI keeps everything
-  generated up to the cancel, which can be more than the user heard.
+  `supports_output_truncation=False`. `interrupt(played_bytes=...)` (and `handle_barge_in=True`) still
+  discards the unheard audio, cancels the response, and records the reply in history as interrupted
+  with `interrupted_at_ms` where playback stopped, as on OpenAI, including a reply that had finished
+  generating before the user spoke over it. A plain `interrupt()` only cancels. Either way xAI keeps
+  everything generated up to the cancel, which can be more than the user heard, so the model may take
+  the whole reply as heard.
+- With turn detection on, xAI commits a spoken turn a few hundred milliseconds after it hears the user
+  stop, and starts its reply in between. If the user carries on before the commit, xAI continues the same
+  turn and drops that reply without ending it. So
+  [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] and
+  [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] can come more than once
+  per turn. The session ends the dropped reply as cancelled, as it would a reply the user
+  [barged in on](turns.md#barge-in) before it spoke: history records it as an empty, interrupted
+  [`ModelResponse`][pydantic_ai.messages.ModelResponse], followed by the reply to the whole turn.
 - The protocol resembles OpenAI Realtime, but feature support comes from the xAI model profile;
   avoid assuming every OpenAI behavior is available.

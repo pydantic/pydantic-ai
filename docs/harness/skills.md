@@ -17,6 +17,8 @@ the `load_capability` tool to receive that skill's instructions.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![At the start of every run, Skills reads each SKILL.md in the configured libraries from the run's workspace, such as .agents/skills/code-review/SKILL.md, and puts a catalog of skill names and descriptions in the model's instructions. When a skill is useful, the model calls load_capability with its name and gets back a "# Skill: code-review" heading, the skill's directory and the Markdown body of SKILL.md.](../img/harness/skills.svg)
+
 ## Installation
 
 Install the `skills` extra for YAML frontmatter support:
@@ -55,17 +57,18 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Skills
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[LocalWorkspace('.'), Skills('.agents/skills')],
 )
 ```
 
 `Skills` does not search `.agents`, `.claude`, or your home directory
-automatically. Pass each library you want it to load.
+automatically. Pass each library you want it to load; to layer several the way
+coding agents do, see [Layer project and personal skills](#layer-project-and-personal-skills).
 
 !!! note
-    `Skills` loads instructions from `SKILL.md`. It does not load bundled
-    resources or run scripts.
+    `Skills` loads instructions from `SKILL.md` and tells the model where the
+    skill's directory is. It does not load bundled resources or run scripts itself.
 
 ## How it works
 
@@ -79,9 +82,11 @@ At the start of every run, `Skills`:
    named after it: the model sees its name and description, and loads it with the
    `load_capability` tool.
 
-Loading a skill returns a `# Skill: <name>` heading followed by the skill's Markdown
-body. The catalog is the same on every run over the same files, so it stays in the
-cached prefix; a new or renamed skill appears in it on the next run.
+Loading a skill returns a `# Skill: <name>` heading, a line naming the skill's
+directory in the workspace, and the skill's Markdown body. The catalog is the
+same on every run over the same files, so it stays in the cached prefix; a new
+or renamed skill appears in it on the next run. Without any skills, `Skills`
+adds no instructions and no `load_capability` tool.
 
 A run without a workspace fails at its start. To read skills from somewhere
 else, such as skills shipped with your application while the agent works in a
@@ -127,7 +132,9 @@ release_skills = Skills(
 
 `include` and `exclude` cannot be used together. The constructor overloads catch
 this in typed code, and runtime validation covers agent specs and untyped
-callers. Unknown names fail at run start.
+callers. Unknown names fail at run start. Pass `unknown_names='skip'` to ignore
+them instead, for a selection shared by projects that do not all have every
+skill it names, such as a person's list of skills to hide.
 
 Selection happens before frontmatter is parsed. An unselected skill does not add
 instructions or frontmatter validation errors to that `Skills` instance.
@@ -160,11 +167,18 @@ The loader uses these parts of `SKILL.md`:
 | `name` | Optional. Defaults to the parent directory name. If provided, it must match the directory after Unicode normalization. |
 | `description` | Required and non-blank. The Agent Skills limit is 1,024 characters; longer descriptions load with a warning. This appears in the initial catalog. |
 | Markdown body | Optional. This is loaded under a generated `# Skill: <name>` heading. |
+| `disable-model-invocation` | Optional, `true` or `false`. `true` leaves the skill out of the model's catalog; see [Invoke a skill yourself](#invoke-a-skill-yourself). |
+| `user-invocable` | Optional, `true` or `false`. `false` tells a host not to offer the skill as a command; the model still sees it. |
 
 Skill names and `include` or `exclude` values are normalized with Unicode NFKC
 before matching. A normalized name can contain at most 64 lowercase Unicode
 letters or numbers, separated by single hyphens. It cannot start or end with a
 hyphen.
+
+`disable-model-invocation` and `user-invocable` come from
+[Claude Code](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill).
+Any value other than `true` or `false` (in any letter case) skips the skill
+with a warning, rather than guessing whether it may be invoked.
 
 Only immediate children are discovered. For example,
 `code-review/references/SKILL.md` does not create another skill. Ordinary files
@@ -181,21 +195,66 @@ skills = Skills([
 ])
 ```
 
-Selected skill names must be unique across those libraries. Repeated references
-to the same resolved library are scanned once.
+By default, selected skill names must be unique across those libraries.
+Repeated references to the same resolved library are scanned once, and a skill
+found twice, through a symlinked library or skill directory or as a
+byte-identical copy of its `SKILL.md`, counts once.
 
-## Bundled files are not loaded
+## Layer project and personal skills
+
+Coding agents read skills from conventional locations that a project may not
+have, and let a project's skill take precedence over a personal one with the
+same name. Two options give `Skills` the same behavior:
+
+```python {test="skip"}
+from pydantic_ai_harness import Skills
+
+skills = Skills(
+    ['.agents/skills', '.claude/skills', '/home/me/.agents/skills', '/home/me/.claude/skills'],
+    missing_directories='skip',
+    duplicate_names='keep_first',
+)
+```
+
+- `missing_directories='skip'` leaves out a library directory that does not
+  exist, instead of failing the run. A path that is a file, or that holds a
+  `SKILL.md` itself (a skill package rather than a library of them), is left
+  out with a `UserWarning`, so one a model creates mid-session doesn't fail
+  every later run.
+- `duplicate_names='keep_first'` keeps the skill from the earlier directory when
+  two valid skills with different `SKILL.md` files share a name, and skips the
+  other with a `UserWarning`. An invalid `SKILL.md` is skipped first, so it does
+  not hide a valid skill with its name.
+
+Directories are listed in precedence order. Paths are workspace paths, and `~`
+is not expanded, because the workspace may be a sandbox with a home directory of
+its own; spell out the absolute path for a library on this machine.
+
+If `.agents/skills` is a symlink to `.claude/skills`, or holds byte-identical
+copies of its `SKILL.md` files, as in many repositories, each skill is listed
+once. Only `SKILL.md` is compared: the first directory's bundled files are the
+ones the model is pointed at.
+
+## Bundled files
 
 Agent Skill packages can contain directories such as `references/`, `assets/`,
 and `scripts/`. `Skills` does not enumerate, read, or execute those files.
 
-Relative paths and placeholders such as `${CLAUDE_SKILL_DIR}` remain unchanged
-in the loaded instructions. `Skills` does not provide a model-visible path that
-resolves them.
+The loaded instructions name the skill's directory in the run's workspace, so a
+model with file or shell tools, such as those from `FileSystem` or `Shell`, can
+follow a relative reference like `references/guide.md` or run
+`scripts/check.py`. Skills read from a `workspace=` backend are not where those
+tools work, so their instructions leave the directory out. Placeholders such as
+`${CLAUDE_SKILL_DIR}` remain unchanged in the body.
 
 `Skills` reads the libraries itself: the model does not need `FileSystem` or
 `Shell` to load a skill, and adding either does not change which files `Skills`
 reads.
+
+For tools scoped to a loaded skill's own files, see
+[`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills), a
+community package by [Doug Trajano](https://github.com/DougTrajano) that builds
+on `Skills`.
 
 ## Compatibility with existing skill libraries
 
@@ -207,8 +266,7 @@ behavior is not implemented:
 
 ```text
 agent, allowed-tools, argument-hint, arguments, context, dependencies,
-disable-model-invocation, disallowed-tools, effort, hooks, model, paths, shell,
-tools, user-invocable, when_to_use
+disallowed-tools, effort, hooks, model, paths, shell, tools, when_to_use
 ```
 
 If a selected skill uses any of these fields, the run emits one aggregated
@@ -216,12 +274,62 @@ If a selected skill uses any of these fields, the run emits one aggregated
 accepted without changing runtime behavior. Other unknown, non-behavioral fields
 are also accepted.
 
+To keep a skill's tools hidden until the skill is loaded, define that skill as
+an [on-demand capability with its tools](../capabilities/on-demand.md#hide-tools-until-loaded)
+instead: `Skills` delivers instructions only. Such a capability sits alongside
+`Skills` on the same agent: both appear in one catalog, and the model loads
+either with the `load_capability` tool. A capability `id` that matches a skill
+name `Skills` exposes to the model fails the run, so leave that skill out of
+the library or out of `include`, or pass its name in `exclude`.
+
+## Invoke a skill yourself
+
+The model decides when to load a skill. A host that also lets a person invoke a
+skill, such as a `/code-review src/app.py` command in a terminal client, reads
+the same catalog with `load` and renders the skill as a prompt:
+
+```python {test="skip"}
+from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai_harness import Skills
+
+skills = Skills('.agents/skills', missing_directories='skip')
+catalog = await skills.load(LocalWorkspaceBackend('.'))
+review = next(skill for skill in catalog.skills if skill.name == 'code-review')
+result = await agent.run(review.render('src/app.py'))
+```
+
+`load` reads the libraries as a run would, without emitting warnings. Each
+entry in the catalog's `skipped` is a `SkippedSkill` with the `path` left out,
+a `reason`, and the `message` a run would warn with, for the host to show:
+
+| `reason` | Left out |
+|---|---|
+| `'invalid'` | A `SKILL.md` with malformed frontmatter, invalid UTF-8, or an invalid or mismatched name |
+| `'duplicate_name'` | A `SKILL.md` named like a skill found earlier, with `duplicate_names='keep_first'` |
+| `'not_a_directory'` | A library path that is a file, with `missing_directories='skip'` |
+| `'skill_package'` | A library path that holds a `SKILL.md` itself, with `missing_directories='skip'` |
+
+Each `SkillDefinition` has the skill's `name`, `description`, `body`, `path`,
+`directory`, `in_run_workspace`, `model_invocable`, and `user_invocable`. The
+catalog includes skills with `disable-model-invocation: true`
+(`model_invocable` is `False`), which a run leaves out of the model's catalog,
+so a host can offer them as commands only. `Skills` doesn't offer commands
+itself, so `user_invocable` is for the host to check before it offers one.
+
+`render(arguments)` returns what loading the skill returns, with every
+`$ARGUMENTS` in the body replaced by `arguments`. A body without `$ARGUMENTS`
+gets `ARGUMENTS: <arguments>` appended. Other placeholders, such as Claude
+Code's indexed `$0` or `$ARGUMENTS[0]`, are left unchanged, and do not count as
+`$ARGUMENTS`. `render()` without arguments returns the instructions the model
+gets when it loads the skill, including leaving the directory out for a skill
+read from `workspace=` (`in_run_workspace` is `False`).
+
 ## Use an agent spec
 
 `Skills` works with Pydantic AI's [YAML and JSON agent specs](../agent-spec.md):
 
 ```yaml
-model: anthropic:claude-opus-5-5
+model: {{ anthropic:large }}
 capabilities:
   - Skills:
       directories: .agents/skills
@@ -261,6 +369,25 @@ refunds = Capability(
 `Skills` loads portable Agent Skill packages. It does not replace the core API
 for code-defined capabilities.
 
+## Scan skills before loading them
+
+Skills an agent wrote, or that came from a third party, can carry instructions that take effect in a later session. Pass an [`ArtifactScanner`](artifact-scanning.md) to check each skill's description and body for prompt injection, credential exfiltration, HTML comments, and invisible characters before it is offered:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness import ArtifactScanner, Skills
+
+agent = Agent(
+    capabilities=[
+        LocalWorkspace('.'),
+        Skills('.agents/skills', scanner=ArtifactScanner()),
+    ],
+)
+```
+
+A flagged skill is left out of the catalog with a `UserWarning`, and a zero-duration `artifact_scan flagged` span. `Skills.load()` reports it as a `SkippedSkill` with `reason='flagged'` and the findings in `scan`. Bundled files are not scanned, since `Skills` does not load them. The scanner belongs to the `Skills` it is passed to, so when two combine, a vetted library can go unscanned while an agent-written one is scanned.
+
 ## Configuration
 
 ```python {test="skip"}
@@ -269,17 +396,25 @@ Skills(
     *,
     include: Collection[str] | None = None,
     exclude: Collection[str] | None = None,
+    missing_directories: Literal['error', 'skip'] = 'error',
+    duplicate_names: Literal['error', 'keep_first'] = 'error',
+    unknown_names: Literal['error', 'skip'] = 'error',
     workspace: WorkspaceBackend | None = None,
+    scanner: ArtifactScanner | None = None,
 )
 ```
 
 - `directories` accepts one library path or a sequence of paths.
 - `include` exposes only the named skills.
 - `exclude` omits the named skills from the catalog.
+- `missing_directories='skip'` leaves out library paths that do not exist, and warns about and leaves out those that are files or skill packages.
+- `duplicate_names='keep_first'` keeps the first of two skills with one name, with a warning.
+- `unknown_names='skip'` ignores `include` and `exclude` names that no library has.
 - `workspace` reads the libraries from this backend instead of the run's workspace.
+- `scanner` checks each skill's description and body with an [`ArtifactScanner`](artifact-scanning.md) and leaves flagged skills out of the catalog; see [Scan skills before loading them](#scan-skills-before-loading-them).
 
 Pass at least one library directory, not the path of an individual skill
-package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names warn and skip that skill. Duplicate selected names, unknown selections, missing libraries, and non-directory library paths fail at run start.
+package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names warn and skip that skill. Unknown selections fail at run start, and so do duplicate selected names, missing libraries, and library paths that are files or skill packages, unless `duplicate_names`, `missing_directories`, or `unknown_names` say otherwise.
 
 Two `Skills` on one agent combine into one catalog.
 
@@ -293,3 +428,9 @@ Two `Skills` on one agent combine into one catalog.
 ## API reference
 
 ::: pydantic_ai_harness.skills.Skills
+
+::: pydantic_ai_harness.skills.SkillDefinition
+
+::: pydantic_ai_harness.skills.SkillCatalog
+
+::: pydantic_ai_harness.skills.SkippedSkill

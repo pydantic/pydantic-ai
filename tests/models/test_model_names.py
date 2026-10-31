@@ -22,21 +22,25 @@ with try_import() as imports_successful:
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import DEPRECATED_OPENAI_MODELS, OpenAIModelName
+    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModelName
     from pydantic_ai.models.snowflake import SnowflakeModelName
     from pydantic_ai.models.typesafe import TypeSafeModelName
     from pydantic_ai.models.xai import XaiModelName
     from pydantic_ai.models.zai import ZaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
+    from pydantic_ai.providers.meta import MetaModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
 
 if not imports_successful():  # pragma: lax no cover
     # Define placeholders so the module can be loaded for test collection
     AnthropicModelName = BedrockModelName = BedrockMantleModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
+    OpenAIDecisionsModelName = None
     DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     CrusoeModelName = None
     DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
+    MetaModelName = None
     TypeSafeModelName = None
 
 pytestmark = [
@@ -65,10 +69,12 @@ _PROVIDER_TO_MODEL_NAMES = {
     'xai': XaiModelName,
     'groq': GroqModelName,
     'huggingface': HuggingFaceModelName,
+    'meta': MetaModelName,
     'mistral': MistralModelName,
     'moonshotai': MoonshotAIModelName,
     'openai': OpenAIModelName,
     'openai-chat': OpenAIModelName,
+    'openai-decisions': OpenAIDecisionsModelName,
     'snowflake': SnowflakeModelName,
     'typesafe': TypeSafeModelName,
     'zai': ZaiModelName,
@@ -107,6 +113,11 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
         'gateway/bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
         'gateway/bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+        # Gateway returns HTTP 400 for the bare Haiku 5.5 id and the au./jp./us. profiles.
+        'gateway/bedrock:anthropic.claude-haiku-5-5',
+        'gateway/bedrock:au.anthropic.claude-haiku-5-5',
+        'gateway/bedrock:jp.anthropic.claude-haiku-5-5',
+        'gateway/bedrock:us.anthropic.claude-haiku-5-5',
         'gateway/bedrock:anthropic.claude-instant-v1',
         'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
         'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
@@ -175,10 +186,6 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/google:gemini-flash-lite-latest',
         'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
         'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
-        'gateway/groq:meta-llama/llama-guard-4-12b',
-        'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
-        'gateway/groq:playai-tts',
-        'gateway/groq:playai-tts-arabic',
         'gateway/groq:whisper-large-v3',
         'gateway/groq:whisper-large-v3-turbo',
         'gateway/openai:chatgpt-4o-latest',
@@ -274,6 +281,36 @@ def test_known_model_names():  # pragma: lax no cover
 def test_known_model_names_accessor():
     """`known_model_names()` exposes exactly the `KnownModelName` members, verbatim."""
     assert known_model_names() == get_args(KnownModelName.__value__)
+
+
+def test_grok_4_7_is_known_model_name():
+    """`grok-4.7` is a bridged `XaiModelName` and a `KnownModelName` member."""
+    assert 'grok-4.7' in get_args(get_args(XaiModelName)[-1])
+    assert 'xai:grok-4.7' in known_model_names()
+
+
+def test_known_model_names_docstring_warns_not_a_validator():
+    """The docstring states the list's purpose and warns against using it to validate user input."""
+    # Whitespace-normalized so rewrapping the docstring does not break the assertions.
+    doc = ' '.join((known_model_names.__doc__ or '').split())
+
+    # The intended purpose is named: autocomplete and error suggestions.
+    assert 'autocomplete' in doc
+    assert 'error suggestions' in doc
+    # The list is explicitly not exhaustive of the model ids providers accept.
+    assert 'not exhaustive' in doc
+    # Using it to validate user input is explicitly warned against.
+    assert 'validate user input' in doc
+
+
+def test_known_model_names_enumeration_contract_intact():
+    """`known_model_names()` still returns a non-empty tuple of provider-prefixed ids."""
+    names = known_model_names()
+    assert isinstance(names, tuple)
+    assert all(isinstance(name, str) for name in names)
+    assert names
+    assert any(name.startswith('openai:') for name in names)
+    assert any(name.startswith('anthropic:') for name in names)
 
 
 class HerokuModel(TypedDict):

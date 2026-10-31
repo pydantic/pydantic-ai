@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import math
 import posixpath
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from typing import TypeVar
 
 import anyio
 
@@ -18,6 +19,8 @@ try:
     import sniffio as _sniffio
 except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
     _sniffio = None
+
+_T = TypeVar('_T')
 
 
 def safe_credential_reason(error: Exception) -> str:
@@ -125,6 +128,31 @@ async def command_deadline(
         raise WorkspaceTimeoutError(f'Command timed out after {timeout:g} seconds', stdout=stdout, stderr=stderr)
 
 
+async def run_to_completion(call: Callable[[], Awaitable[_T]]) -> _T:
+    """Await `call` in a task of its own and see it finish even if the caller is cancelled meanwhile.
+
+    For work whose outcome must be recorded, such as a created Sprite or a closed client: the
+    caller's cancellation is re-raised only once `call` has finished, and nothing outlives this
+    await. `call` must be bounded; the caller waits for it.
+    """
+    # AnyIO has no detached task: keep this native task alive and referenced until its result is recorded.
+    task = asyncio.ensure_future(call())
+    # Preserve the native cancellation to re-raise after the provider call finishes.
+    cancelled: asyncio.CancelledError | None = None
+    # The AnyIO shield holds off cancel scopes, but native `Task.cancel()` can still interrupt the
+    # caller. `asyncio.wait` does not propagate that cancellation to the independent provider task.
+    with anyio.CancelScope(shield=True):
+        while not task.done():
+            try:
+                await asyncio.wait([task])
+            except asyncio.CancelledError as error:
+                cancelled = error
+    if cancelled is not None:
+        task.exception()  # Retrieve a provider failure before the native cancellation takes precedence.
+        raise cancelled
+    return task.result()
+
+
 def absolute_path(name: str, value: str | None) -> str | None:
     """Validate an absolute POSIX path without changing symlink traversal."""
     if value is None:
@@ -157,6 +185,24 @@ def command_argv(command: WorkspaceCommand, shell: bool) -> list[str]:
         if '\x00' in argument:
             raise ValueError('argv elements must not contain NUL bytes')
     return list(command)
+
+
+def check_env_types(env: Mapping[str, str] | None) -> None:
+    """Raise `TypeError` unless `env` is `None` or maps strings to strings."""
+    if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
+        raise TypeError('env keys and values must be strings')
+
+
+def check_env(env: Mapping[str, str] | None) -> None:
+    """Raise unless `env` maps non-empty names without `=` or NUL to strings without NUL.
+
+    A local VM engine passes them on as C strings, which would cut a value short at a NUL.
+    """
+    if env is None:
+        return
+    check_env_types(env)
+    if any(not key or '=' in key or '\0' in key or '\0' in value for key, value in env.items()):
+        raise ValueError('env keys must be non-empty without `=` or NUL, and values must not contain NUL')
 
 
 def check_working_dir(value: str | None) -> None:

@@ -11,6 +11,8 @@ import pytest
 
 from .test_engine_definition import CLAI2_SOURCE, launch, proxy_env
 
+pytestmark = pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
+
 # Configure is real; only outbound HTTP is replaced. The CLI boundary records the
 # resulting public configuration instead of making a model request.
 PROBE = """import atexit
@@ -68,8 +70,15 @@ exec(compile(sys.argv.pop(1), '<launcher>', 'exec'))
 """
 
 
-@pytest.mark.parametrize('token', ['', 'test-maintainer-token'])
-@pytest.mark.parametrize('exit_code', [0, 7])
+# Each case is a fresh interpreter importing `pydantic_ai` and Logfire, so the two
+# axes are paired rather than crossed: the token decides whether Logfire starts its
+# exporter and token-validation thread, the exit code only which `SystemExit` the
+# launcher re-raises, and neither changes how the other reaches shutdown.
+@pytest.mark.parametrize(
+    ('exit_code', 'token'),
+    [(0, 'test-maintainer-token'), (7, '')],
+    ids=['token-success', 'no-token-failure'],
+)
 def test_launcher_ignores_checkout_logfire_configuration(tmp_path: Path, token: str, exit_code: int) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()

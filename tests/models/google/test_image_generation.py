@@ -27,7 +27,8 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     TextPartDelta,
     UserPromptPart,
@@ -177,9 +178,11 @@ async def test_google_image_generation(allow_model_requests: None, gemini_api_ke
                     cost=Decimal('0.136628'),
                 ),
                 model_name='gemini-3-pro-image-preview',
+                model_id='google:gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -228,9 +231,11 @@ async def test_google_image_generation(allow_model_requests: None, gemini_api_ke
                     cost=Decimal('0.138000'),
                 ),
                 model_name='gemini-3-pro-image-preview',
+                model_id='google:gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -285,9 +290,11 @@ async def test_google_image_generation_stream(allow_model_requests: None, gemini
                     cost=Decimal('0.0387155'),
                 ),
                 model_name='gemini-2.5-flash-image',
+                model_id='google:gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -363,9 +370,11 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                     cost=Decimal('0.138472'),
                 ),
                 model_name='gemini-3-pro-image-preview',
+                model_id='google:gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -388,6 +397,19 @@ async def test_google_image_or_text_output(allow_model_requests: None, gemini_ap
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(IsInstance(BinaryImage))
+
+
+async def test_google_2_5_flash_image_ignores_thinking(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """`gemini-2.5-flash-image` doesn't think, so unified `thinking` sends no thinking config, which the API would reject."""
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    agent = Agent(GoogleModel('gemini-2.5-flash-image', provider=provider), model_settings={'thinking': True})
+
+    result = await agent.run('Say hi in one word, no image please.')
+    assert result.output == snapshot('Hi!')
+    body = request_capture.body(':generateContent')
+    assert body['generationConfig'] == snapshot({'responseModalities': ['TEXT', 'IMAGE']})
 
 
 async def test_google_image_and_text_output(allow_model_requests: None, gemini_api_key: str):
@@ -460,9 +482,11 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                     cost=Decimal('0.136998'),
                 ),
                 model_name='gemini-3-pro-image-preview',
+                model_id='google:gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -471,9 +495,9 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -504,9 +528,11 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                     cost=Decimal('0.003254'),
                 ),
                 model_name='gemini-3-pro-image-preview',
+                model_id='google:gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -612,12 +638,14 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                     },
                     output_reasoning_tokens=529,
                     web_searches=1,
-                    cost=Decimal('0.148734'),
+                    cost=Decimal('0.162734'),
                 ),
                 model_name='gemini-3-pro-image-preview',
+                model_id='google:gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',

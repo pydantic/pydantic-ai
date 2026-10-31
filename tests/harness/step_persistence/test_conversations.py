@@ -54,6 +54,33 @@ async def test_roundtrip_search_paging_and_media(tmp_path: Path) -> None:
         assert conn.execute('SELECT count(*) FROM media').fetchone()[0] >= 2
 
 
+async def test_listing_newest_first_reads_an_index_not_every_transcript(tmp_path: Path) -> None:
+    """A database from before the index gains it, so listing never orders by reading every saved transcript."""
+    database = tmp_path / 'sessions.db'
+    with closing(sqlite3.connect(database)) as conn, conn:
+        conn.execute(
+            'CREATE TABLE conversations (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, metadata TEXT NOT NULL, '
+            'messages TEXT NOT NULL, search_text TEXT NOT NULL, updated_at TEXT NOT NULL)'
+        )
+    store = SqliteConversationStore(database=database)
+    first = await store.save(summary=ConversationSummary(workspace='/a', title='First'), messages=[])
+    second = await store.save(summary=ConversationSummary(workspace='/a', title='Second'), messages=[])
+    assert [e.id for e in await store.listing()] == [second.id, first.id]
+    assert [e.id for e in await store.listing(query='first')] == [first.id]
+    with closing(sqlite3.connect(database)) as conn:
+        # The query `listing(archived=False)` runs.
+        plan = conn.execute(
+            'EXPLAIN QUERY PLAN SELECT metadata FROM conversations '
+            "WHERE (? IS NULL OR (json_extract(metadata, '$.archived_at') IS NOT NULL) = ?) "
+            'ORDER BY updated_at DESC, id LIMIT ? OFFSET ?',
+            (False, False, 200, 0),
+        ).fetchall()
+    # SQLite versions word the plan differently; a temporary B-tree would mean sorting every row.
+    steps = ' '.join(row[-1] for row in plan)
+    assert 'USING INDEX conversations_updated_at' in steps
+    assert 'TEMP B-TREE' not in steps
+
+
 async def test_content_and_naming_compare_and_swap(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     source = ConversationSummary(workspace='/a', title='Fallback')
@@ -82,6 +109,60 @@ async def test_content_and_naming_compare_and_swap(tmp_path: Path) -> None:
         await store.save(summary=current, messages=[])
     with pytest.raises(ConversationConflict):
         await store.delete(source=current)
+
+
+async def test_archiving_is_metadata_that_listing_filters(tmp_path: Path) -> None:
+    """Archiving keeps messages, revision, and activity time, and is reversible; new content lists it again."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    kept = await store.save(summary=ConversationSummary(workspace='/a', title='Kept'), messages=[])
+    old = await store.save(
+        summary=ConversationSummary(workspace='/a', title='Old'),
+        messages=[ModelRequest(parts=[UserPromptPart('old work')])],
+    )
+    archived = await store.set_archived(conversation_id=old.id, archived=True)
+    assert archived.archived_at is not None
+    assert replace(archived, archived_at=None) == old
+    assert (await store.set_archived(conversation_id=old.id, archived=True)) == archived, 'the first time is kept'
+    assert len((await store.get(conversation_id=old.id)).messages) == 1
+    assert [e.id for e in await store.listing(archived=False)] == [kept.id]
+    assert [e.id for e in await store.listing(archived=True)] == [old.id]
+    assert [e.id for e in await store.listing()] == [old.id, kept.id]
+    assert [e.id for e in await store.listing(query='old work', archived=True)] == [old.id]
+    restored = await store.set_archived(conversation_id=old.id, archived=False)
+    assert restored == old
+    assert [e.id for e in await store.listing(archived=False)] == [old.id, kept.id]
+    await store.set_archived(conversation_id=old.id, archived=True)
+    # Saving new content, even from a summary read while it was archived, lists it again.
+    saved = await store.save(summary=archived, messages=[])
+    assert saved.archived_at is None
+    assert [e.id for e in await store.listing(archived=False)] == [old.id, kept.id]
+    with pytest.raises(LookupError, match='No saved session'):
+        await store.set_archived(conversation_id='missing', archived=True)
+
+
+async def test_metadata_saved_before_archiving_existed_is_not_archived(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    saved = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
+    with closing(sqlite3.connect(store.database)) as conn, conn:
+        conn.execute("UPDATE conversations SET metadata = json_remove(metadata, '$.archived_at')")
+    assert [e.id for e in await store.listing(archived=False)] == [saved.id]
+    assert await store.listing(archived=True) == []
+    assert (await store.get(conversation_id=saved.id)).summary == saved
+
+
+async def test_a_fork_records_its_source_which_listing_filters_by(tmp_path: Path) -> None:
+    """`forked_from` survives later saves, so an application can find a conversation's forks again."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    source = await store.save(summary=ConversationSummary(workspace='/a', title='Source'), messages=[])
+    other = await store.save(summary=ConversationSummary(workspace='/a', title='Other'), messages=[])
+    fork = await store.save(summary=ConversationSummary(workspace='/a', forked_from=source.id), messages=[])
+    fork = await store.save(summary=fork, messages=[ModelRequest(parts=[UserPromptPart('more')])])
+    assert fork.forked_from == source.id
+    assert [e.id for e in await store.listing(forked_from=source.id)] == [fork.id]
+    assert await store.listing(forked_from=other.id) == []
+    assert [e.id for e in await store.listing()] == [fork.id, other.id, source.id]
+    await store.set_archived(conversation_id=fork.id, archived=True)
+    assert await store.listing(forked_from=source.id, archived=False) == []
 
 
 async def test_stale_delete_does_not_erase_new_content(tmp_path: Path) -> None:
@@ -132,15 +213,25 @@ async def test_delete_removes_run_data_but_not_other_conversations(tmp_path: Pat
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     second = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     steps = SqliteStepStore(database=store.database)
+    shared = ModelRequest(parts=[UserPromptPart('shared instructions')])
+    histories: dict[str, list[ModelMessage]] = {}
     for record in (first, second):
+        histories[record.id] = [shared, ModelResponse(parts=[TextPart(f'only in {record.id}')])]
         await steps.register_run(RunRecord(run_id=record.id, conversation_id=record.id))
         await steps.append_event(StepEvent(run_id=record.id, kind='run_started', step_index=0))
-        await steps.save_snapshot(ContinuableSnapshot(run_id=record.id, step_index=0, messages=[]))
+        await steps.save_snapshot(ContinuableSnapshot(run_id=record.id, step_index=0, messages=histories[record.id]))
     await store.delete(source=first)
     assert await steps.get_run(run_id=first.id) is None
     assert await steps.latest_snapshot(run_id=first.id) is None
     assert await steps.list_events(run_id=first.id) == []
-    assert await steps.latest_snapshot(run_id=second.id) is not None
+    kept = await steps.latest_snapshot(run_id=second.id)
+    assert kept is not None
+    assert kept.messages == histories[second.id]
+    # The deleted conversation's messages go with it; the one both stored stays for the other.
+    with closing(sqlite3.connect(store.database)) as conn:
+        stored = [row[0] for row in conn.execute('SELECT message FROM snapshot_messages')]
+    assert len(stored) == 2
+    assert not any(f'only in {first.id}' in message for message in stored)
     assert len(await store.listing()) == 1
 
 

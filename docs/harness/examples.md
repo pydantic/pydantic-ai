@@ -1,9 +1,9 @@
 ---
-title: Examples
+title: Harness Examples
 description: "Example Pydantic AI Harness agents to read and copy: a coding agent and a web research agent, each built from individual capabilities with full configuration."
 ---
 
-# Examples
+# Harness Examples
 
 The [`examples/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/examples)
 directory contains complete agents assembled from individual capabilities. They are
@@ -21,7 +21,7 @@ If you just want the assembled version, every packaged harness ([`Coder`](coder.
 [CLI](https://pydantic.dev/docs/ai/cli/#custom-agents):
 
 ```bash
-uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent
+uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent
 ```
 
 ## Running an example

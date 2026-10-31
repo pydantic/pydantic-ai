@@ -5,8 +5,9 @@ user up, and approves the code. No local callback server is involved, so it also
 the link on any device. The client registers itself (RFC 7591) and uses PKCE; the authorization server
 is discovered from the MCP URL (RFC 9728), so self-hosted Logfire works too.
 
-Tokens are kept per MCP URL in CLAI's credential store (the OS keyring, or a private file), refreshed
-when they expire, and replaced by a new sign-in when refreshing fails.
+Tokens are kept per MCP URL in CLAI's credential store (the OS keyring, or a private file) and refreshed
+when they expire. A run never starts a sign-in: `DeviceAuth` raises `SignInRequiredError` instead, and
+`LogfireSignIn` signs in when the user asks, from `/logfire login` or the settings menu.
 """
 
 import base64
@@ -16,6 +17,7 @@ import threading
 import time
 import webbrowser
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
+from dataclasses import dataclass, field
 from typing import Annotated, Literal, TypeVar
 from urllib.parse import urlsplit
 
@@ -37,14 +39,17 @@ from pydantic import (
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.plugins.sign_in import SignInRequiredError
+from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 ACCOUNT = 'logfire-oauth'
 """The credential account holding Logfire sign-ins, one per MCP URL."""
 READ_SCOPE = 'project:read'
 """The scope Logfire's MCP server requires; read-and-write sign-ins also ask for every scope it lists."""
-SIGN_IN_TIMEOUT = 660.0
-"""Seconds a first connection may wait: Logfire's device codes last 600 seconds."""
+SERVICE = 'Logfire'
+SETUP = '/logfire login'
+"""The command that signs in."""
 DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code'
 _REFRESH_MARGIN = 60.0
 
@@ -270,7 +275,7 @@ def _pkce() -> tuple[str, str]:
 
 def _open(url: str) -> bool:
     try:
-        return webbrowser.open(url)
+        return open_browser(url)
     except webbrowser.Error:
         return False
 
@@ -315,7 +320,7 @@ async def sign_in(
             # Asking again would get the same grant, so say so once rather than on every request.
             announce('Logfire granted fewer scopes than asked; some write tools may be refused.')
     except (httpx.HTTPError, ValidationError) as exc:
-        raise SignInError(f'Logfire sign-in failed: {type(exc).__name__}. Run /logfire_mcp login to retry.') from exc
+        raise SignInError(f'Logfire sign-in failed: {type(exc).__name__}. Run /logfire login to retry.') from exc
     tokens = Tokens(
         client_id=client_id,
         token_endpoint=server.token_endpoint,
@@ -371,8 +376,8 @@ async def _poll(
             interval += 5
         elif problem.error != 'authorization_pending':
             reason = 'was denied' if problem.error == 'access_denied' else f'failed: {problem.error_description}'
-            raise SignInError(f'Logfire sign-in {reason}. Run /logfire_mcp login to retry.')
-    raise SignInError('The Logfire sign-in code expired before it was approved. Run /logfire_mcp login to retry.')
+            raise SignInError(f'Logfire sign-in {reason}. Run /logfire login to retry.')
+    raise SignInError('The Logfire sign-in code expired before it was approved. Run /logfire login to retry.')
 
 
 async def _refresh(http: httpx.AsyncClient, *, resource: str, tokens: Tokens) -> Tokens | None:
@@ -417,23 +422,13 @@ def _http() -> httpx.AsyncClient:
 # rejects another family's `Auth` as an invalid `auth`. The flows below serve either, so be both; the
 # unused `auth_flow` the two declare for their own `Request` is what Pyright objects to.
 class DeviceAuth(httpx.Auth, httpx2.Auth):  # pyright: ignore[reportIncompatibleMethodOverride]
-    """Bearer tokens from a stored sign-in; refreshes them, or starts a browser sign-in when there is none."""
+    """Bearer tokens from a stored sign-in, refreshed when they expire; `SignInRequiredError` when there is none."""
 
-    def __init__(
-        self,
-        *,
-        resource: str,
-        read_only: bool,
-        announce: Announce,
-        http: Callable[[], httpx.AsyncClient] = _http,
-        sleep: Sleep = anyio.sleep,
-    ) -> None:
-        """Tokens for `resource`, the MCP URL; `announce` shows the sign-in link and code."""
+    def __init__(self, *, resource: str, read_only: bool, http: Callable[[], httpx.AsyncClient] = _http) -> None:
+        """Tokens for `resource`, the MCP URL."""
         self._resource = resource
         self._read_only = read_only
-        self._announce = announce
         self._http = http
-        self._sleep = sleep
         self._lock = anyio.Lock()
 
     def sync_auth_flow(self, request: _RequestT) -> Generator[_RequestT, object, None]:
@@ -451,26 +446,54 @@ class DeviceAuth(httpx.Auth, httpx2.Auth):  # pyright: ignore[reportIncompatible
             yield request
 
     async def _tokens(self, *, rejected: Tokens | None) -> Tokens:
-        # One sign-in at a time: an MCP connection sends several requests at once.
+        # One refresh at a time: an MCP connection sends several requests at once.
         async with self._lock:
             tokens = await to_thread.run_sync(load, self._resource)
             if tokens is None or not tokens.serves(read_only=self._read_only):
-                return await self.sign_in()
+                raise SignInRequiredError(NOT_SIGNED_IN)
             if tokens != rejected and tokens.fresh():
                 return tokens  # Another request, or another CLAI process, may have refreshed it already.
             async with self._http() as http:
                 refreshed = await _refresh(http, resource=self._resource, tokens=tokens)
-            return refreshed or await self.sign_in()
+            if refreshed is None:
+                raise SignInRequiredError(NOT_SIGNED_IN)
+            return refreshed
 
-    async def sign_in(self) -> Tokens:
-        """Run the device flow now, announcing the link and code."""
-        async with self._http() as http:
+
+NOT_SIGNED_IN = f'Not signed in to {SERVICE}. Run {SETUP} to sign in.'
+
+
+@dataclass(frozen=True, kw_only=True)
+class LogfireSignIn:
+    """Logfire's device sign-in as a `pydantic_clai2.plugins.sign_in.SignInMethod`, for one MCP URL."""
+
+    resource: str
+    read_only: bool
+    http: Callable[[], httpx.AsyncClient] = field(default=_http, repr=False)
+    sleep: Sleep = field(default=anyio.sleep, repr=False)
+    service: str = SERVICE
+    setup: str = SETUP
+
+    def signed_in(self) -> bool:
+        """Whether runs can use a stored sign-in, refreshing it if needed."""
+        return status(resource=self.resource, read_only=self.read_only) == 'signed in'
+
+    def sign_out(self) -> None:
+        """Forget every Logfire sign-in."""
+        forget()
+
+    async def sign_in(self, *, show: Callable[[str], object]) -> Tokens:
+        """Run the device flow now, showing every line so far: the link, the code, and what happened."""
+        lines: list[str] = []
+
+        def announce(line: str) -> None:
+            # Links and notices can carry text from a self-hosted server, so terminal controls are made inert.
+            lines.append(terminal_text(line))
+            show('\n'.join(lines))
+
+        async with self.http() as http:
             return await sign_in(
-                resource=self._resource,
-                read_only=self._read_only,
-                announce=self._announce,
-                http=http,
-                sleep=self._sleep,
+                resource=self.resource, read_only=self.read_only, announce=announce, http=http, sleep=self.sleep
             )
 
 
@@ -478,7 +501,7 @@ Status = Literal['signed in', 'expired', 'signed out']
 
 
 def status(*, resource: str, read_only: bool) -> Status:
-    """Whether runs can use a stored sign-in; `expired` ones refresh or sign in again on the next run."""
+    """Whether runs can use a stored sign-in; `expired` ones need `/logfire login` again."""
     tokens = load(resource)
     if tokens is None or not tokens.serves(read_only=read_only):
         return 'signed out'

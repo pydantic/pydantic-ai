@@ -23,8 +23,8 @@ from pydantic_clai2.config.credential_store import (
     save_codex_credentials,
 )
 from pydantic_clai2.ui import telemetry
-from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.menus.menu_worker import menu_key, require_terminal, run_worker
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 
 class KeyReference(BaseModel):
@@ -236,6 +236,7 @@ async def set_api_key(*, args: list[str]) -> str:
     """Ask for a name and masked value, never accepting secrets as command arguments."""
     if args:
         raise ValueError('Usage: /set api_key (name and key are prompted privately)')
+    require_terminal(instead='/keys')
     prompt: PromptSession[str] = PromptSession()
     try:
         name = normalize_name(name=await prompt.prompt_async('API key name (automatically uppercased): '))

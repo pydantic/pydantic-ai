@@ -6,7 +6,7 @@ import time
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from genai_prices.types import PriceCalculation
@@ -22,7 +22,9 @@ from pydantic_ai._instrumentation import (
     CachedMessageJson,
     MessageJsonCache,
     get_instructions,
+    mcp_telemetry_history_ids,
     message_json_fragment,
+    model_request_telemetry_url_ids,
     open_model_request_span,
     response_cost,
     safe_to_json,
@@ -33,17 +35,34 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
     BaseToolReturnPart,
+    CapabilityLoadDeltaPart,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
+    ModelResponsePart,
+    ModelSettingsDeltaPart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
+    _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
 from ..settings import ModelSettings
 from ..usage import UsageBase
-from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
+from . import (
+    KnownModelName,
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    StreamedResponse,
+    _current_request_start,  # pyright: ignore[reportPrivateUsage]
+)
 from .wrapper import WrapperModel
 
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
@@ -132,8 +151,10 @@ class InstrumentationSettings:
                     as UNSET, since deferrals are control flow, not errors.
                 Version 6 is the same as version 5, but tool results are emitted in a message with
                     `role='tool'` rather than `role='user'`, which is the role the GenAI semantic
-                    conventions pair with the `tool_call_response` parts they carry. Opt in to it when
-                    your telemetry consumer keys on the message role; it is not the default.
+                    conventions pair with the `tool_call_response` parts they carry, and retry feedback
+                    that answers no tool call moves from `role='user'` to `role='system'`, the voice it
+                    reaches the model in. Opt in to it when your telemetry consumer keys on the message
+                    role; it is not the default.
             use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
                 for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
                 Defaults to True to prevent double-counting in observability backends that aggregate span
@@ -203,13 +224,22 @@ class InstrumentationSettings:
                 **time_to_first_chunk_histogram_kwargs,  # pyright: ignore[reportArgumentType]
             )
 
-    def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
+    def messages_to_otel_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+    ) -> list[_otel_messages.ChatMessage]:
         result: list[_otel_messages.ChatMessage] = []
+        sensitive_names = {f'mcp_server:{identity}' for identity in mcp_url_ids}
         for message in messages:
+            if sensitive_names and isinstance(message, ModelResponse):
+                projected_parts: list[ModelResponsePart] = [
+                    replace(part, tool_name='mcp_server:[REDACTED]')
+                    if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name in sensitive_names
+                    else part
+                    for part in message.parts
+                ]
+                message = replace(message, parts=projected_parts)
             if isinstance(message, ModelRequest):
-                for role, group in itertools.groupby(
-                    message.parts, key=functools.partial(_otel_message_role, version=self.version)
-                ):
+                for role, group in self._request_part_groups(message):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):
@@ -223,8 +253,73 @@ class InstrumentationSettings:
                 result.append(otel_message)
         return result
 
+    def _request_part_groups(self, message: ModelRequest) -> list[tuple[_otel_messages.Role, list[ModelRequestPart]]]:
+        """The OTel messages a request's parts make: each one's role and the parts that go in it.
+
+        Shared by `messages_to_otel_messages` and `_span_input_messages`, which lines its result up with this.
+        """
+        # A baseline records what the request's instructions were and contributes nothing to a trace,
+        # so it's left out before grouping rather than becoming an empty system message.
+        request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]
+        return [
+            (role, list(group))
+            for role, group in itertools.groupby(
+                request_parts, key=functools.partial(_otel_message_role, version=self.version)
+            )
+        ]
+
+    def _span_input_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str], current_request_start: int
+    ) -> list[_otel_messages.ChatMessage]:
+        """`messages_to_otel_messages`, with the parts of request-scoped system prompts the model no longer sees marked.
+
+        A [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt in a message before
+        `current_request_start` was sent with an earlier request, so its part gets `visible: false`. The marker
+        is added to what `messages_to_otel_messages` returns, so an override of it still applies. Where the
+        result doesn't have the shape the default conversion gives, the parts can't be told apart and none are
+        marked.
+        """
+        otel_messages = self.messages_to_otel_messages(messages, mcp_url_ids=mcp_url_ids)
+        if not any(_holds_request_scoped_prompt(message) for message in messages[:current_request_start]):
+            return otel_messages
+        # For each OTel message the default conversion gives, which of its parts to mark, or `None` to leave it.
+        expected: list[list[bool] | None] = []
+        for index, message in enumerate(messages):
+            if not isinstance(message, ModelRequest):
+                expected.append(None)
+                continue
+            mark = index < current_request_start and _holds_request_scoped_prompt(message)
+            for _, group in self._request_part_groups(message):
+                # Only a message with a part to mark needs its OTel parts counted again; the rest just need their groups.
+                expected.append(
+                    [
+                        _is_request_scoped(part)
+                        for part in group
+                        if hasattr(part, 'otel_message_parts')
+                        for _ in part.otel_message_parts(self)
+                    ]
+                    if mark
+                    else None
+                )
+        if len(expected) != len(otel_messages) or any(
+            marks is not None
+            and (
+                len(marks) != len(otel_message['parts'])
+                or any(mark and part['type'] != 'text' for mark, part in zip(marks, otel_message['parts']))
+            )
+            for marks, otel_message in zip(expected, otel_messages)
+        ):
+            return otel_messages
+        for marks, otel_message in zip(expected, otel_messages):
+            for mark, part in zip(marks or (), otel_message['parts']):
+                if mark and part['type'] == 'text':
+                    part['visible'] = False
+        return otel_messages
+
     def _input_messages_json(
-        self, input_messages: list[ModelMessage], message_json_cache: MessageJsonCache | None
+        self,
+        input_messages: list[ModelMessage],
+        message_json_cache: MessageJsonCache | None,
     ) -> bytes:
         """Serialize the input message history to a JSON array.
 
@@ -234,16 +329,41 @@ class InstrumentationSettings:
         in the input history are evicted, so the cache (and the `parts` lists it keeps alive) stays
         bounded by the current history even when a history processor prunes or rebuilds messages.
         Without a cache (one-off requests), the whole history is serialized in a single call.
+        Historical MCP names lack their original request provenance, so each cached fragment
+        withholds those names without rescanning every part on subsequent requests.
         """
+        current_request_start = _current_request_start(input_messages)
         if message_json_cache is None:
-            return safe_to_json(self.messages_to_otel_messages(input_messages))
+            history_ids = mcp_telemetry_history_ids(input_messages, frozenset())
+            return safe_to_json(
+                self._span_input_messages(
+                    input_messages, mcp_url_ids=history_ids, current_request_start=current_request_start
+                )
+            )
 
         fragments: list[bytes] = []
         fresh_entries: MessageJsonCache = {}
-        for message in input_messages:
+        for index, message in enumerate(input_messages):
+            answered = index < current_request_start
             entry = message_json_cache.get(id(message))
-            if entry is None or entry.parts is not message.parts:
-                entry = CachedMessageJson(message, message.parts, message_json_fragment(self, message))
+            # A fragment holding a request-scoped system prompt, cached while its request was current, is
+            # rebuilt once that request has been answered, so the prompt is marked as no longer visible.
+            if (
+                entry is None
+                or entry.parts is not message.parts
+                or (entry.request_scoped and entry.answered != answered)
+            ):
+                history_ids = mcp_telemetry_history_ids([message], frozenset())
+                request_scoped = _holds_request_scoped_prompt(message)
+                answered = answered and request_scoped
+                entry = CachedMessageJson(
+                    message,
+                    message.parts,
+                    message_json_fragment(self, message, history_ids, answered=answered),
+                    history_ids,
+                    request_scoped=request_scoped,
+                    answered=answered,
+                )
             fresh_entries[id(message)] = entry
             if entry.fragment:
                 fragments.append(entry.fragment)
@@ -260,7 +380,10 @@ class InstrumentationSettings:
         *,
         message_json_cache: MessageJsonCache | None = None,
     ):
-        output_messages = self.messages_to_otel_messages([response])
+        mcp_url_ids: frozenset[str] = (
+            frozenset(model_request_telemetry_url_ids(parameters)) if parameters is not None else frozenset[str]()
+        )
+        output_messages = self.messages_to_otel_messages([response], mcp_url_ids=mcp_url_ids)
         assert len(output_messages) == 1
         output_message = output_messages[0]
 
@@ -407,6 +530,11 @@ class InstrumentedModel(WrapperModel):
                     )
 
 
+def _holds_request_scoped_prompt(message: ModelMessage) -> bool:
+    """Whether `message` is a request holding a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt."""
+    return isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)
+
+
 def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.Role:
     """The GenAI role of the message a request part belongs in.
 
@@ -419,18 +547,35 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     `role='user'`. Earlier versions keep those parts on `user`, so a consumer written against them
     keeps reading the role it was built for.
 
-    `ToolAvailabilityDeltaPart` gets `system` as the least-bad fit in a closed vocabulary, not as a
-    mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the set
-    of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is
-    no native channel, a `role='system'` entry carrying `tool_addition` blocks on Anthropic, a
-    roleless `additional_tools` item on OpenAI Responses, a tool-search exchange where schemas are
-    withheld. `tool` is the one role that would actively mislead, being paired with
-    `tool_call_response`.
+    `RetryFeedbackPart` sits on that same boundary, for the same reason. From version 6 on it takes
+    the voice it reaches the model in, which its `retry.cause` decides: `user` for a
+    `'validation_error'` or `'model_retry'`, either of which can quote back what the model wrote, and
+    `system` for `'no_output'`, whose text is the framework's own. Earlier versions keep every cause
+    on `user`, so a consumer written against them keeps reading the role it was built for — and for
+    every cause but `'no_output'` that is already the role the wire uses. Only `pydantic_ai.all_messages` moves at all: a request span records the
+    history after `prepare_messages` has already translated the part, except on a decision model,
+    which is handed the part itself.
+
+    `ToolAvailabilityDeltaPart`, like `CapabilityLoadDeltaPart`, gets `system` as the least-bad fit in a closed
+    vocabulary, not as a mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the
+    set of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is no native
+    channel, a `role='system'` entry carrying `tool_addition` blocks on Anthropic, a roleless `additional_tools` item on
+    OpenAI Responses, a tool-search exchange where schemas are withheld. `tool` is the one role that would actively
+    mislead, being paired with `tool_call_response`.
     """
-    if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart):
+    if isinstance(
+        part,
+        SystemPromptPart
+        | ToolAvailabilityDeltaPart
+        | CapabilityLoadDeltaPart
+        | InstructionDeltaPart
+        | ModelSettingsDeltaPart,
+    ) or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part)):
         return 'system'
+    # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`
+    # records the stored history rather than the prepared one.
     elif version >= 6 and (
-        isinstance(part, BaseToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+        isinstance(part, BaseToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)  # pyright: ignore[reportDeprecated]
     ):
         return 'tool'
     else:

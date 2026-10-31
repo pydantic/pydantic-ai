@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from typing import Any
 
 import pytest
@@ -69,13 +70,24 @@ def test_defense_with_semantic_detection_raises() -> None:
         PromptInjectionDefender(_observe(), semantic_detection=True)
 
 
-def test_semantic_detection_without_onnx_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ('version_info', 'remedy'),
+    [
+        ((3, 14), 'uv add "pydantic-ai-harness[prompt-injection-defender-ml]"'),
+        ((3, 15), 'needs Python 3.14 or earlier'),
+    ],
+)
+def test_semantic_detection_without_onnx_raises(
+    monkeypatch: pytest.MonkeyPatch, version_info: tuple[int, int], remedy: str
+) -> None:
     def no_spec(name: str) -> None:
         return None
 
     monkeypatch.setattr(importlib.util, 'find_spec', no_spec)
-    with pytest.raises(UserError, match='ONNX Runtime'):
+    monkeypatch.setattr(sys, 'version_info', version_info)
+    with pytest.raises(UserError, match='ONNX Runtime') as exc_info:
         PromptInjectionDefender(semantic_detection=True)
+    assert remedy in str(exc_info.value)
 
 
 @requires_onnx

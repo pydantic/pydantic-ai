@@ -24,6 +24,8 @@ self-healing), and the tool returns a text result.
     each capability runs its own browser, so a session opened by one is not
     visible to the other.
 
+![The host model calls browse_web with one natural-language goal. BrowserUse hands it to a browser-use sub-agent, which by default runs on the host run's model. The sub-agent reads the page as indexed DOM elements and a screenshot, picks an action, and repeats for up to 50 steps in its own Chromium session, behind a domain allowlist. A judge call checks the result, and browse_web returns the final text or validated JSON to the host model, with any secrets replaced by placeholders.](../img/harness/browser-use.svg)
+
 ## The problem
 
 Low-level browser tools (goto, click a selector, extract text) work well when
@@ -60,10 +62,10 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import BrowserUse
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         BrowserUse(
-            llm='anthropic:claude-sonnet-4-6',
+            llm='{{ anthropic:medium }}',
             allowed_domains=['example.com'],
         )
     ],
@@ -74,10 +76,10 @@ print(result.output)
 ```
 
 Each `browse_web` call runs the sub-agent's loop to completion in a browser
-session. The tool result is the sub-agent's final text; when the sub-agent
-stops without finishing (step budget exhausted, repeated failures) or judges
-its own result incomplete, the tool says so instead of presenting a partial
-answer as a clean one.
+session. The tool result is the sub-agent's final text. When the sub-agent
+stops without finishing (repeated failures) or reports its own result
+incomplete, the tool says so instead of presenting a partial answer as a clean
+one.
 
 ## The sub-agent's model
 
@@ -96,11 +98,18 @@ on top of a Pydantic AI model. That buys three things:
 browser-use's own model wrappers (`ChatAnthropic`, `ChatOpenAI`, `ChatGoogle`,
 ...) are also accepted and used as-is.
 
-With `llm=None`, browser-use falls back to its own default model selection,
-which ends at its hosted `ChatBrowserUse` model. That is a separate account and
-API key (`BROWSER_USE_API_KEY`), billed by browser-use, and invisible to your
-own model observability. Pass an explicit `llm` to keep inference in your own
-stack.
+With `llm=None` (the default), the sub-agent runs on the host run's model,
+read from `RunContext.model` on each `browse_web` call and wrapped in
+`PydanticAIChatModel`. Browsing then stays on the provider, account, and
+observability you already configured, and follows the host agent when a run
+overrides its model. This default also inherits the host run's instrumentation
+settings, including its content-redaction policy. Passing an explicit `llm`
+leaves that model's instrumentation unchanged.
+
+browser-use's hosted `ChatBrowserUse` model is opt-in: pass
+`llm=ChatBrowserUse()` (from `browser_use`) to use it. That is a separate
+account and API key (`BROWSER_USE_API_KEY`), billed by browser-use, and page
+content leaves your own provider stack.
 
 Two cost knobs to know about:
 
@@ -127,7 +136,7 @@ from pydantic_ai_harness import BrowserUse
 from pydantic_ai_harness.browser_use import BrowserAgentSettings
 
 BrowserUse(
-    llm='anthropic:claude-sonnet-4-6',
+    llm='{{ anthropic:medium }}',
     agent_settings=BrowserAgentSettings(
         use_judge=False,  # skip the extra judge call per task
         step_timeout=60,
@@ -168,11 +177,13 @@ as a clean answer.
 
 ## Secrets
 
-`sensitive_data` lets the sub-agent type credentials without its model ever
-seeing the values: the model is shown only placeholder keys and writes
-`<secret>key</secret>`, and browser-use substitutes the real value in the
-browser. Scope entries to a domain with the nested form, and combine with
-`allowed_domains` so the values cannot be typed anywhere else:
+`sensitive_data` keeps credentials out of the browser agent's own messages: the
+model is shown only placeholder keys and writes `<secret>key</secret>`, and
+browser-use substitutes the real value into the action. Screenshots are not
+redacted, so a value typed into a visible, non-password field reaches the model
+while `use_vision` is on, and the page-extraction and judge models receive a
+value the agent writes into an `extract` query or its final answer. Scope
+entries to a domain with the nested form, and combine with `allowed_domains`:
 
 ```python
 from pydantic_ai_harness import BrowserUse
@@ -183,14 +194,36 @@ BrowserUse(
 )
 ```
 
-Flat `sensitive_data` values are available on every domain, so they require a
+Flat `sensitive_data` values have no domain of their own, so they require a
 non-empty `allowed_domains` allowlist with explicit hostnames on the capability
 or `browser_profile`. Host globs, including `'*.example.com'`, and catch-all
 entries such as `'*'` and `'https://*'` are rejected. Use the domain-scoped
 nested form shown above when the allowed domains are not known in advance.
-BrowserUse disables cross-origin iframe processing whenever `sensitive_data` is
-configured, so browser-use cannot type a secret into a field from another
-origin.
+Flat values are substituted only on the hosts the allowlist names, not on
+`data:` pages, which browser-use's navigation guard always admits.
+
+browser-use substitutes a placeholder in any action, not only when typing. So
+whenever `sensitive_data` is configured, BrowserUse:
+
+- disables cross-origin iframe processing, so a secret is not typed into a field
+  from another origin;
+- removes browser-use's `evaluate` action from the `settings.tools` every
+  agent factory receives, since a page script can send a value to any origin
+  and the allowlist only checks navigations;
+- replaces each secret value in the `browse_web` result with its placeholder,
+  so a value the sub-agent writes into its answer does not reach the host
+  model. It matches the value as written, its JSON-escaped form (as schema
+  output writes it), and its URL-encoded form as `urllib.parse.quote_plus`
+  writes it, `p%40ss+word` for `p@ss word` (the query in a blocked `search`
+  action's URL). Other encodings, such as `%20` for a space, HTML entities,
+  base64, or a change of letter case, are not matched. Every occurrence is
+  replaced, including inside other words, so a very short value can garble the
+  result. Schema output stays valid JSON: a non-string field holding a secret
+  becomes its placeholder string, and an object with two keys that redact alike
+  raises `ModelRetry` instead of dropping one.
+
+A domain-scoped secret is still substituted into a navigation made from its own
+domain, so add `allowed_domains` to bound where such a request can go.
 
 ## Sessions and safety
 
@@ -212,8 +245,14 @@ origin.
   entry (`'example.com'`, `'localhost'`, `'*'`) is qualified to `http`/`https`
   first, so an allowlist cannot re-admit `file://` (see **File actions**). An
   entry whose scheme is a glob keeps only the schemes it already matched, so
-  narrowing it never admits one the caller had excluded. The same normalization
-  runs in `BrowserUseToolset`, so constructing the toolset directly gets it too.
+  narrowing it never admits one the caller had excluded. A `browser_profile`
+  allowlist given as a set is matched the same way. browser-use matches an
+  allowlist of 100 or more entries by exact hostname only, so an allowlist that
+  normalizes to that many raises `ValueError`. Without an allowlist, the same
+  limit applies to `browser_profile.prohibited_domains` once the harness's
+  `file://` rules (and, with `block_ip_addresses`, its localhost rules) are
+  added. The same normalization runs in
+  `BrowserUseToolset`, so constructing the toolset directly gets it too.
 - **Private networks.** `block_ip_addresses=True` by default blocks direct IP
   addresses and common localhost hostnames, including when a profile has an
   allowlist. Names that resolve to loopback without being spelled `localhost`
@@ -227,7 +266,8 @@ origin.
   inside it. Non-empty custom `guidance` retains this rule automatically;
   `guidance=''` is the explicit opt-out.
 - **File actions.** The default factory disables browser-use's `read_file` and
-  `upload_file` actions and prohibits `file://` navigation. browser-use consults
+  `upload_file` actions, and every session prohibits `file://` navigation in
+  any letter case or spelling Chromium accepts. browser-use consults
   `allowed_domains` or `prohibited_domains`, never both, so a permissive
   allowlist entry would otherwise override that prohibition; host-only entries
   are qualified to `http`/`https` to close that path, and an allowlist
@@ -243,8 +283,9 @@ origin.
   `block_ip_addresses`, and `cdp_url` override the profile when set, exactly like directly passed
   fields on a hand-built `BrowserSession`.
 - **Step budget.** `max_steps` (default 50) caps the sub-agent's loop; each
-  step is one of its model calls. On hitting the cap the tool reports that the
-  agent stopped without a result.
+  step is one of its model calls, not counting planning, judge, and extraction calls.
+  On the last step browser-use makes the agent give a final answer, which the
+  tool labels as incomplete when the agent reports failure.
 - **Sub-agent instructions.** `extend_system_message` appends standing
   constraints to the browser agent's own system prompt ("never submit forms",
   "prefer the English version of pages").
@@ -253,8 +294,14 @@ origin.
   Ending a call disconnects from an attached browser rather than terminating
   it -- browser-use only kills a browser process it launched itself -- so a
   browser you manage survives `'call'` scope.
-- **Telemetry.** browser-use collects anonymized telemetry by default; set
-  `ANONYMIZED_TELEMETRY=false` to disable it.
+- **Telemetry.** browser-use reports every agent run to its PostHog project by
+  default, including the task, the visited URLs, and the final result. The
+  capability turns that per-run event off for its own agents without touching
+  the process environment; set `browser_use_telemetry=True` to send it. The
+  capability cannot stop browser-use from creating its process-wide PostHog
+  client, which also captures uncaught exceptions: set
+  `ANONYMIZED_TELEMETRY=false` in the environment to disable browser-use
+  telemetry entirely.
 
 ## Session reuse
 
@@ -275,8 +322,8 @@ from pydantic_ai_harness import BrowserUse
 
 
 async def main():
-    async with BrowserUse(llm='anthropic:claude-sonnet-4-6', session_scope='agent') as browser:
-        agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[browser])
+    async with BrowserUse(llm='{{ anthropic:medium }}', session_scope='agent') as browser:
+        agent = Agent('{{ anthropic:medium }}', capabilities=[browser])
         first = await agent.run('Log in to app.example.com with the stored credentials.')
         await agent.run('Now open the latest report.', message_history=first.all_messages())
 ```
@@ -310,7 +357,7 @@ Every field of `BrowserUse` with its default:
 from pydantic_ai_harness import BrowserUse
 
 BrowserUse(
-    llm=None,                    # Pydantic AI model/string or browser-use chat model; None = browser-use's default
+    llm=None,                    # Pydantic AI model/string or browser-use chat model; None = the host run's model
     browser_profile=None,        # full BrowserProfile (proxy, user_data_dir, storage_state, ...)
     allowed_domains=None,        # navigation allowlist; None = unrestricted; overrides the profile
     block_ip_addresses=True,     # block IP addresses and localhost-style hostnames; False opts in
@@ -318,13 +365,14 @@ BrowserUse(
     max_steps=50,                # cap on sub-agent steps per call (one LLM call each)
     use_vision=True,             # send screenshots; 'auto' follows the model, False disables
     output_schema=None,          # Pydantic model class for a structured, validated result
-    sensitive_data=None,         # secrets typed by the browser, never shown to the model
+    sensitive_data=None,         # secrets typed by the browser, kept out of the agent's messages
     extend_system_message=None,  # extra standing instructions for the sub-agent
     agent_settings=None,         # BrowserAgentSettings: supported Agent options
     session_scope='call',        # 'call' = fresh browser per call; 'agent' = one shared session
     cdp_url=None,                # attach to a remote Chromium over CDP; overrides the profile
     guidance=None,               # host-model instructions: None = default, '' = none, str = custom
     browser_agent=None,          # BrowserAgentFactory; None builds a real browser_use.Agent
+    browser_use_telemetry=False,  # send browser-use's per-run product telemetry
 )
 ```
 
@@ -355,6 +403,8 @@ def factory(request: BrowserTask) -> BrowserAgent:
         sensitive_data=request.sensitive_data,
         extend_system_message=request.extend_system_message,
         enable_signal_handler=False,
+        # Arrives without `evaluate` when secrets are set: page scripts could send one anywhere.
+        tools=request.settings.tools,
         use_judge=request.settings.use_judge,
         skill_ids=['*'],
     )
@@ -367,7 +417,11 @@ BrowserUse(browser_agent=factory)
 existing factories: unpack what you forward, ignore the rest (the default
 factory, `default_browser_agent`, forwards all of `settings`). The factory
 must not start or stop the session itself; the tool owns the session
-lifecycle.
+lifecycle. `request.sensitive_data` arrives with flat values keyed by the
+allowlist entries; when it is set, `request.settings.tools` arrives without
+browser-use's `evaluate` action, so forward it as the example does. A factory
+that builds its own `Tools` or agent must exclude `evaluate` itself: the
+capability cannot enforce it on tools it never sees.
 
 ## BrowserUse vs PlaywrightBrowser
 
@@ -392,7 +446,7 @@ you have not seen.
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - BrowserUse:
       allowed_domains: [example.com]
@@ -409,8 +463,8 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[BrowserUse])
 ```
 
 The `llm`, `browser_profile`, `output_schema`, `agent_settings`, and
-`browser_agent` fields are not spec-serializable; spec-loaded instances use
-browser-use's own default model selection and browser and agent configuration,
+`browser_agent` fields are not spec-serializable; spec-loaded instances run the
+sub-agent on the host run's model, with default browser and agent configuration,
 prose output, and the default agent factory.
 
 

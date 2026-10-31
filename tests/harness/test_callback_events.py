@@ -132,7 +132,7 @@ def test_new_construction_paths_do_not_warn() -> None:
         warnings.simplefilter('error', HarnessDeprecationWarning)
         SpendLimits()
         ReportContextUsage()
-        SystemReminders(reminders=[Reminder('focus')])
+        SystemReminders(reminders=[Reminder('focus', tag=None)])
         InMemoryPlanStore()
 
 
@@ -162,6 +162,7 @@ def test_callback_replacement_events_serialize() -> None:
                 'usd': '0.50',
                 'priced': True,
                 'budgets': [],
+                'failed_attempt': False,
                 'event_kind': 'capability',
                 'kind': 'spend_limits.recorded',
             },

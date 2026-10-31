@@ -15,6 +15,8 @@ single lookup cannot settle.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls tools from two capabilities. YouSearch adds web_search, which returns the top ten hits with excerpts, and get_page, which returns one page as markdown capped at 10,000 characters. YouResearch adds answer, research and finance_research, which return cited answers. Each tool calls one method of the You.com API. Every tool returns a ToolReturn: the text goes to the model and the sources entry of its metadata holds YouSource records for your app. Authentication, billing and permission errors stop the run; other failures come back as a retry.](../img/harness/youdotcom.svg)
+
 ## The problem
 
 Some search tools return only a title and a snippet, so the agent has to fetch
@@ -45,7 +47,7 @@ Then pass the capabilities to an `Agent` via the `capabilities` parameter:
 from pydantic_ai import Agent
 from pydantic_ai_harness import YouResearch, YouSearch
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[YouSearch(), YouResearch()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[YouSearch(), YouResearch()])
 
 result = agent.run_sync('What changed in the latest stable Python release?')
 print(result.output)
@@ -205,7 +207,7 @@ from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai_harness import YouSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         YouSearch(),  # web_search, get_page
         PrefixTools(
@@ -222,7 +224,7 @@ contributes the same default research guidance.
 
 ## Durable execution
 
-Under [durable execution](durable-execution.md), each You.com request is recorded, so a
+Under [durable execution](../durable_execution/overview.md), each You.com request is recorded, so a
 recovered run reuses the result instead of making the request again. Temporal
 and Prefect record each tool call in its own activity or task. DBOS runs
 function tools in workflow code, so there the request runs as its own step.
@@ -232,7 +234,7 @@ exceed: it waits up to `timeout_ms`, 600 seconds by default. Give the tool calls
 longer with
 `TemporalDurability(toolset_activity_config={'you_research': ActivityConfig(...)})`,
 keyed by the capability's `id`,
-as in [Temporal timeouts](durable-execution.md#temporal-timeouts).
+as in [Temporal timeouts](../durable_execution/temporal.md#harness-command-timeouts).
 
 The records are named after the capability's `id`, which defaults to
 `you_search` for `YouSearch` and `you_research` for `YouResearch`, so durable
@@ -272,8 +274,10 @@ To use the provider's search where there is one and You.com's elsewhere, either:
   `get_page` stays available on every model. `include_domains` and
   `exclude_domains` become the native tool's `allowed_domains` and
   `blocked_domains`.
-  Whether the native search applies them depends on the provider: Gemini's
-  native search ignores them, so on Gemini they only restrict the fallback.
+  A model whose native search can't apply a domain filter you set gets
+  You.com's `web_search` instead, so the filter still holds: on Gemini, whose
+  native search takes no domain filters, setting either list means You.com
+  searches.
 - Or pass You.com's search as the fallback of core `WebSearch`, to configure the
   native search with `WebSearch`'s own options:
 
@@ -304,7 +308,7 @@ config file instead of Python:
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - YouSearch:
       num_results: 5
@@ -327,6 +331,7 @@ instances always build the default client from `YDC_API_KEY`. In specs,
 
 ## Further reading
 
+- [You.com is now a Pydantic AI capability](https://pydantic.dev/articles/youdotcom-pydantic-ai-harness) (Pydantic)
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Toolsets](../toolsets.md)
 - [You.com API documentation](https://documentation.you.com)

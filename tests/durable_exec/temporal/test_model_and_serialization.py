@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sys
 import uuid
@@ -7,12 +8,14 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
+import httpx2
 import pytest
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -22,6 +25,7 @@ from pydantic_ai import (
     CodeExecutionTool,
     DocumentUrl,
     FilePart,
+    FunctionToolset,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -40,21 +44,41 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._instrumentation import model_request_parameters_attributes
+from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
+    Capability,
+    DynamicCapability,
     Instrumentation,
     NativeTool,
 )
+from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request_stream
+from pydantic_ai.durable_exec._utils import mark_streamed_before_failing, streamed_before_failing
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelAuthenticationError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
+    ModelRateLimitError,
+    ModelRequestRejectedError,
+    ModelServerError,
+    ModelTimeoutError,
+    RetryModelRequest,
     UserError,
 )
 from pydantic_ai.messages import (
     CUSTOM_EVENT_TYPES,
     CapabilityEvent,
     CustomEvent,
+    InstructionId,
+    InstructionPart,
+    ModelRequestAttempt,
+    ThinkingPart,
+    ToolsetInstructionSource,
     UnknownCustomEvent,
     UploadedFile,
 )
@@ -69,6 +93,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
@@ -116,11 +141,19 @@ try:
         _CancelParams as _ModelCancelParams,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._model_errors import (
+        _retry_policy_type,  # pyright: ignore[reportPrivateUsage]
         model_errors_as_application_errors,
         rebuilt_model_errors,
+        rebuilt_retry_requests,
+        retry_requests_as_application_errors,
     )
     from pydantic_ai.durable_exec.temporal._replay_safe_tracer_provider import ReplaySafeSDKTracerProvider
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
+    from pydantic_ai.durable_exec.temporal._transports import (
+        _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
+        _CompactMessagesTransport,
+        _ModelRequestTransport,
+    )
 
     from .sandbox_workflow import PydanticAIPluginSandboxWorkflow
 except ImportError:  # pragma: lax no cover
@@ -173,9 +206,11 @@ with workflow.unsafe.imports_passed_through():
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
 
     from ..._inline_snapshot import snapshot
+    from ...append_only import drain_events
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr, try_import
+    from ..responses_websocket import responses_reply, websocket_model
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -886,7 +921,7 @@ async def test_oversized_model_response_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134191)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
+            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134347)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedModelResponseWorkflow.run,
@@ -1070,6 +1105,10 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'workspace',  # live facade cannot cross the activity boundary; only a concrete ref is optionally carried
         # Live toolsets the run holds entered; an activity may run in another process, so it enters its own
         '_run_held_toolsets',
+        '_dispatched_tool_name',  # names a tool in the workflow-side `tool_manager`, which an activity doesn't have
+    }
+    carried_only_when_set = {
+        '_tool_name_path',  # set while a name-changing wrapper lists a toolset; defaults to `()` otherwise
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
@@ -1078,11 +1117,50 @@ def test_temporal_run_context_serialization_is_exhaustive():
     overlap = serialized & intentionally_unserialized
     assert not overlap, f'Fields both serialized and excluded: {overlap}'
 
-    uncategorized = all_fields - (serialized | intentionally_unserialized)
+    uncategorized = all_fields - (serialized | intentionally_unserialized | carried_only_when_set)
     assert not uncategorized, (
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to '
         '`TemporalRunContext.serialize_run_context` or to `intentionally_unserialized` (with a reason).'
     )
+
+
+async def test_temporal_run_context_carries_tool_name_path():
+    """A toolset listed in an activity under a wrapper reads its tool's count by the wrapper's names.
+
+    The path crosses as JSON and comes back in the shape the toolsets read. A payload without it, from a worker that
+    predates it or a custom `serialize_run_context` that omits it, still loads and lists the tool by the name its
+    toolset holds it under, as before the path existed.
+
+    A unit test, not a workflow or recorded test: a workflow run shows only the count the toolset reads, not the
+    payload that crossed the activity boundary or whether an older payload still loads.
+
+    See https://github.com/pydantic/pydantic-ai/issues/9741.
+    """
+    seen: list[int] = []
+    toolset = FunctionToolset[None]()
+
+    async def record(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        seen.append(ctx.retry)
+        return tool_def
+
+    @toolset.tool(prepare=record)
+    async def fail(ctx: RunContext[None]) -> str:
+        return 'ok'  # pragma: no cover
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), retries={'outer_x': 1})
+    wire = to_jsonable_python(
+        TemporalRunContext.serialize_run_context(
+            with_tool_name_layer(with_tool_name_layer(ctx, 'outer'), {'fail': 'x'})
+        )
+    )
+    assert wire['_tool_name_path'] == ['outer', {'fail': 'x'}]
+    older_wire: dict[str, object] = {key: value for key, value in wire.items() if key != '_tool_name_path'}
+
+    for payload in (wire, older_wire):
+        await toolset.get_tools(TemporalRunContext.deserialize_run_context(payload, deps=None))
+
+    assert seen == [1, 0]
+    assert '_tool_name_path' not in TemporalRunContext.serialize_run_context(ctx)
 
 
 @dataclass
@@ -1594,6 +1672,82 @@ def test_temporal_model_profile_for_raw_strings():
         assert temporal_model_with_registry.profile == alt_model.profile
 
 
+class _CanonicalSystemTestModel(TestModel):
+    @property
+    def canonical_system(self) -> str:
+        return 'anthropic'
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        return frozenset({'bedrock'})
+
+
+def test_temporal_model_canonical_system_follows_active_model():
+    """Which history data a model sends back is decided by the active model, like its identity.
+
+    A raw model string has no model to ask, so its provider name stands in, as it does for `system`.
+    """
+    default_model = TestModel(model_name='default-model')
+    alt_model = _CanonicalSystemTestModel(model_name='alt-model')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__canonical_system',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': alt_model},
+    )
+    anthropic_response = ModelResponse(
+        parts=[ThinkingPart(content='thought', signature='sig', provider_name='anthropic')], provider_name='anthropic'
+    )
+
+    assert (temporal_model.canonical_system, temporal_model.compatible_systems) == ('test', frozenset())
+    assert not temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+    assert not temporal_model.accepts_server_state(anthropic_response)
+    assert temporal_model._model_for_response(anthropic_response) is default_model  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('alt'):
+        assert (temporal_model.canonical_system, temporal_model.compatible_systems) == (
+            'anthropic',
+            frozenset({'bedrock'}),
+        )
+        assert temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+        assert temporal_model._model_for_response(anthropic_response) is alt_model  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('anthropic:claude-sonnet-4-5'):
+        assert (temporal_model.canonical_system, temporal_model.compatible_systems) == ('anthropic', frozenset())
+        assert temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+        assert temporal_model.accepts_server_state(anthropic_response)
+        assert temporal_model._model_for_response(anthropic_response) is temporal_model  # pyright: ignore[reportPrivateUsage]
+
+
+class _NoRestrictionsTestModel(TestModel):
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return native_tool.restricting_settings
+
+
+def test_temporal_model_unsupported_native_tool_settings_follow_active_model():
+    """The native tool settings check asks the active model, so a swapped-in model's limits are the ones applied.
+
+    A raw model string has no model class to ask, so it reports none; the activity's concrete model decides.
+    """
+    temporal_model = TemporalModel(
+        TestModel(model_name='default-model'),
+        activity_name_prefix='test__unsupported_native_tool_settings',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': _NoRestrictionsTestModel(model_name='alt-model')},
+    )
+    web_search = WebSearchTool(allowed_domains=['pydantic.dev'])
+
+    assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset()
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset({'allowed_domains'})
+
+    with temporal_model.using_model('google-gla:gemini-2.5-flash'):
+        assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset()
+
+
 class DefaultHostModel(TestModel):
     @property
     def base_url(self) -> str:
@@ -1779,6 +1933,375 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
         'cancel',
         'exit',
     ]
+
+
+async def test_temporal_model_activities_use_http_for_responses_websocket(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An activity without an external model owner uses HTTP instead of opening a socket for one request."""
+    pytest.importorskip('websockets')
+    connect = AsyncMock()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        responses_model = websocket_model(client)
+        temporal_model = TemporalModel(
+            responses_model,
+            activity_name_prefix='test__responses_websocket',
+            activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+            deps_type=type(None),
+            event_stream_handler=drain_events,
+        )
+        ctx = RunContext[None](deps=None, model=responses_model, usage=RunUsage(), run_id='responses-websocket')
+        params = _RequestParams(
+            messages=[ModelRequest.user_text_prompt('hello')],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+            serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+            model_id=None,
+        )
+        response = await ActivityEnvironment().run(temporal_model.request_activity, params, None)
+        stream_response = await ActivityEnvironment().run(
+            temporal_model.request_stream_activity,
+            params,
+            None,  # pyright: ignore[reportArgumentType]
+        )
+    assert response.text == stream_response.text == 'from HTTP'
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize('legacy_payload', [True, False])
+@pytest.mark.parametrize('streaming', [True, False])
+async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: bool, streaming: bool) -> None:
+    identity = 'mcp.example.test'
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path-token', native=True, local=False)
+    assert capability.id == identity
+    observed_ids: list[set[str]] = []
+
+    def check_parameters(info: AgentInfo) -> None:
+        parameters = info.model_request_parameters
+        assert parameters._telemetry_mcp_url_ids is not None  # pyright: ignore[reportPrivateUsage]
+        observed_ids.append(parameters._telemetry_mcp_url_ids)  # pyright: ignore[reportPrivateUsage]
+        attributes = model_request_parameters_attributes(parameters)
+        serialized = attributes['model_request_parameters']
+        assert isinstance(serialized, str)
+        assert json.loads(serialized)['function_tools'][0]['capability_id'] == '[REDACTED]'
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        check_parameters(info)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    async def respond_stream(_messages: list[ModelMessage], info: AgentInfo) -> AsyncGenerator[str, None]:
+        check_parameters(info)
+        yield 'ok'
+
+    async def handle_stream(_ctx: RunContext[object], _stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass
+
+    model = FunctionModel(respond, stream_function=respond_stream)
+    agent = Agent(model, capabilities=[capability])
+    temporal_model = TemporalModel(
+        model,
+        activity_name_prefix='test__request_telemetry_ids',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        event_stream_handler=handle_stream,
+        agent=agent,
+    )
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=model, usage=RunUsage())
+    params = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(
+                    name='ping',
+                    toolset_id=identity,
+                    capability_id=identity,
+                    unless_native=f'mcp_server:{identity}',
+                )
+            ],
+            instruction_parts=[
+                InstructionPart(
+                    'server guidance', id=InstructionId(ToolsetInstructionSource(identity), name='instructions')
+                )
+            ],
+            deferred_capability_ids={identity},
+            _telemetry_mcp_url_ids={identity},
+        ),
+        telemetry_mcp_url_ids={identity},
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(params, mode='json')
+    if legacy_payload:
+        wire.pop('telemetry_mcp_url_ids')
+    decoded = TypeAdapter(_RequestParams).validate_python(wire)
+    if streaming:
+        await ActivityEnvironment().run(
+            temporal_model.request_stream_activity,
+            decoded,
+            deps,  # pyright: ignore[reportArgumentType]  # Temporal's activity wrapper erases the deps generic.
+        )
+    else:
+        await ActivityEnvironment().run(temporal_model.request_activity, decoded, deps)
+
+    assert observed_ids == [{identity}]
+
+
+async def test_temporal_direct_activity_recovers_url_derived_native_mcp_id() -> None:
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=True, local=False)
+    assert capability.id is not None
+    tool = next(iter(capability.get_native_tools()))
+    assert isinstance(tool, MCPServerTool)
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        serialized = model_request_parameters_attributes(info.model_request_parameters)['model_request_parameters']
+        assert isinstance(serialized, str)
+        assert json.loads(serialized)['native_tools'][0]['id'] == '[REDACTED]'
+        return ModelResponse(parts=[TextPart('ok')])
+
+    model = FunctionModel(respond)
+    temporal_model = TemporalModel(
+        model,
+        activity_name_prefix='test__direct_request_telemetry_ids',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+    )
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(native_tools=[tool]),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
+    await ActivityEnvironment().run(
+        temporal_model.request_activity, TypeAdapter(_RequestParams).validate_python(wire), deps
+    )
+
+
+@pytest.mark.parametrize('legacy_payload', [True, False])
+@pytest.mark.parametrize('compact', [True, False])
+def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy_payload: bool) -> None:
+    identity = 'mcp.example.test'
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path-token', native=True, local=False)
+    assert capability.id == identity
+    model = TestModel()
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='ping', capability_id=identity)], _telemetry_mcp_url_ids={identity}
+    )
+    common: dict[str, Any] = {
+        'messages': [ModelRequest.user_text_prompt('hello')],
+        'model_settings': None,
+        'model_request_parameters': parameters,
+        'serialized_run_context': TemporalRunContext.serialize_run_context(ctx),
+    }
+    agent = Agent(model, name='telemetry_recovery', capabilities=[capability])
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    assert bound_durability.agent is agent
+    if compact:
+        payload = _CompactMessagesParams(
+            **common,
+            telemetry_mcp_url_ids={identity},
+            telemetry_mcp_url_toolset_ids={identity},
+            telemetry_mcp_url_tool_names={'ping'},
+            streaming=False,
+            instructions=None,
+        )
+        wire = TypeAdapter(_CompactMessagesParams).dump_python(payload, mode='json')
+        if legacy_payload:
+            wire.pop('telemetry_mcp_url_ids')
+            wire.pop('telemetry_mcp_url_toolset_ids')
+            wire.pop('telemetry_mcp_url_tool_names')
+        decoded = TypeAdapter(_CompactMessagesParams).validate_python(wire)
+        loaded = _CompactMessagesTransport(bound_durability).load((decoded, None), runtime=object())
+        restored = loaded.request_context.model_request_parameters
+    else:
+        payload = _RequestParams(
+            **common,
+            telemetry_mcp_url_ids={identity},
+            telemetry_mcp_url_toolset_ids={identity},
+            telemetry_mcp_url_tool_names={'ping'},
+        )
+        wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
+        if legacy_payload:
+            wire.pop('telemetry_mcp_url_ids')
+            wire.pop('telemetry_mcp_url_toolset_ids')
+            wire.pop('telemetry_mcp_url_tool_names')
+        decoded = TypeAdapter(_RequestParams).validate_python(wire)
+        loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load(
+            (decoded, None), runtime=object()
+        )
+        restored = loaded.model_request_parameters
+
+    assert restored._telemetry_mcp_url_ids == {identity}  # pyright: ignore[reportPrivateUsage]
+    assert restored._telemetry_mcp_url_toolset_ids == (set() if legacy_payload else {identity})  # pyright: ignore[reportPrivateUsage]
+    assert restored._telemetry_mcp_url_tool_names == (None if legacy_payload else {'ping'})  # pyright: ignore[reportPrivateUsage]
+    assert identity not in str(model_request_parameters_attributes(restored))
+
+
+@pytest.mark.parametrize('derived_id', [True, False])
+def test_temporal_legacy_payload_recovers_dynamic_native_mcp_id(derived_id: bool) -> None:
+    url = 'https://mcp.example.test/private/SENTINEL-path-token'
+    identity = 'mcp.example.test' if derived_id else 'chosen-id'
+    model = TestModel()
+    agent = Agent(
+        model,
+        name='telemetry_recovery',
+        capabilities=[DynamicCapability(lambda _ctx: MCP(url, native=True, local=False), id='dynamic-mcp')],
+    )
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(native_tools=[MCPServerTool(id=identity, url=url)]),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    decoded = TypeAdapter(_RequestParams).validate_python(TypeAdapter(_RequestParams).dump_python(payload, mode='json'))
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    parameters = loaded.model_request_parameters
+
+    assert parameters._telemetry_mcp_url_ids == ({identity} if derived_id else set())  # pyright: ignore[reportPrivateUsage]
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert 'SENTINEL-path-token' not in serialized
+    assert json.loads(serialized)['native_tools'][0]['id'] == ('[REDACTED]' if derived_id else identity)
+
+
+@pytest.mark.parametrize('derived_id', [True, False])
+def test_temporal_legacy_payload_recovers_dynamic_local_mcp_capability_id(derived_id: bool) -> None:
+    url = 'https://mcp.example.test/private/SENTINEL-path-token'
+    capability = MCP(url, native=False, local=True, id=None if derived_id else 'chosen-id')
+    assert capability.id is not None
+    model = TestModel()
+    agent = Agent(
+        model,
+        name='telemetry_recovery',
+        capabilities=[DynamicCapability(lambda _ctx: capability, id='dynamic-mcp')],
+    )
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(
+                    name='ping',
+                    toolset_id=capability.id,
+                    capability_id=capability.id,
+                    metadata={'meta': None, 'annotations': None, 'task': False},
+                )
+            ]
+        ),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
+    decoded = TypeAdapter(_RequestParams).validate_python(wire)
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    serialized = model_request_parameters_attributes(loaded.model_request_parameters)['model_request_parameters']
+
+    assert isinstance(serialized, str)
+    assert 'SENTINEL-path-token' not in serialized
+    assert json.loads(serialized)['function_tools'][0]['capability_id'] == '[REDACTED]'
+    assert json.loads(serialized)['function_tools'][0]['toolset_id'] == '[REDACTED]'
+
+
+def test_temporal_legacy_payload_preserves_non_mcp_dynamic_id() -> None:
+    model = TestModel()
+    agent = Agent(
+        model,
+        name='telemetry_recovery',
+        capabilities=[DynamicCapability(lambda _ctx: Capability(id='chosen-id'), id='dynamic-capability')],
+    )
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[ToolDefinition(name='ping', toolset_id='chosen-id', capability_id='chosen-id')]
+        ),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
+    decoded = TypeAdapter(_RequestParams).validate_python(wire)
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    serialized = model_request_parameters_attributes(loaded.model_request_parameters)['model_request_parameters']
+
+    assert isinstance(serialized, str)
+    assert json.loads(serialized)['function_tools'][0]['capability_id'] == 'chosen-id'
+    assert json.loads(serialized)['function_tools'][0]['toolset_id'] == 'chosen-id'
+
+
+@pytest.mark.parametrize('strategy', ['generated_native', 'provided_native', 'factory_native', 'local_only'])
+def test_temporal_legacy_payload_classifies_static_explicit_mcp_id_matching_url(strategy: str) -> None:
+    url = 'https://mcp.example.test/private/SENTINEL-path-token'
+    identity = 'mcp.example.test'
+    model = TestModel()
+    if strategy == 'provided_native':
+        capability = MCP(native=MCPServerTool(id=identity, url=url), local=False)
+    elif strategy == 'generated_native':
+        capability = MCP(url, native=True, local=False, id=identity)
+    elif strategy == 'factory_native':
+        capability = MCP(url, native=lambda _ctx: MCPServerTool(id=identity, url=url), local=False, id=identity)
+    else:
+        capability = MCP(url, native=False, local=True, id=identity)
+    agent = Agent(model, name='telemetry_recovery', capabilities=[capability])
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(native_tools=[MCPServerTool(id=identity, url=url)]),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    decoded = TypeAdapter(_RequestParams).validate_python(TypeAdapter(_RequestParams).dump_python(payload, mode='json'))
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    parameters = loaded.model_request_parameters
+
+    assert parameters._telemetry_mcp_url_ids == ({identity} if strategy == 'local_only' else set())  # pyright: ignore[reportPrivateUsage]
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert 'SENTINEL-path-token' not in json.loads(serialized)['native_tools'][0]['url']
+    assert json.loads(serialized)['native_tools'][0]['id'] == ('[REDACTED]' if strategy == 'local_only' else identity)
+
+
+def test_temporal_legacy_payload_recovers_run_override_native_mcp_id() -> None:
+    url = 'https://mcp.example.test/private/SENTINEL-path-token'
+    capability = MCP(url, native=True, local=False)
+    assert capability.id is not None
+    tool = next(iter(capability.get_native_tools()))
+    assert isinstance(tool, MCPServerTool)
+    model = TestModel()
+    agent = Agent(model, name='telemetry_recovery')
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(native_tools=[tool]),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
+    assert '_telemetry_url_derived_id' not in str(wire)
+    decoded = TypeAdapter(_RequestParams).validate_python(wire)
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    parameters = loaded.model_request_parameters
+
+    assert parameters._telemetry_mcp_url_ids == {capability.id}  # pyright: ignore[reportPrivateUsage]
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert json.loads(serialized)['native_tools'][0]['id'] == '[REDACTED]'
 
 
 async def test_temporal_activity_does_not_manage_registered_models() -> None:
@@ -2649,10 +3172,11 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     else:
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
+    # Foundry serves no mid-conversation system messages, so the standing prompt also says what `<system>` means.
     assert rendered_requests == snapshot(
         [
             {
-                'system': 'leading',
+                'system': f'leading\n\n{SYSTEM_VOICE_ANNOUNCEMENT}',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
@@ -2828,6 +3352,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     ],
                     usage=RequestUsage(input_tokens=61, output_tokens=2),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -2862,6 +3387,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     ],
                     usage=RequestUsage(input_tokens=62, output_tokens=34),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -3025,6 +3551,77 @@ def _crossed(error: ModelAPIError) -> BaseException:
     return rebuilt.value
 
 
+def test_what_a_stream_produced_before_failing_crosses_with_its_error():
+    """The partial response of a stream that failed after producing output reaches the workflow unchanged.
+
+    Through JSON, as the details of the activity's failure are stored, so the run commits it with its usage.
+    """
+    partial = ModelResponse(
+        parts=[
+            ThinkingPart(content='thinking', id='rs_1', signature='sig', provider_name='openai'),
+            TextPart('partial answer'),
+            ToolCallPart('lookup', {'q': 'x'}, tool_call_id='call_1'),
+        ],
+        usage=RequestUsage(input_tokens=10, output_tokens=3),
+        model_name='primary',
+        provider_name='openai',
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        state='interrupted',
+        failed_attempts=[
+            ModelRequestAttempt(
+                model_name='earlier',
+                provider_name='anthropic',
+                outcome='error',
+                error='ModelAPIError: boom',
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                duration=timedelta(seconds=1),
+            )
+        ],
+    )
+    error = ModelAPIError('primary', 'stream broke')
+    mark_streamed_before_failing(error, partial)
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    wire = ApplicationError(
+        raised.value.message,
+        *json.loads(json.dumps(list(raised.value.details))),
+        type=raised.value.type,
+        non_retryable=raised.value.non_retryable,
+    )
+    with pytest.raises(ModelAPIError) as rebuilt:
+        with rebuilt_model_errors():
+            raise _activity_error(wire)
+    assert streamed_before_failing(rebuilt.value) == partial
+
+
+@pytest.mark.parametrize('model', ['backup', None])
+def test_retry_model_request_crosses_a_capability_activity(model: str | None):
+    """A `RetryModelRequest` a durable capability hook raises reaches the workflow as itself, with its model's name."""
+    with pytest.raises(ApplicationError) as raised:
+        with retry_requests_as_application_errors():
+            raise RetryModelRequest(model)
+    assert raised.value.non_retryable
+    with pytest.raises(RetryModelRequest) as rebuilt:
+        with rebuilt_retry_requests():
+            raise _activity_error(raised.value)
+    assert rebuilt.value.model == model
+
+
+def test_retry_model_request_for_a_model_instance_cant_cross_a_capability_activity():
+    with pytest.raises(UserError, match='can only name the model to attempt by its name'):
+        with retry_requests_as_application_errors():
+            raise RetryModelRequest(TestModel())
+
+
+def test_other_capability_activity_failures_are_raised_as_they_were():
+    failure = _activity_error(ApplicationError('boom', type='ValueError'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_retry_requests():
+            raise failure
+    assert raised.value is failure
+
+
 def test_model_http_error_crosses_with_its_fields():
     error = ModelHTTPError(
         503,
@@ -3084,7 +3681,7 @@ def test_a_subclass_with_plain_reduce_state_crosses_with_it():
     class StatefulModelError(ModelAPIError):
         extra: int | None = None
 
-        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:
             return self.__class__, (self.model_name, self.message), {'extra': self.extra}
 
     # Only Pydantic AI's own classes cross, so present this one as one of them.
@@ -3112,6 +3709,81 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
     assert not raised.value.non_retryable
 
 
+@pytest.mark.parametrize(
+    ('error', 'type_name'),
+    [
+        pytest.param(
+            ModelHTTPError.for_category(ModelServerError, status_code=500, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-category',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='gpt-test', in_stream=True),
+            'ModelHTTPError',
+            id='in-stream-http-category',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-authentication',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelRequestRejectedError, status_code=400, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-request-rejected',
+        ),
+        pytest.param(
+            ModelNotFoundError('gpt-test', 'The model does not exist.', in_stream=True),
+            'ModelAPIError',
+            id='not-found',
+        ),
+        pytest.param(
+            ModelContextWindowExceededError('gpt-test', 'context_length_exceeded: too long'),
+            'ModelAPIError',
+            id='context-window',
+        ),
+        pytest.param(ModelTimeoutError('gpt-test', 'timed out', phase='read'), 'ModelAPIError', id='timeout'),
+        pytest.param(
+            ModelServerError('gpt-test', 'server_error: failed', in_stream=True), 'ModelAPIError', id='server'
+        ),
+        pytest.param(ModelAPIError('gpt-test', 'boom'), 'ModelAPIError', id='base'),
+        pytest.param(DecisionHandOff('decider', 'search', 0.4, 'handed off'), 'DecisionHandOff', id='other-subclass'),
+    ],
+)
+def test_a_categorized_error_keeps_the_type_temporal_retries_on(error: ModelAPIError, type_name: str):
+    """A retry policy sees an error with a category as the class it was before categories existed, so
+    `non_retryable_error_types` matches what it did; the workflow still rebuilds it as its own class."""
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    assert raised.value.type == type_name
+    rebuilt = _crossed(error)
+    assert type(rebuilt) is type(error)
+
+
+def test_a_categorized_http_error_is_rebuilt_as_itself_not_its_category():
+    """An HTTP error with a category has the category's name, so it crosses marked as the HTTP variant."""
+    error = ModelHTTPError.for_category(
+        ModelRateLimitError, status_code=429, model_name='gpt-test', headers={'retry-after': '3'}
+    )
+    rebuilt = _crossed(error)
+    assert type(rebuilt) is type(error)
+    assert isinstance(rebuilt, ModelHTTPError) and isinstance(rebuilt, ModelRateLimitError)
+    assert (rebuilt.status_code, rebuilt.retry_after) == (429, 3.0)
+
+    assert type(_crossed(ModelRateLimitError('gpt-test', 'slow down'))) is ModelRateLimitError
+
+
+def test_a_category_subclass_defined_elsewhere_keeps_its_own_type():
+    """Only the categories in `pydantic_ai.exceptions` report their legacy class: a subclass defined elsewhere,
+    like an adapter-specific error, reports its own name, as it did before categories existed."""
+
+    class AdapterTimeoutError(ModelTimeoutError):
+        pass
+
+    assert _retry_policy_type(AdapterTimeoutError('gpt-test', 'timed out', phase='read')) == 'AdapterTimeoutError'
+
+
 def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):
     class ApplicationModelError(ModelAPIError):
         """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
@@ -3128,6 +3800,28 @@ def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: p
     with pytest.raises(ModelAPIError):
         with model_errors_as_application_errors():
             raise ModelAPIError('gpt-test', 'boom')
+
+
+def test_a_non_retryable_model_error_that_cannot_be_rebuilt_is_still_marked_non_retryable():
+    """An error the workflow can't rebuild, like one defined outside Pydantic AI, still fails the activity without a
+    retry when it's listed, under its own class name as Temporal would have reported it."""
+
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom')
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors((ApplicationModelError,)):
+            raise error
+    assert (raised.value.type, raised.value.non_retryable, raised.value.details) == (
+        'ApplicationModelError',
+        True,
+        (),
+    )
+    assert raised.value.__cause__ is error
+    with pytest.raises(ActivityError):
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
 
 
 def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(

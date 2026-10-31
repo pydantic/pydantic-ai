@@ -13,6 +13,7 @@ import anyio
 from pydantic import ValidationError
 
 from . import _utils, exceptions, messages as _messages, models
+from ._context_size import context_input_tokens
 from ._genai_prices import best_effort_price
 from ._output import (
     OutputDataT_inv,
@@ -28,6 +29,7 @@ from ._sync_stream import SyncStreamBridge
 from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
     OutputDataT,
+    PendingModelResponse,
     ToolOutput,
 )
 from .tool_manager import ToolManager
@@ -56,6 +58,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
     _carried_workspace_ref: WorkspaceRef | None = field(default=None, repr=False)
+    _model_id: str | None = field(default=None, repr=False)
+    """The identifier of the model the stream came from, which its response records as `model_id`."""
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
     _root_capability: AbstractCapability[AgentDepsT]
@@ -215,6 +219,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     def response(self) -> _messages.ModelResponse:
         """Get the current state of the response."""
         response = self._raw_stream_response.get()
+        response.model_id = response.model_id or self._model_id
         response.workspace_ref = recorded_workspace_ref(self._run_ctx.workspace, self._carried_workspace_ref)
         return response
 
@@ -236,6 +241,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 provider_api_url=self.response.provider_url,
                 provider_name=self.response.provider_name,
                 genai_request_timestamp=self.response.timestamp,
+                price_context=self.response.provider_details,
             )
             if price is not None:
                 usage.cost = (usage.cost or Decimal(0)) + price.total_price
@@ -282,6 +288,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
+        if not allow_partial and message.state == 'suspended' and self._output_schema.allows_pending_model_response:
+            # The stream ended while the provider is still working on the response, as the run was asked to.
+            return cast(OutputDataT, PendingModelResponse(response=message))
         final_result_event = self._raw_stream_response.final_result_event
         if final_result_event is None:
             raise exceptions.UnexpectedModelBehavior('Invalid response, unable to find output')  # pragma: no cover
@@ -439,7 +448,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 self._model_events(),
                 self._usage_limits,
                 lambda: self._initial_run_ctx_usage + self._raw_stream_response.usage,
-                lambda: self._raw_stream_response.usage.input_tokens,
+                lambda: context_input_tokens(self._raw_stream_response.get()),
             )
             # Wrap once, so a capability's `wrap_run_event_stream` sees each event exactly once no
             # matter how many times this stream is iterated (e.g. `stream_text()` then a drain).
@@ -553,19 +562,22 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield event
 
     async def _events_iter(self, base_iter: AsyncIterator[ModelResponseStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
-        while True:
-            # Drain events emitted into the run's event buffer before each pull, so they interleave with the
-            # model's own events. Events emitted while a pull is in flight surface on the next pull,
-            # or through the response-handling node's stream once this stream is exhausted.
-            while buffer := self._event_stream_buffer_getter():
-                yield buffer.pop(0)
+        try:
+            while True:
+                # Drain events emitted into the run's event buffer before each pull, so they interleave with the
+                # model's own events. Events emitted while a pull is in flight surface on the next pull,
+                # or through the response-handling node's stream once this stream is exhausted.
+                while buffer := self._event_stream_buffer_getter():
+                    yield buffer.pop(0)
 
-            try:
-                event = await anext(base_iter)
-            except StopAsyncIteration:
-                return
+                try:
+                    event = await anext(base_iter)
+                except StopAsyncIteration:
+                    return
 
-            yield event
+                yield event
+        finally:
+            await _utils.aclose_if_supported(base_iter)
 
 
 @dataclass(init=False)
@@ -655,7 +667,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     '`stream_text()`, `stream_response()` or `get_output()` first.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
-            return AgentRunResult(
+            result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,
                 _state=GraphAgentState(
@@ -668,6 +680,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
             )
+            # As in AgentRun.result, this isn't a dataclass field because a live workspace can't be serialized.
+            result.__dict__['_workspace'] = self.workspace
+            return result
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
@@ -1218,10 +1233,16 @@ def _get_usage_checking_stream_response(
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():
-            async for item in events:
-                limits.check_tokens(get_usage())
-                limits.check_per_request_input_tokens(get_request_input_tokens())
-                yield item
+            try:
+                async for item in events:
+                    # Omitted usage is warned about once the response completes, not on every event.
+                    limits._check_token_limits(get_usage())  # pyright: ignore[reportPrivateUsage]
+                    # `get_request_input_tokens` builds a response snapshot, so only pay for it when the limit is set.
+                    if limits.per_request_input_tokens_limit is not None:
+                        limits.check_per_request_input_tokens(get_request_input_tokens())
+                    yield item
+            finally:
+                await _utils.aclose_if_supported(events)
 
         return _usage_checking_iterator()
     else:

@@ -36,6 +36,8 @@ every request.
 The verdict is cross-provider for free -- pyai normalizes every provider into the
 `cache_read_tokens` / `cache_write_tokens` fields on `RequestUsage`.
 
+![WarnOnCacheBusts runs in the after_model_request hook and only observes. For each response it compares cache_read_tokens with the cacheable prefix the conversation has established. Requests 2 to 4 read back the whole prefix; request 5 reads back 4K of an established 40K, so it emits a CacheBustWarning with reason unexpected. Collapses explained by an expired cache, compaction or unreported usage do not warn.](https://pydantic.dev/docs/ai/img/harness/warn-on-cache-busts.svg)
+
 ## Retention and classification
 
 A collapse has two shapes the token counts can't tell apart: the cacheable prefix
@@ -120,16 +122,20 @@ Models such as Anthropic's (including on the Bedrock and Vertex AI SDK clients),
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
 from pydantic_ai_harness import WarnOnCacheBusts
 
-agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[WarnOnCacheBusts()])
+# `Caching()` enables caching; `WarnOnCacheBusts()` only observes it.
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[Caching(), WarnOnCacheBusts()])
 result = await agent.run('...')  # a CacheBustWarning fires if a cached prefix collapses mid-run
 # ...and on the next turn, if the prefix the first turn cached no longer reads back:
 await agent.run('...', message_history=result.all_messages())
 ```
 
-The monitor is silent when caching is off or unreported (`cache_read_tokens`
-stays 0), so it never fires spuriously in runs that don't use caching. That is the
+The `CacheBustWarning` is silent when caching is off or unreported
+(`cache_read_tokens` stays 0), so it never fires spuriously in runs that don't
+use caching (see [Caching not enabled](#caching-not-enabled) for the warning
+that does). That is the
 honest scope of a runtime signal -- the deterministic, always-on structural catch
 belongs at the wire level in tests, not here.
 
@@ -212,8 +218,9 @@ it reaches Logfire.
 - **Observational only.** It reports that a cached prefix collapsed and whether the
   provider's retention window explains it, not what moved the prefix. The structural
   explanation ("what moved the prefix this turn") is a separate job.
-- **Fires only when caching is enabled and reported.** A run that never establishes
-  a cache never warns.
+- **Cache busts need an established cache.** A run that never establishes
+  a cache never emits a `CacheBustWarning`; only the `CacheNotEnabledWarning`
+  above can fire.
 - **History rewritten by a history processor can warn.** Harness compaction
   strategies (such as `ClearToolResults` or `SummarizingCompaction`) rewrite
   messages the provider already cached, which moves the prefix like any other

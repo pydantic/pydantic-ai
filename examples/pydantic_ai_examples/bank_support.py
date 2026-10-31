@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Caching
 
 
 @dataclass
@@ -59,6 +60,7 @@ support_agent = Agent(
         'customer support and judge the risk level of their query. '
         "Reply using the customer's name."
     ),
+    capabilities=[Caching()],
 )
 
 

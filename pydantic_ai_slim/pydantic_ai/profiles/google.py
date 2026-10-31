@@ -151,6 +151,15 @@ class GoogleModelProfile(ModelProfile, total=False):
     See https://ai.google.dev/gemini-api/docs/thinking.
     """
 
+    google_disables_thinking_with_zero_budget: bool
+    """Whether unified `thinking=False` turns thinking off with `thinking_budget=0` on a model that otherwise
+    takes `thinking_level`. Default: `False`.
+
+    When disabled, `thinking=False` on such a model sends its lowest thinking level instead. `GoogleModel` enables it
+    for `gemini-3.1-pro-preview` on Vertex AI, which accepts `thinking_budget=0` and then doesn't think, while the
+    Gemini API rejects it for that model ("Budget 0 is invalid. This model only works in thinking mode.").
+    """
+
     google_thinking_levels: frozenset[GoogleThinkingLevel]
     """Thinking levels the model supports, from Google's per-model thinking table. Default: unset.
 
@@ -182,6 +191,16 @@ class GoogleModelProfile(ModelProfile, total=False):
     See <https://ai.google.dev/gemini-api/docs/google-search#pricing>.
     """
 
+    google_supports_batch_api: bool
+    """Whether the endpoint serves the Gemini API's [Batch Mode](https://ai.google.dev/gemini-api/docs/batch-api).
+    Default: `False`.
+
+    [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
+    [`model_request_batch`][pydantic_ai.direct.model_request_batch] use it. `GoogleModel` sets it when its client
+    talks to the Gemini API, and not on Google Cloud (Vertex AI), whose batch prediction jobs read from Cloud Storage
+    or BigQuery rather than the uploaded files `GoogleModel` submits.
+    """
+
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
@@ -196,6 +215,10 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # Verified live 2026-09-06: the Developer API 404s this id toward `gemini-3.1-pro-preview`.
     # The level set is from Google's documented thinking table.
     ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
+    # https://ai.google.dev/gemini-api/docs/generate-content/long-decode: "Gemini 4 Argon does not support
+    # minimal. Use low, medium, or high." Verified live 2026-10-13 against the Gemini API and Vertex `global`:
+    # `LOW`, `MEDIUM` and `HIGH` are accepted, `MINIMAL` returns 400.
+    ('gemini-4-argon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
 )
 """Model name prefixes mapped to their documented thinking levels."""
 
@@ -222,7 +245,10 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
 
     # Thinking support: Gemini 3+ defaults to thinking enabled with thinking_level.
     # Older models: Gemini 2.5 uses thinking_budget; Gemini 2.0, 1.x, and Gemma do not support thinking.
-    if is_gemma or is_pre_gemini_2_5:
+    # `gemini-2.5-flash-image` doesn't think either: verified live 2026-10-23, the Gemini API 400s any thinking
+    # config with `Thinking is not enabled for this model`, and Vertex rejects `include_thoughts` and any nonzero
+    # budget with `thinking is not supported by this model`.
+    if is_gemma or is_pre_gemini_2_5 or 'gemini-2.5-flash-image' in model_name:
         supports_thinking = False
         google_supports_thinking_level = False
     elif is_gemini_2_5:
@@ -255,6 +281,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_object_output=is_modern_gemini or not is_image_model,
         supports_tools=not is_image_model,
         supports_tool_return_schema=not is_image_model,
+        supports_video_input=not is_image_model,
         supports_thinking=supports_thinking,
         thinking_always_enabled=thinking_always_enabled,
         google_supports_tool_combination=is_modern_gemini,
@@ -275,6 +302,7 @@ _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (
     'gemini-3.1-flash-live',
     'gemini-3.8-live',  # and `gemini-3.8-live-extended-thinking`
     'gemini-live-2.5-flash',  # Vertex AI
+    'gemini-robotics-er',
 )
 """Live model families whose typed turns don't see an image sent just before them as a video frame."""
 
@@ -292,6 +320,8 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # Vertex's half-cascade Live model (plus its pinned `-NNN`/`@` versions), which differs from the
     # native-audio ones in a few ways below.
     is_half_cascade = re.fullmatch(r'gemini-live-2\.5-flash(?:-\d{3}|@.+)?', model_name) is not None
+    # Gemini's robotics streaming models, which only write text (see `supports_audio_output` below).
+    is_robotics = model_name.startswith('gemini-robotics-er')
     thinking_levels = next(
         (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
@@ -321,13 +351,14 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # `gemini-live-2.5-flash` is the exception that does answer in text (verified live 2026-09-28
         # through the gateway).
         #
-        # The one Live model that *is* text-only is `gemini-robotics-er-2-streaming-preview`, which
-        # conversely rejects `AUDIO`. It isn't a speech-to-speech model and isn't advertised in
-        # `KnownRealtimeModelName`; pointing a session at it wants
-        # `profile={'supports_text_output': True}`, which is what that override is for. Reporting
-        # `False` by default keeps the common case failing closed with a clear error rather than an
-        # opaque handshake rejection.
-        'supports_text_output': is_half_cascade,
+        # The Live models that are text-only are the robotics streaming ones
+        # (`gemini-robotics-er-2-streaming-preview`), which conversely reject `AUDIO` (`1007 The requested
+        # combination of response modalities (AUDIO) is not supported by the model`, verified live
+        # 2026-10-22): perception models that take in a live audio and video stream and answer in text, for
+        # a robot's controller to act on. With `supports_audio_output=False`, a session on one defaults to
+        # text output.
+        'supports_text_output': is_half_cascade or is_robotics,
+        'supports_audio_output': not is_robotics,
         'supports_session_seeding': True,
         'supports_seeding_images': True,
         # Verified live 2026-09-28 by seeding a spoken fact as audio and asking about it:
@@ -386,6 +417,12 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # a model sending only one boundary would never finish an empty answer. `GoogleRealtimeModel.profile`
     # keeps it on for Vertex AI only, the one surface it was verified on.
     profile['google_closes_tool_call_turn_separately'] = is_half_cascade
+    # Verified live 2026-10-19/20: text sent while `gemini-3.1-flash-live-preview` or `gemini-3.8-live` generates a
+    # reply cuts it off (`interrupted`, `turn_complete`), and the next turn answers it; speech that cuts it off is
+    # reported first (`voice_activity`), which tells the two apart. Vertex's `gemini-live-2.5-flash` cuts a reply off
+    # for text too, but reports no `voice_activity`, so a speech barge-in can't be told apart: it is left off, as is
+    # `gemini-2.5-flash-native-audio-preview-09-2025`, which finishes the reply and answers the text after it.
+    profile['google_input_cuts_off_reply'] = model_name.startswith('gemini-3.1-flash-live') or is_3_8_live
     # Verified live 2026-09-25 with `enable_affective_dialog`: `gemini-3.1-flash-live-preview` refuses the
     # handshake with `1007 Request contains an invalid argument`, and `gemini-3.8-live` and
     # `gemini-3.8-live-extended-thinking` accept it and then close the session with that same `1007` on the
@@ -406,7 +443,9 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     )
     # Verified live 2026-09-25 by sending an image and then a typed question about it, 3/3 each: the 3.x
     # models answered that they couldn't see an image, and the 2.5 models misread it. A typed turn only
-    # sees images in its own content, so these get the recent image sent again there.
+    # sees images in its own content, so these get the recent image sent again there. Verified live
+    # 2026-10-27 the same way on `gemini-robotics-er-2-streaming-preview`: without the second send it
+    # described a different object 3/3, and with it the image it was sent 3/3.
     # Verified live 2026-09-28 by seeding a tool call and its result and asking about the result, before
     # and after a session-resumption re-dial: the 3.8 models, extended thinking included, recall it
     # both times. `gemini-3.1-flash-live-preview` recalls it until the re-dial and then has lost it (it
@@ -489,13 +528,26 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         # inlined and a nullable union becomes the plain type plus `nullable: true`.
         super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
 
+    def _walk_def(self, key: str, siblings: JsonSchema) -> JsonSchema:
+        if self.defs.get(key) is False:
+            raise UserError(
+                "Gemini's OpenAPI schema cannot represent a boolean `false` definition, which rejects all inputs."
+            )
+        return super()._walk_def(key, siblings)
+
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
-        # `transform` drops `additionalProperties` and `Schema` has no `patternProperties`, so neither
-        # subschema reaches Gemini. Walking them anyway would refuse a recursive `dict[str, Node]` over a
-        # `$ref` the declaration doesn't contain.
+        # `transform` drops `additionalProperties` and `Schema` has no `patternProperties` or `propertyNames`,
+        # so none of these subschemas reaches Gemini. Walking them anyway would refuse a recursive
+        # `dict[str, Node]` over a `$ref` the declaration doesn't contain.
         schema.pop('additionalProperties', None)
         schema.pop('patternProperties', None)
+        schema.pop('propertyNames', None)
         return super()._handle_object(schema)
+
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
+        # `Schema` has no `contains` either: same reason as `_handle_object`.
+        schema.pop('contains', None)
+        return super()._handle_array(schema)
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # `additionalProperties` is mishandled by Gemini, so a `dict[str, MyType]` field always arrives

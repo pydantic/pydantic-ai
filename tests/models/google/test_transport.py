@@ -358,3 +358,39 @@ def test_flash_image_thinking_levels_follow_the_client_transport(case: FlashImag
         for thinking in ('low', 'medium')
     ]
     assert sent == [{'include_thoughts': True, 'thinking_level': level} for level in case.expected]
+
+
+@pytest.mark.parametrize(
+    ('make_provider', 'profile', 'expected'),
+    [
+        pytest.param(
+            lambda: GoogleCloudProvider(api_key='mock-api-key'), None, {'thinking_budget': 0}, id='google_cloud'
+        ),
+        pytest.param(
+            lambda: GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1')),
+            None,
+            {'thinking_budget': 0},
+            id='google_cloud_client_in_google_provider',
+        ),
+        pytest.param(lambda: GoogleProvider(api_key='mock-api-key'), None, {'thinking_level': 'LOW'}, id='gemini_api'),
+        pytest.param(
+            lambda: GoogleCloudProvider(api_key='mock-api-key'),
+            GoogleModelProfile(google_disables_thinking_with_zero_budget=False),
+            {'thinking_level': 'LOW'},
+            id='google_cloud_user_flag_wins',
+        ),
+    ],
+)
+def test_gemini_3_1_pro_thinking_false_follows_the_client_transport(
+    make_provider: Callable[[], Provider[Client]], profile: GoogleModelProfile | None, expected: dict[str, object]
+) -> None:
+    """`thinking=False` turns thinking off on `gemini-3.1-pro-preview` only when requests go to Vertex.
+
+    Vertex accepts `thinking_budget=0` for this model and returns no thoughts, while the Gemini API rejects it, so
+    the Gemini API gets the lowest level the model accepts. Not a VCR test: the config is decided before the
+    request is built; `test_google_vertex_gemini_3_1_pro_thinking_false_turns_thinking_off` records the Vertex side.
+    """
+    m = GoogleModel('gemini-3.1-pro-preview', provider=make_provider(), profile=profile)
+    sent = m._translate_thinking(GoogleModelSettings(), ModelRequestParameters(thinking=False))  # pyright: ignore[reportPrivateUsage]
+    assert sent == expected
+    assert m.profile.get('thinking_always_enabled') is ('thinking_level' in expected)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .._run_context import AgentDepsT, RunContext
+from .._run_context import AgentDepsT, RunContext, with_tool_name_layer
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -28,7 +28,7 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
                 toolset=self,
                 tool_def=replace(tool.tool_def, name=new_name),
             )
-            for name, tool in (await super().get_tools(ctx)).items()
+            for name, tool in (await super().get_tools(with_tool_name_layer(ctx, self.prefix))).items()
             if (new_name := f'{self.prefix}_{name}')
         }
 

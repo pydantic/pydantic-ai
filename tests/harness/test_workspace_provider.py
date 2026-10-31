@@ -144,6 +144,7 @@ async def test_stop_cleanup_finishes_before_stop_shielded_returns(anyio_backend:
     assert events == ['stop cleanup', 'returned']
 
 
+@pytest.mark.subprocess(reason='needs an interpreter where `sniffio` cannot be imported')
 @pytest.mark.skipif(
     any(req.startswith('sniffio') for req in importlib.metadata.requires('anyio') or []),
     reason='AnyIO before 4.12 depends on and imports `sniffio`, so every install has it',

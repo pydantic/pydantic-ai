@@ -1,5 +1,6 @@
 """Conversation-local settings and actions behind `/set`."""
 
+import threading
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -15,7 +16,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui import telemetry
 
 if TYPE_CHECKING:
-    from pydantic_clai2.runtime._session import FamilyDefaults
+    from pydantic_clai2.runtime.session import FamilyDefaults
 
 
 @runtime_checkable
@@ -33,7 +34,6 @@ class CommandContext:
 
     settings: Settings
     store: SettingsStore
-    clear_history: Callable[[], None]
     apply_setting: Callable[[str, Settings], None]
     project: ProjectSettings = field(default_factory=ProjectSettings)
     """Read-only here: `/set` writes the user store, and the project file wins again at next start."""
@@ -44,6 +44,10 @@ class CommandContext:
 
     Differs for a plugin's `settings_from`, and for a chain, which takes its first model's.
     """
+    edits: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    """Held by each save, so the terminal's `/set` menu, typed commands, and the web UI, each on its own thread, never lose one."""
+    saved: Callable[[str], None] = lambda key: None
+    """Told the key `/set` saved or reset, once applied here, so the process's other live sessions can follow."""
 
     def __post_init__(self) -> None:
         """Keep the configured model selectable, including preferences saved before the model list existed."""
@@ -54,6 +58,20 @@ class CommandContext:
         """Whether the project file sets `key`, so a saved value only lasts for this session."""
         return key in self.project.overrides
 
+    def use_project(self, project: ProjectSettings, settings: Settings) -> None:
+        """Adopt another directory's project file and the settings CLAI starts with there, applying each one."""
+        self.project = project
+        self.settings = settings
+        if settings.model:
+            self.store.add_model(name=settings.model)
+        for key in SETTING_FIELDS:
+            self.apply_setting(key, settings)
+
+    def setting(self, key: str) -> JsonValue:
+        """The effective value of `key`, such as `run.code_mode`, as JSON; `KeyError` for an unknown key."""
+        field = SETTING_FIELDS[key]
+        return self.settings.model_dump(mode='json', include={field})[field]
+
     def set_setting(self, args: list[str]) -> str:
         """Validate, persist, and apply a preference to the current conversation."""
         if len(args) == 1 and args[0] in SETTING_FIELDS:
@@ -61,9 +79,10 @@ class CommandContext:
         if len(args) != 2 or args[0] not in SETTING_FIELDS:
             raise ValueError('Usage: /set SETTING VALUE. Press Tab for suggestions.')
         key, raw = args
-        value, settings = self.validate(key, raw)
-        self.store.set(key, value)
-        self._apply(key, settings)
+        with self.edits:
+            value, settings = self.validate(key, raw)
+            self.store.set(key, value)
+            self._apply(key, settings)
         return f'Saved {key}. ' + self._when(key)
 
     def validate(self, key: str, raw: str) -> tuple[JsonValue, Settings]:
@@ -131,16 +150,31 @@ class CommandContext:
 
     def reset_setting(self, key: str) -> str:
         """Forget the saved override and apply the default now."""
-        self.store.reset(key)
-        updated = self.settings.model_dump(exclude_unset=True)
-        updated.pop(SETTING_FIELDS[key], None)
-        self._apply(key, Settings.model_validate(updated))
+        with self.edits:
+            self.store.reset(key)
+            updated = self.settings.model_dump(exclude_unset=True)
+            updated.pop(SETTING_FIELDS[key], None)
+            self._apply(key, Settings.model_validate(updated))
         return f'Reset {key}. ' + self._when(key)
+
+    def adopt(self, key: str, source: Settings) -> None:
+        """Apply `key` as `source`, another live session's settings, holds it now, unless the project file sets it here."""
+        if self.from_project(key):
+            return
+        field = SETTING_FIELDS[key]
+        updated = self.settings.model_dump(exclude_unset=True)
+        if field in source.model_fields_set:
+            updated[field] = source.model_dump(include={field})[field]
+        else:
+            updated.pop(field, None)
+        self.settings = Settings.model_validate(updated)
+        self.apply_setting(key, self.settings)
 
     def _apply(self, key: str, settings: Settings) -> None:
         self.settings = settings
         self.apply_setting(key, settings)
         telemetry.record('setting {setting} changed', setting=key, value=_shown(key, settings))
+        self.saved(key)
 
     def _when(self, key: str) -> str:
         when = 'Applies at next startup.' if key == 'display.splash' else 'Applied.'

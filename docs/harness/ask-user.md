@@ -11,6 +11,8 @@ Let the model ask the user multiple-choice questions mid-run and wait for the an
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls ask_user_question with one to ten multiple-choice questions. AskUser validates them, rejecting calls outside the limits or with control characters as a retry, then hands an AskUserRequest to the answerer you supply, such as a terminal menu or a web form. The answerer returns an AskUserResponse. The model gets the picked labels keyed by header, a sentence saying the user declined or did not answer in time, or, with answerer=None, the run pauses with DeferredToolRequests until you answer in a later run.](../img/harness/ask-user.svg)
+
 ## The problem
 
 An agent given an ambiguous task either guesses or buries a question in its output and stops.
@@ -40,7 +42,7 @@ async def pick_first(request: AskUserRequest) -> AskUserResponse:
     return AskUserResponse(answers=tuple(answers))
 
 
-agent = Agent('anthropic:claude-fable-5', capabilities=[AskUser(answerer=pick_first)])
+agent = Agent('{{ anthropic:xlarge }}', capabilities=[AskUser(answerer=pick_first)])
 ```
 
 `pick_first` stands in for a real UI. [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2/)
@@ -57,23 +59,124 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
   with the picked option labels in `selected`: exactly one unless the question is
   `multi_select`, at least one either way, and no label twice.
 - An answerer may instead return `AskUserAnswer(header=q.header, custom_answer='My own answer')`.
-  Leave `selected` empty. Custom text must be nonblank and contain no control characters
-  other than newlines. The tool returns it as a one-item list under the same header;
-  existing selected-label responses keep their format. The answerer, not the model's
-  question schema, decides whether to offer text entry.
+  Leave `selected` empty. Custom text must be nonblank and contain no control characters other
+  than newlines and no format characters such as zero-width spaces, joiners and bidirectional
+  overrides, so run `check_response` on text a user typed. Its length is not limited, so cap free text that
+  arrives from a client before returning it. The model receives it as a one-item list under the
+  question's header.
+  Whether to offer text entry is up to the answerer; the model cannot request it.
 - When the user declines, return `AskUserResponse(cancelled=True)` with no answers. The tool
   result tells the model the user declined; nothing is raised into the run.
 - A response that does not fit the request (an unknown header, a label the question did not
   offer, several labels on a single-select question, a missing answer) is a bug in the answerer
   and raises `ValueError`, which fails the run. `check_response` is exported so an answerer can
   validate before returning.
+- By default, two `ask_user_question` calls in one model response reach the answerer
+  concurrently, so serialize in the answerer if your UI shows one request at a time. Other tool
+  calls from that response may run while the user decides: an answer shapes the model's next
+  response, not calls it already made. To run a response's calls one at a time, wrap the run in
+  `with Agent.parallel_tool_call_execution_mode('sequential'):`.
+- The model writes the questions, and a prompt injection can make it ask for a password or a
+  token. Present the questions as coming from the model, not as a system or sign-in prompt.
+
+### Reading the asking run
+
+An answerer with two required positional parameters receives `(ctx, request)`, satisfying
+[`ContextAnswerer`][pydantic_ai_harness.ask_user.ContextAnswerer]. Request-only answerers keep
+receiving just the request. Both plain async functions and callable objects are supported,
+including two-argument lambdas.
+
+If a callable accepts both one and two positional arguments, annotate its first parameter as
+[`RunContext[DepsT]`][pydantic_ai.tools.RunContext] to select the context form; otherwise it receives
+only the request. Only the first annotation is inspected; an unresolved annotation naming
+`RunContext` also selects the context form. Use
+[`AnyAnswerer[DepsT]`][pydantic_ai_harness.ask_user.AnyAnswerer] to annotate a stored callback that
+may use either signature.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import AskUser
+from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
+
+
+async def answer_for_session(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+    for question in request.questions:
+        print(f'{ctx.deps}: {question.question}')
+    answers = [AskUserAnswer(header=q.header, selected=(q.options[0].label,)) for q in request.questions]
+    return AskUserResponse(answers=tuple(answers))
+
+
+agent = Agent('{{ anthropic:xlarge }}', deps_type=str, capabilities=[AskUser(answerer=answer_for_session)])
+```
+
+In an in-process run, `ctx.deps`, `ctx.model`, and `ctx.messages` belong to the run that called
+the tool. For a delegated agent, that is the child's run, not the parent's. The messages include the model response that
+asked the question, including thinking parts when the model provides them. Treat the history as
+read-only; other tools may still run while the answerer waits.
+
+The context reaches only the answerer; it is not part of the request, its events or deferred
+calls. With `answerer=None`, no answerer is called: deferred hosts supply context from their own
+state. Durable execution can restrict access to context fields; see
+[Temporal's run-context rules](../durable_execution/temporal.md#agent-run-context-and-dependencies).
+
+## Adding notes to an answer
+
+Set [`AskUserAnswer.note`][pydantic_ai_harness.ask_user.AskUserAnswer.note] to a tuple of
+[`UserContent`][pydantic_ai.messages.UserContent] items to accompany selected labels or a
+custom answer. Text and images keep their order; notes do not replace the required answer.
+
+```python
+from pydantic_ai.messages import ImageUrl
+from pydantic_ai_harness.ask_user import AskUserAnswer
+
+answer = AskUserAnswer(
+    header='Database',
+    selected=('Postgres',),
+    note=('Keep version 16. Match this layout:', ImageUrl('https://example.com/schema.png')),
+)
+```
+
+Text, including `TextContent`, follows the custom-answer character rules. A nonempty note must
+contain nonblank text or an attachment, not only whitespace or cache markers. Run
+`check_response(request, response)` before submitting client input. The harness sets no note size
+limit; the answerer should bound text and attachments from clients.
+
+File URLs must use HTTP(S) and `force_download=False`. Notes reject other URL schemes, forced
+download modes (including `True` and `'allow-local'`), Google Files API URLs and `UploadedFile`
+provider references, even when a server-side answerer constructed them. To attach a file instead, have the application
+authorize access and supply its bytes as `BinaryContent`.
+
+Only the rendered text of `TextContent` and `StructuredContent` is forwarded; user-supplied text
+metadata is dropped so notes cannot claim framework provenance. The answered event still carries
+the original response before validation, so observers must treat its note metadata as user input.
+
+With notes, `ask_user_result` returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn]:
+`return_value` is the unchanged answer dictionary, and `content` sends the notes as
+[`UserPromptPart`][pydantic_ai.messages.UserPromptPart] content rather than tool data.
+Each note is framed by `<answer_note header="...">` and `</answer_note>` text items. Headers and
+framing tags inside text are escaped; images remain multimodal items between those boundaries.
+The boundary items are `TextContent` with `metadata` containing
+`origin='user.pydantic-ai-harness.ask_user.answer_note.v1'`, `request_id` and `header`, so applications
+can identify the record without matching visible text.
+The user-content origin keeps notes classified as user turns during compaction.
+Without notes, the result is the answer dictionary or decline text.
+
+Annotate results with [`AskUserResult`][pydantic_ai_harness.ask_user.AskUserResult]. To inspect
+wrapped answers, narrow with `isinstance(result, ToolReturn)` and read `result.return_value`.
+Deferred hosts can pass the result directly to `DeferredToolResults.calls`.
 
 ## Bounding the wait
 
-The run waits inside the tool call for the answerer to return. Set `timeout`, in seconds, so a
-user who walked away or disconnected cannot hold the run forever. When it runs out, the answerer
-is cancelled, `AskUserAnsweredEvent` fires with `timed_out=True` and a cancelled response, and the
-model is told the user did not answer in time (the `TIMED_OUT` result) and continues.
+The run waits inside the tool call for the answerer to return. Set `timeout`, in seconds, to
+bound that wait. When it runs out, the answerer is cancelled, `AskUserAnsweredEvent` fires with
+`timed_out=True` and a cancelled response, and the model is told the user did not answer in time
+(the `TIMED_OUT` result) and continues.
+
+The timeout cancels the answerer, so the answerer must be cancellable. A thread cannot be
+cancelled: run blocking work with `anyio.to_thread.run_sync(..., abandon_on_cancel=True)`, or the
+run waits for the thread and then uses its late answer. An abandoned thread keeps running, so a
+terminal answerer should read input with an async prompt library rather than `input()` in a
+thread, which would take the next line the user types.
 
 ```python {test="skip"}
 AskUser(answerer=pick_first, timeout=300)
@@ -100,7 +203,7 @@ from pydantic_ai_harness import AskUser
 from pydantic_ai_harness.ask_user import TOOL_NAME, AskUserRequest, AskUserResponse, ask_user_result
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    '{{ anthropic:xlarge }}',
     output_type=[str, DeferredToolRequests],
     capabilities=[AskUser(answerer=None)],
 )
@@ -136,11 +239,14 @@ Two `CapabilityEvent`s let anything else in the run observe the exchange:
 | Event | When | Fields |
 | --- | --- | --- |
 | `AskUserRequestedEvent` | before the answerer is called, or before a deferred call pauses the run | `request` |
-| `AskUserAnsweredEvent` | after it returns or times out, before the response is checked or the model sees the result | `request_id`, `response`, `timed_out` |
+| `AskUserAnsweredEvent` | after it returns, times out, or raises, before the response is checked or the model sees the result | `request_id`, `response`, `timed_out`, `failed` |
 
 Both dispatch immediately, so a listener that shows a "waiting for you" state sees the wait
-start and end in step with the run. Subscribe with `@on_event` on a capability or through the
-run's event stream:
+start and end in step with the run. When the answerer raises, the answered event carries
+`failed=True` and a cancelled response, then the error propagates from the tool call: a
+`ModelRetry` sends the model a retry prompt, and any other error fails the run. A run
+cancelled while the answerer waits emits no answered event, so also clear waiting state when the
+run ends. Subscribe with `@on_event` on a capability or through the run's event stream:
 
 ```python
 from pydantic_ai import RunContext
@@ -156,20 +262,34 @@ class WaitIndicator(AbstractCapability[None]):
 
     @on_event(AskUserAnsweredEvent)
     async def done(self, ctx: RunContext[None], event: AskUserAnsweredEvent) -> None:
-        print('declined' if event.response.cancelled else 'answered')
+        if event.failed:
+            print('failed')
+        elif event.timed_out:
+            print('timed out')
+        else:
+            print('declined' if event.response.cancelled else 'answered')
 ```
 
 ## What the model sees
 
-The tool schema mirrors Code Puppy's `ask_user_question`, so prompts written for it carry
-over. Limits: 1 to 10 questions per call, unique headers of at most 25 characters, question text
-of at most 500, 2 to 6 options per question with unique labels of at most 50 characters and
-descriptions of at most 200; no control characters anywhere (headers and labels are one line;
-question text and descriptions may span lines), since these strings are drawn on terminals and
-an escape sequence in a prompt-injected call is an attack. A call outside those limits, or
-carrying a field the schema does not have, is returned to the model as a validation retry,
-not sent to the answerer. Once
-validated the questions are frozen: what the answerer sees is what the model asked.
+The tool schema mirrors [Code Puppy](https://github.com/mpfaffenberger/code_puppy)'s
+`ask_user_question`, so prompts written for it carry over.
+
+| Field | Limit |
+| --- | --- |
+| `questions` | 1 to 10 per call; headers unique, ignoring case and compatibility forms such as full-width letters |
+| `header` | 1 to 25 characters, one line |
+| `question` | 1 to 500 characters, may span lines |
+| `options` | 2 to 6 per question; labels unique, ignoring case and compatibility forms such as full-width letters |
+| `label` | 1 to 50 characters, one line |
+| `description` | optional, at most 200 characters, may span lines |
+
+These strings are drawn on terminals, where an escape sequence in a prompt-injected call is an
+attack, so control characters and format characters such as zero-width spaces, joiners and
+bidirectional overrides are rejected. Spaces of any width are allowed, and uniqueness treats
+most of them as an ordinary space. A call outside these limits, or with a field the schema
+does not have, goes back to the model as a validation retry and never reaches the answerer.
+Once validated the questions are frozen: what the answerer sees is what the model asked.
 
 The result is a JSON object mapping each header to the list of picked labels (or one custom answer), or the sentence
 `The user declined to answer. Continue without the answer, or ask differently if it is essential.`
@@ -179,15 +299,26 @@ The capability adds one instruction: ask when the task is ambiguous and the answ
 the workspace, offer concrete options, batch related questions, and make a stated choice if
 the user declines.
 
-## Two of them
+## One per agent
 
-`AskUser` declares no default `id`. Two on one agent collide on the `ask_user_question` tool
-name: two answerers is a conflict, not one configuration stated twice.
+`AskUser` declares the default `id` `'ask_user'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `AskUser`s on one agent that
+share it are one answerer stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
+in [PrefixTools](../capabilities/prefix-tools.md), since both register `ask_user_question`.
+To serve several UIs, pass one answerer that dispatches to them.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
 
 ## Tracing
 
 `AskUser` emits no spans. Core's tool-call span already covers the wait, and the two events
-above carry what was asked and answered.
+above carry what was asked and answered. That span records the tool's arguments and result,
+which here are the questions and the user's answers, custom text included. Notes and attachments
+appear in the following model request's user content; inline answers also record them in the tool
+span's serialized `ToolReturn`. The `include_content` setting applies to notes as well. Set
+[`include_content=False`](../logfire.md#excluding-prompts-and-completions) to leave them out.
 
 ## Specs
 
@@ -196,18 +327,25 @@ to name.
 
 ## API reference
 
-`check_response`, `ask_user_result`, `TOOL_NAME`, `DECLINED`, `TIMED_OUT`, and `MAX_QUESTIONS` are also
-exported from `pydantic_ai_harness.ask_user`.
+`check_response`, `ask_user_result`, `AskUserResult`, `TOOL_NAME`, `DECLINED`, `TIMED_OUT`, and `MAX_QUESTIONS` are also
+exported from `pydantic_ai_harness.ask_user`, along with `AskUserToolset`, the toolset `AskUser`
+registers, and `ASK_USER_EVENTS`, the namespace of both events.
 
 ::: pydantic_ai_harness.ask_user.AskUser
 
 ::: pydantic_ai_harness.ask_user.Answerer
+
+::: pydantic_ai_harness.ask_user.ContextAnswerer
+
+::: pydantic_ai_harness.ask_user.AnyAnswerer
 
 ::: pydantic_ai_harness.ask_user.AskUserRequest
 
 ::: pydantic_ai_harness.ask_user.AskUserResponse
 
 ::: pydantic_ai_harness.ask_user.AskUserAnswer
+
+::: pydantic_ai_harness.ask_user.AskUserResult
 
 ::: pydantic_ai_harness.ask_user.Question
 

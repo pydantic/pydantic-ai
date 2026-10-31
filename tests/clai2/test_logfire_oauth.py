@@ -6,7 +6,6 @@ import time
 import webbrowser
 from urllib.parse import parse_qs
 
-import anyio
 import httpx
 import httpx2
 import keyring
@@ -14,10 +13,20 @@ import pytest
 from keyring.errors import KeyringError
 from pydantic import JsonValue
 
-import pydantic_clai2.mcp._settings as mcp_settings
+import pydantic_clai2.mcp._client as mcp_client
 from pydantic_clai2 import logfire_oauth
 from pydantic_clai2.config.credential_store import save_codex_credentials
-from pydantic_clai2.logfire_oauth import DeviceAuth, SignInError, Tokens, forget, load, sign_in, status
+from pydantic_clai2.logfire_oauth import (
+    DeviceAuth,
+    LogfireSignIn,
+    SignInError,
+    Tokens,
+    forget,
+    load,
+    sign_in,
+    status,
+)
+from pydantic_clai2.plugins.sign_in import SignInRequiredError
 
 ORIGIN = 'https://logfire.test'
 RESOURCE = f'{ORIGIN}/mcp'
@@ -113,7 +122,7 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         links.append(url)
         return True
 
-    monkeypatch.setattr(webbrowser, 'open', open_link)
+    monkeypatch.setattr('pydantic_clai2.logfire_oauth.open_browser', open_link)
     return links
 
 
@@ -220,7 +229,7 @@ class TestSignIn:
         def no_browser(url: str) -> bool:
             raise webbrowser.Error('could not locate runnable browser')
 
-        monkeypatch.setattr(webbrowser, 'open', no_browser)
+        monkeypatch.setattr('pydantic_clai2.logfire_oauth.open_browser', no_browser)
         logfire = Logfire()
         logfire.device = (200, {**DEVICE, 'verification_uri_complete': None})
         lines = await run_sign_in(logfire)
@@ -316,8 +325,8 @@ class TestSignIn:
     @pytest.mark.parametrize(
         ('broken', 'value', 'message'),
         [
-            ('polls', [pending('access_denied')], 'Logfire sign-in was denied. Run /logfire_mcp login to retry.'),
-            ('polls', [pending('invalid_grant')], 'Logfire sign-in failed: invalid grant. Run /logfire_mcp login'),
+            ('polls', [pending('access_denied')], 'Logfire sign-in was denied. Run /logfire login to retry.'),
+            ('polls', [pending('invalid_grant')], 'Logfire sign-in failed: invalid grant. Run /logfire login'),
             ('polls', [(200, {'access_token': ''})], 'Logfire sign-in failed: ValidationError.'),
             ('polls', [granted('access-1', token_type='DPoP')], 'Logfire sign-in failed: ValidationError.'),
             ('polls', [granted('access-1', scope='project:write')], 'Logfire did not grant project:read'),
@@ -356,7 +365,7 @@ class TestSignIn:
                 {**METADATA, 'issuer': 'https://elsewhere.test'},
                 f'{ORIGIN} described itself as https://elsewhere.test; not signing in.',
             ),
-            ('handle', refuse, 'Logfire sign-in failed: ConnectError. Run /logfire_mcp login to retry.'),
+            ('handle', refuse, 'Logfire sign-in failed: ConnectError. Run /logfire login to retry.'),
         ],
         ids=[
             'denied',
@@ -402,24 +411,16 @@ class TestSignIn:
 
 
 class TestDeviceAuth:
-    async def mcp(self, logfire: Logfire, *, read_only: bool = True, lines: list[str] | None = None) -> int:
-        auth = DeviceAuth(
-            resource=RESOURCE,
-            read_only=read_only,
-            announce=(lines if lines is not None else []).append,
-            http=logfire.client,
-            sleep=no_wait,
-        )
+    async def mcp(self, logfire: Logfire, *, read_only: bool = True) -> int:
+        auth = DeviceAuth(resource=RESOURCE, read_only=read_only, http=logfire.client)
         async with httpx.AsyncClient(transport=httpx.MockTransport(logfire.handle), auth=auth) as client:
             return (await client.post(RESOURCE)).status_code
 
-    async def test_the_first_connection_signs_in_by_itself(self, opened: list[str]) -> None:
+    async def test_a_connection_without_a_sign_in_never_starts_one(self, opened: list[str]) -> None:
         logfire = Logfire()
-        lines: list[str] = []
-        assert await self.mcp(logfire, lines=lines) == 200
-        assert opened == [LINK]
-        assert lines[-1] == 'Signed in to Logfire.'
-        assert logfire.bearers == ['access-1']
+        with pytest.raises(SignInRequiredError, match=r'Not signed in to Logfire\. Run /logfire login to sign in\.'):
+            await self.mcp(logfire)
+        assert (opened, logfire.forms, logfire.bearers) == ([], [], [])
 
     async def test_a_stored_sign_in_is_used_without_asking_again(self, opened: list[str]) -> None:
         remember(stored())
@@ -443,7 +444,7 @@ class TestDeviceAuth:
         assert {form['resource'] for form in logfire.forms} == {RESOURCE}
 
     @pytest.mark.parametrize('refresh', [None, 'broken', 'unreachable', 'rejected', 'no-read-scope'])
-    async def test_a_failed_refresh_signs_in_again(self, refresh: str | None, opened: list[str]) -> None:
+    async def test_a_failed_refresh_asks_for_a_sign_in(self, refresh: str | None, opened: list[str]) -> None:
         remember(stored(expires_in=-10, refresh=None if refresh is None else 'refresh-1'))
         logfire = Logfire()
         if refresh == 'broken':
@@ -453,62 +454,22 @@ class TestDeviceAuth:
         elif refresh == 'no-read-scope':
             logfire.refreshes = [granted('access-2', scope='project:write')]
         elif refresh == 'unreachable':
-            handle = logfire.handle
 
             def drop_refresh(request: httpx.Request) -> httpx.Response:
-                if b'grant_type=refresh_token' in request.content:
-                    raise httpx.ReadTimeout('slow', request=request)
-                return handle(request)
+                assert b'grant_type=refresh_token' in request.content, 'the refresh comes first'
+                raise httpx.ReadTimeout('slow', request=request)
 
             logfire.handle = drop_refresh
-        assert await self.mcp(logfire) == 200
-        assert opened == [LINK]
+        with pytest.raises(SignInRequiredError):
+            await self.mcp(logfire)
+        assert opened == []
 
-    async def test_a_read_only_sign_in_is_replaced_for_write_access(self, opened: list[str]) -> None:
+    async def test_a_read_only_sign_in_does_not_serve_write_access(self, opened: list[str]) -> None:
         remember(stored())
         logfire = Logfire()
-        assert await self.mcp(logfire, read_only=False) == 200
-        assert opened == [LINK]
-        assert logfire.forms[0]['scope'] == ' '.join(OFFERED)
-
-    async def test_concurrent_requests_sign_in_once(self, opened: list[str]) -> None:
-        logfire = Logfire()
-        auth = DeviceAuth(
-            resource=RESOURCE, read_only=True, announce=lambda line: None, http=logfire.client, sleep=no_wait
-        )
-        async with httpx.AsyncClient(transport=httpx.MockTransport(logfire.handle), auth=auth) as client:
-            async with anyio.create_task_group() as tasks:
-                for _ in range(3):
-                    tasks.start_soon(client.post, RESOURCE)
-        assert opened == [LINK]
-        assert logfire.bearers == ['access-1'] * 3
-
-    async def test_a_sign_in_the_store_refuses_lasts_the_session(
-        self, monkeypatch: pytest.MonkeyPatch, opened: list[str]
-    ) -> None:
-        def locked(service: str, account: str, value: str) -> None:
-            raise KeyringError('locked')
-
-        monkeypatch.setattr(keyring, 'set_password', locked)
-        logfire = Logfire()
-        lines: list[str] = []
-        auth = DeviceAuth(resource=RESOURCE, read_only=True, announce=lines.append, http=logfire.client, sleep=no_wait)
-        async with httpx.AsyncClient(transport=httpx.MockTransport(logfire.handle), auth=auth) as client:
-            for _ in range(2):
-                assert (await client.post(RESOURCE)).status_code == 200
-            assert lines[-1] == 'Signed in to Logfire for this session only: saving the sign-in failed (KeyringError).'
-            assert (opened, logfire.bearers, status(resource=RESOURCE, read_only=True)) == (
-                [LINK],
-                ['access-1', 'access-1'],
-                'signed in',
-            )
-            assert forget()  # Logout drops the in-memory sign-in too, so the next request signs in again.
-            assert status(resource=RESOURCE, read_only=True) == 'signed out'
-            logfire.polls = [granted('access-1')]
-            assert (await client.post(RESOURCE)).status_code == 200
-        assert opened == [LINK, LINK]
-        assert forget()
-        assert not forget()
+        with pytest.raises(SignInRequiredError):
+            await self.mcp(logfire, read_only=False)
+        assert (opened, logfire.forms) == ([], [])
 
     async def test_logging_out_during_a_refresh_discards_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
         remember(stored(expires_in=-10))
@@ -533,7 +494,7 @@ class TestDeviceAuth:
         remember(stored())
         logfire = Logfire()
         logfire.refreshes = [granted('access-2')]
-        auth = DeviceAuth(resource=RESOURCE, read_only=True, announce=print, http=logfire.client, sleep=no_wait)
+        auth = DeviceAuth(resource=RESOURCE, read_only=True, http=logfire.client)
         bearers: list[str] = []
 
         def mcp(request: httpx2.Request) -> httpx2.Response:
@@ -546,16 +507,76 @@ class TestDeviceAuth:
 
     async def test_sign_in_failures_are_reported_under_fastmcp_4(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The device flow keeps its own client: FastMCP 4's SDK builds `httpx2` ones, whose errors it would miss."""
-        monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', httpx2.AsyncClient)
-        auth = DeviceAuth(resource='http://127.0.0.1:1/mcp', read_only=True, announce=print)
+        monkeypatch.setattr(mcp_client, 'create_mcp_http_client', httpx2.AsyncClient)
+        method = LogfireSignIn(resource='http://127.0.0.1:1/mcp', read_only=True)
         with pytest.raises(SignInError, match='Logfire sign-in failed: ConnectError'):
-            await auth.sign_in()
+            await method.sign_in(show=lambda text: None)
 
     def test_sync_clients_are_refused(self) -> None:
-        auth = DeviceAuth(resource=RESOURCE, read_only=True, announce=print)
+        auth = DeviceAuth(resource=RESOURCE, read_only=True)
         with httpx.Client(transport=httpx.MockTransport(Logfire().handle), auth=auth) as client:
             with pytest.raises(RuntimeError, match='Logfire sign-in needs an async client'):
                 client.post(RESOURCE)
+
+
+class TestLogfireSignIn:
+    def method(self, logfire: Logfire, *, read_only: bool = True) -> LogfireSignIn:
+        return LogfireSignIn(resource=RESOURCE, read_only=read_only, http=logfire.client, sleep=no_wait)
+
+    async def test_signs_in_on_request_showing_every_line_and_then_runs_connect(self, opened: list[str]) -> None:
+        logfire = Logfire()
+        method = self.method(logfire)
+        assert (method.service, method.setup) == ('Logfire', '/logfire login')
+        assert not method.signed_in()
+        shown: list[str] = []
+        await method.sign_in(show=shown.append)
+        assert opened == [LINK]
+        assert shown[-1].splitlines() == [
+            f'Sign in to Logfire (new users can sign up there): open {LINK}',
+            'Enter code: ABCD-EFGH',
+            'Approve only the code shown here. You can open the link on another device.',
+            'Signed in to Logfire.',
+        ]
+        assert method.signed_in() and not self.method(logfire, read_only=False).signed_in()
+        assert await TestDeviceAuth().mcp(logfire) == 200
+        method.sign_out()
+        assert not method.signed_in()
+
+    async def test_text_from_the_server_cannot_drive_the_terminal(self) -> None:
+        logfire = Logfire()
+        logfire.device = (200, {**DEVICE, 'user_code': '\x1b]52;c;eA==\x07'})
+        shown: list[str] = []
+        await self.method(logfire).sign_in(show=shown.append)
+        assert 'Enter code: \\x1b]52;c;eA==\\x07' in shown[-1].splitlines()
+
+    async def test_a_sign_in_the_store_refuses_lasts_the_session(
+        self, monkeypatch: pytest.MonkeyPatch, opened: list[str]
+    ) -> None:
+        def locked(service: str, account: str, value: str) -> None:
+            raise KeyringError('locked')
+
+        monkeypatch.setattr(keyring, 'set_password', locked)
+        logfire = Logfire()
+        shown: list[str] = []
+        await self.method(logfire).sign_in(show=shown.append)
+        assert shown[-1].endswith(
+            'Signed in to Logfire for this session only: saving the sign-in failed (KeyringError).'
+        )
+        auth = DeviceAuth(resource=RESOURCE, read_only=True, http=logfire.client)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(logfire.handle), auth=auth) as client:
+            for _ in range(2):
+                assert (await client.post(RESOURCE)).status_code == 200
+            assert (opened, logfire.bearers, status(resource=RESOURCE, read_only=True)) == (
+                [LINK],
+                ['access-1', 'access-1'],
+                'signed in',
+            )
+            assert forget()  # Logout drops the in-memory sign-in too, so the next request needs a new one.
+            assert status(resource=RESOURCE, read_only=True) == 'signed out'
+            with pytest.raises(SignInRequiredError):
+                await client.post(RESOURCE)
+        assert opened == [LINK]
+        assert not forget()
 
 
 def test_an_unreadable_sign_in_does_not_discard_the_others() -> None:

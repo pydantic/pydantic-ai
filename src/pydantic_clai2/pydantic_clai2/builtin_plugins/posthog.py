@@ -8,16 +8,17 @@ refuses to rename a key PostHog uses. The name is resolved on every request, so 
 the next turn, and a deleted key fails the run instead of connecting without it.
 
 The non-secret options live in the plugin's settings and are edited in the menu that `/plugins configure posthog`
-opens. The plugin always builds its own FastMCP client: harness `PostHog`'s `auth` connects only to the US endpoint
+opens, or the web UI's plugins panel. The plugin always builds its own FastMCP client: harness `PostHog`'s `auth` connects only to the US endpoint
 and `auth='oauth'` keeps browser tokens in memory with a 5-second connect timeout, so the region, the project and
 organization pins, and keyring-backed sign-in all need a client of CLAI's own.
+
+The browser sign-in runs only from the settings menu or `/posthog login`, never while loading or in a prompt; see
+`pydantic_clai2.plugins.sign_in`.
 """
 
-import asyncio
 import re
 from collections.abc import AsyncGenerator, Generator, Sequence
 from dataclasses import replace
-from functools import partial
 from typing import Literal, TypeVar
 from urllib.parse import urlencode, urlsplit
 
@@ -27,40 +28,28 @@ import httpx2
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, field_validator
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
-from termflow.tui.menu import Menu
 
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.posthog import PostHog
 from pydantic_clai2.commands import Command
-from pydantic_clai2.config.api_keys import (
-    KeyExistsError,
-    KeyReference,
-    load_keys,
-    prompt_api_key,
-    resolve_key,
-    save_key,
-    save_key_connection,
-)
+from pydantic_clai2.config.api_keys import KeyReference, load_keys, resolve_key, save_key_connection
 from pydantic_clai2.config.credential_store import load_codex_credentials
-from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore, http_client, sign_in
+from pydantic_clai2.mcp import OAuthSignIn, http_client
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
-from pydantic_clai2.ui.menus.field_menu import (
-    SAVE_AND_CLOSE_DETAILS,
-    TERMINAL,
-    FieldMenu,
-    FieldRow,
-    Runners,
-    first_error,
-    is_save_and_close,
-    picked,
-    run_flow,
-    save_and_close_item,
+from pydantic_clai2.plugins.keys import choose_key
+from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
+from pydantic_clai2.plugins.sign_in import (
+    SUBCOMMANDS,
+    run_subcommand,
+    sign_in_now,
+    status as sign_in_status,
+    warn_if_signed_out,
 )
-from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.runtime.session import WorkspacelessCapability
+from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 KEY_NAME = 'POSTHOG_PERSONAL_API_KEY'
 """The `/keys` label for a new key: harness `PostHog`'s documented variable name, used as a label only."""
@@ -78,8 +67,7 @@ EU_URL = 'https://mcp-eu.posthog.com/mcp'
 """PostHog's EU endpoint, which keeps browser sign-in on the EU instance."""
 
 SETUP = 'Run /plugins configure posthog to choose or enter a key.'
-RUNNERS: Runners = TERMINAL
-"""How the settings menu's widgets are shown; tests swap in scripted ones."""
+KEY_LABEL = f'PostHog personal API key (new keys are saved in /keys as {KEY_NAME})'
 
 FEATURE_GROUPS = (
     *('actions', 'alerts', 'annotations', 'batch_exports', 'business_knowledge', 'canvas', 'cohorts'),
@@ -99,11 +87,6 @@ _RequestT = TypeVar('_RequestT', httpx.Request, httpx2.Request)
 _GROUP = re.compile(r'[a-z][a-z0-9_]*')
 _ID = re.compile(r'[A-Za-z0-9-]+')
 _LOOPBACK = ('localhost', '127.0.0.1', '::1')
-_SIGN_IN_STATES: dict[bool | None, str] = {
-    True: 'signed in through the browser',
-    False: 'not signed in; the first prompt that uses it opens the browser',
-    None: 'in an unknown sign-in state: the keyring cannot be read',
-}
 
 
 class PostHogSettings(BaseModel):
@@ -197,53 +180,86 @@ def _bearer() -> str:
 class PostHogPlugin(Plugin[PostHogSettings]):
     """`PostHog` from the saved settings, with a settings menu and `/posthog`."""
 
-    def __init__(self, host: PluginHost[None], settings: PostHogSettings) -> None:
-        super().__init__(host, settings)
-        self.capability = PostHog[None](client=client(settings), include_instructions=settings.include_instructions)
-        self.tokens = TokenStore(TOKENS)
-
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (self.capability,)
+        if self.settings.auth == 'browser':
+            return (WorkspacelessCapability[None](self.for_run),)
+        return (
+            PostHog[None](
+                defer_loading=True,
+                client=client(self.settings),
+                include_instructions=self.settings.include_instructions,
+            ),
+        )
 
     def get_commands(self) -> Sequence[Command]:
         return (
             Command(
                 name='posthog',
-                description='Show how PostHog connects, or forget its browser sign-in (/posthog logout).',
+                description='Show how PostHog connects, or sign in or out in the browser (/posthog login|logout).',
                 handler=self._command,
-                complete=lambda args: ['logout'] if len(args) <= 1 else [],
+                complete=lambda args: SUBCOMMANDS if len(args) <= 1 else (),
             ),
         )
 
-    async def configure(self) -> str:
-        if not self.host.console.is_terminal:
-            return f'Configure PostHog from a terminal: {SETUP}'
-        return await _configure(PostHogSource(self.host))
+    async def for_run(self, ctx: RunContext[None]) -> PostHog[None] | None:
+        """The browser sign-in's capability, checked per run so signing in applies to the next prompt."""
+        method = browser(self.settings)
+        if not await anyio.to_thread.run_sync(method.signed_in, abandon_on_cancel=True):
+            return None
+        return PostHog[None](
+            defer_loading=True, client=method.client(), include_instructions=self.settings.include_instructions
+        )
+
+    def settings_menu(self) -> SettingsMenu:
+        source = PostHogSource(self.host)
+        return SettingsMenu(
+            source=source,
+            actions={_KEY.key: source.pick_key, _AUTH.key: source.pick_auth, _FEATURES.key: source.pick_features},
+        )
 
     async def on_session_start(self, event: SessionStart) -> None:
-        usable = _usable_key() if self.settings.auth == 'key' else None
+        if self.settings.auth == 'browser':
+            await warn_if_signed_out(browser(self.settings), self.host.console)
+            return
+        usable = _usable_key()
         if isinstance(usable, str):
             # Loading anyway keeps the settings menu available; each run fails closed until a key is chosen.
             self.host.console.print(usable, style=theme.color(theme.WARNING), markup=False)
 
     async def _command(self, args: list[str]) -> str:
-        if args == ['logout']:
-            await anyio.to_thread.run_sync(self.tokens.forget, abandon_on_cancel=True)
-            # The live sign-in still holds the tokens it loaded, so later runs need a fresh one.
-            self.capability.client = client(self.host.settings(PostHogSettings))
-            return 'Signed out of PostHog. The next prompt that uses browser sign-in opens the browser again.'
-        if args:
-            raise ValueError('Usage: /posthog [logout]; change settings with /plugins configure posthog')
-        return await anyio.to_thread.run_sync(
-            _status, self.host.settings(PostHogSettings), self.tokens, abandon_on_cancel=True
-        )
+        settings = self.host.settings(PostHogSettings)
+        if args in ([], ['status']):
+            return await anyio.to_thread.run_sync(_status, settings, abandon_on_cancel=True)
+        message = await run_subcommand(browser(settings), args)
+        if message is None:
+            raise ValueError(
+                'Usage: /posthog [login | logout | status]; change settings with /plugins configure posthog'
+            )
+        return message
+
+
+def browser(settings: PostHogSettings) -> OAuthSignIn:
+    """The browser sign-in for the endpoint `settings` describe; its tokens are the `mcp-posthog_plugin` credential."""
+    return OAuthSignIn(
+        name=TOKENS, service='PostHog', setup='/posthog login', url=_url(settings), headers=_headers(settings)
+    )
 
 
 def client(settings: PostHogSettings) -> Client[StreamableHttpTransport]:
-    """The connection `settings` describe; PostHog reads the region from the key, the rest from the request."""
-    url = settings.url
-    if settings.features is not None:
-        url += '?' + urlencode({'features': ','.join(settings.features)})
+    """The key connection `settings` describe; PostHog reads the region from the key, the rest from the request."""
+    transport = StreamableHttpTransport(
+        _url(settings), headers=_headers(settings), auth=SavedKeyAuth(), httpx_client_factory=http_client
+    )
+    return Client(transport)
+
+
+def _url(settings: PostHogSettings) -> str:
+    if settings.features is None:
+        return settings.url
+    return settings.url + '?' + urlencode({'features': ','.join(settings.features)})
+
+
+def _headers(settings: PostHogSettings) -> dict[str, str]:
     headers: dict[str, str] = {}
     if settings.read_only:
         headers['x-posthog-read-only'] = 'true'
@@ -253,14 +269,7 @@ def client(settings: PostHogSettings) -> Client[StreamableHttpTransport]:
         headers['x-posthog-project-id'] = settings.project_id
     if settings.organization_id is not None:
         headers['x-posthog-organization-id'] = settings.organization_id
-    browser = settings.auth == 'browser'
-    transport = StreamableHttpTransport(
-        url,
-        headers=headers,
-        auth=sign_in(TOKENS) if browser else SavedKeyAuth(),
-        httpx_client_factory=http_client,
-    )
-    return Client(transport, init_timeout=OAUTH_TIMEOUT if browser else None)
+    return headers
 
 
 def _usable_key() -> KeyReference | str:
@@ -277,10 +286,10 @@ def _usable_key() -> KeyReference | str:
     return reference
 
 
-def _status(settings: PostHogSettings, tokens: TokenStore) -> str:
+def _status(settings: PostHogSettings) -> str:
     access = 'read-only' if settings.read_only else 'read-write'
     if settings.auth == 'browser':
-        return f'PostHog ({access}, {settings.url}) is {_SIGN_IN_STATES[tokens.signed_in()]}.'
+        return f'PostHog ({access}, {settings.url}) uses browser sign-in. {sign_in_status(browser(settings))}'
     usable = _usable_key()
     if isinstance(usable, str):
         return usable
@@ -306,17 +315,18 @@ _FEATURES = FieldRow(
     ),
     default='every group',
 )
+_AUTH = FieldRow(
+    key='auth',
+    label='Sign-in',
+    description='A personal API key from /keys, or a browser sign-in whose tokens are kept in the keyring.',
+    default='key',
+    choices=('key', 'browser'),
+    choice_labels={'key': 'API key from /keys', 'browser': 'browser sign-in'},
+    allow_custom=False,
+)
 _ROWS = (
     _KEY,
-    FieldRow(
-        key='auth',
-        label='Sign-in',
-        description='A personal API key from /keys, or a browser sign-in whose tokens are kept in the keyring.',
-        default='key',
-        choices=('key', 'browser'),
-        choice_labels={'key': 'API key from /keys', 'browser': 'browser sign-in'},
-        allow_custom=False,
-    ),
+    _AUTH,
     FieldRow(
         key='url',
         label='Region',
@@ -435,6 +445,49 @@ class PostHogSource:
         """Persist to the plugin's declaration."""
         self._host.save_settings(settings)
 
+    async def pick_key(self, dialogs: Dialogs) -> list[str]:
+        """The API key row: pick a saved key or save a new one in `/keys`; only its name is remembered."""
+        try:
+            reference = await choose_key(name=KEY_NAME, label=KEY_LABEL, dialogs=dialogs)
+            if reference is None:
+                return ['PostHog key unchanged.']
+            await anyio.to_thread.run_sync(_choose, reference, abandon_on_cancel=True)
+        except (ValueError, UserError) as exc:
+            return [str(exc)]
+        return [f'PostHog connects with {reference.name} from /keys.']
+
+    async def pick_auth(self, dialogs: Dialogs) -> list[str]:
+        """The Sign-in row: choosing the browser signs in now, behind a waiting screen, unless a sign-in is stored."""
+        picked = await dialogs.choose(
+            title=f'Choose {_AUTH.label}',
+            options=[Option(value=choice, label=_AUTH.display(choice)) for choice in _AUTH.choices],
+            current=self.settings.auth,
+            description=_AUTH.description,
+        )
+        if picked is None:
+            return []
+        saved = await anyio.to_thread.run_sync(self.apply, _AUTH, picked)
+        method = browser(self.settings)
+        if picked != 'browser' or await anyio.to_thread.run_sync(method.signed_in, abandon_on_cancel=True):
+            return [saved]
+        return [saved, await sign_in_now(method, dialogs)]
+
+    async def pick_features(self, dialogs: Dialogs) -> list[str]:
+        """The Feature groups row: each pick toggles a group and saves it, until Done, every group, or backing out."""
+        changed = False
+        while True:
+            selected = self.settings.features
+            group = await dialogs.choose(
+                title='PostHog feature groups', options=feature_options(selected), description=_FEATURES_HELP
+            )
+            if group is None or group == DONE:
+                return [f'Saved {_FEATURES.label}.'] if changed else []
+            update = {'features': _toggled(selected, group)}
+            await anyio.to_thread.run_sync(self.save, self.settings.model_copy(update=update))
+            changed = True
+            if group == EVERY_GROUP:
+                return [f'Saved {_FEATURES.label}.']
+
     def _updated(self, row: FieldRow, raw: str) -> PostHogSettings:
         data = self.settings.model_dump(mode='json')
         value: JsonValue = raw
@@ -444,66 +497,36 @@ class PostHogSource:
         return PostHogSettings.model_validate(data)
 
 
-async def _configure(source: PostHogSource) -> str:
-    loop = asyncio.get_running_loop()
-
-    def pick_key() -> list[str]:
-        # The key picker is async, so the menu's thread hands it back to the event loop.
-        try:
-            return [asyncio.run_coroutine_threadsafe(choose_key(), loop).result()]
-        except (ValueError, UserError) as exc:
-            return [str(exc)]
-
-    menu = FieldMenu(source)
-    submenus = {'key': pick_key, 'features': lambda: _pick_features(source)}
-    messages = await run_worker(lambda: run_flow(menu, RUNNERS, submenus=submenus))
-    return '\n'.join(messages) or 'PostHog settings unchanged.'
-
+DONE = ':done'
+"""The feature list's last row: close it. Group names never start with `:`."""
 
 EVERY_GROUP = 'every'
 """The feature list's first row: offer every group."""
 
+_FEATURES_HELP = 'Each pick toggles a group and saves it. Leaving none selected offers every group.'
 
-def feature_menu(selected: list[str] | None, cursor: int) -> Menu:
-    """Build the searchable feature-group toggle list; `cursor` keeps the place between toggles."""
+
+def feature_options(selected: list[str] | None) -> list[Option]:
+    """The feature-group toggle list, `[x]` marking what is offered, then Done."""
     chosen = set(selected or ())
-    groups = _listed(selected)
-    items = [MenuItem(f'{"[x]" if selected is None else "[ ]"} every group (no filter)', value=EVERY_GROUP)]
-    items += [MenuItem(f'{"[x]" if group in chosen else "[ ]"} {group}', value=group) for group in groups]
-    items.append(save_and_close_item())
-    return (
-        MenuBuilder('PostHog feature groups')
-        .style(markdown_style())
-        .items(items)
-        .searchable()
-        .initial_index(cursor)
-        .preview(lambda item: SAVE_AND_CLOSE_DETAILS if is_save_and_close(item) else _FEATURES.description)
-        .footer_hint('type to filter - Enter toggle (saved) - Esc done')
-        .key_source(menu_key)
-        .build()
+    every = Option(
+        value=EVERY_GROUP,
+        label=f'{"[x]" if selected is None else "[ ]"} every group (no filter)',
+        description='Offer every group, and close the list.',
     )
+    groups = [
+        Option(value=group, label=f'{"[x]" if group in chosen else "[ ]"} {group}') for group in _listed(selected)
+    ]
+    done = Option(value=DONE, label='Done', description='Close the list. Each toggle was saved as you made it.')
+    return [every, *groups, done]
 
 
-def _pick_features(source: PostHogSource) -> list[str]:
-    cursor = 0
-    changed = False
-    while True:
-        selected = source.settings.features
-        item = picked(RUNNERS.run_choice(feature_menu(selected, cursor)))
-        if item is None or not isinstance(item.value, str):
-            return [f'Saved {_FEATURES.label}.'] if changed else []
-        group = item.value
-        if group == EVERY_GROUP:
-            features = None
-        else:
-            remaining = [name for name in selected or () if name != group]
-            features = remaining if group in (selected or ()) else [*(selected or ()), group]
-        source.save(source.settings.model_copy(update={'features': features or None}))
-        changed = True
-        if group == EVERY_GROUP:
-            return [f'Saved {_FEATURES.label}.']
-        listed = _listed(features)
-        cursor = 1 + listed.index(group) if group in listed else 0
+def _toggled(selected: list[str] | None, group: str) -> list[str] | None:
+    """`selected` with `group` switched; unchecking the last group offers every group, never an empty list."""
+    if group == EVERY_GROUP:
+        return None
+    remaining = [name for name in selected or () if name != group]
+    return (remaining if group in (selected or ()) else [*(selected or ()), group]) or None
 
 
 def _listed(selected: list[str] | None) -> list[str]:
@@ -511,65 +534,6 @@ def _listed(selected: list[str] | None) -> list[str]:
     return sorted({*FEATURE_GROUPS, *(selected or ())})
 
 
-class _MaskedPrompt:
-    """`prompt_api_key`'s value prompt as a masked termflow input, matching the settings menu."""
-
-    async def prompt_async(self, label: str, /, *, is_password: bool = False) -> str:
-        builder = (
-            TextInputBuilder(label)
-            .style(markdown_style())
-            .prompt('Key: ')
-            .placeholder('Paste a PostHog personal API key; it is saved in /keys')
-            .footer_hint('Enter save - Esc cancel')
-            .key_source(menu_key)
-        )
-        builder.mask()
-        widget = builder.build()
-        result = await run_worker(lambda: RUNNERS.run_text(widget))
-        if result.cancelled or not isinstance(result.value, str):
-            raise EOFError  # `prompt_api_key` reads this as cancellation.
-        return result.value
-
-
-async def choose_key() -> str:
-    """Pick a saved key or enter a new masked one; only the key's name is saved for PostHog."""
-    label = f'PostHog personal API key (new keys are saved in /keys as {KEY_NAME})'
-    token = await prompt_api_key(prompt=_MaskedPrompt(), label=label)
-    if token is None:
-        return 'PostHog key unchanged.'
-    if isinstance(token, str):
-        if not token.strip():
-            return 'PostHog key unchanged.'
-        try:
-            # Checked and written under one /keys lock, so a key saved meanwhile elsewhere is not overwritten.
-            await anyio.to_thread.run_sync(
-                partial(save_key, name=KEY_NAME, value=token, replace=False), abandon_on_cancel=True
-            )
-        except KeyExistsError:
-            if not await run_worker(_confirm_replace):
-                return 'PostHog key unchanged.'
-            await anyio.to_thread.run_sync(partial(save_key, name=KEY_NAME, value=token), abandon_on_cancel=True)
-        token = KeyReference(name=KEY_NAME)
-    saved = _Saved(token=token).model_dump_json()
-    await anyio.to_thread.run_sync(
-        partial(save_key_connection, account=ACCOUNT, token=token, value=saved), abandon_on_cancel=True
-    )
-    return f'PostHog connects with {token.name} from /keys.'
-
-
-def _confirm_replace() -> bool:
-    menu = (
-        MenuBuilder(f'{KEY_NAME} is already in /keys')
-        .style(markdown_style())
-        .items(
-            [
-                MenuItem('Keep the saved key', value=False),
-                MenuItem(f'Replace {KEY_NAME} for every plugin and connection that uses it', value=True),
-            ]
-        )
-        .footer_hint('Enter select - Esc keep')
-        .key_source(menu_key)
-        .build()
-    )
-    pick = RUNNERS.run_choice(menu)
-    return not pick.cancelled and pick.item is not None and pick.item.value is True
+def _choose(reference: KeyReference) -> None:
+    """Keep the key's name, never its value, in the credential store."""
+    save_key_connection(account=ACCOUNT, token=reference, value=_Saved(token=reference).model_dump_json())

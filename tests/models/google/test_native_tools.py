@@ -46,11 +46,18 @@ with try_import() as imports_successful:
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.google import (
         GeminiStreamedResponse,
+        GoogleModel,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _process_response_from_parts,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
+
+
+def _gemini_api_model() -> GoogleModel:
+    """A Gemini API model, which replays parts recorded under `google` and the pre-v2 `google-gla`."""
+    return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='mock-api-key'))
 
 
 def test_content_model_response_pre_gemini_3_drops_native_tool_parts():
@@ -85,10 +92,12 @@ def test_content_model_response_pre_gemini_3_drops_native_tool_parts():
         provider_name='google-gla',
     )
 
-    assert _content_model_response(response, frozenset({'google-gla'})) == snapshot(
+    assert _content_model_response(response, _gemini_api_model().accepts_stateless_artifacts) == snapshot(
         {'role': 'model', 'parts': [{'text': 'hello'}]}
     )
-    assert _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True) == snapshot(
+    assert _content_model_response(
+        response, _gemini_api_model().accepts_stateless_artifacts, supports_tool_combination=True
+    ) == snapshot(
         {
             'role': 'model',
             'parts': [
@@ -142,7 +151,7 @@ def test_content_model_response_pre_gemini_3_drops_native_tool_parts():
         ],
         provider_name='google-gla',
     )
-    assert _content_model_response(native_only, frozenset({'google-gla'})) is None
+    assert _content_model_response(native_only, _gemini_api_model().accepts_stateless_artifacts) is None
 
 
 def test_content_model_response_drops_pyd_ai_synthesized_native_tool_ids():
@@ -169,9 +178,9 @@ def test_content_model_response_drops_pyd_ai_synthesized_native_tool_ids():
         ],
         provider_name='google-gla',
     )
-    assert _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True) == snapshot(
-        {'role': 'model', 'parts': [{'text': 'hello'}]}
-    )
+    assert _content_model_response(
+        response, _gemini_api_model().accepts_stateless_artifacts, supports_tool_combination=True
+    ) == snapshot({'role': 'model', 'parts': [{'text': 'hello'}]})
 
 
 @pytest.mark.parametrize('supports_tool_combination', [False, True])
@@ -195,7 +204,7 @@ def test_content_model_response_pre_gemini_3_preserves_code_execution(supports_t
     )
 
     assert _content_model_response(
-        response, frozenset({'google-gla'}), supports_tool_combination=supports_tool_combination
+        response, _gemini_api_model().accepts_stateless_artifacts, supports_tool_combination=supports_tool_combination
     ) == snapshot(
         {
             'role': 'model',
@@ -502,7 +511,9 @@ def test_content_model_response_leaves_web_search_sources_out_of_the_tool_respon
     """The sources came from the grounding metadata, not Gemini's `tool_response`, so they aren't sent back."""
     complete = _process_response(_WEB_SEARCH_PARTS, grounding=_WEB_SEARCH_GROUNDING_METADATA)
 
-    assert _content_model_response(complete, frozenset({'google-gla'}), supports_tool_combination=True) == snapshot(
+    assert _content_model_response(
+        complete, _gemini_api_model().accepts_stateless_artifacts, supports_tool_combination=True
+    ) == snapshot(
         {
             'role': 'model',
             'parts': [
@@ -546,3 +557,25 @@ def test_content_model_response_leaves_web_search_sources_out_of_the_tool_respon
             ],
         }
     )
+
+
+def test_content_model_response_drops_native_tool_ids_minted_for_gemini_parts(monkeypatch: pytest.MonkeyPatch):
+    """A `tool_call` / `tool_response` Gemini sent without an id gets one from `generate_tool_call_id`, and the echo
+    path must recognize it by `TOOL_CALL_ID_PREFIX`, whatever its value, so the part never reaches Gemini.
+
+    Unit, not VCR: the check only diverges from a hardcoded prefix once `TOOL_CALL_ID_PREFIX` is patched, which a
+    recording can't exercise.
+    """
+    monkeypatch.setattr(_utils, 'TOOL_CALL_ID_PREFIX', 'minted_')
+    response = _process_response(
+        [
+            {'tool_call': {'tool_type': 'GOOGLE_SEARCH_WEB', 'args': {'queries': ['foo']}}},
+            {'tool_response': {'tool_type': 'GOOGLE_SEARCH_WEB', 'response': {'search_suggestions': '<a>'}}},
+            {'text': 'hello'},
+        ],
+        grounding={},
+    )
+
+    assert _content_model_response(
+        response, _gemini_api_model().accepts_stateless_artifacts, supports_tool_combination=True
+    ) == snapshot({'role': 'model', 'parts': [{'text': 'hello'}]})

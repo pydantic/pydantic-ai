@@ -1,9 +1,12 @@
 """Render typed capability events without parsing model-facing tool results."""
 
+import io
 import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import partial
+from typing import Literal
 
 from pydantic import BaseModel
 from rich.ansi import AnsiDecoder
@@ -14,7 +17,17 @@ from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2.config import ToolCallDisplay
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.command_syntax import highlight_command
+
+ColorSystemName = Literal['standard', '256', 'truecolor', 'windows']
+
+
+def color_system(console: Console) -> ColorSystemName | None:
+    """The colour system `console` renders with; `None` when it renders no colour."""
+    name = console.color_system
+    return name if name in ('standard', '256', 'truecolor', 'windows') else None
 
 
 def terminal_text(text: str, *, keep: str = '\n\t') -> str:
@@ -53,22 +66,52 @@ SHELL_COMMAND_ROWS = 10
 def print_shell_header(console: Console, command: str) -> None:
     """Wrap the whole command under a hanging indent, so long one-liners and scripts stay readable.
 
-    Rows beyond `SHELL_COMMAND_ROWS` are replaced by a count; the model-facing command is unchanged.
+    The command is highlighted as Bash, with embedded code in its own language. Rows beyond
+    `SHELL_COMMAND_ROWS` are replaced by a count; the model-facing command is unchanged. In the
+    live prompt the header is its own transcript item, so a new width or theme renders it again.
     """
     if not command.strip():
         print_tool_header(console, name='shell')
         return
+    surface = console.file
+    if console.is_terminal and isinstance(surface, PromptSurface):
+        render = partial(_shell_header_ansi, colors=color_system(console))
+        block = surface.markdown(render=render, width=console.width)
+        block.extend(command)
+        block.write(render(source=command, width=console.width))
+        return
+    _print_shell_header(console, command)
+
+
+def _shell_header_ansi(*, source: str, width: int, colors: ColorSystemName | None) -> str:
+    """Style on a console of our own, for a width or theme the header was not printed at.
+
+    `colors` must be the stream console's colour system; see `render_markdown`.
+    """
+    output = io.StringIO()
+    _print_shell_header(Console(file=output, force_terminal=True, color_system=colors, width=width), source)
+    return output.getvalue()
+
+
+def _print_shell_header(console: Console, command: str) -> None:
     muted = theme.color(theme.MUTED)
-    head = Text('● ', style=muted)
-    head.append('shell ', style=theme.color(theme.ACCENT))
+    # Spans, not a base style, so the command's unstyled names keep the terminal foreground.
+    head = Text.assemble(('● ', muted), ('shell ', theme.color(theme.ACCENT)))
     indent = Text(' ' * head.cell_len)
-    body = Text(terminal_text(command.strip('\n')), style=muted)
-    rows = body.wrap(console, max(console.width - head.cell_len, 1), overflow='fold')
+    width = max(console.width - head.cell_len, 1)
+    # Escape control characters before highlighting, so no style can carry them to the terminal.
+    command = terminal_text(command.strip('\n'))
+    # Each line takes a row or more, and each row `width` cells or fewer, so lex no further than the
+    # shown rows reach. One row of slack keeps the last shown word whole.
+    shown = len('\n'.join(command.split('\n')[:SHELL_COMMAND_ROWS]))
+    end = min(shown, (SHELL_COMMAND_ROWS + 1) * width)
+    rows = highlight_command(command, end=end).wrap(console, width, overflow='fold')
+    total = len(Text(command).wrap(console, width, overflow='fold'))
     for index, row in enumerate(rows[:SHELL_COMMAND_ROWS]):
         row.rstrip()
         console.print((head if index == 0 else indent) + row, overflow='ellipsis', no_wrap=True)
-    if len(rows) > SHELL_COMMAND_ROWS:
-        console.print(indent + Text(f'… +{len(rows) - SHELL_COMMAND_ROWS} lines', style=muted), no_wrap=True)
+    if total > SHELL_COMMAND_ROWS:
+        console.print(indent + Text(f'… +{total - SHELL_COMMAND_ROWS} lines', style=muted), no_wrap=True)
     console.print()
 
 
@@ -101,7 +144,7 @@ def shell_text(text: str, decoder: AnsiDecoder) -> Text:
     return decoder.decode_line(safe)
 
 
-class DisplayArguments(BaseModel):
+class DisplayArgs(BaseModel):
     """Optional display fields for file and shell tools."""
 
     path: str | None = None
@@ -172,7 +215,7 @@ class ToolOutput:
         if name not in ('shell', 'write_file', 'edit_file', 'read_file', 'list_files'):
             return False
         try:
-            args = DisplayArguments.model_validate_json(event.part.args_as_json_str())
+            args = DisplayArgs.model_validate_json(event.part.args_as_json_str())
         except ValueError:
             return False
         if name in ('read_file', 'list_files'):
@@ -184,7 +227,7 @@ class ToolOutput:
         self._headers.add((event.part.tool_call_id, name))
         return True
 
-    def _inspection_header(self, name: str, args: DisplayArguments) -> bool:
+    def _inspection_header(self, name: str, args: DisplayArgs) -> bool:
         if name == 'read_file':
             if args.path is None:
                 return False

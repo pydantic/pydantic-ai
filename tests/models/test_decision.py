@@ -1,24 +1,30 @@
 from __future__ import annotations
 
+import json
 import pickle
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, ClassVar, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field, WithJsonSchema, field_validator
+from pydantic import BaseModel, Field, JsonValue, WithJsonSchema, field_validator
 
-from pydantic_ai import Agent, BoolCriteria, ModelRetry, RunContext, Tool, ToolOutput
-from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai import Agent, BinaryContent, BoolCriteria, DocumentUrl, ModelRetry, RunContext, Tool, ToolOutput
+from pydantic_ai.capabilities import FileUnderstanding, Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    CachePoint,
+    FilePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    NativeToolReturnPart,
+    RetryFeedbackPart,
+    RetryInfo,
+    StructuredContent,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -51,7 +57,7 @@ from pydantic_ai.profiles.decision import DecisionModelProfile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsStr, try_import
+from ..conftest import IsDatetime, IsStr, legacy_retry_prompt_part, try_import
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
@@ -136,12 +142,88 @@ async def test_decision_model_extension_point(allow_model_requests: None):
                         },
                     ),
                 },
+                messages=[
+                    ModelRequest(
+                        parts=[UserPromptPart(content='The customer cannot sign in.', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        run_id=IsStr(),
+                        conversation_id=IsStr(),
+                    )
+                ],
             )
         ]
     )
     assert result.response.usage == RequestUsage(input_tokens=4, output_tokens=2)
     assert result.response.provider_name == 'test-decisions'
     assert result.response.provider_url == 'https://example.test/decisions'
+
+
+class ImageEnabledDecisionModel(InMemoryDecisionModel):
+    supports_image_input: ClassVar[bool] = True
+
+
+async def test_decision_model_preserves_image_evidence_in_state(allow_model_requests: None):
+    prior_image = BinaryContent(b'prior', media_type='image/png')
+    assistant_image = BinaryContent(b'assistant', media_type='image/png')
+    tool_image = BinaryContent(b'tool', media_type='image/png')
+    native_image = BinaryContent(b'native', media_type='image/png')
+    failed_image = BinaryContent(b'failed', media_type='image/png')
+    current_image = BinaryContent(b'current', media_type='image/png')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(['Earlier prompt.', prior_image])]),
+        ModelResponse(parts=[TextPart('Assistant text.'), FilePart(assistant_image)]),
+        ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', ['before', tool_image, 'after'], tool_call_id='tool-1')]),
+        ModelResponse(
+            parts=[NativeToolReturnPart('native_lookup', ['before', native_image, 'after'], provider_name='test')]
+        ),
+        ModelResponse(parts=[ToolCallPart('failed_lookup', {}, tool_call_id='tool-2')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'failed_lookup',
+                    ['before', failed_image, 'after'],
+                    tool_call_id='tool-2',
+                    outcome='failed',
+                )
+            ]
+        ),
+    ]
+    model = ImageEnabledDecisionModel()
+
+    result = await Agent(model, output_type=bool, instructions='Does the evidence contain an image?').run(
+        ['Current prompt.', current_image], message_history=history
+    )
+
+    assert result.output is True
+    [request] = model.requests
+    assert request.images == (
+        prior_image,
+        assistant_image,
+        tool_image,
+        native_image,
+        failed_image,
+        current_image,
+    )
+    expected_state: JsonValue = {
+        'history': [
+            {'user': 'Earlier prompt.\n\n<image 1>'},
+            {'assistant': 'Assistant text.'},
+            {'assistant': '<image 2>'},
+            {'tool_call': {'name': 'lookup', 'args': {}}},
+            {'tool_return': {'name': 'lookup', 'content': '["before","<image 3>","after"]'}},
+            {'tool_return': {'name': 'native_lookup', 'content': '["before","<image 4>","after"]'}},
+            {'tool_call': {'name': 'failed_lookup', 'args': {}}},
+            {
+                'tool_return': {
+                    'name': 'failed_lookup',
+                    'content': json.dumps({'error': '["before","<image 5>","after"]'}, separators=(',', ':')),
+                }
+            },
+        ],
+        'text': 'Current prompt.\n\n<image 6>',
+    }
+    assert request.state == expected_state
 
 
 class Release(BaseModel):
@@ -488,7 +570,9 @@ async def test_decide_span_records_an_unsure_route_handed_to_a_fallback(
     """A pick below `decision_route_threshold` is recorded on the `decide` span that picked it, even without content.
 
     The `FallbackModel` hands the step to the model behind the decision model, so the `chat` span ends without an
-    error: the `decide` span is the one place the hand-off shows, with the picked route's label on its exception.
+    error. The hand-off shows on the `decide` span, with the picked route's label on its exception, and on the
+    `model request attempt` span beside it. That span is only opened once the attempt has failed, so the `decide` span
+    the attempt opened can't be its child.
     """
     fallback = FallbackModel(UnsureDecisionModel(), TestModel(call_tools=[]))
     agent = Agent(
@@ -520,7 +604,18 @@ async def test_decide_span_records_an_unsure_route_handed_to_a_fallback(
                                         'pydantic_ai.decision.route': 'escalate_to_team',
                                     }
                                 ],
-                            }
+                            },
+                            {
+                                'name': 'model request attempt in-memory-decisions',
+                                'level': 17,
+                                'events': [
+                                    {
+                                        'name': 'exception',
+                                        'exception.type': 'pydantic_ai.models.decision.UnsureRoute',
+                                        'exception.escaped': 'True',
+                                    }
+                                ],
+                            },
                         ],
                     }
                 ],
@@ -851,6 +946,50 @@ async def test_no_choice_limit(allow_model_requests: None):
     assert part.args == {}
 
 
+async def test_a_legacy_retry_prompt_part_on_a_direct_request_is_judged_as_what_it_meant(allow_model_requests: None):
+    """A direct `request()` skips `prepare_messages`; the deprecated part is judged as the part it always meant."""
+    model = InMemoryDecisionModel()
+
+    await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart('Look it up.')]),
+            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='c1')]),
+            ModelRequest(
+                parts=[
+                    legacy_retry_prompt_part('bad args', tool_name='lookup', tool_call_id='c1'),
+                    legacy_retry_prompt_part('answer in one word'),
+                ]
+            ),
+        ],
+        None,
+        ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(name='lookup', parameters_json_schema={'type': 'object'}),
+                ToolDefinition(name='finish', parameters_json_schema={'type': 'object'}),
+            ],
+            allow_text_output=False,
+        ),
+    )
+
+    assert model.requests[0].state == snapshot(
+        {
+            'history': [
+                {'user': 'Look it up.'},
+                {'tool_call': {'name': 'lookup', 'args': {}}},
+                {'tool_return': {'name': 'lookup', 'content': '{"error":"bad args"}'}},
+                {
+                    'retry': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in one word
+</retry_feedback>\
+"""
+                },
+            ]
+        }
+    )
+
+
 Rubric = Annotated[
     Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
     WithJsonSchema(
@@ -1040,6 +1179,65 @@ async def test_text_output_is_refused(allow_model_requests: None):
     assert model.requests == []
 
 
+async def test_file_understanding_describes_what_a_decision_model_cannot_read(allow_model_requests: None):
+    """A document is described for a decision model, and an image is too unless the class reads images.
+
+    Documents, audio and video are always described here: `DecisionModel.profile` hard-codes them `False` and
+    `DecisionRequest` carries images only, so the accepting side is unreachable for this adapter (it is covered
+    on a plain model in `tests/test_capability_file_understanding.py`).
+    """
+
+    def describe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('A description of the file.')])
+
+    image = BinaryContent(b'\x89PNG', media_type='image/png', identifier='chart')
+    prompt = ['The report and its chart:', DocumentUrl('https://example.com/report.pdf', identifier='report'), image]
+
+    text_only = InMemoryDecisionModel()
+    assert text_only.profile.get('supports_image_input') is False
+    assert text_only.profile.get('supports_document_input') is False
+    assert text_only.profile.get('supports_video_input') is False
+    await Agent(
+        text_only,
+        output_type=bool,
+        instructions='Is this urgent?',
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe))],
+    ).run(prompt)
+    [request] = text_only.requests
+    assert request.state == snapshot("""\
+The report and its chart:
+
+-----BEGIN FILE id="report" type="text/plain"-----
+A description of the file.
+-----END FILE id="report"-----
+
+-----BEGIN FILE id="chart" type="text/plain"-----
+A description of the file.
+-----END FILE id="chart"-----\
+""")
+    assert request.images == ()
+
+    reads_images = ImageEnabledDecisionModel()
+    assert reads_images.profile.get('supports_image_input') is True
+    await Agent(
+        reads_images,
+        output_type=bool,
+        instructions='Is this urgent?',
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe))],
+    ).run(prompt)
+    [request] = reads_images.requests
+    assert request.state == snapshot("""\
+The report and its chart:
+
+-----BEGIN FILE id="report" type="text/plain"-----
+A description of the file.
+-----END FILE id="report"-----
+
+<image 1>\
+""")
+    assert request.images == (image,)
+
+
 class Escalation(BaseModel):
     """Hand the ticket to a person."""
 
@@ -1154,6 +1352,14 @@ async def test_the_fill_calls_the_route_what_the_route_question_did(allow_model_
                         instructions='Which of these does this call for?',
                     ),
                 },
+                messages=[
+                    ModelRequest(
+                        parts=[UserPromptPart(content='Someone else can see my invoices.', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        run_id=IsStr(),
+                        conversation_id=IsStr(),
+                    )
+                ],
             )
         ]
     )
@@ -1361,6 +1567,27 @@ async def test_a_fallback_model_takes_the_unsure_step(allow_model_requests: None
 
     assert result.response.model_name == 'test'
     assert len(decision_model.requests) == 1
+
+
+@pytest.mark.parametrize('limit_kind', ['images', 'questions'])
+async def test_default_fallback_handles_backend_request_limits(allow_model_requests: None, limit_kind: str):
+    """Image and question preflight errors are `ModelAPIError`s, so the default fallback can take over."""
+
+    class LimitedDecisionModel(ImageEnabledDecisionModel):
+        max_images: ClassVar[int | None] = 0
+        max_questions: ClassVar[int | None] = 1
+
+    decision_model = LimitedDecisionModel()
+    model = FallbackModel(decision_model, TestModel(call_tools=[]))
+    if limit_kind == 'images':
+        agent = Agent(model, output_type=bool, instructions='Does the evidence contain a receipt?')
+        result = await agent.run(['Review this image.', BinaryContent(b'image', media_type='image/png')])
+    else:
+        agent = Agent(model, output_type=Triage)
+        result = await agent.run('Triage this ticket.')
+
+    assert result.response.model_name == 'test'
+    assert decision_model.requests == []
 
 
 def approve() -> str:
@@ -1794,7 +2021,7 @@ async def test_a_message_history_that_ends_mid_turn_is_split_at_its_latest_promp
                 ToolReturnPart('look_up_order', 'Order #1 shipped yesterday.', 'c1'),
                 UserPromptPart('Thanks. It arrived broken.'),
                 UserPromptPart('Please refund it.'),
-                RetryPromptPart('Pick something else.'),
+                RetryFeedbackPart('Pick something else.', retry=RetryInfo(cause='model_retry')),
             ]
         ),
         ModelResponse(parts=[ThinkingPart('A refund, then.'), ToolCallPart('issue_refund', {}, 'c2')]),
@@ -1815,7 +2042,14 @@ Thanks. It arrived broken.
 Please refund it.\
 """,
             'done': [
-                {'retry': IsStr()},
+                {
+                    'retry': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Pick something else.
+</retry_feedback>\
+"""
+                },
                 {'thinking': 'A refund, then.'},
                 {'tool_call': {'name': 'issue_refund', 'args': {}}},
                 {'tool_return': {'name': 'issue_refund', 'content': 'Refunded.'}},
@@ -1857,6 +2091,92 @@ async def test_a_tool_result_with_no_prompt_before_it_is_all_history(allow_model
             ]
         }
     )
+
+
+@pytest.mark.parametrize(
+    'value',
+    [
+        pytest.param({'question': 'What is 2 + 2?', 'expected': '4', 'answer': 'Four'}, id='object'),
+        pytest.param(['4', 'Four'], id='array'),
+        pytest.param(4, id='scalar'),
+        pytest.param(None, id='null'),
+        pytest.param({}, id='empty'),
+    ],
+)
+async def test_a_structured_prompt_is_judged_as_its_value(allow_model_requests: None, value: JsonValue):
+    """A prompt that is one `StructuredContent` is the whole state as the value itself, not the text it renders to.
+
+    A null or empty value is still a value to judge, not a missing prompt.
+    """
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=bool, instructions='Are the answers equivalent?').run(
+        [StructuredContent(value), CachePoint()]
+    )
+    assert model.requests[0].state == value
+
+
+async def test_a_structured_prompt_is_judged_as_json_compatible_data(allow_model_requests: None):
+    """A Pydantic model is sent as the JSON-compatible data it dumps to, which is what a backend can take."""
+
+    class Answers(BaseModel):
+        expected: str
+        answer: str
+
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=bool, instructions='Are the answers equivalent?').run(
+        [StructuredContent(Answers(expected='4', answer='Four'))]
+    )
+    assert model.requests[0].state == snapshot({'expected': '4', 'answer': 'Four'})
+
+
+async def test_a_structured_prompt_after_a_conversation_goes_under_state(allow_model_requests: None):
+    """With history before it, the value goes under `state`, beside the history rather than merged into it.
+
+    An earlier structured prompt is a `user` entry holding its value, and the caller's keys stay the caller's,
+    even ones named like the envelope's.
+    """
+    model = InMemoryDecisionModel()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart([StructuredContent({'url': '/products/41'})])]),
+        ModelResponse(parts=[TextPart('That one is out of stock.')]),
+    ]
+    await Agent(model, output_type=bool, instructions='Is the product in stock?').run(
+        [StructuredContent({'url': '/products/42', 'history': 'mine'})], message_history=history
+    )
+    assert model.requests[0].state == snapshot(
+        {
+            'history': [{'user': {'url': '/products/41'}}, {'assistant': 'That one is out of stock.'}],
+            'state': {'url': '/products/42', 'history': 'mine'},
+        }
+    )
+
+
+async def test_after_a_tool_returns_a_structured_prompt_stays_the_state(allow_model_requests: None):
+    """Once a tool has returned, the value is still what is judged, under `state`, with the calls under `done`."""
+    model = RoutingDecisionModel({'Triage': 0.4, 'look_up_order': 0.6})
+    await Agent(model, output_type=Triage, tools=[look_up_order]).run([StructuredContent({'order': 1})])
+    assert model.requests[-1].state == snapshot(
+        {
+            'state': {'order': 1},
+            'done': [
+                {'tool_call': {'name': 'look_up_order', 'args': {}}},
+                {'tool_return': {'name': 'look_up_order', 'content': 'Order #1 shipped yesterday.'}},
+            ],
+        }
+    )
+
+
+async def test_a_structured_prompt_with_text_beside_it_is_judged_as_text(allow_model_requests: None):
+    """A prompt that mixes a structured value with text has no single value to send, so it is sent as text."""
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=bool, instructions='Is the question answered?').run(
+        [StructuredContent({'cart_total': 949}, tag='ui_state'), 'Too high?']
+    )
+    assert model.requests[0].state == snapshot("""\
+<ui_state>{"cart_total":949}</ui_state>
+
+Too high?\
+""")
 
 
 class HandsOffFirstDecisionModel(InMemoryDecisionModel):
@@ -1932,13 +2252,7 @@ def a_language_model_step_retried() -> tuple[InMemoryDecisionModel, Agent[None, 
                     'text': 'I was charged twice this month.',
                     'done': [
                         {'tool_call': {'name': 'final_result', 'args': {'urgent': True, 'action': 'review'}}},
-                        {
-                            'retry': """\
-Be sure.
-
-Fix the errors and try again.\
-"""
-                        },
+                        {'tool_return': {'name': 'final_result', 'content': '{"error":"Be sure."}'}},
                     ],
                 }
             ),
@@ -1952,23 +2266,10 @@ Fix the errors and try again.\
                     'done': [
                         {'tool_call': {'name': 'final_result', 'args': {'urgent': True}}},
                         {
-                            'retry': """\
-1 validation error:
-```json
-[
-  {
-    "type": "value_error",
-    "loc": [
-      "urgent"
-    ],
-    "msg": "Value error, Check again.",
-    "input": true
-  }
-]
-```
-
-Fix the errors and try again.\
-"""
+                            'tool_return': {
+                                'name': 'final_result',
+                                'content': '{"error":[{"type":"value_error","loc":["urgent"],"msg":"Value error, Check again.","input":true}]}',
+                            }
                         },
                     ],
                 }
@@ -1983,11 +2284,10 @@ Fix the errors and try again.\
                     'done': [
                         {'tool_call': {'name': 'look_up_charges', 'args': {}}},
                         {
-                            'retry': """\
-The billing system is busy.
-
-Fix the errors and try again.\
-"""
+                            'tool_return': {
+                                'name': 'look_up_charges',
+                                'content': '{"error":"The billing system is busy."}',
+                            }
                         },
                     ],
                 }
@@ -2003,18 +2303,10 @@ Fix the errors and try again.\
                         {'assistant': 'Sorry about that, refunding now.'},
                         {
                             'retry': """\
-1 validation error:
-```json
-[
-  {
-    "type": "json_invalid",
-    "loc": [],
-    "msg": "Invalid JSON: expected value at line 1 column 1"
-  }
-]
-```
-
-Fix the errors and try again.\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+[{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected value at line 1 column 1","input":"Sorry about that, refunding now."}]
+</validation_errors>\
 """
                         },
                     ],
@@ -2041,7 +2333,7 @@ async def test_a_replayed_history_with_a_retry_since_its_prompt_is_split(allow_m
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Delete everything.')]),
         ModelResponse(parts=[TextPart('Deleting.')]),
-        ModelRequest(parts=[RetryPromptPart('Answer with a tool call.')]),
+        ModelRequest(parts=[legacy_retry_prompt_part('Answer with a tool call.')]),
     ]
     await Agent(model, output_type=Triage).run(message_history=history)
     assert model.requests[0].state == snapshot(
@@ -2051,15 +2343,57 @@ async def test_a_replayed_history_with_a_retry_since_its_prompt_is_split(allow_m
                 {'assistant': 'Deleting.'},
                 {
                     'retry': """\
-Validation feedback:
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
 Answer with a tool call.
-
-Fix the errors and try again.\
+</retry_feedback>\
 """
                 },
             ],
         }
     )
+
+
+class HandsOffSecondRoutingDecisionModel(RoutingDecisionModel):
+    """Routes like `RoutingDecisionModel`, but fails its second request, so a `FallbackModel` hands that step on."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        if len(self.requests) == 1:
+            self.requests.append(request)
+            raise ModelAPIError(self.model_name, 'The backend is busy.')
+        return await super().decide(request, model_settings)
+
+
+async def test_feedback_after_a_tool_returned_is_a_retry_entry(allow_model_requests: None):
+    """Feedback after a tool returned goes in `done`: the prompt stays the text, and the tool stays withheld."""
+
+    def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Sorry about that, refunding now.')])
+
+    model = HandsOffSecondRoutingDecisionModel({'Triage': 0.1, 'look_up_order': 0.9, 'issue_refund': 0.05})
+    agent = Agent(FallbackModel(model, FunctionModel(reply)), output_type=Triage, tools=[look_up_order, issue_refund])
+    await agent.run('Where is my order?')
+    assert model.requests[2].state == snapshot(
+        {
+            'text': 'Where is my order?',
+            'done': [
+                {'tool_call': {'name': 'look_up_order', 'args': {}}},
+                {'tool_return': {'name': 'look_up_order', 'content': 'Order #1 shipped yesterday.'}},
+                {'assistant': 'Sorry about that, refunding now.'},
+                {
+                    'retry': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+[{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected value at line 1 column 1","input":"Sorry about that, refunding now."}]
+</validation_errors>\
+"""
+                },
+            ],
+        }
+    )
+    route = model.requests[2].questions['route']
+    assert isinstance(route, ChoiceQuestion)
+    assert list(route.criteria) == snapshot(['Triage', 'issue_refund'])
 
 
 async def test_a_system_prompt_is_a_system_entry_on_any_backend(allow_model_requests: None):

@@ -1,30 +1,43 @@
 """Settings survive upgrades, branch switches, and rejected operations."""
 
 import io
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
+from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from pydantic_clai2 import StreamRenderer
+from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
+from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderSettings
+from pydantic_clai2.builtin_plugins.compaction import CompactionPlugin
+from pydantic_clai2.builtin_plugins.day_ai import DayAISource
 from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings, LogfireSource
-from pydantic_clai2.commands import config_command, plugins_command
+from pydantic_clai2.builtin_plugins.logfire_mcp import LogfireMCPSettings
+from pydantic_clai2.builtin_plugins.notion import NotionSource
+from pydantic_clai2.builtin_plugins.ordinal import OrdinalSource
+from pydantic_clai2.builtin_plugins.workspaces import WorkspacesSettings, WorkspacesSource
+from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.commands import Commands, config_command, plugins_command
 from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
+from pydantic_clai2.config.project_settings import PROJECT_FILE, load_project_settings
 from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
 from pydantic_clai2.models.model_settings import model_settings_from_json
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
+from pydantic_clai2.ui.menus.set_menu import SettingsSource
+from tests.clai2.dialog_script import ScriptedDialogs, Type
 from tests.clai2.test_logfire import Recorder, observability_loader, recorder as recorder
 
 
@@ -69,12 +82,15 @@ async def test_logfire_user_tag_settings_survive_older_builds(
             'user_tag': ['logfire-user-tag'],
             'account': ['logfire-user-tag'],
             'httpx': ['logfire-httpx'],
+            'variables_key': ['logfire-variables-key'],
         }
         old_view = apply_requirements(
             saved.settings, stored_requirements(requirements, saved.settings), defaults={}, supported=frozenset()
         )
         assert old_view.settings == {
-            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account', 'httpx')
+            key: value
+            for key, value in saved.settings.items()
+            if key not in ('user_tag', 'account', 'httpx', 'variables_key')
         }
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
         await loader.reload('observability')
@@ -104,6 +120,7 @@ async def test_httpx_opt_in_is_ignored_by_older_builds(tmp_path: Path, recorder:
             'httpx': ['logfire-httpx'],
             'user_tag': ['logfire-user-tag'],
             'account': ['logfire-user-tag'],
+            'variables_key': ['logfire-variables-key'],
         }
         old_view = apply_requirements(
             saved.settings,
@@ -112,6 +129,30 @@ async def test_httpx_opt_in_is_ignored_by_older_builds(tmp_path: Path, recorder:
             supported=frozenset({'logfire-user-tag'}),
         )
         assert old_view.settings['httpx'] is False
+        assert store.plugins() == [saved]
+    finally:
+        await loader.close('exit')
+
+
+async def test_variables_key_is_ignored_by_older_builds(tmp_path: Path, recorder: Recorder) -> None:
+    """A build without `variables_key` forbids unknown settings, so the key is tagged for it to drop instead."""
+    loader, store = observability_loader(tmp_path)
+    try:
+        await loader.load_all()
+        source = LogfireSource(_observability_host(loader))
+        row = next(row for row in source.rows() if row.key == 'variables_key')
+        source.apply(row, 'LOGFIRE_API_KEY_TEAM')
+        [saved] = store.plugins()
+        assert saved.settings['variables_key'] == {'name': 'LOGFIRE_API_KEY_TEAM'}
+        requirements = store.plugin_requirements('observability')
+        old_view = apply_requirements(
+            saved.settings,
+            stored_requirements(requirements, saved.settings),
+            defaults={},
+            supported=frozenset({'logfire-user-tag', 'logfire-httpx'}),
+        )
+        assert 'variables_key' not in old_view.settings
+        assert old_view.ignored == {'variables_key': frozenset({'logfire-variables-key'})}
         assert store.plugins() == [saved]
     finally:
         await loader.close('exit')
@@ -151,6 +192,35 @@ async def test_logfire_ui_events_default_preserves_saved_overrides(
     finally:
         await loader.close('exit')
     assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
+
+
+@pytest.mark.parametrize('include_content', [None, False, True])
+async def test_logfire_content_default_is_off_and_keeps_saved_opt_ins(
+    tmp_path: Path, recorder: Recorder, include_content: bool | None
+) -> None:
+    loader, store = observability_loader(tmp_path)
+    # Declarations that omitted the content flags were saved when they defaulted on; they now leave content out,
+    # deliberately, so an ambient `LOGFIRE_TOKEN` alone never exports prompts. An explicit choice is kept.
+    previous = PluginSettings(
+        id='observability', factory='pydantic_clai2.builtin_plugins.logfire', settings={'send_to_logfire': False}
+    )
+    if include_content is not None:
+        previous.settings['include_content'] = include_content
+        previous.settings['include_binary_content'] = include_content
+    store.save_plugin(previous)
+    expected = include_content is True
+    try:
+        await loader.load_all()
+        settings = _observability_host(loader).settings(LogfireSettings)
+        assert (settings.include_content, settings.include_binary_content) == (expected, expected)
+        assert store.plugins() == [previous]  # No migration or write on load.
+        source = LogfireSource(_observability_host(loader))
+        source.apply(next(row for row in source.rows() if row.key == 'service_name'), 'changed-project')
+        [saved] = store.plugins()
+        # Saved explicitly, so older builds, which defaulted content on, keep the same choice.
+        assert (saved.settings['include_content'], saved.settings['include_binary_content']) == (expected, expected)
+    finally:
+        await loader.close('exit')
 
 
 def _observability_host(loader: PluginLoader[None]) -> PluginHost[None]:
@@ -222,6 +292,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().update_channel == 'stable'
     # Databases from before grouped tool calls keep one line per call.
     assert store.load().tool_calls == 'detailed'
+    # Older databases show the model in delegated-task rows unless the user turns it off.
+    assert store.load().task_models is True
     # Databases from before `/system_prompt` add no instructions of the user's own.
     assert store.load().instructions == ''
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
@@ -242,6 +314,18 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     with closing(sqlite3.connect(path)) as connection:
         assert list(connection.iterdump()) == snapshot
         assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+
+
+def test_task_model_display_preference_survives_reopen(tmp_path: Path) -> None:
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    assert store.load().task_models is True
+    store.set('display.task_models', False)
+    reopened = SettingsStore(path)
+    assert reopened.load().task_models is False
+    assert reopened.overrides() == {'display.task_models': False}
+    reopened.reset('display.task_models')
+    assert SettingsStore(path).load().task_models is True
 
 
 @pytest.mark.parametrize('value_json', ['false', 'true'])
@@ -370,6 +454,7 @@ def test_database_from_before_account_pooling_pools_and_keeps_its_settings(tmp_p
     settings = store.load()
     # Turning pooling on for existing databases is the intended default; named profiles stay pinned.
     assert settings.pool_accounts is True
+    assert settings.worktree_remove_commands == {}
     assert settings.model == 'claude-code@work:opus' and settings.thinking is False
     config_command(store, ['set', 'accounts.pool', 'false'])
     assert SettingsStore(path).load().pool_accounts is False
@@ -712,3 +797,532 @@ def test_legacy_logfire_commands_edit_the_renamed_plugin(tmp_path: Path) -> None
     assert store.plugins()[0].enabled
     plugins_command(store, ['remove', 'logfire'])
     assert store.plugins() == []
+
+
+@pytest.mark.parametrize(
+    'url',
+    [
+        'https://logfire-eu.pydantic.dev/mcp',
+        'https://logfire.example.com/mcp',
+        'https://logfire.example.com/x/mcp',
+        # Not as the picker writes them, but browser sign-ins are stored under these exact URLs.
+        'https://logfire-eu.pydantic.dev/mcp/',
+        'https://Logfire-EU.pydantic.dev/mcp',
+        'https://logfire.pydantic.dev/mcp',
+    ],
+)
+def test_logfire_mcp_settings_from_older_builds_load_under_the_same_id(tmp_path: Path, url: str) -> None:
+    """The plugin is shown as Logfire, but keeps the `logfire_mcp` id, and every MCP URL older builds saved loads as is.
+
+    The URL is the OAuth resource a browser sign-in is stored under, so normalizing it would sign the user out.
+
+    `logfire` cannot become its id: it is the `observability` plugin's stored id, which older builds still read.
+    """
+    store = SettingsStore(tmp_path / 'config.db')
+    legacy = (
+        '{"id":"logfire_mcp","factory":"pydantic_clai2.builtin_plugins.logfire_mcp","enabled":true,'
+        f'"settings":{{"key":null,"url":"{url}","oauth":true,"read_only":false,"include_instructions":true}}}}'
+    )
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO plugins VALUES (?, ?)', ('logfire_mcp', legacy))
+    [saved] = store.plugins()
+    assert saved == PluginSettings.model_validate_json(legacy)
+    settings = PluginHost[None](name='logfire_mcp', console=Console(), settings=saved.settings).settings(
+        LogfireMCPSettings
+    )
+    assert (settings.url, settings.read_only) == (url, False)
+    # `/plugins ... logfire` still means `observability`, as in older builds.
+    plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
+    plugins_command(store, ['disable', 'logfire'])
+    assert {plugin.id: plugin.enabled for plugin in store.plugins()} == {'logfire_mcp': True, 'observability': False}
+
+
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-skill-folders'])
+async def test_saved_skill_folders_load_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    """A `coder` saved before skills existed gets the default folders; a build lacking the feature drops a saved list."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false, "skill_folders": ["team-skills"]}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false}}',
+            ),
+        )
+    store.save_plugin(store.plugins()[0], requires={'skill_folders': frozenset({'coder-skill-folders'})})
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    entries = {entry.name: entry for entry in loader.entries() if entry.name in {'coder', 'older'}}
+    # Through the host: an earlier `loader.reload('coder')` in this process may have replaced the module's class.
+    folders = {
+        name: entry.loaded.plugin.host.settings(CoderSettings).skill_folders
+        for name, entry in entries.items()
+        if entry.loaded is not None
+    }
+    assert folders == {
+        'coder': ['team-skills'] if supported else list(DEFAULT_SKILL_FOLDERS),
+        'older': list(DEFAULT_SKILL_FOLDERS),
+    }
+    # `/plugins` shows the notice; startup does not print it.
+    assert entries['coder'].ignored == (
+        None if supported else 'coder: ignored saved skill_folders (needs coder-skill-folders); using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
+@pytest.mark.parametrize(
+    ('stored', 'supported', 'background_start'),
+    [
+        ('{"threshold": 0.7}', True, None),
+        ('{"threshold": 0.7, "background_compaction": true, "background_start": 0.9}', True, 0.9),
+        ('{"threshold": 0.7, "background_compaction": true, "background_start": 0.9}', False, None),
+    ],
+    ids=['saved-before-background-compaction', 'this-build', 'build-without-background-compaction'],
+)
+async def test_saved_background_compaction_loads_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stored: str, supported: bool, background_start: float | None
+) -> None:
+    """A `compaction` saved before background compaction keeps it off; a build lacking the feature drops it."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'compaction',
+                '{"id": "compaction", "factory": "pydantic_clai2.builtin_plugins.compaction", "enabled": true, '
+                f'"settings": {stored}}}',
+            ),
+        )
+    if 'background' in stored:
+        requires = frozenset({'compaction-background'})
+        store.save_plugin(
+            store.plugins()[0], requires={'background_compaction': requires, 'background_start': requires}
+        )
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'compaction-background'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    [entry] = [entry for entry in loader.entries() if entry.name == 'compaction']
+    assert entry.loaded is not None and isinstance(entry.loaded.plugin, CompactionPlugin)
+    chain = entry.loaded.plugin.chain
+    assert (chain.max_fraction, chain.background_start) == (0.7, background_start)
+    assert entry.ignored == (
+        None
+        if supported
+        else 'compaction: ignored saved background_compaction, background_start (needs compaction-background); '
+        'using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-disabled-skills'])
+async def test_saved_disabled_skills_load_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    """A `coder` saved before skill toggles existed offers every skill; a build lacking the feature drops the list."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false, "skill_folders": ["team-skills"], '
+                '"disabled_skills": ["pre-push-review"]}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false}}',
+            ),
+        )
+    store.save_plugin(
+        store.plugins()[0],
+        requires={
+            'skill_folders': frozenset({'coder-skill-folders'}),
+            'disabled_skills': frozenset({'coder-disabled-skills'}),
+        },
+    )
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-disabled-skills'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    entries = {entry.name: entry for entry in loader.entries() if entry.name in {'coder', 'older'}}
+    # Through the host: an earlier `loader.reload('coder')` in this process may have replaced the module's class.
+    loaded = {
+        name: entry.loaded.plugin.host.settings(CoderSettings)
+        for name, entry in entries.items()
+        if entry.loaded is not None
+    }
+    assert {name: (settings.skill_folders, settings.disabled_skills) for name, settings in loaded.items()} == {
+        'coder': (['team-skills'], ['pre-push-review'] if supported else []),
+        'older': (list(DEFAULT_SKILL_FOLDERS), []),
+    }
+    assert entries['coder'].ignored == (
+        None if supported else 'coder: ignored saved disabled_skills (needs coder-disabled-skills); using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-task-control'])
+async def test_saved_task_control_loads_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    """A `coder` saved before `task_control` existed has it on; a build lacking the feature drops a saved value."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "task_control": false}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false}}',
+            ),
+        )
+    store.save_plugin(store.plugins()[0], requires={'task_control': frozenset({'coder-task-control'})})
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-task-control'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    entries = {entry.name: entry for entry in loader.entries() if entry.name in {'coder', 'older'}}
+    # Through the host: an earlier `loader.reload('coder')` in this process may have replaced the module's class.
+    loaded = {
+        name: entry.loaded.plugin.host.settings(CoderSettings)
+        for name, entry in entries.items()
+        if entry.loaded is not None
+    }
+    assert {name: (settings.repo_context, settings.task_control) for name, settings in loaded.items()} == {
+        'coder': (False, not supported),
+        'older': (False, True),
+    }
+    assert entries['coder'].ignored == (
+        None if supported else 'coder: ignored saved task_control (needs coder-task-control); using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
+@pytest.mark.parametrize(
+    ('name', 'previous', 'saved'),
+    [
+        ('day_ai', {'auth': None}, {'auth': 'oauth', 'include_instructions': False}),
+        (
+            'notion',
+            {'auth': None, 'read_only': True},
+            {'auth': 'oauth', 'read_only': True, 'include_instructions': False},
+        ),
+        ('ordinal', {'sign_in': 'auto'}, {'sign_in': 'browser', 'include_instructions': False}),
+    ],
+)
+async def test_automatic_sign_in_saved_by_older_builds_means_the_browser(
+    tmp_path: Path, name: str, previous: dict[str, JsonValue], saved: dict[str, JsonValue]
+) -> None:
+    store = SettingsStore(tmp_path / 'settings.db')
+    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == name)
+    declaration = builtin.model_copy(update={'enabled': True, 'settings': previous})
+    store.save_plugin(declaration)
+    loader = PluginLoader[None](
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(builtin,),
+    )
+    try:
+        await loader.load_all()
+        [entry] = loader.entries()
+        assert entry.loaded is not None, 'the automatic choice older builds saved still loads'
+        assert store.plugins() == [declaration], 'loading does not rewrite it'
+        host = entry.loaded.plugin.host
+        source = {'day_ai': DayAISource, 'notion': NotionSource, 'ordinal': OrdinalSource}[name](host)
+        [instructions] = [row for row in source.rows() if row.key == 'include_instructions']
+        source.apply(instructions, 'false')
+        # An unrelated edit saves the browser sign-in, a value older builds read too.
+        assert [plugin.settings for plugin in store.plugins()] == [saved]
+    finally:
+        await loader.close('exit')
+
+
+async def test_a_workspace_kind_keeps_the_model_older_builds_saved() -> None:
+    """A kind's `model`, which builds that ran each workspace's own CLAI read, survives editing other settings."""
+    saved: list[dict[str, JsonValue]] = []
+    host = PluginHost[None](
+        name='workspaces',
+        console=Console(file=io.StringIO()),
+        settings={'kinds': {'local-worktree': {'model': 'openai:gpt-5'}}},
+        save_settings=saved.append,
+    )
+    source = WorkspacesSource(host)
+    rows = {row.key: row for row in source.rows()}
+    assert 'local-worktree.model' not in rows, 'the menu no longer offers it'
+    source.apply(rows['local-worktree.teardown'], 'keep')
+    source.reset(rows['local-worktree.teardown'])
+    assert await source.add(ScriptedDialogs([Type(text='docs')])) == ['Added workspace kind docs.']
+    models = [WorkspacesSettings.model_validate(settings).kinds['local-worktree'].model for settings in saved]
+    assert models == ['openai:gpt-5'] * 3
+
+
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'older-build'])
+@pytest.mark.parametrize('review_supported', [True, False])
+async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool, review_supported: bool
+) -> None:
+    from pydantic_clai2.builtin_plugins.coder import CoderSource
+
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id":"coder","factory":"pydantic_clai2.builtin_plugins.coder","enabled":true,'
+                '"settings":{"repo_context":false,"skill_folders":[],"review_agent":true,"delegate_models":'
+                '{"review-light":{"model":"chain:review-light","settings":{"thinking":"high"}}}}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id":"older","factory":"pydantic_clai2.builtin_plugins.coder","enabled":true,'
+                '"settings":{"repo_context":false,"skill_folders":[]}}',
+            ),
+        )
+    store.save_plugin(
+        store.plugins()[0],
+        requires={
+            'delegate_models': frozenset({'coder-delegate-models'}),
+            'review_agent': frozenset({'coder-review-agent'}),
+        },
+    )
+    original = store.plugins()[0].settings['delegate_models']
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-delegate-models'})
+    if not review_supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-review-agent'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+    await loader.load_all()
+    entries = {entry.name: entry for entry in loader.entries()}
+    loaded = entries['coder'].loaded
+    old = entries['older'].loaded
+    assert loaded is not None and old is not None
+    assert bool(loaded.plugin.host.settings(CoderSettings).delegate_models) is supported
+    assert loaded.plugin.host.settings(CoderSettings).review_agent is review_supported
+    assert old.plugin.host.settings(CoderSettings).delegate_models == {}
+    assert old.plugin.host.settings(CoderSettings).review_agent is False
+    source = CoderSource(loaded.plugin.host)
+    unrelated = next(row for row in source.rows() if row.key == 'unrestricted_filesystem')
+    source.apply(unrelated, 'true')
+    source.reset(unrelated)
+    assert store.plugins()[0].settings['delegate_models'] == original
+    assert store.plugins()[0].settings['review_agent'] is True
+    if supported:
+        row = next(row for row in source.rows() if row.key == 'delegate_models')
+        saved = store.plugins()
+        with pytest.raises(ValidationError):
+            source.apply(row, '{"review-light":{"model":"chain:review-light","settings":{"thinking":"bad"}}}')
+        assert store.plugins() == saved
+    if review_supported:
+        row = next(row for row in source.rows() if row.key == 'review_agent')
+        saved = store.plugins()
+        with pytest.raises(ValidationError):
+            source.apply(row, '"true"')
+        assert store.plugins() == saved
+    await loader.close('exit')
+    reopened = SettingsStore(store.path)
+    assert reopened.plugins()[0].settings['delegate_models'] == original
+    assert reopened.plugins()[0].settings['review_agent'] is True
+
+
+def test_worktree_command_setting_validation(tmp_path: Path) -> None:
+    key = str((tmp_path / 'repo.git').resolve())
+    valid = {key: ['sh', '-c', 'rm -r "$1"', 'clai', '{path}']}
+    assert Settings(worktree_remove_commands=valid).worktree_remove_commands == valid
+    literal_tokens = {key: ['tool', '{"key": 1}', '{ echo hello; }']}
+    assert Settings(worktree_remove_commands=literal_tokens).worktree_remove_commands == literal_tokens
+    assert SETTING_FIELDS['worktrees.remove_commands'] == 'worktree_remove_commands'
+
+    invalid_values: list[dict[str, list[str]]] = [
+        {'relative': ['command']},
+        {key: []},
+        {key: ['', 'argument']},
+        {key: ['command', '\x00']},
+        {key: ['command', '{unknown}']},
+        {key: ['command', '--worktree={path}']},
+        {key: ['command', '{repo}/scripts']},
+        {key: ['command', 'prefix-{branch}']},
+    ]
+    for value in invalid_values:
+        with pytest.raises(ValidationError):
+            Settings(worktree_remove_commands=value)
+
+
+def test_project_cannot_register_worktree_commands(tmp_path: Path) -> None:
+    project = tmp_path / PROJECT_FILE
+    project.parent.mkdir()
+    project.write_text('{"worktree_remove_commands": {"/repo": ["command"]}}')
+    with pytest.raises(ValueError, match='user-only'):
+        load_project_settings(tmp_path)
+
+
+def test_worktree_commands_roundtrip_and_older_reader(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    store.set('model', 'test:model')
+    store.set('display.thinking', False)
+    store.save_plugin(PluginSettings(id='sample', factory='sample:Plugin'))
+    store.save_model_settings('test:model', {'temperature': 0.2})
+    key = str((tmp_path / 'repo.git').resolve())
+    command_map = {key: ['tool', '{path}']}
+    config_command(store, ['set', 'worktrees.remove_commands', json.dumps(command_map)])
+    assert config_command(SettingsStore(path), ['get', 'worktrees.remove_commands']) == json.dumps(command_map)
+    reopened = SettingsStore(path)
+    settings = reopened.load()
+    assert settings.worktree_remove_commands == command_map
+    assert settings.model == 'test:model' and settings.thinking is False
+    assert reopened.plugins() == store.plugins()
+    assert reopened.model_settings('test:model') == {'temperature': 0.2}
+    assert SettingsStore(path).load().worktree_remove_commands == command_map
+
+    older = {name: field for name, field in SETTING_FIELDS.items() if name != 'worktrees.remove_commands'}
+    monkeypatch.setattr('pydantic_clai2.config.SETTING_FIELDS', older)
+    monkeypatch.setattr('pydantic_clai2.config.settings_store.SETTING_FIELDS', older)
+    old_store = SettingsStore(path)
+    assert old_store.load().worktree_remove_commands == {}
+    old_store.set('display.thinking', True)
+    old_store.reset('display.thinking')
+    assert SettingsStore(path).load().worktree_remove_commands == {}
+    monkeypatch.setattr('pydantic_clai2.config.SETTING_FIELDS', SETTING_FIELDS)
+    monkeypatch.setattr('pydantic_clai2.config.settings_store.SETTING_FIELDS', SETTING_FIELDS)
+    assert SettingsStore(path).load().worktree_remove_commands == command_map
+
+
+def test_exit_removal_commands_ignore_unrelated_invalid_json(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    commands: dict[str, JsonValue] = {str(tmp_path.resolve()): ['remove', '{path}']}
+    store.set('worktrees.remove_commands', commands)
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('display.theme', 'not JSON from another build'))
+    assert store.worktree_remove_commands() == commands
+    with closing(sqlite3.connect(store.path)) as connection:
+        assert connection.execute('SELECT value_json FROM settings WHERE key = ?', ('display.theme',)).fetchone() == (
+            'not JSON from another build',
+        )
+
+
+def test_invalid_worktree_command_write_preserves_saved_map(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    key = str((tmp_path / 'repo').resolve())
+    original = {key: ['remove', '{path}']}
+    json_values: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+    store.set('worktrees.remove_commands', json_values.validate_python(original))
+    for invalid in ({key: ['bad', '\x00']}, {'/bad\x00key': ['bad']}):
+        with pytest.raises(ValidationError):
+            store.set('worktrees.remove_commands', json_values.validate_python(invalid))
+        assert SettingsStore(store.path).load().worktree_remove_commands == original
+
+
+@pytest.mark.parametrize('alias_kind', ['symlink', 'trailing-slash'])
+def test_worktree_commands_reject_duplicate_repository_keys(tmp_path: Path, alias_kind: str) -> None:
+    directory = tmp_path / 'repo.git'
+    directory.mkdir()
+    if alias_kind == 'symlink':
+        link = tmp_path / 'alias.git'
+        link.symlink_to(directory, target_is_directory=True)
+        alias = str(link)
+    else:
+        alias = str(directory) + '/'
+    commands: dict[str, JsonValue] = {str(directory): ['first'], alias: ['second']}
+    store = SettingsStore(tmp_path / 'config.db')
+    store.set('worktrees.remove_commands', {str(directory): ['original']})
+    with pytest.raises(ValidationError, match='resolve to the same directory') as error:
+        store.set('worktrees.remove_commands', commands)
+    assert repr(str(directory)) in str(error.value)
+    assert repr(alias) in str(error.value)
+    assert store.worktree_remove_commands() == {str(directory.resolve()): ['original']}
+
+
+def test_worktree_command_symlink_key_is_canonical_and_menu_is_json(tmp_path: Path) -> None:
+    target = tmp_path / 'repo.git'
+    target.mkdir()
+    alias = tmp_path / 'alias.git'
+    alias.symlink_to(target, target_is_directory=True)
+    settings = Settings(worktree_remove_commands={str(alias): ['remove']})
+    assert settings.worktree_remove_commands == {str(target.resolve()): ['remove']}
+    store = SettingsStore(tmp_path / 'config.db')
+    context = CommandContext(settings=Settings(), store=store, apply_setting=lambda key, settings: None)
+    source = SettingsSource(context)
+    row = next(row for row in source.rows() if row.key == 'worktrees.remove_commands')
+    assert source.current(row) == '{}'
+    assert row.default == '{}'
+    assert 'absolute Git common directory' in row.description
+    assert 'confirmed removal on exit' in row.description.lower()
+    assert source.problem(row, '{"/repo": ["remove"]}') is None
+    assert context.set_setting(['worktrees.remove_commands', '{"/repo": ["remove"]}']).startswith('Saved')
+    assert source.current(row) == '{"/repo": ["remove"]}'
+    context.reset_setting('worktrees.remove_commands')
+    assert source.current(row) == '{}'

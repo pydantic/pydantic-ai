@@ -26,6 +26,7 @@ Provider-adaptive capabilities to reach for first:
 - `WebSearch`
 - `WebFetch`
 - `ImageGeneration`
+- `FileUnderstanding`
 - `MCP`
 
 For stricter safety handling, use `RaiseContentFilterError` to raise `ContentFilterError` whenever a model response has `finish_reason='content_filter'`, including responses with partial text.
@@ -53,30 +54,44 @@ Supported effort values:
 - `'medium'`
 - `'high'`
 - `'xhigh'`
+- `'max'`
+
+Thinking is model parity, not a per-model feature: a `ThinkingPart` from message history is sent back to whatever model you switch to. It rides the provider's own reasoning channel where the part is still usable there — it has to carry the credential that channel checks (a signature, a reasoning-item id) and have come from that same provider — and goes as text where it isn't: in the model's thinking tags for most models, and for the Anthropic family in a `user` message ahead of the assistant turn, wrapped in `<assistant_thinking>`, because Claude copies formatting it finds in assistant turns into the answers your users read. You do not have to strip thinking from history before switching models; the one profile that can turn the send-back off is `openai_chat_send_back_thinking_parts=False`, which no shipped model sets.
+
+To change effort between runs or steps, change the unified `thinking` setting (a `model_settings` callable or a capability's `get_model_settings`); don't switch to `openai_reasoning_effort`/`anthropic_effort` for it. The framework records each change as a `ModelSettingsDeltaPart` and sends it as a mid-conversation `configuration_update` (OpenAI Responses, GPT-6; OpenRouter, as a content-less `system` message on GPT-6 and recent Claude models) or per-message `output_config` (Anthropic), so the prompt cache survives; elsewhere it goes out as the request-level effort. On Anthropic, a change takes effect at the next user turn with new input, not after a tool-result-only step.
 
 ## Configure Prompt Caching Across Providers
 
-Some models only cache what the request asks them to: Anthropic (incl. Bedrock, Vertex and Foundry clients), Bedrock Claude and Nova, and OpenRouter's Anthropic routes. OpenAI GPT-5.6+ and OpenRouter's Gemini 2.5+ routes cache implicitly, and take explicit breakpoints (and on GPT-5.6, cache options) on top. Enable caching on them with the `Caching` capability (or the unified `cache` model setting) rather than reaching for provider-specific settings like `anthropic_cache` or `bedrock_cache_*`.
+Add `Caching()` to every agent you build unless its requests are one-offs that are never repeated. Some models cache nothing unless the request asks them to: Anthropic (incl. Bedrock, Vertex and Foundry clients), Bedrock Claude and Nova, and OpenRouter's Anthropic routes. Without it, those agents pay full price for their instructions, tools and conversation on every request. OpenAI GPT-5.6+ and OpenRouter's Gemini 2.5+ routes cache implicitly and take explicit breakpoints (and on GPT-5.6, cache options) on top. Caching isn't on by default only because it changes cost. Use the `Caching` capability (or the unified `cache` model setting) rather than provider-specific settings like `anthropic_cache` or `bedrock_cache_*`.
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Caching
 
-agent = Agent('anthropic:claude-opus-4-6', name='cached_agent', capabilities=[Caching('1h')])
+agent = Agent('anthropic:claude-opus-5-5', name='cached_agent', capabilities=[Caching()])
 ```
 
 Accepted values (the same for `model_settings={'cache': ...}`):
 
-- `True` (the capability's default): cache the tool definitions, static instructions and conversation with the provider's default retention, using its automatic caching mode where one exists and placing breakpoints elsewhere
+- `True` (the capability's default): cache the tool definitions, static instructions (plus the `on_change='append'` instructions after them, except on OpenAI) and conversation with the provider's default retention, placing breakpoints and using the provider's automatic caching mode for the conversation where one exists
 - `False`: disable library-managed caching (the same as unset, but overrides a model-level default); explicit `CachePoint`s and provider-specific settings still apply, and implicitly caching providers still cache
-- `'5m'`, `'30m'`, `'1h'`: cache with a specific retention, snapped to the nearest tier the provider supports (down where a shorter tier exists)
-- `Caching(messages=False)` / `{'retention': ..., 'messages': False}`: cache only the stable prefix (tool definitions and static instructions), not the conversation, for many one-off conversations sharing long instructions or tools
+- `'5m'`, `'30m'`, `'1h'`: cache with a specific retention, snapped to the nearest tier the provider supports (down where a shorter tier exists). Start with the default; Anthropic's `'1h'` only pays off when a conversation commonly continues after more than five minutes, since its 2x writes need two reads to break even
+- `Caching(messages=False)` / `{'retention': ..., 'messages': False}`: cache only the stable prefix (tool definitions, static instructions and, except on OpenAI, the `on_change='append'` instructions after them), not the conversation, for many one-off conversations sharing long instructions or tools
 
 Cache writes cost more than uncached input (1.25x; 2x for Anthropic's 1-hour cache) while reads cost about 0.1x, so a 1.25x write breaks even after one read and Anthropic's 2x 1-hour write after two; one-shot requests only pay the premium.
 
-Provider-specific cache settings (`anthropic_cache*`, `bedrock_cache_*`, `openrouter_cache_*`, `openai_prompt_cache_options`, `openai_cache_instructions`) take precedence: if any is set, even to `False`, the unified value is ignored entirely. Providers that cache implicitly (OpenAI before GPT-5.6, Gemini, DeepSeek, xAI) ignore the setting. Explicit `CachePoint` markers in the message history still work alongside it.
+Provider-specific cache settings (`anthropic_cache*`, `bedrock_cache_*`, `openrouter_cache_*`, `openai_prompt_cache_options`, `openai_cache_instructions`) take precedence: if any is set, even to `False`, the unified value is ignored entirely. Providers that cache implicitly (OpenAI before GPT-5.6, Gemini, DeepSeek, xAI) ignore the setting. Explicit `CachePoint` markers in the message history still work alongside it, except on providers that ignore them (Google, and OpenAI before GPT-5.6).
 
-See [Prompt Caching](https://pydantic.dev/docs/ai/capabilities/caching/) for the per-provider mapping.
+To debug a low cache hit rate:
+
+1. Check that caching is enabled for the model and that no provider-specific cache setting overrides `Caching()`.
+2. Check that the shared prefix is above the provider's minimum cacheable length (about 1,024 to 4,096 tokens, depending on the model).
+3. Compare each response's `result.response.usage.cache_write_tokens` and `cache_read_tokens` (`result.usage` sums the whole run): writes without later reads mean the prefix changed or expired.
+4. Keep the prefix stable: continue conversations with the full `message_history`, keep tools and their order fixed, keep timestamps and other per-request values out of instructions, and don't rewrite history that was already sent.
+5. Check the gap between requests against the provider's retention, and that one conversation's requests reach the same cache (OpenRouter provider routing, xAI sticky routing, `openai_prompt_cache_key`).
+6. Ask the provider: `anthropic_cache_diagnostics` and OpenAI's prompt cache diagnostics (in `provider_details`) report why a request missed. Instrumented runs record `pydantic_ai.cache.*` span attributes, and the harness `WarnOnCacheBusts` capability warns on unexpected misses.
+
+See [Caching](https://pydantic.dev/docs/ai/capabilities/caching/) for the per-provider mapping.
 
 ## Intercept Agent Lifecycle with Hooks
 
@@ -117,7 +132,7 @@ Important hook families:
 
 - run-level hooks (`before_run`, `after_run`, `wrap_run`, `on_run_error`)
 - node-level hooks (`before_node_run`, `after_node_run`, `wrap_node_run`, `on_node_run_error`)
-- model-request hooks (`before_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`)
+- model-request hooks (`before_model_request`, `prepare_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`)
 - tool-validation and tool-execution hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
 - output-validation and output-processing hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
 - event-stream hooks
@@ -125,6 +140,20 @@ Important hook families:
 For each stage, the entire `wrap_*` chain encloses the `before_*` chain, the core operation with `on_*_error` recovery, and the `after_*` chain. A wrapper that returns without calling its handler skips everything inside, so mandatory authorization belongs in an outer wrapper or outside a short-circuitable cache. Recovered core failures are hidden from wrappers; hook failures and unrecovered core failures propagate through them. The exception is `agent.run_stream()` node handling: `before_node_run` fires before streaming, non-final nodes wrap only later graph advancement, and the final streamed `ModelRequestNode` skips `wrap_node_run`/`after_node_run`.
 
 In `run_stream()`, `ContextVar` values set by an async `before_model_request` hook are available to later tool, output, and run hooks, as in non-streamed runs. Values set later in that model request may not be; use a mutable attribute on `ctx.deps` for state that must be shared throughout the run.
+
+A request step can make several attempts. `before_model_request` and `wrap_model_request` run once per step; `prepare_model_request` runs before every attempt with `request_context.model` set to the model about to serve it, so put model-dependent work (compaction, context-window fitting, per-provider translation) there, and once-per-step work (history processors, injected messages) in `before_model_request`. Changes `prepare_model_request` makes to `request_context` are for that attempt only; changes through `ctx.messages` (the persistent history) persist and aren't rolled back for another attempt, for state that doesn't depend on the attempt. Raise `RetryModelRequest()` to re-run the same model, or `RetryModelRequest(model)` to move to another, from `on_model_request_error` (the attempt raised), `after_model_request` (reject the response), or `prepare_model_request` (switch before sending). `request_context.attempt` counts attempts from 1. Unlike `ModelRetry`, the model sees no retry prompt and `usage.requests` counts the step once; rejected responses stay out of history but their tokens count. A streamed response can't be rejected after it was streamed. The `ModelFallback` capability is built on this.
+
+Changing what the model sees from `before_model_request`:
+
+- Steering message the model sees now and that stays in the conversation: `ctx.enqueue(part)`. It goes into the request being prepared and into history, as its own `ModelRequest`.
+- Reminder true only for this request: `ctx.enqueue(SystemPromptPart(..., scope='request'))`. Anthropic sends it with `clear_at` and stops showing it once its request has been answered; elsewhere it's sent with its own request only. It stays in history either way.
+- State the model should track (todo list, notes): instructions with `on_change='append'`, via `@capability.instructions(name='state', on_change='append')` on a `Capability` with an `id`. Each change is appended to history as a replacement, so the cached prefix survives. Only for operator-controlled text: never tool arguments, tool output or user input. A callable returned from `get_instructions` opts in by returning `InstructionPart(..., name='state', on_change='append')`. With the default `'rewrite'` each change re-sends everything after the instructions uncached.
+- Change only this request (trim, filter, redact): assign a new list to `request_context.messages`. Build new messages and parts; mutating shared ones in place changes history too.
+- Rewrite history (compaction): `ctx.messages[:] = ...`, plus assign `request_context.messages` if this request should be sent it.
+- `request_context.messages.append(...)` also writes history, deprecated with a warning; use `ctx.enqueue(...)`.
+- Data tagged in prompt text (`<memory>`, `<reviewer_note>`): register the tag once at module level with `pydantic_ai.framing.register_tag('memory')` and render it with `wrap(tag, body, **attrs)`, never an f-string. Then nothing in its body can close the tag or forge `<system>`, and Pydantic AI's own frames, such as a tool result, neutralize it too. Names are lowercase snake_case.
+
+A request-only change that drops or alters content earlier requests sent moves the cached prefix, and on models with preserved thinking (Claude Opus 5.5, Sonnet 5.5, Fable 5.1) invalidates earlier reasoning. So enqueue reminders, request-scoped when one-off; never make them per-request copies.
 
 From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
 
@@ -144,7 +173,7 @@ React with `@on_event(SomeEvent, OtherEvent)` on an async capability method; a b
 
 Always name the classes when you can. They are what lets dispatch skip a capability without descending into it — a bare `@on_event`, or an overridden `on_event()`, opts that capability into every event in the run. Override `listens_to(event)` alongside a custom `on_event()` if you can report something narrower.
 
-Capability events reach the agent run event stream but UI adapters do not forward them, since they are internal signals. To surface one to a frontend, react to it from application code and emit your own `CustomEvent` with the public payload.
+Capability events reach the agent run event stream, and a realtime session's, but UI adapters do not forward them, since they are internal signals. One emitted from `after_run` comes after the stream has ended, so as in `iter()` only the listeners of a `dispatch='immediate'` event receive it; emitting there is still safe, in a realtime session too. To surface one to a frontend, react to it from application code and emit your own `CustomEvent` with the public payload.
 
 For application-level listening, prefer `@agent.on_event(SomeEvent)` — it takes the same event classes, filtering and `timeout=` as `Hooks.on.event` without a separate capability, runs after the capabilities' own listeners, and survives an overridden root capability. Reach for a `Hooks` capability when you also want hook families other than events, or when you need to choose where it sits among the other capabilities.
 
@@ -188,7 +217,7 @@ Give a capability an `id` when its instructions should be addressable. You decla
 
 Assume a capability instance may outlive and be reused across runs. By default, `for_run()` returns `self`, so every run uses that same instance. Mutating its fields from hooks, tools, dynamic callables, or other code executed during a run will therefore share state across sequential and concurrent runs.
 
-Before adding an instance field, classify it as immutable configuration, a deliberately shared concurrency-safe resource, or per-run state. If code executed during a run mutates per-run state, override `for_run()` to return a fresh instance. Do not mutate and return `self`, and do not rely on clearing shared state in `after_run()`; overlapping runs can still interfere, and `after_run()` is skipped when a run produces no result. Use `wrap_run()` with `try`/`finally` when external resources need cleanup on errors or cancellation.
+Before adding an instance field, classify it as immutable configuration, a deliberately shared concurrency-safe resource, or per-run state. If code executed during a run mutates per-run state, override `for_run()` to return a fresh instance. Do not mutate and return `self`, and do not rely on clearing shared state in `after_run()`; overlapping runs can still interfere, and `after_run()` is skipped when a run produces no result. Use `wrap_run()` with `try`/`finally` when external resources need cleanup on errors or cancellation. Run awaited cleanup that must finish inside `anyio.CancelScope(shield=True)`, and bound cleanup that does I/O with `anyio.move_on_after(..., shield=True)`: an `anyio` cancellation around the run, such as `anyio.fail_after()`, cuts unshielded cleanup at its next `await`.
 
 For dataclass capabilities, keep configuration in normal fields and declare per-run state with `init=False` so `dataclasses.replace()` preserves configuration while reinitializing the run state:
 
@@ -240,13 +269,13 @@ Use `for_agent(agent)` when a capability needs the agent's model, name, or tools
 
 ## Select a Model Dynamically
 
-Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, the run's prompt, the messages the selected model will be sent (ending with the request being routed, before its instructions are added), and accumulated usage. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
+Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, the run's prompt, the messages the selected model will be sent (ending with the request being routed, before its instructions are added), accumulated usage, the run's `usage_limits`, `deadline`, `run_id` and `conversation_id`, and its output retry count and budget (`retry`, `max_retries`), which a selector can use to escalate to a stronger model after output validation failures. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
 
 Explicit `run(model=...)`, run-spec, and `agent.override(model=...)` choices win and skip capability selection. Later capabilities override earlier model contributions. Same-step continuation remains pinned to its selected model; pass an explicit model when resuming a suspended provider-side request in another run.
 
 Keep selection separate from construction. Use the `resolve_model_id()` hook, or the `ResolveModelId` convenience capability, when tenant, region, credentials, or another dependency controls how a selected string becomes a `Model` instance. Resolution uses the first non-`None` result in capability order; model selection uses the last non-`None` contribution.
 
-Bootstrap strings use the post-`for_agent`, pre-`for_run` resolver chain. If `for_run()` replaces the capability, strings selected for step one and later use the replacement's resolver chain. Return a `FallbackModel` as the selected model when request failures, rather than routing policy, should trigger fallback.
+Bootstrap strings use the post-`for_agent`, pre-`for_run` resolver chain. If `for_run()` replaces the capability, strings selected for step one and later use the replacement's resolver chain. Add the `ModelFallback` capability when request failures, rather than routing policy, should trigger fallback: it starts from the selected model, and its own first model only stands in when the agent has no model and nothing else selects one.
 
 Both hooks are eager: deferred capabilities do not select or resolve models. Run-spec capabilities can bootstrap a model-less agent, but `CapabilityFunc` and `for_run()` need an existing model to construct their `RunContext`; they can replace it starting on step one. Do not use adaptive selection with durable execution yet, and pass an explicit model when resuming a selector-backed suspended request in another run.
 

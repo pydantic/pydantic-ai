@@ -1,0 +1,59 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.openai.gpt-5.6-luna/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 351567bc-0840-403a-9737-5d2eec9d0b6e
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "261"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              How many positive integers below 10000 have a digit sum of exactly 20? Reply
+              with only the number.
+        system: []
+        inferenceConfig: {}
+        additionalModelRequestFields:
+          reasoning:
+            effort: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "342"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 405
+        output:
+          message:
+            content:
+            - text: "530"
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 29
+          outputTokens: 5
+          serverToolUsage: {}
+          totalTokens: 34
+  recorded_at: 2026-10-22T08:43:27.421129+00:00

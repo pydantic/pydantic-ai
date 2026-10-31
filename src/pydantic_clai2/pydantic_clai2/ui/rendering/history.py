@@ -8,16 +8,16 @@ from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartEndE
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
+    RetryFeedbackPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import StreamRenderer
-from pydantic_clai2.ui.rendering.tool_output import terminal_text
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer, print_prompt
 
 RESUMED_TURNS = 10
 """How many of the latest prompts `/resume` shows; the model still receives the whole history."""
@@ -32,8 +32,8 @@ def turn_starts(messages: Sequence[ModelMessage]) -> list[int]:
             continue
         if message.run_id is not None:
             seen_runs.add(message.run_id)
-        if any(isinstance(part, UserPromptPart) for part in message.parts) and not any(
-            isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts
+        if any(is_typed_prompt(part) for part in message.parts) and not any(
+            isinstance(part, (ToolReturnPart, RetryFeedbackPart)) for part in message.parts
         ):
             starts.append(index)
     return starts
@@ -69,11 +69,10 @@ async def render_history(
             seen_runs.add(message.run_id)
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if isinstance(part, UserPromptPart) and not steered:
+                if is_typed_prompt(part) and not steered:
                     await renderer.finish()
-                    console.print(f'> {terminal_text(prompt_text(part))}', markup=False, highlight=False)
-                    console.print()
-                elif isinstance(part, ToolReturnPart) or isinstance(part, RetryPromptPart) and part.tool_name:
+                    print_prompt(console, prompt_text(part))
+                elif isinstance(part, ToolReturnPart):
                     await renderer.on_stream_event(FunctionToolResultEvent(part))
             continue
         for index, part in enumerate(message.parts):

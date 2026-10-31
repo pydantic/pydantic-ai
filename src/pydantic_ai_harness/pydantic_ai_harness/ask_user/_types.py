@@ -2,14 +2,29 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
-from typing import Annotated, Protocol
+from typing import Annotated, Protocol, TypeAlias
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 from typing_extensions import TypedDict
 
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai._utils import is_google_files_api_url
+from pydantic_ai.messages import (
+    CachePoint,
+    FileUrl,
+    TextContent,
+    ToolCallPart,
+    ToolReturn,
+    UploadedFile,
+    UserContent,
+    UserPromptPart,
+)
+from pydantic_ai.tools import AgentDepsT, RunContext
+
+TOOL_NAME = 'ask_user_question'
 
 MAX_QUESTIONS = 10
 """Most questions one `ask_user_question` call may carry."""
@@ -23,9 +38,15 @@ MAX_QUESTION_LENGTH = 500
 
 
 def _printable(value: str, *, newlines: bool) -> str:
-    """Reject control characters: these strings are drawn on terminals, and an escape sequence is an attack."""
-    if not all(char.isprintable() or (newlines and char == '\n') for char in value):
-        raise ValueError('must not contain control characters')
+    """Reject control and format characters: these strings are drawn on terminals, and an escape sequence is an attack.
+
+    Space separators, such as the no-break and ideographic spaces, are ordinary text. Format characters, such as
+    zero-width spaces, joiners and bidirectional overrides, are not: they make two strings that differ look the same.
+    """
+    if not all(
+        char.isprintable() or unicodedata.category(char) == 'Zs' or (newlines and char == '\n') for char in value
+    ):
+        raise ValueError('must not contain control characters or invisible formatting')
     return value
 
 
@@ -91,7 +112,10 @@ class Question(BaseModel):
 
 
 def _require_unique(values: list[str], *, what: str) -> None:
-    folded = [value.casefold() for value in values]
+    # NFKC folds compatibility forms (full-width letters, ligatures), so look-alikes count as duplicates.
+    # It leaves the Ogham space mark (U+1680) alone, so every space separator is made a plain space first.
+    spaced = [''.join(' ' if unicodedata.category(char) == 'Zs' else char for char in value) for value in values]
+    folded = [unicodedata.normalize('NFKC', value).casefold() for value in spaced]
     if len(folded) != len(set(folded)):
         raise ValueError(f'{what} must be unique')
 
@@ -130,18 +154,31 @@ class AskUserRequest:
 
     @classmethod
     def from_tool_call(cls, call: ToolCallPart) -> AskUserRequest:
-        """Rebuild the request behind a deferred `ask_user_question` call, to put it to the user."""
+        """Rebuild the request behind a deferred `ask_user_question` call, to put it to the user.
+
+        Raises `ValueError` when `call` is for another tool.
+        """
+        if call.tool_name != TOOL_NAME:
+            raise ValueError(f'expected an {TOOL_NAME!r} call, got {call.tool_name!r}')
         arguments = _TOOL_ARGUMENTS.validate_python(call.args_as_dict())
         return cls(questions=tuple(arguments['questions']), id=call.tool_call_id)
 
 
 @dataclass(frozen=True, kw_only=True)
 class AskUserAnswer:
-    """Picked labels, or a custom answer instead of those labels, for one question."""
+    """Picked labels, or a custom answer instead, with optional user notes for one question."""
 
     header: str
     selected: tuple[str, ...] = ()
     custom_answer: str | None = None
+    note: tuple[UserContent, ...] = ()
+    """User text and attachments, in order, accompanying either selected labels or a custom answer.
+
+    Text follows the custom-answer character rules. A nonempty note must contain nonblank text
+    or an attachment, not only whitespace or cache markers. Notes do not replace the answer.
+    File URLs must use HTTP(S) with `force_download=False`; provider-uploaded file references
+    are not accepted. Text metadata is not forwarded to message history.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -150,6 +187,10 @@ class AskUserResponse:
 
     answers: tuple[AskUserAnswer, ...] = ()
     cancelled: bool = False
+
+
+AskUserResult: TypeAlias = ToolReturn[dict[str, list[str]]] | dict[str, list[str]] | str
+"""The answer dictionary or decline text, wrapped in `ToolReturn` when user notes accompany the answers."""
 
 
 class Answerer(Protocol):
@@ -164,11 +205,68 @@ class Answerer(Protocol):
         ...  # pragma: no cover
 
 
+def _check_note(note: tuple[UserContent, ...]) -> None:
+    if not isinstance(note, tuple):
+        raise ValueError('must be a tuple of `UserContent` items')
+    if not note:
+        return
+    # Reuse core's content-type guard before notes reach a model adapter.
+    try:
+        UserPromptPart(content=note)
+    except ValueError as exc:
+        raise ValueError('must contain only `UserContent` items') from exc
+    has_content = False
+    for item in note:
+        if isinstance(item, FileUrl):
+            if urlparse(item.url).scheme not in {'http', 'https'}:
+                raise ValueError('file URLs must use http or https')
+            if item.force_download is not False:
+                raise ValueError('file URLs must use `force_download=False`')
+            # Google treats these URLs as authenticated Files API references, not public downloads.
+            if is_google_files_api_url(item.url):
+                raise ValueError('must not contain provider-uploaded file references')
+        elif isinstance(item, UploadedFile):
+            raise ValueError('must not contain provider-uploaded file references')
+        if isinstance(item, str | TextContent):
+            text = item if isinstance(item, str) else item.content
+            _printable(text, newlines=True)
+            has_content |= bool(text.strip())
+        elif not isinstance(item, CachePoint):
+            has_content = True
+    if not has_content:
+        raise ValueError('must not be blank')
+
+
+class ContextAnswerer(Protocol[AgentDepsT]):
+    """An answerer that also receives the context of the run that asked the question.
+
+    Two required positional parameters select this form. If a callable also accepts just one,
+    annotate the first parameter as `RunContext[DepsT]` to disambiguate. The request and response
+    follow the same contract as `Answerer`; the context is passed separately, not serialized
+    into `AskUserRequest` or its events. Durable execution can restrict context fields; see
+    [Temporal's run-context rules](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#agent-run-context-and-dependencies).
+    """
+
+    async def __call__(self, ctx: RunContext[AgentDepsT], request: AskUserRequest, /) -> AskUserResponse:
+        """Put `request` to the user with access to the asking run's context."""
+        ...  # pragma: no cover
+
+
+AnyAnswerer: TypeAlias = Answerer | ContextAnswerer[AgentDepsT]
+"""Either answerer signature, for hosts storing a callback to pass to `AskUser`.
+
+`Answerer` remains the request-only protocol; `ContextAnswerer` also receives the asking run's context.
+"""
+
+
 def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
     """Raise `ValueError` when a response does not fit its request.
 
     A cancelled response carries no answers. A completed one answers every question with distinct
     labels that question offered, one of them unless `multi_select`, or a nonblank custom answer.
+    Notes must be `UserContent` tuples; a nonempty note needs nonblank text or an attachment.
+    Note text follows the custom-answer character rules. File references cannot claim provider
+    uploads, non-HTTP(S) URLs or privileged download modes.
     """
     if response.cancelled:
         if response.answers:
@@ -179,6 +277,10 @@ def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
         question = questions.pop(answer.header, None)
         if question is None:
             raise ValueError(f'answer for unknown or repeated question {answer.header!r}')
+        try:
+            _check_note(answer.note)
+        except ValueError as exc:
+            raise ValueError(f'answer note for {answer.header!r} {exc}') from exc
         if answer.custom_answer is not None:
             if answer.selected:
                 raise ValueError('a custom answer cannot also select options')

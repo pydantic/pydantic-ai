@@ -2,8 +2,10 @@
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from functools import partial
 from typing import Literal, get_args, get_origin
 
+from anyio import to_thread
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 from termflow.tui import MenuBuilder, MenuItem
@@ -16,13 +18,17 @@ from pydantic_clai2.models.model_catalog import CatalogModel, catalog, github_co
 from pydantic_clai2.models.model_options import model_options, validate_model_options
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults
 from pydantic_clai2.models.profiles import provider_of
-from pydantic_clai2.ui.menus.custom_params import CustomParamsMenu
-from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow, shown
+from pydantic_clai2.plugins.menus import Dialogs, Option, SettingsMenu
+from pydantic_clai2.ui.menus.custom_params import edit_custom_params
+from pydantic_clai2.ui.menus.dialogs import run_settings_menu
+from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldRow, Runners, first_error, shown
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 _HINT = 'type to filter - Enter add and use model - Ctrl+S settings - Esc close'
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+_CONNECTS = ('github-copilot', 'openrouter', 'vllm')
+"""Providers `/model add` connects to first: a sign-in, or an address to discover models at."""
 
 
 @dataclass(frozen=True)
@@ -58,7 +64,7 @@ class ModelSettingsSource:
             rows.append(
                 FieldRow(
                     key=key,
-                    label='Service Tier / Fast Mode' if codex_tier else _setting_label(key),
+                    label='Service Tier / Fast Mode' if codex_tier else setting_label(key),
                     allow_custom=False,
                     description=(
                         'Fast mode uses more ChatGPT credits.\n'
@@ -132,10 +138,12 @@ class ModelSettingsSource:
         return form
 
 
-def _setting_label(key: str) -> str:
+def setting_label(key: str) -> str:
+    """How the settings menu names a `ModelSettingsForm` field."""
     labels = {
         'max_tokens': 'Max Output Tokens',
         'top_p': 'Top-P (Nucleus Sampling)',
+        'cache': 'Prompt Caching',
         'openai_text_verbosity': 'Verbosity',
         'anthropic_thinking_mode': 'Extended Thinking',
         'anthropic_thinking_budget': 'Thinking Budget',
@@ -247,7 +255,7 @@ class ModelMenu:
 
     def providers(self) -> list[str]:
         """Unique provider prefixes from the merged catalog."""
-        return sorted({model.provider for model in self.models} | {'github-copilot', 'openrouter', 'vllm'})
+        return sorted({model.provider for model in self.models} | set(_CONNECTS))
 
     def build_providers(self) -> Menu:
         """Choose a provider before browsing its models."""
@@ -268,11 +276,9 @@ class ModelMenu:
         """Browse one provider without changing the active model."""
         return ModelMenu(self._context, provider=provider, discovered=self._discovered)
 
-    def edit_settings(self, *, name: str, runners: Runners) -> list[str]:
-        """Run the same settings flow as the direct slash command."""
-        return run_model_settings(
-            store=self._context.store, model=name, runners=runners, settings_as=self._context.settings_model(name)
-        )
+    def settings_menu(self, name: str) -> SettingsMenu:
+        """`name`'s settings, as `/model settings NAME` shows them."""
+        return model_settings_menu(self._context.store, name, settings_as=self._context.settings_model(name))
 
 
 def _tokens(count: int | None) -> str:
@@ -280,30 +286,32 @@ def _tokens(count: int | None) -> str:
 
 
 def run_model_flow(menu: ModelMenu, runners: Runners = TERMINAL, *, connect_provider: bool = False) -> list[str]:
-    """Show the list; Enter picks and closes, `Ctrl+S` edits settings and returns to the list."""
+    """Show the providers, then one's models; Enter picks and closes.
+
+    `Ctrl+S` on a model raises `_OpenSettings` (and a provider that connects first `_ConnectProvider`),
+    so the caller closes this worker before that menu opens, as `open_add_model_menu` does.
+    """
     messages: list[str] = []
     while True:
         selection = runners.run_list(menu.build_providers())
         if selection.cancelled or selection.item is None or not isinstance(selection.item.value, str):
             return messages
-        if selection.item.value in ('github-copilot', 'openrouter', 'vllm') and connect_provider:
+        if selection.item.value in _CONNECTS and connect_provider:
             raise _ConnectProvider(messages, provider=selection.item.value)
         provider_menu = menu.for_provider(selection.item.value)
         if _run_provider(provider_menu, runners, messages):
             return messages
 
 
-def _run_provider(menu: ModelMenu, runners: Runners, messages: list[str]) -> bool:
-    cursor = menu.index_of(menu.current)
+def _run_provider(menu: ModelMenu, runners: Runners, messages: list[str], *, focus: str | None = None) -> bool:
+    """Whether a model was picked; the list opens on `focus`, else the current model."""
     while True:
-        result = runners.run_list(menu.build(cursor))
+        result = runners.run_list(menu.build(menu.index_of(focus or menu.current)))
         if result.cancelled or result.item is None:
             return False
         value = result.item.value
         if isinstance(value, _EditSettings):
-            cursor = menu.index_of(value.model)
-            messages += menu.edit_settings(name=value.model, runners=runners)
-            continue
+            raise _OpenSettings(menu=menu, model=value.model)
         if isinstance(value, str):
             from pydantic_clai2.ui.menus.accounts_menu import choose_account
 
@@ -315,9 +323,16 @@ def _run_provider(menu: ModelMenu, runners: Runners, messages: list[str]) -> boo
 
 
 async def open_add_model_menu(
-    context: CommandContext, *, run: Callable[[ModelMenu], list[str]] | None = None, runners: Runners = TERMINAL
+    context: CommandContext,
+    *,
+    console: Console,
+    run: Callable[[ModelMenu], list[str]] | None = None,
+    runners: Runners = TERMINAL,
 ) -> str:
-    """Show the menu in a thread; the pick and any settings edits apply to the next prompt."""
+    """Show the menu in a thread; the pick and any settings edits apply to the next prompt.
+
+    A provider sign-in prints through `console`, the shell's, so its URL stays in the transcript.
+    """
 
     def flow(menu: ModelMenu) -> list[str]:
         return run_model_flow(menu, runners, connect_provider=True)
@@ -326,21 +341,38 @@ async def open_add_model_menu(
     while True:
         try:
             messages = await run_worker(lambda: (run or flow)(ModelMenu(context)))
+        except _OpenSettings as request:
+            accumulated += await run_settings_menu(request.menu.settings_menu(request.model), runners)
+            if await _browse(request.menu, runners, accumulated, focus=request.model):
+                return '\n'.join(accumulated)
+            continue
         except _ConnectProvider as request:
             accumulated.extend(request.messages)
             if request.provider == 'github-copilot':
-                await github_copilot.ensure_login(console=Console())
+                await github_copilot.ensure_login(console=console)
                 models = await github_copilot_models()
                 provider_menu = ModelMenu(context, provider='github-copilot', discovered=models)
-                if await run_worker(lambda: _run_provider(provider_menu, runners, accumulated)):
+                if await _browse(provider_menu, runners, accumulated):
                     return '\n'.join(accumulated) or 'No changes.'
                 continue
-            connector = openrouter.connect if request.provider == 'openrouter' else vllm.connect
-            result = await connector(context, [])
+            if request.provider == 'openrouter':
+                result = await openrouter.connect(context, [], console=console)
+            else:
+                result = await vllm.connect(context, [])
             if result == 'Connection cancelled.':
                 continue
             return '\n'.join([*accumulated, result])
         return '\n'.join([*accumulated, *messages]) or 'No changes.'
+
+
+async def _browse(menu: ModelMenu, runners: Runners, messages: list[str], *, focus: str | None = None) -> bool:
+    """One provider's models until one is picked (`True`) or the list closes; `Ctrl+S` edits a model between."""
+    while True:
+        try:
+            return await run_worker(partial(_run_provider, menu, runners, messages, focus=focus))
+        except _OpenSettings as request:
+            messages += await run_settings_menu(menu.settings_menu(request.model), runners)
+            focus = request.model
 
 
 class _ConnectProvider(Exception):
@@ -352,33 +384,84 @@ class _ConnectProvider(Exception):
         super().__init__()
 
 
+class _OpenSettings(Exception):
+    """Release the menu worker before a model's settings menu opens, as `/plugins` does for a plugin's."""
+
+    def __init__(self, *, menu: ModelMenu, model: str) -> None:
+        self.menu = menu
+        self.model = model
+        super().__init__()
+
+
+async def add_model(context: CommandContext, dialogs: Dialogs) -> list[str]:
+    """`/model add` through `Dialogs`: a provider, one of its catalog models, and its account, then select it.
+
+    Providers that connect first (GitHub Copilot, OpenRouter, vLLM) sign in or ask for an address in the
+    terminal, so they are left to `/model add` there.
+    """
+    from pydantic_clai2.ui.menus.accounts_menu import account_options
+
+    menu = await to_thread.run_sync(ModelMenu, context)
+    providers = [provider for provider in menu.providers() if provider not in _CONNECTS]
+    provider = provider_of(menu.current or '')
+    while True:
+        picked = await dialogs.choose(
+            title='Add a model: provider',
+            options=[Option(value=name, label=name) for name in providers],
+            current=provider if provider in providers else None,
+            description='Connect GitHub Copilot, OpenRouter, or vLLM with /model add in the terminal.',
+        )
+        if picked is None:
+            return []
+        provider = picked
+        name = await dialogs.choose(
+            title=f'Add a model: {provider}',
+            options=[
+                Option(
+                    value=model.name,
+                    label=model.name,
+                    description=' · '.join(fact for fact in (model.label, _tokens(model.context_window)) if fact),
+                )
+                for model in menu.models
+                if model.provider == provider
+            ],
+            current=menu.current,
+        )
+        if name is None:
+            continue
+        accounts = await to_thread.run_sync(account_options, context.store, name)
+        if accounts:
+            name = await dialogs.choose(title=f'Which {provider} account?', options=accounts)
+            if name is None:
+                continue
+        return [await to_thread.run_sync(menu.choose, name)]
+
+
 async def model_settings_command(context: CommandContext, args: list[str], *, runners: Runners = TERMINAL) -> str:
     """Pick a saved model to edit, or open a named one, without switching models."""
     if len(args) > 1:
         raise ValueError('Usage: /model settings [NAME]')
     if not args:
-        messages = await run_worker(lambda: run_model_settings_picker(context=context, runners=runners))
+        messages = await _pick_model_settings(context, runners)
         return '\n'.join(messages) or 'No changes.'
     name = args[0]
     if name not in context.store.models():
         raise ValueError(f'Model not added: {name}. Use /model add {name} first.')
-    messages = await run_worker(
-        lambda: run_model_settings(
-            store=context.store, model=name, runners=runners, settings_as=context.settings_model(name)
-        )
+    messages = await run_settings_menu(
+        model_settings_menu(context.store, name, settings_as=context.settings_model(name)), runners
     )
     return '\n'.join(messages) or 'No changes.'
 
 
-def run_model_settings(
-    *, store: SettingsStore, model: str, runners: Runners, settings_as: str | None = None
-) -> list[str]:
-    """Both entry points use the same field editor and custom-params submenu."""
-    custom = CustomParamsMenu(store=store, model=model)
-    return run_flow(
-        FieldMenu(ModelSettingsSource(store, model, settings_as=settings_as), searchable=False),
-        runners,
-        submenus={'custom_params': lambda: custom.run(runners=runners)},
+def model_settings_menu(store: SettingsStore, model: str, *, settings_as: str | None = None) -> SettingsMenu:
+    """One model's settings, as `/model settings NAME`, the `/model add` list's `Ctrl+S`, and the web UI show them.
+
+    Edits save under `model`, offering and validating the controls of `settings_as` (default `model`).
+    """
+    return SettingsMenu(
+        source=ModelSettingsSource(store, model, settings_as=settings_as),
+        actions={'custom_params': partial(edit_custom_params, store=store, model=model)},
+        searchable=False,
     )
 
 
@@ -410,24 +493,25 @@ def build_model_settings_picker(*, context: CommandContext, current: str | None)
 def model_settings_summary(*, store: SettingsStore, model: str, settings_as: str | None = None) -> str:
     """Preview effective settings without mutating the model or its saved overrides."""
     values = {**model_defaults(model=settings_as or model), **store.model_settings(model)}
-    lines = [model, '', 'Configured settings:' if values else 'No custom settings (model defaults).']
-    lines.extend(f'{_setting_label(key)}: {shown(value)}' for key, value in values.items())
+    # Never empty: every model has at least CLAI's prompt caching default.
+    lines = [model, '', 'Configured settings:']
+    lines.extend(f'{setting_label(key)}: {shown(value)}' for key, value in values.items())
     return '\n'.join(lines)
 
 
-def run_model_settings_picker(*, context: CommandContext, runners: Runners) -> list[str]:
+async def _pick_model_settings(context: CommandContext, runners: Runners) -> list[str]:
     """Return from a model's editor to the picker, preserving its selection."""
     current = context.settings.model
     messages: list[str] = []
     while True:
-        result = runners.run_list(build_model_settings_picker(context=context, current=current))
+        result = await run_worker(
+            lambda: runners.run_list(build_model_settings_picker(context=context, current=current))
+        )
         if result.cancelled or result.item is None or not isinstance(result.item.value, str):
             return messages
         current = result.item.value
         if current not in context.store.models():
             return messages
-        messages.extend(
-            run_model_settings(
-                store=context.store, model=current, runners=runners, settings_as=context.settings_model(current)
-            )
+        messages += await run_settings_menu(
+            model_settings_menu(context.store, current, settings_as=context.settings_model(current)), runners
         )

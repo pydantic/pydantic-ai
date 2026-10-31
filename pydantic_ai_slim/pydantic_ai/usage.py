@@ -6,15 +6,22 @@ from copy import copy
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import cache
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import SchemaSerializer, core_schema
+from typing_extensions import deprecated
 
 from . import _utils
+from ._gateway_cost import gateway_reported_cost
 from ._genai_prices import iter_provider_references
-from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning
+from ._warnings import (
+    CostNotFoundWarning,
+    PydanticAIDeprecationWarning,
+    UsageExtractionFailedWarning,
+    UsageLimitUnavailableWarning,
+)
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -101,6 +108,11 @@ class UsageBase:
 
     cache_write_tokens: int = 0
     """Number of tokens written to the cache. Included in `input_tokens`."""
+    cache_write_1h_tokens: int = 0
+    """Number of tokens written to the cache with a one-hour TTL. Included in `cache_write_tokens`.
+
+    Anthropic bills these at a higher rate than five-minute writes, which make up the rest of `cache_write_tokens`.
+    """
     cache_read_tokens: int = 0
     """Number of tokens read from the cache, across all modalities (includes `cache_audio_read_tokens`).
 
@@ -113,6 +125,17 @@ class UsageBase:
         Field(validation_alias=AliasChoices('output_tokens', 'response_tokens')),
     ] = 0
     """Number of output/completion tokens."""
+
+    unmeasured_requests: Annotated[int, Field(exclude_if=lambda value: value == 0)] = 0
+    """Number of responses that omitted usage information.
+
+    When non-zero, token totals and any known cost are lower bounds. On a `RequestUsage`, it is non-zero when the
+    response omitted usage, so its token counts carry no information. This count does not imply a particular number
+    of missing tokens, cost, or usage details.
+    """
+
+    output_reasoning_tokens: int = 0
+    """Number of reasoning (thinking) tokens the model generated. Included in `output_tokens`."""
 
     input_audio_tokens: int = 0
     """Number of audio input tokens. Included in `input_tokens`."""
@@ -143,6 +166,9 @@ class UsageBase:
     Calculated with [genai-prices](https://github.com/pydantic/genai-prices). `None` (rather than zero) when the
     model or provider can't be priced, so "unknown" stays distinguishable from a genuine zero cost. Models released
     after your install can be priced by calling [`update_in_background()`][pydantic_ai.prices.update_in_background].
+
+    Requests made through the [Pydantic AI Gateway](../gateway.md#request-cost) use the cost the gateway reported,
+    when it reports one.
     """
 
     def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
@@ -275,8 +301,13 @@ class UsageBase:
         return NotImplemented
 
     def has_values(self) -> bool:
-        """Whether any values are set and non-zero."""
-        return any(self.details.values()) or any(v for k, v in self.__dict__.items() if k != 'details')
+        """Whether any usage values (token counts, details, or cost) are set and non-zero.
+
+        `unmeasured_requests` is not a usage value: it records that usage was omitted.
+        """
+        return any(self.details.values()) or any(
+            v for k, v in self.__dict__.items() if k not in {'details', 'unmeasured_requests'}
+        )
 
 
 @dataclass(repr=False, init=False, eq=False)
@@ -289,6 +320,11 @@ class RequestUsage(UsageBase):
 
     @property
     def requests(self):
+        """Always `1`, as this is the usage of a single request, which is how genai-prices prices it.
+
+        Adding a `RequestUsage` to a [`RunUsage`][pydantic_ai.usage.RunUsage] doesn't change
+        [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests], which counts the model responses the agent acted on.
+        """
         return 1
 
     def incr(self, incr_usage: RequestUsage) -> None:
@@ -335,6 +371,7 @@ class RequestUsage(UsageBase):
             details: Becomes the `details` field on the returned `RequestUsage` for convenience.
         """
         details = details or {}
+        cost = gateway_reported_cost(data)
         extraction_error: Exception | None = None
         for provider_id, provider_api_url in iter_provider_references(
             provider_api_url=provider_url, provider_id=provider, provider_fallback=provider_fallback
@@ -349,7 +386,12 @@ class RequestUsage(UsageBase):
 
             try:
                 _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
-                return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
+                request_usage = cls(
+                    **{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details
+                )
+                if cost is not None:
+                    request_usage.cost = cost
+                return request_usage
             except Exception as e:
                 extraction_error = e
 
@@ -359,7 +401,7 @@ class RequestUsage(UsageBase):
                 UsageExtractionFailedWarning,
                 stacklevel=2,
             )
-        return cls(details=details)
+        return cls(details=details, cost=cost)
 
 
 @dataclass(repr=False, init=False, eq=False)
@@ -370,7 +412,19 @@ class RunUsage(UsageBase):
     """
 
     requests: int = 0
-    """Number of requests made to the LLM API."""
+    """Number of model responses committed to the run's history, one per step of the agent loop.
+
+    That includes a response the run stopped on before acting on it, because it crossed a token or cost limit.
+
+    This is what [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit] bounds. It can be
+    lower than the number of requests sent to the provider: attempts a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability moved on from, the continuation requests that
+    complete a suspended response, and retries made by the provider SDK or HTTP transport aren't counted.
+    The tokens and cost of a rejected response, and of continuation requests, are still added to this usage.
+    The attempts before a response are listed in its
+    [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts].
+    """
 
     tool_calls: int = 0
     """Number of successful tool calls executed during the run."""
@@ -418,29 +472,31 @@ class RunUsage(UsageBase):
         return new_usage
 
     def __sub__(self, other: RunUsage) -> RunUsage:
-        """Return the field-by-field usage accumulated since `other`.
+        """Return the usage accumulated since `other`.
 
         This is useful when a nested operation shares a run's mutable usage object and needs to
         report only the requests, tool calls, tokens, details, and cost added by that operation.
+        Every count is subtracted, including provider-specific ones like `web_searches`.
         Unknown costs remain `None`; an unchanged known cost also produces `None`.
         """
-        details = {
-            name: self.details.get(name, 0) - other.details.get(name, 0) for name in self.details | other.details
-        }
-        return RunUsage(
-            requests=self.requests - other.requests,
-            tool_calls=self.tool_calls - other.tool_calls,
-            input_tokens=self.input_tokens - other.input_tokens,
-            cache_write_tokens=self.cache_write_tokens - other.cache_write_tokens,
-            cache_read_tokens=self.cache_read_tokens - other.cache_read_tokens,
-            output_tokens=self.output_tokens - other.output_tokens,
-            input_audio_tokens=self.input_audio_tokens - other.input_audio_tokens,
-            cache_audio_read_tokens=self.cache_audio_read_tokens - other.cache_audio_read_tokens,
-            output_audio_tokens=self.output_audio_tokens - other.output_audio_tokens,
-            audio_seconds=self.audio_seconds - other.audio_seconds,
-            details=details,
-            cost=self.cost - (other.cost or 0) if self.cost is not None and self.cost != other.cost else None,
-        )
+        new_usage = copy(self)
+        _add_usage_tokens(new_usage, other, -1)
+        new_usage.requests = self.requests - other.requests
+        new_usage.tool_calls = self.tool_calls - other.tool_calls
+        new_usage.cost = self.cost - (other.cost or 0) if self.cost is not None and self.cost != other.cost else None
+        return new_usage
+
+    @deprecated(
+        '`usage` is a property, not a method: use `.usage` instead of `.usage()`.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def __call__(self) -> RunUsage:
+        """Return this usage, so that V1-style `result.usage()` keeps working, with a deprecation warning.
+
+        Without this, the call raises `TypeError: 'RunUsage' object is not callable`, which code that wraps
+        its usage accounting in `except Exception` turns into silently zero usage.
+        """
+        return self
 
 
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
@@ -455,24 +511,33 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
         slf: The usage to increment.
         incr_usage: The usage to increment by.
     """
-    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - {'requests', 'tool_calls', 'details', 'cost'}:
-        slf_value = getattr(slf, k, 0)
-        incr_value = getattr(incr_usage, k, 0)
-        if isinstance(slf_value, (int, float)) and isinstance(incr_value, (int, float)):
-            setattr(slf, k, slf_value + incr_value)
+    _add_usage_tokens(slf, incr_usage, 1)
 
-    for key, value in incr_usage.details.items():
+
+def _add_usage_tokens(slf: RunUsage | RequestUsage, other: RunUsage | RequestUsage, sign: Literal[1, -1]) -> None:
+    """Add `sign` times `other`'s token counts to `slf`'s in place, including provider-specific counters.
+
+    `sign=-1` is the inverse of `_incr_usage_tokens`, which `RunUsage.__sub__` uses, and which the continuation glue
+    uses to tell what a request that resumed a suspended response billed beyond it.
+    """
+    for k in (slf.__dict__.keys() | other.__dict__.keys()) - {'requests', 'tool_calls', 'details', 'cost'}:
+        slf_value = getattr(slf, k, 0)
+        other_value = getattr(other, k, 0)
+        if isinstance(slf_value, (int, float)) and isinstance(other_value, (int, float)):
+            setattr(slf, k, slf_value + sign * other_value)
+
+    for key, value in other.details.items():
         # Note: value can be None at runtime from model responses despite the type annotation
         if isinstance(value, (int, float)):
-            slf.details[key] = slf.details.get(key, 0) + value
+            slf.details[key] = slf.details.get(key, 0) + sign * value
 
 
 @dataclass(repr=False, kw_only=True)
 class UsageLimits:
     """Limits on model usage.
 
-    The request count is tracked by pydantic_ai, and the request limit is checked before each request to the model.
-    Token counts are provided in responses from the model, and the token limits are checked after each response.
+    The request count is tracked by Pydantic AI, and the request limit is checked at the start of each step of the
+    agent loop. Token counts are provided in responses from the model, and the token limits are checked after each response.
 
     Each of the limits can be set to `None` to disable that limit.
     """
@@ -480,7 +545,14 @@ class UsageLimits:
     cost_limit: Decimal | None = None
     """The maximum cost allowed in USD."""
     request_limit: int | None = 50
-    """The maximum number of requests allowed to the model."""
+    """The maximum number of model responses committed to the run's history, as counted by [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests].
+
+    This bounds the number of turns of the agent loop, not the number of requests sent to the provider: attempts a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moved on from, continuation requests, and
+    provider SDK or HTTP transport retries aren't counted. The tokens and cost of a response a `FallbackModel`
+    rejected, and of continuation requests, do count towards the token and cost limits. It's checked at the start
+    of each step, including a step answered without a request to the model.
+    """
     tool_calls_limit: int | None = None
     """The maximum number of successful tool calls allowed to be executed."""
     input_tokens_limit: int | None = None
@@ -495,7 +567,11 @@ class UsageLimits:
     Unlike `input_tokens_limit` which is cumulative across the entire run, this
     limit is checked against each request's input token count independently —
     ahead of the request when `count_tokens_before_request=True`, otherwise against
-    the provider-reported `input_tokens` of the response.
+    the provider-reported `input_tokens` of the response. For a response whose usage sums several
+    model requests, it is checked against the input tokens of the one that measures the context:
+    the first request of a [Google long decode](../models/google.md#long-decode), and the last
+    sampling pass of an [Anthropic response that reported its passes](../models/anthropic.md#server-side-tool-loops),
+    such as a server-side tool loop or a compaction.
 
     This provides a guard against oversized contexts (which hurt model performance
     and incur high costs on cache misses), complementing the runaway-loop
@@ -572,6 +648,7 @@ class UsageLimits:
         Args:
             usage: The accumulated run usage to check.
             warn_if_cost_unavailable: Whether to warn when a `cost_limit` is set but no cost was calculated.
+                When some responses omitted usage information, `check_tokens` warns instead.
         """
         if warn_if_cost_unavailable:
             self._warn_if_cost_unavailable(usage)
@@ -579,7 +656,8 @@ class UsageLimits:
             raise UsageLimitExceeded(f'Exceeded the `cost_limit` of {self.cost_limit} (`usage.cost`={usage.cost!r})')
 
     def _warn_if_cost_unavailable(self, usage: RunUsage) -> None:
-        if self.cost_limit is not None and usage.cost is None:
+        # Omitted usage is reported once, by `check_tokens`, which covers a `cost_limit` too.
+        if self.cost_limit is not None and usage.cost is None and not usage.unmeasured_requests:
             warnings.warn(
                 CostNotFoundWarning(
                     'A `cost_limit` is set but cannot be enforced because no cost was calculated for this run. '
@@ -589,7 +667,16 @@ class UsageLimits:
             )
 
     def check_tokens(self, usage: RunUsage) -> None:
-        """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits."""
+        """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits.
+
+        Warns with [`UsageLimitUnavailableWarning`][pydantic_ai.exceptions.UsageLimitUnavailableWarning] when some
+        responses omitted usage information and a token or cost limit is configured.
+        """
+        self._check_token_limits(usage)
+        self._warn_if_usage_unavailable(usage)
+
+    def _check_token_limits(self, usage: RunUsage) -> None:
+        """Raise `UsageLimitExceeded` if the usage exceeds any of the token limits, without warning about omitted usage."""
         input_tokens = usage.input_tokens
         if self.input_tokens_limit is not None and input_tokens > self.input_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the input_tokens_limit of {self.input_tokens_limit} ({input_tokens=})')
@@ -603,6 +690,18 @@ class UsageLimits:
         total_tokens = usage.total_tokens
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')
+
+    def _warn_if_usage_unavailable(self, usage: RunUsage) -> None:
+        if usage.unmeasured_requests and (self.has_token_limits() or self.cost_limit is not None):
+            # A fixed message, so the default warning filter shows it once rather than after every later response.
+            warnings.warn(
+                UsageLimitUnavailableWarning(
+                    'Some responses omitted usage information, so the known token and cost totals are lower bounds '
+                    'and configured limits cannot be fully enforced. `RunUsage.unmeasured_requests` counts them. '
+                    'Check the provider or server usage reporting, or promote `UsageLimitUnavailableWarning` to an '
+                    'error.'
+                )
+            )
 
     def check_before_tool_call(self, projected_usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the next tool call(s) would exceed the tool call limit."""

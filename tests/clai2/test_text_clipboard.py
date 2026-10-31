@@ -63,6 +63,7 @@ def test_linux_prefers_wayland_then_x11_tools(installed: set[str], monkeypatch: 
     assert copy_command(platform='linux') == ClipboardCommand(argv=('/bin/wl-copy',))
 
 
+@pytest.mark.subprocess(reason='runs a Python script as the clipboard command')
 def test_run_copy_feeds_utf8_text_and_the_command_environment(tmp_path: Path) -> None:
     path = tmp_path / 'clipboard'
     script = f'import os, sys; open({str(path)!r}, "wb").write(os.environ["MARK"].encode() + sys.stdin.buffer.read())'
@@ -72,6 +73,7 @@ def test_run_copy_feeds_utf8_text_and_the_command_environment(tmp_path: Path) ->
     assert path.read_bytes()[:1] == b'>', 'the command gets its own variables'
 
 
+@pytest.mark.subprocess(reason='runs a Python script as the clipboard command')
 def test_a_failing_clipboard_command_loses_only_that_copy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     run_copy(command=ClipboardCommand(argv=(str(tmp_path / 'missing'),)), text='lost')
     monkeypatch.setattr(text_clipboard, 'COPY_TIMEOUT', 0.01)

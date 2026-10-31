@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import base64
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import pytest
+from browser_use.agent.service import Agent as BrowserUseAgent
+from browser_use.agent.views import AgentHistoryList
+from browser_use.browser import BrowserSession
 from browser_use.llm.messages import (
     AssistantMessage,
     ContentPartImageParam,
@@ -15,8 +18,13 @@ from browser_use.llm.messages import (
     SystemMessage,
     UserMessage,
 )
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -28,8 +36,9 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.browser_use import PydanticAIChatModel, resolve_chat_model
+from pydantic_ai_harness.browser_use import BrowserUse, PydanticAIChatModel, resolve_chat_model
 from tests.harness.conftest import agent_run_names
 
 if TYPE_CHECKING:
@@ -188,3 +197,107 @@ class TestResolveChatModel:
     def test_pydantic_ai_model_is_wrapped(self) -> None:
         resolved = resolve_chat_model(TestModel())
         assert isinstance(resolved, PydanticAIChatModel)
+
+
+class TestInheritedInstrumentation:
+    @pytest.fixture(autouse=True)
+    def browser_model_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Exercise the real factory and adapter without launching a browser or calling a provider."""
+        monkeypatch.setenv('ANONYMIZED_TELEMETRY', 'false')
+
+        async def run(self: BrowserUseAgent[None, BaseModel], max_steps: int = 500) -> AgentHistoryList[BaseModel]:
+            await self.llm.ainvoke(
+                [
+                    UserMessage(
+                        content=[
+                            ContentPartTextParam(text='private page content'),
+                            ContentPartImageParam(image_url=ImageURL(url=f'data:image/png;base64,{_PNG}')),
+                        ]
+                    )
+                ]
+            )
+            return AgentHistoryList[BaseModel](history=[])
+
+        async def kill(self: BrowserSession) -> None:
+            pass
+
+        monkeypatch.setattr(BrowserUseAgent, 'run', run)
+        monkeypatch.setattr(BrowserSession, 'kill', kill)
+
+    @pytest.mark.parametrize('global_enabled', [False, True])
+    @pytest.mark.parametrize(
+        ('source', 'include_content'),
+        [
+            ('capability', False),
+            ('capability', True),
+            ('run', False),
+            ('dynamic', False),
+            ('model', False),
+            ('disabled', False),
+        ],
+    )
+    async def test_host_instrumentation_is_inherited(
+        self,
+        capfire: CaptureLogfire,
+        global_enabled: bool,
+        source: Literal['capability', 'run', 'dynamic', 'model', 'disabled'],
+        include_content: bool,
+    ) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        settings = InstrumentationSettings(
+            tracer_provider=provider,
+            include_content=include_content,
+            include_binary_content=False,
+            include_model_request_parameters=False,
+            version=6,
+        )
+        capabilities: list[AgentCapability[None]] = [BrowserUse()]
+        run_capabilities: list[AgentCapability[None]] = []
+        if source == 'capability':
+            capabilities.append(Instrumentation(settings=settings))
+        elif source == 'dynamic':
+            run_capabilities.append(lambda ctx: Instrumentation(settings=settings))
+        elif source == 'run':
+            capabilities.append(Instrumentation())
+            run_capabilities.append(Instrumentation(settings=settings))
+        model = InstrumentedModel(TestModel(), settings) if source == 'model' else TestModel()
+        agent = Agent(model, deps_type=None, capabilities=capabilities)
+        if source == 'disabled':
+            agent.instrument = False
+
+        Agent.instrument_all(global_enabled)
+        try:
+            await agent.run('Browse.', capabilities=run_capabilities)
+        finally:
+            Agent.instrument_all(False)
+            provider.shutdown()
+
+        # Neither the host nor its browser model may fall back to the global provider.
+        assert agent_run_names(capfire) == []
+        spans = exporter.get_finished_spans()
+        if source == 'disabled':
+            assert spans == ()
+        else:
+            assert any(span.name == 'invoke_agent browser_use' for span in spans)
+            assert sum(span.name == 'chat test' for span in spans) == 3  # Two host turns, one browser turn.
+            attributes = [dict(span.attributes or {}) for span in spans]
+            assert ('private page content' in str(attributes)) is include_content
+            assert _PNG not in str(attributes)
+            assert all('model_request_parameters' not in span_attributes for span_attributes in attributes)
+
+    async def test_explicit_llm_keeps_its_own_instrumentation(self, capfire: CaptureLogfire) -> None:
+        browser_model = InstrumentedModel(TestModel(), InstrumentationSettings(include_content=True))
+        agent = Agent(
+            TestModel(),
+            capabilities=[
+                Instrumentation(settings=InstrumentationSettings(include_content=False)),
+                BrowserUse(llm=browser_model),
+            ],
+        )
+
+        await agent.run('Browse.')
+
+        assert 'browser_use' in agent_run_names(capfire)
+        assert 'private page content' in str(capfire.exporter.exported_spans_as_dict())

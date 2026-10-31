@@ -4,8 +4,9 @@ import base64
 import io
 import json
 import warnings
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Sequence
 from pathlib import Path
+from threading import Event, Thread
 from typing import Literal
 
 import anyio
@@ -14,8 +15,8 @@ import logfire
 import pytest
 from opentelemetry import metrics, propagate, trace
 from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExportResult
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
@@ -23,18 +24,23 @@ from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import logfire as logfire_plugin
-from pydantic_clai2.builtin_plugins.logfire import CREDENTIALS_FILE, PROJECT, LogfirePlugin, LogfireSource, logfire_dir
+from pydantic_clai2.builtin_plugins.logfire import CREDENTIALS_FILE, PROJECT, LogfirePlugin, LogfireSource
+from pydantic_clai2.builtin_plugins.logfire_destination import logfire_dir
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.config import Settings
+from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.api_keys import save_key
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, TurnEnd, load_plugin
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.plugins.process_plugins import ProcessPlugins
+from pydantic_clai2.runtime import agent_instrumentation
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.menus import dialogs
 from tests.clai2.menu_script import Script, pick, typed
 
 
@@ -49,10 +55,12 @@ class Exporter(InMemorySpanExporter):
 class Recorder:
     def __init__(self) -> None:
         self.configure_sdk = logfire.configure
+        self.span_processor: Callable[[Exporter], SpanProcessor] = SimpleSpanProcessor
         self.exporters: list[Exporter] = []
         self.instances: list[logfire.Logfire] = []
         self.options: list[dict[str, object]] = []
         self.tokens: list[str | None] = []
+        self.api_keys: list[str | None] = []
 
     def configure(
         self,
@@ -65,10 +73,12 @@ class Recorder:
         config_dir: Path,
         data_dir: Path,
         token: str | None,
+        api_key: str | None,
         scrubbing: logfire.ScrubbingOptions | None,
         advanced: logfire.AdvancedOptions | None,
     ) -> logfire.Logfire:
         self.tokens.append(token)
+        self.api_keys.append(api_key)
         self.options.append(
             {
                 'local': local,
@@ -93,8 +103,10 @@ class Recorder:
             token=token,
             scrubbing=scrubbing,
             metrics=False,
-            additional_span_processors=[SimpleSpanProcessor(exporter)],
-            advanced=logfire.AdvancedOptions(emit_configuration_span=False),
+            additional_span_processors=[self.span_processor(exporter)],
+            advanced=logfire.AdvancedOptions(
+                emit_configuration_span=False, base_url=advanced.base_url if advanced else None
+            ),
         )
         self.exporters.append(exporter)
         self.instances.append(instance)
@@ -131,10 +143,38 @@ def operation(span: ReadableSpan) -> object:
     return (span.attributes or {}).get('gen_ai.operation.name')
 
 
-async def test_default_content_images_tools_and_usage_are_traced(recorder: Recorder, tmp_path: Path) -> None:
+async def test_default_traces_leave_content_out_even_with_an_ambient_token(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `LOGFIRE_TOKEN` set up for another project gets timing and usage, but no prompts, results, or files."""
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'write-token-for-another-project')
+    plugin = load_logfire(make_host())
+    agent = Agent(TestModel(custom_output_text='The image shows a button'), deps_type=type(None))
+
+    @agent.tool_plain
+    def inspect_button() -> str:
+        return 'button details'
+
+    image = BinaryContent(data=b'example image bytes', media_type='image/png')
+    try:
+        await agent.run(['describe the screenshot', image], capabilities=plugin.capabilities)
+    finally:
+        await close(plugin)
+    spans = recorder.spans()
+    assert [operation(span) for span in spans].count('execute_tool') == 1
+    serialized = json.dumps([dict(span.attributes or {}) for span in spans])
+    assert 'gen_ai.usage.input_tokens' in serialized
+    assert 'describe the screenshot' not in serialized
+    assert 'The image shows a button' not in serialized
+    assert 'button details' not in serialized
+    assert base64.b64encode(image.data).decode() not in serialized
+    assert recorder.options[0]['send_to_logfire'] == 'if-token-present'
+
+
+async def test_included_content_images_tools_and_usage_are_traced(recorder: Recorder, tmp_path: Path) -> None:
     tracer, meter = trace.get_tracer_provider(), metrics.get_meter_provider()
     propagator = propagate.get_global_textmap()
-    host = make_host()
+    host = make_host(include_content=True, include_binary_content=True)
     plugin = load_logfire(host)
     assert not HTTPXClientInstrumentor().is_instrumented_by_opentelemetry
     assert not HTTPX2ClientInstrumentor().is_instrumented_by_opentelemetry
@@ -181,6 +221,62 @@ async def test_default_content_images_tools_and_usage_are_traced(recorder: Recor
     assert metrics.get_meter_provider() is meter
     assert propagate.get_global_textmap() is propagator
     assert agent.instrument is None
+
+
+async def test_agents_built_elsewhere_are_traced_while_loaded(recorder: Recorder) -> None:
+    """Summarizers and sub-agents build their own `Agent`, so only global instrumentation reaches them."""
+    previous = InstrumentationSettings()
+    Agent.instrument_all(previous)
+    try:
+        plugin = await start_logfire()
+        assert isinstance(plugin.plugin, LogfirePlugin)
+        assert agent_instrumentation.current() is plugin.plugin.instrumentation.settings
+        await Agent(TestModel(), name='nested').run('hello')
+        await close(plugin)
+        assert agent_instrumentation.current() is previous, 'unloading restores what was there before'
+    finally:
+        Agent.instrument_all(False)
+    assert [span.name for span in recorder.spans()].count('invoke_agent nested') == 1
+
+
+async def start_logfire() -> LoadedPlugin[None]:
+    plugin = load_logfire(make_host())
+    await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+    return plugin
+
+
+async def test_agent_instrumentation_moves_to_a_remaining_copy(recorder: Recorder) -> None:
+    """Unloading one of two copies leaves agents traced by the live one, never by a shut-down instance."""
+    first, second = await start_logfire(), await start_logfire()
+    assert isinstance(first.plugin, LogfirePlugin) and isinstance(second.plugin, LogfirePlugin)
+    await close(second)
+    assert agent_instrumentation.current() is first.plugin.instrumentation.settings
+    second = await start_logfire()
+    await close(first)
+    assert isinstance(second.plugin, LogfirePlugin)
+    assert agent_instrumentation.current() is second.plugin.instrumentation.settings
+    await close(second)
+    assert agent_instrumentation.current() is False
+
+
+async def test_unloading_keeps_instrumentation_set_after_loading(recorder: Recorder) -> None:
+    plugin = await start_logfire()
+    later = InstrumentationSettings()
+    Agent.instrument_all(later)
+    try:
+        await close(plugin)
+        assert agent_instrumentation.current() is later
+    finally:
+        Agent.instrument_all(False)
+
+
+def test_global_tracer_follows_instrument_all() -> None:
+    assert agent_instrumentation.tracer() is None
+    Agent.instrument_all(True)
+    try:
+        assert agent_instrumentation.tracer() is not None
+    finally:
+        Agent.instrument_all(False)
 
 
 @pytest.mark.parametrize('content', [False, True])
@@ -338,6 +434,85 @@ async def test_unload_finishes_inside_outer_cancellation(recorder: Recorder) -> 
     assert scope.cancelled_caught
 
 
+@pytest.mark.parametrize('blocked', ['export', 'shutdown'])
+def test_shutdown_wall_clock_bound(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch, blocked: Literal['export', 'shutdown']
+) -> None:
+    # Exercise the SDK ignoring its timeout, without waiting out a real export deadline.
+    entered = Event()
+    release = Event()
+    workers: list[Thread] = []
+    completed = Event()
+    export = Exporter.export
+    shutdown = Exporter.shutdown
+
+    def blocking_export(self: Exporter, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        if blocked == 'export':
+            entered.set()
+            release.wait()
+        return export(self, spans)
+
+    def blocking_shutdown(self: Exporter) -> None:
+        if blocked == 'shutdown':
+            entered.set()
+            release.wait()
+        shutdown(self)
+
+    monkeypatch.setattr(Exporter, 'export', blocking_export)
+    monkeypatch.setattr(Exporter, 'shutdown', blocking_shutdown)
+    recorder.span_processor = lambda exporter: BatchSpanProcessor(exporter, schedule_delay_millis=60_000)
+
+    class DeadlineThread(Thread):
+        def join(self, timeout: float | None = None) -> None:
+            assert timeout == 3
+            assert self.daemon
+            workers.append(self)
+            assert entered.wait(10)
+            # Advance the entire join deadline while the exporter remains blocked.
+
+    host = make_host()
+    plugin = load_logfire(host)
+    exporter = recorder.exporters[0]
+    recorder.instances[0].info('queued span')
+    monkeypatch.setattr(logfire_plugin, 'Thread', DeadlineThread)
+
+    def unload() -> None:
+        anyio.run(close, plugin)
+        completed.set()
+
+    caller = Thread(target=unload, daemon=True)
+    caller.start()
+    try:
+        caller.join(10)
+        assert not caller.is_alive()
+        assert completed.is_set()
+        output = host.console.file
+        assert isinstance(output, io.StringIO)
+        assert 'Logfire shutdown timed out' in output.getvalue()
+        assert len(workers) == 1
+        assert workers[0].is_alive()
+        assert not exporter.closed
+    finally:
+        release.set()
+        caller.join(10)
+        for worker in workers:
+            Thread.join(worker, 10)
+            assert not worker.is_alive()
+    assert exporter.closed
+
+
+async def test_shutdown_propagates_flush_error(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin = load_logfire(make_host())
+
+    def fail(*, timeout_millis: int) -> bool:
+        raise RuntimeError('flush failed')
+
+    monkeypatch.setattr(recorder.instances[0], 'force_flush', fail)
+    with pytest.raises(RuntimeError, match='flush failed'):
+        await close(plugin)
+    assert recorder.exporters[0].closed
+
+
 async def test_shutdown_timeout_is_reported(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
     host = make_host()
     plugin = load_logfire(host)
@@ -431,6 +606,78 @@ async def test_failed_and_cancelled_runs_finish_their_spans(recorder: Recorder, 
     assert all(span.end_time is not None for span in spans)
     if not cancelled:
         assert any(span.status.status_code is trace.StatusCode.ERROR for span in spans)
+
+
+async def test_a_failure_inside_the_run_is_not_logged_again_by_a_second_copy(recorder: Recorder) -> None:
+    """With two copies enabled, `combine` keeps one copy's `wrap_run`; neither logs the run's error as `Turn failed`."""
+    first, second = load_logfire(make_host()), load_logfire(make_host())
+    agent = Agent(TestModel(), deps_type=type(None))
+
+    @agent.tool_plain
+    def work() -> str:
+        raise RuntimeError('tool failure')
+
+    try:
+        for plugin in (first, second):
+            await plugin.dispatch(SessionStart(agent=agent, settings=Settings()))
+        with pytest.raises(RuntimeError) as in_run:
+            await agent.run('run the tool', capabilities=[*first.capabilities, *second.capabilities])
+        for plugin in (first, second):
+            await plugin.dispatch(TurnEnd(text='a prompt', outcome='failed', error=in_run.value))
+    finally:
+        await close(first)
+        await close(second)
+    assert not [span for span in recorder.spans() if (span.attributes or {}).get('logfire.msg') == 'Turn failed']
+
+
+@pytest.mark.parametrize('content', [True, False])
+async def test_turn_failures_outside_the_run_are_recorded_with_their_traceback(
+    recorder: Recorder, content: bool
+) -> None:
+    plugin = load_logfire(make_host(include_content=content))
+    agent = Agent(TestModel(), deps_type=type(None), name='failure_test')
+
+    @agent.tool_plain
+    def work() -> str:
+        raise RuntimeError('tool failure')
+
+    def resolve_model() -> None:
+        raise UserError('No Claude Code login. Run /login claude-code.')
+
+    try:
+        await plugin.dispatch(SessionStart(agent=agent, settings=Settings()))
+        with pytest.raises(RuntimeError) as in_run:
+            await agent.run('run the tool', capabilities=plugin.capabilities)
+        with pytest.raises(UserError) as before_run:
+            resolve_model()
+        # The same exception instance failing a later turn outside a run, as a plugin reusing one might, is logged.
+        for error in (in_run.value, before_run.value, in_run.value):
+            await plugin.dispatch(TurnEnd(text='a private prompt', outcome='failed', error=error))
+    finally:
+        await close(plugin)
+    spans = recorder.spans()
+    root = next(span for span in spans if span.name == 'CLAI session')
+    run = next(span for span in spans if operation(span) == 'invoke_agent')
+    # The run's own span already holds the error that left it, so only turns that failed outside a run are logged.
+    assert [(event.attributes or {}).get('exception.type') for event in run.events] == ['RuntimeError']
+    failed, reused = [span for span in spans if (span.attributes or {}).get('logfire.msg') == 'Turn failed']
+    assert failed.parent == root.context
+    assert failed.status.status_code is trace.StatusCode.ERROR
+    assert failed.instrumentation_scope is not None and failed.instrumentation_scope.name == 'clai2'
+    if not content:
+        # Like core's agent spans, the event keeps only the type: the message and traceback can quote the prompt.
+        assert [dict(event.attributes or {}) for span in (failed, reused) for event in span.events] == [
+            {'exception.type': 'pydantic_ai.exceptions.UserError', 'exception.escaped': 'False'},
+            {'exception.type': 'RuntimeError', 'exception.escaped': 'False'},
+        ]
+        return
+    assert [(event.attributes or {}).get('exception.type') for event in reused.events] == ['RuntimeError']
+    [exception] = failed.events
+    attributes = exception.attributes or {}
+    assert exception.name == 'exception'
+    assert attributes['exception.type'] == 'pydantic_ai.exceptions.UserError'
+    assert attributes['exception.message'] == 'No Claude Code login. Run /login claude-code.'
+    assert 'resolve_model' in str(attributes['exception.stacktrace'])
 
 
 async def test_flush_timeout_still_stops_providers(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -530,7 +777,8 @@ async def test_ui_events_can_be_explicitly_disabled(recorder: Recorder) -> None:
         telemetry.record('setting {setting} changed', setting='display.theme', value='default')
     finally:
         await close(plugin)
-    assert messages(recorder) == ['CLAI session']
+    # The root's announcement is not a UI event: it is sent either way.
+    assert messages(recorder) == ['CLAI session opened', 'CLAI session']
 
 
 @pytest.mark.parametrize('model', [Settings().model, None])
@@ -551,13 +799,14 @@ async def test_ui_events_follow_the_plugin_and_keep_setting_names(
         await close(plugin)
     telemetry.record('after the plugin unloaded')
     assert messages(recorder) == [
+        'CLAI session opened',
         'session started',
         'turn cancelled',
         'setting sessions.naming changed',
         'not a UI event',
         'CLAI session',
     ]
-    started, _, changed, other, _ = recorder.spans()
+    _, started, _, changed, other, _ = recorder.spans()
     # The exemption covers only UI records: another span's `setting` is scrubbed as usual.
     assert (other.attributes or {})['setting'] == "[Scrubbed due to 'password']"
     assert (started.attributes or {})['model'] == (model or 'agent default')
@@ -604,13 +853,67 @@ async def test_token_from_keys_chooses_the_project(
     assert ('CLAI2_LOGFIRE_TOKEN is not in /keys' in output.getvalue()) == (not saved and send is not False)
 
 
-async def test_self_hosted_base_url_reaches_the_sdk(recorder: Recorder) -> None:
-    await close(load_logfire(make_host(base_url='logfire.example.com/')))
+@pytest.mark.parametrize('saved', [True, False])
+async def test_variables_key_from_keys_reaches_the_sdk(recorder: Recorder, saved: bool) -> None:
+    """The chosen `/keys` entry is the API key managed variables are read with; a missing one is reported."""
+    if saved:
+        save_key(name='LOGFIRE_API_KEY_TEAM', value='lf-read-variables-key')
+    host = make_host(variables_key={'name': 'LOGFIRE_API_KEY_TEAM'})
+    await close(load_logfire(host))
+    assert recorder.api_keys == ['lf-read-variables-key' if saved else None]
+    output = host.console.file
+    assert isinstance(output, io.StringIO)
+    assert ('managed variables with LOGFIRE_API_KEY_TEAM' in output.getvalue()) == (not saved)
+
+
+async def test_no_variables_key_leaves_the_sdk_default(recorder: Recorder) -> None:
+    await close(load_logfire(make_host()))
+    assert recorder.api_keys == [None]
+
+
+async def test_variables_key_is_kept_apart_from_another_builds_settings(
+    tmp_path: Path, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settings a fleet-control build saved, `api_key` among them, neither block nor replace `variables_key`.
+
+    This build ignores them and writes them back unchanged when it saves, so the key it saves must not share
+    a name with one of them, or the other build's value would be written over it.
+    """
+    loader, store = observability_loader(tmp_path)
+    leftovers: dict[str, JsonValue] = {'api_key': {'name': 'FLEET_KEY'}, 'agent_control': True}
+    store.save_plugin(
+        PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire', settings=leftovers),
+        requires={key: frozenset({'fleet-control'}) for key in leftovers},
+    )
+    scripted = Script(lists=[pick('variables_key'), MenuResult(cancelled=True)], choices=[], texts=[typed('MY_KEY')])
+    monkeypatch.setattr(dialogs, 'RUNNERS', scripted.runners)
+    save_key(name='MY_KEY', value='lf-read-variables-key')
+    try:
+        await loader.load_all()
+        assert await loader.command(['configure', 'observability']) == 'Saved Variables API key.'
+        [declaration] = store.plugins()
+        assert declaration.settings['variables_key'] == {'name': 'MY_KEY'}
+        assert {key: declaration.settings[key] for key in leftovers} == leftovers
+        requirements = store.plugin_requirements('observability')
+        assert isinstance(requirements, dict)
+        assert {key: requirements[key] for key in (*leftovers, 'variables_key')} == {
+            'api_key': ['fleet-control'],
+            'agent_control': ['fleet-control'],
+            'variables_key': ['logfire-variables-key'],
+        }
+        assert recorder.api_keys == [None, 'lf-read-variables-key']
+    finally:
+        await loader.close('exit')
+
+
+@pytest.mark.parametrize('base_url', ['logfire.example.com/', 'https://logfire.example.com/mcp'])
+async def test_self_hosted_base_url_reaches_the_sdk(recorder: Recorder, base_url: str) -> None:
+    await close(load_logfire(make_host(base_url=base_url)))
     assert recorder.options[0]['base_url'] == 'https://logfire.example.com'
 
 
 def test_base_url_must_be_an_https_origin(recorder: Recorder) -> None:
-    with pytest.raises(ValidationError, match='https URL with no path'):
+    with pytest.raises(ValidationError, match='Type a host'):
         load_logfire(make_host(base_url='http://logfire.example.com'))
     assert not recorder.instances
 
@@ -619,7 +922,8 @@ def observability_loader(tmp_path: Path) -> tuple[PluginLoader[None], SettingsSt
     store = SettingsStore(tmp_path / 'config.db')
     loader: PluginLoader[None] = PluginLoader(
         store=store,
-        console=Console(file=io.StringIO()),
+        # A terminal without colours, so the settings menu opens in it.
+        console=Console(file=io.StringIO(), force_terminal=True, color_system=None),
         commands=Commands(),
         session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
         builtin=(next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'observability'),),
@@ -639,34 +943,44 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             pick('user_tag'),
             pick('httpx'),
             pick('ui_events'),
+            pick('variables_key'),
             MenuResult(cancelled=True),
         ],
-        choices=[pick('false'), pick('false'), pick('false'), pick('git-email'), pick('true'), pick('false')],
-        texts=[typed('my-clai')],
+        choices=[pick('false'), pick('true'), pick('true'), pick('git-email'), pick('true'), pick('false')],
+        texts=[typed('my-clai'), typed('LOGFIRE_API_KEY_TEAM')],
     )
-    monkeypatch.setattr(logfire_plugin, 'RUNNERS', scripted.runners)
+    save_key(name='LOGFIRE_API_KEY_TEAM', value='lf-read-variables-key')
+    monkeypatch.setattr(dialogs, 'RUNNERS', scripted.runners)
     loader, store = observability_loader(tmp_path)
     try:
         await loader.load_all()
         assert loader.configurable('observability')
         assert await loader.command(['configure', 'observability']) == (
             'Saved Send to Logfire.\nSaved Service name.\nSaved Message content.\nSaved Binary content.\n'
-            'Saved User tag.\nSaved HTTP requests.\nSaved UI events.'
+            'Saved User tag.\nSaved HTTP requests.\nSaved UI events.\nSaved Variables API key.'
         )
         [declaration] = store.plugins()
         assert declaration.settings == {
             'service_name': 'my-clai',
             'send_to_logfire': False,
-            'include_content': False,
-            'include_binary_content': False,
+            'include_content': True,
+            'include_binary_content': True,
             'user_tag': 'git-email',
             'account': None,
             'token': None,
             'base_url': None,
             'httpx': True,
             'ui_events': False,
+            'variables_key': {'name': 'LOGFIRE_API_KEY_TEAM'},
+        }
+        assert store.plugin_requirements('observability') == {
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+            'httpx': ['logfire-httpx'],
+            'variables_key': ['logfire-variables-key'],
         }
         assert [options['service_name'] for options in recorder.options] == ['pydantic-clai2', 'my-clai']
+        assert recorder.api_keys == [None, 'lf-read-variables-key']
         assert recorder.options[-1]['send_to_logfire'] is False
         assert recorder.exporters[0].closed
     finally:
@@ -677,20 +991,21 @@ async def test_closing_the_menu_unchanged_keeps_the_running_plugin(
     tmp_path: Path, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scripted = Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[])
-    monkeypatch.setattr(logfire_plugin, 'RUNNERS', scripted.runners)
+    monkeypatch.setattr(dialogs, 'RUNNERS', scripted.runners)
     loader, _ = observability_loader(tmp_path)
     try:
         await loader.load_all()
-        assert await loader.configure('observability') == 'Logfire settings unchanged.'
+        assert await loader.configure('observability') == 'Observability (Logfire): nothing changed.'
         assert len(recorder.instances) == 1
     finally:
         await loader.close('exit')
 
 
 def test_menu_validates_resets_and_notes_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    source = LogfireSource(make_host(service_name='custom', include_content=False))
+    source = LogfireSource(make_host(service_name='custom'))
     rows = {row.key: row for row in source.rows()}
     assert source.title == 'Observability (Logfire)'
+    assert rows['include_content'].default == rows['include_binary_content'].default == 'false'
     assert rows[PROJECT].note == 'no LOGFIRE_TOKEN or credentials file'
     assert rows['httpx'].default == 'false'
     assert source.current(rows['httpx']) == 'false'
@@ -710,6 +1025,17 @@ def test_menu_validates_resets_and_notes_credentials(monkeypatch: pytest.MonkeyP
     assert source.reset(rows['service_name']) == 'Reset Service name.'
     assert source.current(rows['service_name']) == 'pydantic-clai2'
     assert source.current(rows['include_content']) == 'false'
+    variables_key = rows['variables_key']
+    assert source.current(variables_key) == 'LOGFIRE_API_KEY, if set'
+    assert variables_key.note == ''
+    assert source.problem(variables_key, 'lf-pasted-secret') is not None
+    assert source.apply(variables_key, 'LOGFIRE_API_KEY_TEAM') == 'Saved Variables API key.'
+    assert source.current(variables_key) == 'LOGFIRE_API_KEY_TEAM'
+    assert {row.key: row.note for row in source.rows()}['variables_key'] == 'missing from /keys'
+    save_key(name='LOGFIRE_API_KEY_TEAM', value='lf-read-variables-key')
+    assert {row.key: row.note for row in source.rows()}['variables_key'] == ''
+    assert source.reset(variables_key) == 'Reset Variables API key.'
+    assert source.current(variables_key) == 'LOGFIRE_API_KEY, if set'
     directory = logfire_dir()
     directory.mkdir(parents=True)
     (directory / CREDENTIALS_FILE).write_text('{}')
@@ -728,9 +1054,50 @@ def test_project_row_names_the_chosen_key_and_resets_to_the_environment() -> Non
     source = LogfireSource(host)
     project = source.rows()[0]
     assert project.note == '', 'a chosen key replaces the environment, so no note about it'
-    assert source.current(project) == 'LOGFIRE_TOKEN_TEAM at https://logfire.example.com'
+    assert source.current(project) == 'LOGFIRE_TOKEN_TEAM at logfire.example.com'
+    eu = LogfireSource(make_host(token={'name': 'LOGFIRE_TOKEN_EU'}, base_url='https://logfire-eu.pydantic.dev'))
+    assert eu.current(eu.rows()[0]) == 'LOGFIRE_TOKEN_EU at Logfire EU'
     hosted = LogfireSource(make_host(token={'name': 'LOGFIRE_TOKEN_US'}))
     assert hosted.current(hosted.rows()[0]) == 'LOGFIRE_TOKEN_US'
     assert source.reset(project) == 'Reset Logfire project.'
     saved = host.settings(logfire_plugin.LogfireSettings)
     assert (saved.token, saved.base_url, saved.account, saved.ui_events) == (None, None, None, True)
+
+
+async def test_one_configuration_serves_every_live_session_with_a_root_each(tmp_path: Path, recorder: Recorder) -> None:
+    """Observability is process-scoped: Logfire is configured once, and each session records under its own root."""
+    store = SettingsStore(tmp_path / 'config.db')
+    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'observability')
+    process = ProcessPlugins[None](store=store, builtin=(builtin,))
+
+    def session(name: str) -> PluginLoader[None]:
+        return PluginLoader(
+            process=process,
+            console=Console(file=io.StringIO()),
+            commands=Commands(),
+            session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+            session_id=lambda: f'conversation-{name}',
+            live_id=name,
+        )
+
+    a, b = session('a'), session('b')
+    await a.load_all()
+    await b.load_all()
+    assert len(recorder.instances) == 1
+    await b.fire(TurnEnd(text='hi', outcome='completed'))
+    await a.fire(TurnEnd(text='hi', outcome='completed'))
+    await a.close('exit')
+    assert not recorder.exporters[0].closed, 'the other session still records'
+    await b.close('exit')
+    assert recorder.exporters[0].closed
+    roots = {
+        root.context.span_id: (root.attributes or {})['agent_session_id']
+        for root in recorder.spans()
+        if root.name == 'CLAI session' and root.context is not None
+    }
+    assert set(roots.values()) == {'conversation-a', 'conversation-b'}
+    turns = [span for span in recorder.spans() if span.name == 'turn {outcome}']
+    assert [roots[span.parent.span_id] for span in turns if span.parent is not None] == [
+        'conversation-b',
+        'conversation-a',
+    ]

@@ -4,9 +4,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
+import httpx2
+
+from pydantic_ai import _model_errors
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.models._decode_errors import map_decode_errors
+from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -31,14 +35,26 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 
     except errors.APIError as e:
         if (status_code := e.code) >= 400:
-            raise ModelHTTPError(
+            status = e.status if isinstance(e.status, str) else None
+            raise ModelHTTPError.for_category(
+                _model_errors.google_status_category(
+                    status,
+                    e.message,
+                    _model_errors.google_error_reason(e.details),  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                )
+                or _model_errors.http_status_category(status_code, e.message),
                 status_code=status_code,
                 model_name=model_name,
                 body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
                 headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                provider_error_code=status,
             ) from e
 
         raise
+    except httpx2.TransportError as e:
+        # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
+        timeout = isinstance(e, httpx2.TimeoutException)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
 LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview', 'gemini-embedding-2']
@@ -330,10 +346,12 @@ def _map_usage(
     Google Cloud (formerly known as Vertex AI) returns token_count in embedding statistics.
     """
     total_tokens = 0
+    usage_reported = provider != 'google'
     if response.embeddings:  # pragma: no branch
         for emb in response.embeddings:
-            if emb.statistics and emb.statistics.token_count:
+            if emb.statistics and emb.statistics.token_count is not None:
                 # Requires Vertex AI.
                 total_tokens += int(emb.statistics.token_count)  # pragma: lax no cover
+                usage_reported = True
 
-    return RequestUsage(input_tokens=total_tokens)
+    return RequestUsage(input_tokens=total_tokens, unmeasured_requests=int(not usage_reported))

@@ -23,6 +23,8 @@ Editors like [Zed](https://zed.dev/docs/ai/external-agents) speak ACP: a stdio J
     warnings.filterwarnings('ignore', category=HarnessExperimentalWarning)
     ```
 
+![An editor such as Zed launches the agent script as a subprocess and talks to it over stdio with ACP JSON-RPC messages. session/new carries the workspace directory, and session_config roots the FileSystem and Shell tools there. session/prompt starts an agent run, and session/update streams its text and tool calls back so the editor shows them as messages and diffs. A tool that requires approval sends session/request_permission and waits as pending until the user allows or rejects it.](../img/harness/acp.svg)
+
 ## The problem
 
 To plug a Pydantic AI agent into an ACP editor you would otherwise have to implement the ACP server side by hand -- chunking streamed text under the wire limit, rendering tool calls as diffs, mapping the protocol's permission requests onto the agent's tools, and managing per-workspace sessions.
@@ -58,7 +60,7 @@ from pydantic_ai_harness.experimental.acp import run_acp_stdio_sync
 
 
 def build_agent() -> Agent[None, str]:
-    return Agent('anthropic:claude-sonnet-5', instructions='You are a coding assistant.')
+    return Agent('{{ anthropic:medium }}', instructions='You are a coding assistant.')
 
 
 if __name__ == '__main__':
@@ -99,7 +101,7 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.experimental.acp import AcpSession, AcpSessionConfig, run_acp_stdio_sync
 
-agent = Agent('anthropic:claude-sonnet-5')
+agent = Agent('{{ anthropic:medium }}')
 
 
 def session_config(session: AcpSession) -> AcpSessionConfig[None]:
@@ -159,7 +161,7 @@ By default the adapter recognizes the harness `FileSystem` and `Shell` tool call
 
 ## MCP servers
 
-An ACP client may offer MCP servers during session setup. This adapter does not connect them itself; a `session_config` is the place to turn `session.mcp_servers` into Pydantic AI toolsets (for example with `pydantic_ai.mcp.MCPServerStdio`). If a client sends MCP servers and no `session_config` is installed to consume them, the session request is rejected rather than silently ignoring them. A spec-following client only sends HTTP/SSE MCP servers when the agent advertises support during `initialize`; when your `session_config` connects them, say so:
+An ACP client may offer MCP servers during session setup. This adapter does not connect them itself; a `session_config` is the place to turn `session.mcp_servers` into Pydantic AI toolsets (for example with `pydantic_ai.mcp.MCPToolset`). If a client sends MCP servers and no `session_config` is installed to consume them, the session request is rejected rather than silently ignoring them. A spec-following client only sends HTTP/SSE MCP servers when the agent advertises support during `initialize`; when your `session_config` connects them, say so:
 
 ```python
 from acp import schema
@@ -199,7 +201,7 @@ run_acp_stdio_sync(agent, session_store=InMemorySessionStore())
 Pass `models` to advertise a stable ACP session config option named `model` (using Pydantic AI [model names](../models/overview.md)). The first is each session's default. A selection is applied as a per-run override -- the shared agent is never mutated -- and is persisted with the session when a `session_store` is set.
 
 ```python
-run_acp_stdio_sync(agent, models=['anthropic:claude-sonnet-5', 'anthropic:claude-opus-4-8', 'openai:gpt-4o'])
+run_acp_stdio_sync(agent, models=['{{ anthropic:medium }}', '{{ anthropic:large }}', '{{ openai:medium }}'])
 ```
 
 A model id is any string a Pydantic AI model accepts, so newer models not yet in `KnownModelName` work too. Pass `models='all'` to offer every model Pydantic AI knows. To advertise ids `infer_model` does not understand (OAuth or subscription models), pass `model_resolver` to map the selected id to a prebuilt `Model`.
@@ -207,7 +209,7 @@ A model id is any string a Pydantic AI model accepts, so newer models not yet in
 ## Cancellation and limitations
 
 - **Cancellation.** `session/cancel` and `session/close` cancel the in-flight turn; close waits for it to unwind before returning. Cooperative async tools stop promptly. A synchronous tool already running in a worker thread cannot be force-stopped, so prefer async tools for cancellation-sensitive work.
-- **Usage limits.** ACP turns have no request limit by default. Pass `usage_limits=UsageLimits(...)` to bound model requests, tokens, tool calls, or cost. Reaching a configured limit ends the turn with `max_tokens` or `max_turn_requests`. The messages exchanged before the limit are committed, so the next turn sees which tools already ran, except tool calls the limit stopped before they ran. The response for that turn reports the usage of every model response received before the limit.
+- **Usage limits.** ACP turns have no request limit by default. Pass `usage_limits=UsageLimits(...)` to bound model requests, tokens, tool calls, or cost. Reaching a configured limit ends the turn with `max_tokens` for a token limit, or `max_turn_requests` for a request, tool-call, or cost limit. The messages exchanged before the limit are committed, so the next turn sees which tools already ran, except tool calls the limit stopped before they ran. The response for that turn reports the usage of every model response received before the limit.
 - **Approval detection.** Tools that require approval are recognized when they live in a `FunctionToolset` (which the harness `FileSystem`/`Shell` and `@agent.tool` all use). A tool whose approval requirement is decided dynamically per call (by raising `ApprovalRequired` from its body) starts as `in_progress`, and any side effects it ran before raising have already happened -- use an `ApprovalRequiredToolset` for actions that must not partially execute before approval. A tool added only per run (via a capability's `for_run()`, or the callable arm of an `AgentToolset`) is not recognized up front, but the run reports exactly which calls paused for approval, and the adapter corrects their announced status to `pending` before asking the client.
 - **Overwrite diffs.** `write_file` renders an overwrite as if creating a new file, so the diff understates what it replaced.
 - **Live terminal panes.** `acp_terminal` returns a command's captured output; it does not embed a live terminal pane in the tool call.
