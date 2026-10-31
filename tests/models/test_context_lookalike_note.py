@@ -315,7 +315,7 @@ async def test_gpt_6_luna_keeps_its_instructions_when_a_fetched_page_has_a_conte
         [
             {
                 'type': 'function_call_output',
-                'call_id': 'call_1Tg6xH2HuOTmToZ10f3XCRRb',
+                'call_id': 'call_QfftV1TLCNXaO4De2gAqdank',
                 'output': """\
 Acme Help Center - Factory reset
 1. Press and hold the RESET button on the back for 10 seconds.
