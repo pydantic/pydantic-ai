@@ -55,11 +55,12 @@ def directories_up_to(directory: Path, top: Path | None) -> list[Path]:
     return list(reversed(chain))
 
 
-async def _real_file(workspace: Workspace, path: Path) -> Path | None:
-    """The file `path` names, after symlinks, when it is a regular file in `path`'s own directory, else `None`.
+async def _real_file(workspace: Workspace, path: Path, filenames: Sequence[str]) -> Path | None:
+    """The file `path` names, after symlinks, when it is an instruction file in `path`'s own directory, else `None`.
 
     A link such as `CLAUDE.md -> AGENTS.md` returns `AGENTS.md` in the same directory, so the file is
-    labeled and deduplicated by the name it is kept under.
+    labeled and deduplicated by the name it is kept under. The target must itself be named in `filenames`:
+    a repository's `AGENTS.md -> .env` would otherwise send a file the file tools may deny to the model.
     """
     text = str(path)
     try:
@@ -71,7 +72,7 @@ async def _real_file(workspace: Workspace, path: Path) -> Path | None:
     real = Path(await workspace.realpath(text))
     # Autoloaded instructions belong to the directory being scanned, not a
     # symlink target in another directory (even another ancestor in the walk).
-    if real.parent != Path(await workspace.realpath(str(path.parent))):
+    if real.parent != Path(await workspace.realpath(str(path.parent))) or real.name not in filenames:
         return None
     return path.parent / real.name
 
@@ -97,7 +98,7 @@ async def discover_instruction_files(
     found: list[ContextFile] = []
     for directory in directories_up_to(workspace_dir, home_dir):
         for filename in filenames:
-            candidate = await _real_file(workspace, directory / filename)
+            candidate = await _real_file(workspace, directory / filename, filenames)
             if candidate is None or candidate in seen_paths:
                 continue
             content = (await workspace.read_bytes(str(candidate))).decode('utf-8', errors='replace')
@@ -113,7 +114,7 @@ async def discover_instruction_files(
 async def dir_context_file_path(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> Path | None:
     """Return the path of the first existing instruction file in `directory`, without reading it."""
     for filename in filenames:
-        candidate = await _real_file(workspace, directory / filename)
+        candidate = await _real_file(workspace, directory / filename, filenames)
         if candidate is not None:
             return candidate
     return None

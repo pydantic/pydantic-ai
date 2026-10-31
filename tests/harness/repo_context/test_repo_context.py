@@ -105,6 +105,15 @@ class TestDiscoverInstructionFiles:
         assert await discover_instruction_files(workspace, directory, None, ('AGENTS.md',)) == []
         assert await find_dir_context_file(workspace, directory, ('AGENTS.md',)) is None
 
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_does_not_load_a_link_to_a_file_that_is_not_an_instruction_file(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        _write(tmp_path / '.env', 'SECRET=1')
+        (tmp_path / 'AGENTS.md').symlink_to('.env')
+        assert await discover_instruction_files(workspace, tmp_path, None, ('AGENTS.md', 'CLAUDE.md')) == []
+        assert await find_dir_context_file(workspace, tmp_path, ('AGENTS.md', 'CLAUDE.md')) is None
+
     async def test_walk_up_ancestor_first(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'root')
         workspace_dir = tmp_path / 'a' / 'b'
@@ -651,6 +660,28 @@ class TestNestedTraversal:
                 '<context-file path="packages/foo/AGENTS.md">\nFOO BODY\n</context-file>',
             ]
         )
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_a_nested_link_to_a_denied_file_is_not_surfaced(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'pkg' / '.env', 'SECRET=1')
+        _write(tmp_path / 'pkg' / 'public.py', 'x = 1')
+        (tmp_path / 'pkg' / 'AGENTS.md').symlink_to('.env')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"pkg/public.py"}', tool_call_id='x')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path, denied_patterns=['**/.env*']),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == []
+        assert 'SECRET' not in str(result.all_messages())
 
     @pytest.mark.parametrize(
         'via',
