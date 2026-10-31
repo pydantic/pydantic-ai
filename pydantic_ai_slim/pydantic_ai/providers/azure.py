@@ -152,6 +152,16 @@ class AzureProvider(_OpenAISDKProvider):
             # single honest boundary to record. Users pass `retention=` to `prompt_cache_outlook`.
             # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/prompt-caching
             base = openai_model_profile(model_name)
+            # Azure OpenAI serves the Responses API's `/responses/compact` endpoint for OpenAI models, like OpenAI.
+            # https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/responses
+            base = merge_profile(
+                base,
+                ModelProfile(
+                    supports_compaction_on_demand=True,
+                    compaction_instructions='system_prompt',
+                    compaction_result_readable=False,
+                ),
+            )
 
         # Azure Chat Completions API doesn't support document input.
         base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))

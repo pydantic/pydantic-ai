@@ -81,7 +81,12 @@ from .._cancel import (
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
+from .._run_context import (
+    RealtimeEventBuffer,
+    RequestedCompaction,
+    dispatch_event_stream,
+    set_current_run_context,
+)
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -164,6 +169,7 @@ from .abstract import (
     AgentRealtime,
     AgentRetries,
     AgentRunEvents,
+    CompactionOptions,
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
@@ -195,6 +201,7 @@ __all__ = (
     'AgentModelSettings',
     'AgentRealtime',
     'AgentRetries',
+    'CompactionOptions',
     'AgentRun',
     'AgentRunEvents',
     'AgentRunResult',
@@ -1435,6 +1442,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1463,6 +1471,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1491,6 +1500,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1594,6 +1604,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1626,6 +1637,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             capabilities=capabilities,
             workspace=workspace,
+            compact=compact,
             spec=spec,
         )
         async with prepared.open() as agent_run:
@@ -1653,6 +1665,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> _PreparedAgentRun[AgentDepsT, Any]:
         # Consume the pending `AgentRunEvents` binding before ANY user-supplied code (capability /
@@ -1800,6 +1813,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 default=bootstrap_capability.get_default_conversation_id(resolved_run_id),
             ),
         )
+        if compact is not False:
+            options: CompactionOptions = {} if compact is True else compact
+            # Served by the run's first model request attempt, like `RunContext.request_compaction` from a
+            # `before_run` hook.
+            state.compaction_requests.request(
+                RequestedCompaction(reason=options.get('reason', 'manual'), focus=options.get('focus'))
+            )
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
         # capability supplies a replay-safe clock and start time, so a replayed or recovered run keeps

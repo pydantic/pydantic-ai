@@ -1241,12 +1241,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         Raises:
             UserError: If the model doesn't support on-demand compaction, according to its
-                [`anthropic_supports_on_demand_compaction`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_on_demand_compaction]
+                [`supports_compaction_on_demand`][pydantic_ai.profiles.ModelProfile.supports_compaction_on_demand]
                 profile flag.
             UnexpectedModelBehavior: If Anthropic returns no summary, for example when `max_tokens` cuts it off.
         """
         check_allow_model_requests()
-        if not self.profile.get('anthropic_supports_on_demand_compaction', False):
+        if not self.profile.get('supports_compaction_on_demand', False):
             raise UserError(
                 f'{self.model_name!r} does not support on-demand compaction. '
                 'See https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand for the supported models.'

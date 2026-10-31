@@ -26,6 +26,9 @@ def openai_codex_model_profile(model_name: str) -> ModelProfile:
             openai_responses_requires_store_false=True,
             openai_supports_input_token_counting=False,
             openai_supports_batch_api=False,
+            # Only `POST /v1/responses` is served, and it requires streaming and `store=false`: there's no
+            # `/responses/compact` for `NativeCompaction` to call.
+            supports_compaction_on_demand=False,
             # The backend rejects `prompt_cache_options` and `prompt_cache_breakpoint` with a 400 on every
             # model it serves, and caches prompts implicitly instead, so the unified `cache` setting has
             # nothing to turn on.

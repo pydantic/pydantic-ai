@@ -65,10 +65,11 @@ def test_legacy_keys_reach_resolution_through_model_profile_argument():
         ('openai_supports_forced_tool_choice_with_thinking', 'supports_forced_tool_choice_with_thinking'),
         ('openrouter_supports_forced_tool_choice_with_thinking', 'supports_forced_tool_choice_with_thinking'),
         ('openai_reasoning_enabled_by_default', 'thinking_enabled_by_default'),
+        ('anthropic_supports_on_demand_compaction', 'supports_compaction_on_demand'),
     ],
 )
 def test_legacy_provider_keys_translate_to_model_profile_keys(legacy_key: str, key: str):
-    """Provider-prefixed tool-forcing and thinking keys moved to `ModelProfile`, so every model family shares them."""
+    """Provider-prefixed tool-forcing, thinking and compaction keys moved to `ModelProfile`, so every model family shares them."""
     with pytest.warns(PydanticAIDeprecationWarning, match=f'`{legacy_key}` is deprecated, use `{key}` instead'):
         assert merge_profile(ModelProfile(), {legacy_key: False}) == {key: False}  # pyright: ignore[reportArgumentType]
     with pytest.warns(PydanticAIDeprecationWarning):

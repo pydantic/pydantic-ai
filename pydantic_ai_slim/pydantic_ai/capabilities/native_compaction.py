@@ -1,0 +1,77 @@
+"""The [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction] capability."""
+
+from __future__ import annotations
+
+from dataclasses import KW_ONLY, dataclass
+from typing import Any
+
+from pydantic_ai.tools import RunContext
+
+from ._native_compaction import compact_with_model
+from .abstract import AbstractCapability
+from .compaction import CompactionRequest, CompactionResult
+
+__all__ = ('NativeCompaction',)
+
+
+@dataclass
+class NativeCompaction(AbstractCapability[Any]):
+    """Compacts the message history with the compaction API of the model that serves the request, when it has one.
+
+    When compaction is requested, for example with
+    [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction] or `compact=` on a run
+    method, it calls
+    [`compact_messages`][pydantic_ai.models.Model.compact_messages] on the
+    [model the request is for][pydantic_ai.capabilities.CompactionRequest.model], if its profile has
+    [`supports_compaction_on_demand`][pydantic_ai.profiles.ModelProfile.supports_compaction_on_demand]: the OpenAI
+    Responses API on OpenAI and Azure OpenAI, and Anthropic's Claude models that compact on demand. Otherwise it returns
+    `None`, so the next capability with a
+    [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook compacts instead.
+
+    The compaction request is sent with the conversation's own settings, tools and instructions, so it reads the
+    prompt cache the conversation's last request wrote. It summarizes everything before the turn being answered:
+    the request, and the response whose tool calls it answers. The compacted history is the provider's
+    [`CompactionPart`][pydantic_ai.messages.CompactionPart], in the `ModelResponse` it arrived in, followed by
+    that turn.
+
+    ```python
+    from pydantic_ai import Agent
+    from pydantic_ai.capabilities import NativeCompaction
+
+    agent = Agent('anthropic:claude-sonnet-5', capabilities=[NativeCompaction()])
+    ```
+    """
+
+    _: KW_ONLY
+
+    focus_as_system_prompt: bool = False
+    """Whether to compact a request with a [`focus`][pydantic_ai.capabilities.CompactionRequest.focus] on a model whose compaction takes instructions as its system prompt.
+
+    On a model whose [`compaction_instructions`][pydantic_ai.profiles.ModelProfile.compaction_instructions] are
+    `'replaces_prompt'`, like Anthropic's, the focus is sent as the compaction's instructions, which the model
+    wraps in a full summarization prompt. On one whose are `'system_prompt'`, like OpenAI's, the instructions
+    replace the agent's for the compaction request, so it no longer reads the prompt cache the conversation
+    wrote. By default, a focused request is left to the next capability that compacts, which can keep the cache.
+    With `True`, the focus is sent as the compaction request's system prompt instead.
+
+    A model whose compaction takes no instructions always leaves a focused request to the next capability.
+    """
+
+    id: str | None = 'native_compaction'
+    """One-off: an agent compacts natively one way, so the id is fixed by default.
+
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine], which keeps
+    the later `focus_as_system_prompt`. Pass a distinct `id` to keep both, or `id=None` for derived ids.
+    """
+
+    async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+        try:
+            profile = request.model.profile
+        except NotImplementedError:
+            # A `FallbackModel` has no profile of its own: which of its models would compact isn't known.
+            return None
+        if not profile.get('supports_compaction_on_demand', False):
+            return None
+        return await compact_with_model(
+            request, profile.get('compaction_instructions'), focus_as_system_prompt=self.focus_as_system_prompt
+        )

@@ -257,7 +257,9 @@ def test_anthropic_claude_sonnet_4_6():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'replaces_prompt',
+            'compaction_result_readable': True,
             'supports_auto_cache': True,
         }
     )
@@ -299,7 +301,9 @@ def test_anthropic_claude_opus_4_7():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'replaces_prompt',
+            'compaction_result_readable': True,
             'supports_auto_cache': True,
         }
     )
@@ -331,7 +335,7 @@ def test_anthropic_claude_haiku_4_5():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': False,
+            'supports_compaction_on_demand': False,
             'supports_auto_cache': True,
         }
     )
@@ -362,7 +366,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': False,
+            'supports_compaction_on_demand': False,
             'supports_auto_cache': True,
         }
     )
@@ -395,6 +399,9 @@ def test_openai_gpt_5_4():
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
         }
     )
 
@@ -452,6 +459,9 @@ def test_openai_gpt_5_6():
             'openai_responses_supports_prompt_cache_diagnostics': True,
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
         }
     )
 
@@ -499,6 +509,9 @@ def test_openai_gpt_6_astra():
             'openai_chat_supports_allowed_tools': True,
             'supports_mid_conversation_effort': True,
             'openai_supports_batch_api': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
         }
     )
 
@@ -650,6 +663,9 @@ def test_openai_gpt_4o():
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
         }
     )
 
@@ -682,6 +698,9 @@ def test_openai_o3_mini():
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
         }
     )
 
@@ -720,6 +739,9 @@ def test_openai_codex_gpt_5_6():
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': False,
+            'supports_compaction_on_demand': False,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
@@ -1885,6 +1907,9 @@ def test_azure_openai_gpt_5():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
             'openai_chat_supports_document_input': False,
         }
     )
@@ -2412,7 +2437,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': False,
+            'supports_compaction_on_demand': False,
             'supports_auto_cache': True,
         }
     )

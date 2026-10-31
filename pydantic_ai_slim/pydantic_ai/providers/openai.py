@@ -156,6 +156,14 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
                 # Azure OpenAI client.
                 openai_supports_batch_api=True,
+                # The Responses API's `/responses/compact` endpoint, set here rather than in `openai_model_profile`
+                # because OpenAI-compatible Responses endpoints don't all serve it: OpenRouter answers it with a 404.
+                # `OpenAIChatModel` turns it off, as Chat Completions has no such endpoint. Its `instructions` are the
+                # system prompt of the compaction request, and the item it returns is encrypted.
+                # https://developers.openai.com/api/docs/guides/compaction
+                supports_compaction_on_demand=True,
+                compaction_instructions='system_prompt',
+                compaction_result_readable=False,
             ),
         )
 

@@ -1,0 +1,348 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "248"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-nano
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: My name is Bob and my favorite color is teal.
+        instructions: Answer in one short sentence.
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "2001"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_05029eab110e14db006ae1296b5a5087d1a7953001e6048e64
+        object: response
+        created_at: 1793141099
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793141101
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: Answer in one short sentence.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-nano-2026-03-17
+        moderation: null
+        output:
+        - id: msg_05029eab110e14db006ae1296cd90487d183228f0ceea7f339
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: Nice to meet you, Bob--teal is a great choice.
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 27
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 18
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 45
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-27T22:45:01.368209+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2908"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-nano
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - id: cmp_05029eab110e14db016ae1296e512087d194f95c2f5e5dbf93
+          encrypted_content: >-
+            gAAAAABq4SluwecsSqkZbyXydZYUoC-wrb0hlTsUVvgNCuUHRu80cX8KeNnzLb0bMMsNffKhKcFlS_u0TK-e75G8WakYCl9lNilCUOsPo2FSH_Su0D04sB4LS_-ovdjWl3yfashvNAoB-LiDJhwalSouNDBOpKpV9zNv_QYyNaed9fMUQV52jx5OEy9mv1dRF9A-YZEc3PZlAueQYqyDnddj1DG1XDEvBzNPqjkjFWPiDlbMHfM2pjYwDtK18o5zF69obVDiZv6lYn3Dxsxq_6Y4HZN9hK-p0gmZgtbHD1uA2O-jy8HgQIhdpQZdCBta7JSo9sc6UNQ7evDRmA7DnvEP_joAy3KSNtsXWjd_UlUrFNT2wwHkiBvMpUO9Yj9IEQu6G171yBju1o7ZfC9iYjq18Y9ngRfTK7oJ-aJ1TcoKJqhsB1-BUiwCcMZgSWtRWyWrhVC-YBbZvkmRxCBgpG6p0uAiF9O-6jiI-sKJAUXW0FXuIhZ5t1xmf2Ye5M18iCB3oi11FMojntV1JE56JPGE-eRESFHOjCwWUVbdAxOXLKhXC7zQvSDUPMN_fQtCOcmN3XDKpoa0v9olIWZOHPwdzf0Hoc2Ge1Yo3IdYfKz3l2bO2d-MYny2UHAomWs7G46mZzjMoOtv2qVxYZ0mPmV3gGf5SYvgaPcwWDzmeUMzVPTkEj2jDOHTsp9ygjJxonSySF7uYL0dV9vLu97FC3BSg4M4xhvqqOEfR113H-be-LH5LadueGXUHoFcpQ6IegkZPZjgV_DsT6iiPQWwJhF34xGRjlY_NyVjxsswrDegGXVPiycYjBm6xvhYhK21a20ea4c5ER2H1PDVe9224mbb3ome84svl472lggeWkGtEZBDWyncJR-zgHy724XuzVrK2gLm1QG0JQ0d9FgKpHyGfWO6o2M8txPl43wasNzAwpGSc6-NLcWQK0bYEsqUzGunFFPHC5SXMxqUgykNlh83JLN0wpNjpp36vGu7ZuWioB7jzZRD9IEdrl4w284vqwaEIrvIbqf3Ur4ct93zgbPTZTmFBCcURe437T02uN4P0l9CJLVX_JPE7b0_vLKxXgo64ZdGDTvukUDieVxFHykrOleGoS-6SQHmDC7r4tYaJCC05iwlJwkiL1GEHUY4JTTSuu1oRH4nChPbHVrV1vo7klVEMQd820QOoo56xH5unhh853veV7LdbwlVkUXZjrxZShy36cfNHhlTBxlq904HV_VdkA8a36Y0OETiYMrG27bwq1PxdESEZWWElEQVy-YMPMgX3zTrSMHQuHfVNbDzH3iiRyIh8I9LgF76yODnvT4akU48XfdvX86rbQqgcqd4ZdjpvyVSxP1yD6WD6VEHupNRxruJmNiXWh6gF1u3AEcxxRA1ojjWEiIuaQgGkxoUPbPv00i_p_Sdp_PDF-IEpqDHriHHtToHTHXTaN5oh3tQuqz1eoOxyiXQrN4_cDR2jSWq37_SjmTPpORqcbOXf6ID2Ll5gvZ8o5EKgsRoWAwWDiUsM2XEDPboFJUmX4Wgm0dATIWuNOK_qhwjIuXJt0P-iDlqf3wu0nOL08F3gldG4S1V7JQ9eJOgpwYPIhG0cY_Kb56ElUcgXiJDGEvuIfRPx4UUn7FUUmgcEXF35iHj70uI6EeAOju7yRiIkLN1bPvww6WaGRcZirHdbIa6jUWOsUMqIljN4fghseWZInS3URc_GJHkblOdKSkstxNwGPcJgpIRp8GqF34lD7tgnnQ96Ce5qqM1PXOJ7YP4OEqUaZsV94k2fwCzgbBOb1nAUlGKD-pD7Jw0hL1VYflDMkOpOH7nuJ5Pkko39yd4xwCX4Ike71_Agpc5zAASKZI8DJ-1aJ_N72A4R8AEL9hsd3tiyK5Wo4xiNLPBZiWEQj5kSkFqLeu0gwVOoDfD9FhVqkVHoVEyZihhPaDDWkhFOfHv6PK6dpyXMe5NRRGhpCGtA2MQr9W0bOwSb7Q1mepTOh8qjaGTgjzHjYyFiNYDechsXncpOIrG2H8WwijNbDNDxbyhWK0jkJLW8UeHS9jaoAQZR8QXfAmjjIcHpvn7-VDBjLgyzOk5ZD9XknBxRYRI87JvsmfUevgLP_fNEZEdOzqZ--i6jNy_D1iyHzjLqbISfbvctwkSnfZYYFmf3Op7Jto_5QLwHYg0SB1qR0ADLAuE6QKY7P8IIRGgOA8Yp-lu0ogNk8QLh-2EDojEQNe8CpwhYoKtajftJcO8lST5ww0NGs6vvG6rwWqclQUv__ESGzx5ubhuZBRkBqu7CXVCeLsTnb6t0fONDgVk6BwLTynxER7b0qNixotzhd3EuikreXyuaT1UIx2kA6ugz7bH22DeLQ7TCuj_Lszf7sA2QT9ld5wLi-UjPb7_Zw0zlaKpCl45XGPOWZAoyUBd5yJe8x2fXcCZaWjnL74Lvd0JdJFTZ9Qq_fJd3UiRiqVpLXtzrh4ab1Ih8hA-piV_ddUg-sDCxXXJT0k3tKz4s06IC_QcviCWWJoddjFSZFX6e_ZTtcdcQqvOi0zqrPb82ffZ4t0YkpBrg8kss0vNiDilXT4JyH2j
+          type: compaction
+        - role: user
+          content: What is my favorite color?
+        instructions: Answer in one short sentence.
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1526"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_05029eab110e14db006ae1296ed29487d1868b4dfc3a5ad881
+        object: response
+        created_at: 1793141102
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793141104
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: Answer in one short sentence.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-nano-2026-03-17
+        moderation: null
+        output:
+        - id: msg_05029eab110e14db006ae1296fabf887d1b783ce69539e6bbe
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: Your favorite color is teal.
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 153
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 10
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 163
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-27T22:45:04.366584+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses/compact
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "408"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-nano
+        input:
+        - role: user
+          content: My name is Bob and my favorite color is teal.
+        - role: assistant
+          id: msg_05029eab110e14db006ae1296cd90487d183228f0ceea7f339
+          content:
+          - text: Nice to meet you, Bob--teal is a great choice.
+            type: output_text
+            annotations: []
+          type: message
+          status: completed
+          phase: final_answer
+        instructions: Answer in one short sentence.
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1148"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_05029eab110e14db016ae1296d88a087d1a6462146cb482cbf
+        object: response.compaction
+        created_at: 1793141102
+        output:
+        - id: msg_05029eab110e14db016ae1296da66c87d181e8cc01573cd957
+          type: message
+          status: completed
+          content:
+          - type: input_text
+            text: My name is Bob and my favorite color is teal.
+          role: user
+        - id: cmp_05029eab110e14db016ae1296e512087d194f95c2f5e5dbf93
+          type: compaction
+          encrypted_content: >-
+            gAAAAABq4SluwecsSqkZbyXydZYUoC-wrb0hlTsUVvgNCuUHRu80cX8KeNnzLb0bMMsNffKhKcFlS_u0TK-e75G8WakYCl9lNilCUOsPo2FSH_Su0D04sB4LS_-ovdjWl3yfashvNAoB-LiDJhwalSouNDBOpKpV9zNv_QYyNaed9fMUQV52jx5OEy9mv1dRF9A-YZEc3PZlAueQYqyDnddj1DG1XDEvBzNPqjkjFWPiDlbMHfM2pjYwDtK18o5zF69obVDiZv6lYn3Dxsxq_6Y4HZN9hK-p0gmZgtbHD1uA2O-jy8HgQIhdpQZdCBta7JSo9sc6UNQ7evDRmA7DnvEP_joAy3KSNtsXWjd_UlUrFNT2wwHkiBvMpUO9Yj9IEQu6G171yBju1o7ZfC9iYjq18Y9ngRfTK7oJ-aJ1TcoKJqhsB1-BUiwCcMZgSWtRWyWrhVC-YBbZvkmRxCBgpG6p0uAiF9O-6jiI-sKJAUXW0FXuIhZ5t1xmf2Ye5M18iCB3oi11FMojntV1JE56JPGE-eRESFHOjCwWUVbdAxOXLKhXC7zQvSDUPMN_fQtCOcmN3XDKpoa0v9olIWZOHPwdzf0Hoc2Ge1Yo3IdYfKz3l2bO2d-MYny2UHAomWs7G46mZzjMoOtv2qVxYZ0mPmV3gGf5SYvgaPcwWDzmeUMzVPTkEj2jDOHTsp9ygjJxonSySF7uYL0dV9vLu97FC3BSg4M4xhvqqOEfR113H-be-LH5LadueGXUHoFcpQ6IegkZPZjgV_DsT6iiPQWwJhF34xGRjlY_NyVjxsswrDegGXVPiycYjBm6xvhYhK21a20ea4c5ER2H1PDVe9224mbb3ome84svl472lggeWkGtEZBDWyncJR-zgHy724XuzVrK2gLm1QG0JQ0d9FgKpHyGfWO6o2M8txPl43wasNzAwpGSc6-NLcWQK0bYEsqUzGunFFPHC5SXMxqUgykNlh83JLN0wpNjpp36vGu7ZuWioB7jzZRD9IEdrl4w284vqwaEIrvIbqf3Ur4ct93zgbPTZTmFBCcURe437T02uN4P0l9CJLVX_JPE7b0_vLKxXgo64ZdGDTvukUDieVxFHykrOleGoS-6SQHmDC7r4tYaJCC05iwlJwkiL1GEHUY4JTTSuu1oRH4nChPbHVrV1vo7klVEMQd820QOoo56xH5unhh853veV7LdbwlVkUXZjrxZShy36cfNHhlTBxlq904HV_VdkA8a36Y0OETiYMrG27bwq1PxdESEZWWElEQVy-YMPMgX3zTrSMHQuHfVNbDzH3iiRyIh8I9LgF76yODnvT4akU48XfdvX86rbQqgcqd4ZdjpvyVSxP1yD6WD6VEHupNRxruJmNiXWh6gF1u3AEcxxRA1ojjWEiIuaQgGkxoUPbPv00i_p_Sdp_PDF-IEpqDHriHHtToHTHXTaN5oh3tQuqz1eoOxyiXQrN4_cDR2jSWq37_SjmTPpORqcbOXf6ID2Ll5gvZ8o5EKgsRoWAwWDiUsM2XEDPboFJUmX4Wgm0dATIWuNOK_qhwjIuXJt0P-iDlqf3wu0nOL08F3gldG4S1V7JQ9eJOgpwYPIhG0cY_Kb56ElUcgXiJDGEvuIfRPx4UUn7FUUmgcEXF35iHj70uI6EeAOju7yRiIkLN1bPvww6WaGRcZirHdbIa6jUWOsUMqIljN4fghseWZInS3URc_GJHkblOdKSkstxNwGPcJgpIRp8GqF34lD7tgnnQ96Ce5qqM1PXOJ7YP4OEqUaZsV94k2fwCzgbBOb1nAUlGKD-pD7Jw0hL1VYflDMkOpOH7nuJ5Pkko39yd4xwCX4Ike71_Agpc5zAASKZI8DJ-1aJ_N72A4R8AEL9hsd3tiyK5Wo4xiNLPBZiWEQj5kSkFqLeu0gwVOoDfD9FhVqkVHoVEyZihhPaDDWkhFOfHv6PK6dpyXMe5NRRGhpCGtA2MQr9W0bOwSb7Q1mepTOh8qjaGTgjzHjYyFiNYDechsXncpOIrG2H8WwijNbDNDxbyhWK0jkJLW8UeHS9jaoAQZR8QXfAmjjIcHpvn7-VDBjLgyzOk5ZD9XknBxRYRI87JvsmfUevgLP_fNEZEdOzqZ--i6jNy_D1iyHzjLqbISfbvctwkSnfZYYFmf3Op7Jto_5QLwHYg0SB1qR0ADLAuE6QKY7P8IIRGgOA8Yp-lu0ogNk8QLh-2EDojEQNe8CpwhYoKtajftJcO8lST5ww0NGs6vvG6rwWqclQUv__ESGzx5ubhuZBRkBqu7CXVCeLsTnb6t0fONDgVk6BwLTynxER7b0qNixotzhd3EuikreXyuaT1UIx2kA6ugz7bH22DeLQ7TCuj_Lszf7sA2QT9ld5wLi-UjPb7_Zw0zlaKpCl45XGPOWZAoyUBd5yJe8x2fXcCZaWjnL74Lvd0JdJFTZ9Qq_fJd3UiRiqVpLXtzrh4ab1Ih8hA-piV_ddUg-sDCxXXJT0k3tKz4s06IC_QcviCWWJoddjFSZFX6e_ZTtcdcQqvOi0zqrPb82ffZ4t0YkpBrg8kss0vNiDilXT4JyH2j
+        usage:
+          input_tokens: 140
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 54
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 194
+  recorded_at: 2026-10-27T22:45:02.695200+00:00

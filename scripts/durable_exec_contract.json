@@ -2047,6 +2047,21 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>"
       ]
     },
+    "CompactionOptions": {
+      "engines": [
+        "dbos",
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "annotation_only"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>"
+      ]
+    },
     "EventStreamHandler": {
       "engines": [
         "absurd",
@@ -5234,6 +5249,21 @@
       ]
     }
   },
+  "pydantic_ai_slim/pydantic_ai/models/_unwrap.py": {
+    "unwrap_model": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "annotation_only",
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>"
+      ]
+    }
+  },
   "pydantic_ai_slim/pydantic_ai/models/instrumented.py": {
     "InstrumentationSettings": {
       "engines": [
@@ -5593,7 +5623,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::reject_serving_wrapper",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::unwrap_model",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.cancel_suspended_response",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.request",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.request_stream",
