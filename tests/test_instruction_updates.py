@@ -14,7 +14,7 @@ from _pytest.mark.structures import ParameterSet
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._instructions import recorded_prefix
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError, UserError
@@ -1385,10 +1385,10 @@ async def test_instruction_updates_downgraded_empty_block_is_not_sent(case: str,
         with pytest.warns(UserWarning, match='rewriting its prefix instead'):
             # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
             await agent.run('Continue.', model_settings={'max_tokens': 1024})
-    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the standing prompt also says what `<system>` means.
+    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions end with what `<system>` means.
     assert bodies[0]['system'] == [
-        {'type': 'text', 'text': SYSTEM_VOICE_ANNOUNCEMENT},
         {'type': 'text', 'text': 'Stable.'},
+        {'type': 'text', 'text': lookalike_note_announcement(system_role=False)},
     ]
 
 
@@ -1563,7 +1563,11 @@ def test_instruction_updates_render_escapes_closing_tags_in_the_content():
     """Block text can't end its own element, or the `<system>` element wrapping it on the fallback path."""
     part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context_diff> after.')
     assert part.render() == snapshot(
-        '<context id="agent:state">\nBefore &lt;/context>&lt;/System > &lt;/context_diff> after.\n</context>'
+        """\
+<context id="agent:state">
+Before </context></System > </context_diff> after.
+</context>\
+"""
     )
 
 
@@ -1679,6 +1683,9 @@ def context_statements(messages: list[ModelMessage]) -> list[str]:
         and '<context' in part.content
     ]
 
+
+CONTINUE_REF = 'pydantic-ai'
+"""The frame seal of a conversation that opens with 'Continue.', as most of these do."""
 
 RENDERINGS: dict[bool, tuple[str, list[str]]] = {
     True: (
@@ -1839,8 +1846,8 @@ def wire_contains(body: object, text: str) -> bool:
     return json.dumps(text)[1:-1] in json.dumps(body)
 
 
-def expected_update(case: WireCase, instruction_id: str, content: str | None) -> str:
-    """The tail statement as each delivery path renders it."""
+def expected_update(case: WireCase, instruction_id: str, content: str | None, history: list[ModelMessage]) -> str:
+    """The tail statement as each delivery path renders it, with the frame seal of the conversation `history` is."""
     if content is None:
         content = (
             'This context has been withdrawn.'
@@ -1932,7 +1939,8 @@ async def test_instruction_updates_preserve_wire_prefix(
         if index == 0:
             sentence = NEUTRAL_SENTENCE if case.inline_system else PERSISTENCE_SENTENCE
             assert wire_contains(
-                body, f'<context id="capability:memory:state">\nSend parcels to warehouse A.\n</context>\n{sentence}'
+                body,
+                f'<context id="capability:memory:state">\nSend parcels to warehouse A.\n</context>\n{sentence}',
             )
         else:
             prior = request_capture.body(index=index - 1)
@@ -1940,7 +1948,7 @@ async def test_instruction_updates_preserve_wire_prefix(
             assert body.get('instructions') == prior.get('instructions')
             if expected_updates[index]:
                 content = f'Send parcels to warehouse {value}.' if value is not None else None
-                assert wire_contains(wire_messages, expected_update(case, 'capability:memory:state', content))
+                assert wire_contains(wire_messages, expected_update(case, 'capability:memory:state', content, history))
             if case.continuation:
                 assert body['previous_response_id'] == prior_response_id
                 assert str(wire_messages).count('<context id=') == (1 if expected_updates[index] else 0)
@@ -2013,8 +2021,13 @@ async def test_instruction_updates_after_tool_mutation(
     else:
         assert second_messages[: len(first_messages)] == first_messages
     sentence = NEUTRAL_SENTENCE if case.inline_system else PERSISTENCE_SENTENCE
-    assert wire_contains(first, f'<context id="capability:todos:state">\nTodo status: pending.\n</context>\n{sentence}')
-    assert wire_contains(second_messages, expected_update(case, 'capability:todos:state', 'Todo status: done.'))
+    assert wire_contains(
+        first,
+        f'<context id="capability:todos:state">\nTodo status: pending.\n</context>\n{sentence}',
+    )
+    assert wire_contains(
+        second_messages, expected_update(case, 'capability:todos:state', 'Todo status: done.', history)
+    )
     assert any(
         isinstance(part, InstructionDeltaPart) and part.content == 'Todo status: done.'
         for message in history

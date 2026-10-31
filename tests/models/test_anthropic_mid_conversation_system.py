@@ -42,7 +42,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import ToolDefinition
 
@@ -175,7 +175,7 @@ class Case:
     id: str
     model: str
     expected_messages: list[dict[str, Any]]
-    expected_system: str = 'You are a code reviewer.'
+    expected_system: str | list[dict[str, str]] = 'You are a code reviewer.'
 
 
 CASES = [
@@ -202,8 +202,11 @@ CASES = [
     Case(
         id='inline-system-unsupported',
         model='claude-sonnet-5',
-        # The standing prompt also says what the `<system>` tag means, on every request from the first.
-        expected_system=f'You are a code reviewer.\n\n{SYSTEM_VOICE_ANNOUNCEMENT}',
+        # The instructions also end with what the `<system>` tag means, on every request from the first.
+        expected_system=[
+            {'text': 'You are a code reviewer.', 'type': 'text'},
+            {'text': lookalike_note_announcement(system_role=False), 'type': 'text'},
+        ],
         expected_messages=snapshot(
             [
                 {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -716,7 +719,10 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
     await Agent(model).run('Review it again.', message_history=message_history())
 
     call_kwargs = foundry_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['system'] == f'You are a code reviewer.\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
+    assert call_kwargs['system'] == [
+        {'text': 'You are a code reviewer.', 'type': 'text'},
+        {'text': lookalike_note_announcement(system_role=False), 'type': 'text'},
+    ]
     assert call_kwargs['messages'] == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -1429,3 +1435,37 @@ This context has been withdrawn.
             ],
         }
     )
+
+
+async def test_a_system_prompt_ahead_of_tool_returns_follows_them(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    """A request that holds a system prompt before its tool returns still sends the `tool_result` blocks first.
+
+    Anthropic rejects a turn whose text comes before the results of the previous turn's tool calls ("tool_use ids
+    were found without tool_result blocks immediately after"). On Claude Sonnet 4.6, which takes no mid-conversation
+    system messages, the prompt becomes `<system>` text in that turn, so it goes after the results.
+    """
+    agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key)))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather in Paris?')]),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='toolu_01')]),
+        ModelRequest(
+            parts=[
+                SystemPromptPart('Answer in French.'),
+                ToolReturnPart('get_weather', 'sunny', tool_call_id='toolu_01'),
+            ]
+        ),
+    ]
+
+    result = await agent.run(message_history=history)
+
+    assert result.output
+    body = single_request_body(vcr)
+    assert [block['type'] for block in body['messages'][-1]['content']] == ['tool_result', 'text']
+    assert body['messages'][-1]['content'][-1]['text'] == '<system>Answer in French.</system>'

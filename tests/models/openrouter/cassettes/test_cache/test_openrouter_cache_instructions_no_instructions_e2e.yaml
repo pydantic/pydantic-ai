@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -31,6 +31,8 @@ interactions:
       - "*"
       access-control-expose-headers:
       - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -46,9 +48,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792905537-Z19OFoMjL7MKiKbXmG6A
+        id: gen-1793406877-bW9vn2F4AgEOdJb91QHp
         object: chat.completion
-        created: 1792905537
+        created: 1793406877
         model: anthropic/claude-sonnet-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -82,4 +84,4 @@ interactions:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-25T05:18:58.964263+00:00
+  recorded_at: 2026-10-31T00:34:38.328976+00:00

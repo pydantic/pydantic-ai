@@ -27,7 +27,7 @@ from cassetter import Cassette
 from pydantic import BaseModel, JsonValue
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -443,12 +443,19 @@ async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests:
     await Agent(model, instructions='Stable instructions.', model_settings={'cache': '1h'}).run('Hi')
 
     request = create.call_args.kwargs
-    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the standing prompt opens with the
-    # `<system>` tag announcement; the breakpoint after the instructions covers both.
-    announcement, system_message = request['messages'][:2]
-    assert announcement == {'role': 'system', 'content': SYSTEM_VOICE_ANNOUNCEMENT}
-    assert system_message['role'] == 'system'
-    assert system_message['content'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
+    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions end with the
+    # announcement; the breakpoint goes after the instructions every conversation shares, ahead of it.
+    system_message, announcement = request['messages'][:2]
+    assert system_message == {
+        'role': 'system',
+        'content': [
+            {'type': 'text', 'text': 'Stable instructions.', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}
+        ],
+    }
+    assert announcement == {
+        'role': 'system',
+        'content': lookalike_note_announcement(system_role=False),
+    }
 
 
 async def test_openrouter_chat_cache_point_dropped_for_openai_models(allow_model_requests: None):

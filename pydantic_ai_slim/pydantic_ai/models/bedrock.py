@@ -905,6 +905,8 @@ class BedrockConverseModel(Model[BaseClient]):
 
     # The Converse API has no audio content block.
     _unsupported_file_inputs = frozenset({'audio'})
+    # A tool's files that a tool result can't carry here go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset(
         {

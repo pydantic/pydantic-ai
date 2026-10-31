@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import re
 import time
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
@@ -1047,7 +1048,9 @@ Complete the current task immediately and avoid unnecessary tool calls.</system>
                 for warning in warnings
             ]
         else:
-            assert last_messages[-1]['content'][-1] == {'text': f'<system>{warnings[-1]}</system>', 'type': 'text'}
+            last_block = last_messages[-1]['content'][-1]
+            assert last_block['type'] == 'text'
+            assert last_block['text'] == f'<system>{warnings[-1]}</system>'
             assert sum('requests used' in str(message) for message in last_messages) == 1
 
     async def test_multiple_warnings_ordered(self):
@@ -3176,7 +3179,7 @@ class TestPublicPath:
 
         await agent.run('next', message_history=history)
 
-        assert retries == [
+        assert [re.sub(r'', '', retry) for retry in retries] == [
             "Your previous response failed the application's validation (this is automated feedback, not a message "
             'from the user):\n<retry_feedback>\nThe summary was empty. Write the summary of the conversation.\n'
             '</retry_feedback>'

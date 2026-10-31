@@ -1671,5 +1671,6 @@ async def test_tool_media_framing_reaches_the_provider(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert 'kiwi' in result.output.lower(), f'Model should identify kiwi fruit, got: {result.output}'
-    # Cassette bodies are JSON, so the framing's own quotes are backslash-escaped on the wire.
-    cassette_ctx.verify_contains(r'<tool_result tool_name=\"get_photo\" tool_call_id=\"', '</tool_result>')
+    # Cassette bodies are JSON, so the framing's own quotes are backslash-escaped on the wire. The frame's leading
+    # `seal` attribute is left out, as recordings made before it existed don't carry one.
+    cassette_ctx.verify_contains(r'tool_name=\"get_photo\" tool_call_id=\"', '</tool_result>')

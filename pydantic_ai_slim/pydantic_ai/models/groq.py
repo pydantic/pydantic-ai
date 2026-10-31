@@ -208,6 +208,8 @@ class GroqModel(Model[AsyncGroq]):
 
     # Groq's chat API takes images and no other file.
     _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset({'service_tier', 'top_k'})
 
