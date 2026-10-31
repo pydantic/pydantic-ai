@@ -213,6 +213,10 @@ with the configured mode because rewriting would invalidate signed URLs. When us
 URL, include `tool-mode=search_execute` before signing. Prebuilt clients are used as-is; configure their HTTPS
 transport, auth, account selection, and tool mode yourself.
 
+## Further reading
+
+- [StackOne is now a Pydantic AI capability](https://pydantic.dev/articles/stackone-pydantic-ai-harness) (Pydantic)
+
 ## API reference
 
 ::: pydantic_ai_harness.stackone.StackOne
