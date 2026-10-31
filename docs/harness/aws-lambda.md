@@ -256,6 +256,7 @@ request is already applied inside the durable step. Attach it alongside other ca
 
 ## Further reading
 
+- [Durable execution in Pydantic AI agents with AWS Lambda Durability](https://pydantic.dev/articles/harness-aws-lambda) (Pydantic)
 - [AWS Lambda durable functions](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html)
 - [AWS Durable Execution SDK for Python](https://github.com/aws/aws-durable-execution-sdk-python)
 - [Pydantic AI durable execution](https://pydantic.dev/docs/ai/durable_execution/overview/)

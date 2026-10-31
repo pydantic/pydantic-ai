@@ -310,6 +310,10 @@ The previous `ModalSandbox` registered its own `run_command`, `read_file`, `writ
 | `ModalSandboxError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceError`. It doesn't cover sandbox creation that doesn't finish within 10 minutes (`TimeoutError`), or transient Modal errors such as connection failures, which propagate unchanged so a durable engine can retry them. Without the `modal` package, importing `pydantic_ai_harness.modal_sandbox` raises `ImportError`. |
 | `ModalSandboxTerminalError`, `ModalSandboxUnavailableError`, `ModalSandboxAuthError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceUnavailableError`. |
 
+## Further reading
+
+- [The agent outgrew your laptop](https://pydantic.dev/articles/harness-modal) (Pydantic): from a shell agent on your laptop to parallel `ModalSandbox` containers
+
 ## API reference
 
 ::: pydantic_ai_harness.modal_sandbox.ModalSandbox
