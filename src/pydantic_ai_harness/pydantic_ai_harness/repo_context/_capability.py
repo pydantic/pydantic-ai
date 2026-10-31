@@ -196,11 +196,12 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     """
 
     nested_max_chars: int | None = 32_000
-    """For Strategy 3 with `nested_inject='contents'`: the total characters of nested file contents to inline per run.
+    """For Strategy 3 with `nested_inject='contents'`: the total characters of nested file contents to inline per conversation.
 
-    A file that would take the total past it is surfaced as a pointer instead. The total starts over when a
-    compaction appears in history, since the notes it summarized are out of the window. `None` inlines every
-    file. It has no effect with `nested_inject='pointer'`, which inlines nothing.
+    The total counts every inlined note still in the history the model sees, from earlier runs of the conversation
+    too, so it drops when a compaction summarizes earlier notes away. A file that would take the total past it is
+    surfaced as a pointer instead. `None` inlines every file. It has no effect with `nested_inject='pointer'`,
+    which inlines nothing.
     """
 
     _context_files: list[ContextFile] | None = field(default=None, init=False, repr=False, compare=False)
@@ -212,6 +213,12 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     _loaded_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
     """Directories whose instruction files Strategy 1 put in the instructions, which Strategy 3 never repeats."""
 
+    _pending_chars: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
+    """Characters each pending note in `_pending_dirs` inlined, counted against `nested_max_chars` until it's in history."""
+
+    _window_chars: int = field(default=0, init=False, repr=False, compare=False)
+    """Characters the inlined notes in the history window hold, as of the latest `_sync_surfaced_dirs`."""
+
     _latest_compaction: CompactionPart | None = field(default=None, init=False, repr=False, compare=False)
     """The latest compaction in history when `_pending_dirs` was last checked; a new one clears them."""
 
@@ -220,9 +227,6 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     _toolset: RepoContextToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """The one inventory toolset, shared with every per-run copy so durable execution sees the leaf it registered."""
-
-    _nested_chars: int = field(default=0, init=False, repr=False, compare=False)
-    """Characters of nested file contents inlined so far this run, since the latest compaction."""
 
     _sniff_traversal_tools: bool = field(default=False, init=False, repr=False, compare=False)
 
@@ -257,8 +261,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         run._context_files = None
         run._pending_dirs = set()
         run._loaded_dirs = set()
+        run._pending_chars = {}
+        run._window_chars = 0
         run._latest_compaction = None
-        run._nested_chars = 0
         run._cached_working_dir = None
         return run
 
@@ -405,12 +410,14 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if context_file is None or self._surfaced(key, in_history):
             return
         self._pending_dirs.add(key)
+        chars = len(context_file.content)
+        used = self._window_chars + sum(self._pending_chars.values())
         inline = self.nested_inject == 'contents' and (
-            self.nested_max_chars is None or self._nested_chars + len(context_file.content) <= self.nested_max_chars
+            self.nested_max_chars is None or used + chars <= self.nested_max_chars
         )
         if inline:
-            self._nested_chars += len(context_file.content)
-        ctx.enqueue(*_stamp(self._render_note(context_file, inline=inline), key))
+            self._pending_chars[key] = chars
+        ctx.enqueue(*_stamp(self._render_note(context_file, inline=inline), key, chars=chars if inline else None))
 
     def _surfaced(self, key: str, in_history: set[str]) -> bool:
         return key in self._loaded_dirs or key in self._pending_dirs or key in in_history
@@ -421,26 +428,28 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         Call it once per traversal, before any `_surfaced` check.
 
         A note survives in history until compaction summarizes it away, so this is derived from the window
-        rather than remembered, and it covers notes from earlier runs of the conversation. Notes enqueued but
-        not yet in history are tracked until they appear there, or until a new compaction replaces the history
-        they would have been in.
+        rather than remembered, and it covers notes from earlier runs of the conversation. The same goes for the
+        characters inlined notes hold, which `nested_max_chars` bounds. Notes enqueued but not yet in history are
+        tracked until they appear there, or until a new compaction replaces the history they would have been in.
         """
         latest = _latest_compaction(messages)
         if latest is not self._latest_compaction:
             self._latest_compaction = latest
             self._pending_dirs.clear()
-            # The compaction took the inlined notes out of the window, so the budget starts over with it.
-            self._nested_chars = 0
-        in_history = {
-            directory
-            for message in post_compaction_window(messages)
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-            for item in part.content
-            if isinstance(item, TextContent) and (directory := _note_directory(item.metadata)) is not None
-        }
+        in_history: set[str] = set()
+        self._window_chars = 0
+        for message in post_compaction_window(messages):
+            if not isinstance(message, ModelRequest):
+                continue
+            for part in message.parts:
+                if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
+                    continue
+                for item in part.content:
+                    if isinstance(item, TextContent) and (directory := _note_directory(item.metadata)) is not None:
+                        in_history.add(directory)
+                        self._window_chars += _note_chars(item.metadata)
         self._pending_dirs -= in_history
+        self._pending_chars = {key: chars for key, chars in self._pending_chars.items() if key in self._pending_dirs}
         return in_history
 
     async def _resolve_directory(self, workspace: Workspace, raw_path: str) -> Path:
@@ -476,16 +485,22 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         return 'RepoContext'
 
 
-def _stamp(parts: Sequence[str | SystemPromptPart], directory: str) -> Iterator[TextContent | SystemPromptPart]:
-    """Mark a note's parts as RepoContext's, so history scans and compaction recognize them by metadata."""
+def _stamp(
+    parts: Sequence[str | SystemPromptPart], directory: str, *, chars: int | None = None
+) -> Iterator[TextContent | SystemPromptPart]:
+    """Mark a note's parts as RepoContext's, so history scans and compaction recognize them by metadata.
+
+    `chars` goes on an inlined note's data, so the history window says how much of `nested_max_chars` it uses.
+    """
     for part in parts:
         # A dict per part, so mutating one part's metadata doesn't change the other's.
-        metadata = {'origin': _NESTED_NOTE_ORIGIN, 'directory': directory}
-        yield (
-            replace(part, metadata=metadata)
-            if isinstance(part, SystemPromptPart)
-            else TextContent(part, metadata=metadata)
-        )
+        metadata: dict[str, object] = {'origin': _NESTED_NOTE_ORIGIN, 'directory': directory}
+        if isinstance(part, SystemPromptPart):
+            yield replace(part, metadata=metadata)
+        else:
+            if chars is not None:
+                metadata['chars'] = chars
+            yield TextContent(part, metadata=metadata)
 
 
 def _latest_compaction(messages: Sequence[ModelMessage]) -> CompactionPart | None:
@@ -494,6 +509,11 @@ def _latest_compaction(messages: Sequence[ModelMessage]) -> CompactionPart | Non
             if isinstance(part, CompactionPart):
                 return part
     return None
+
+
+def _note_chars(metadata: object) -> int:
+    chars = metadata.get('chars') if is_str_dict(metadata) else None
+    return chars if isinstance(chars, int) else 0
 
 
 def _note_directory(metadata: object) -> str | None:

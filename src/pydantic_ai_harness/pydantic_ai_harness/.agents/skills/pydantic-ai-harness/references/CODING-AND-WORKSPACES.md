@@ -91,7 +91,7 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
 `repo_context=True` (`RepoContext` walking up to the repository root and surfacing nested instruction
-files as the agent reads, inlining up to 32,000 characters of them per run before switching to pointers; pass a
+files as the agent reads, inlining up to 32,000 characters of them per conversation before switching to pointers; pass a
 `RepoContext` to use it in place of the bundled one, whose settings it replaces entirely), `sub_agents=True`,
 `agent_folders=None`, `task_control=None` (a `TaskControl`
 is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`,
@@ -541,8 +541,9 @@ whatever `FileSystem` reads or lists, shallowest first, each directory once whil
 conversation (`nested_inject='contents'` by default, or `'pointer'`), in the message tail so the cached
 prefix stays stable. With it on, the instructions also gain one static sentence: each instruction file
 applies to its subtree, the deeper file wins, and the user's direct instructions win over all of them.
-`nested_max_chars` (32,000 by default) caps the `'contents'` inlined per run, starting over after a
-compaction: a file that would go past it becomes a pointer; `None` removes the cap. It doesn't apply with
+`nested_max_chars` (32,000 by default) caps the `'contents'` inlined per conversation, counting the
+inlined notes still in history, so a compaction frees room: a file that would go past it becomes a pointer;
+`None` removes the cap. It doesn't apply with
 `nested_inject='pointer'`.
 
 ## Macroscope
