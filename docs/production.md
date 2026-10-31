@@ -215,7 +215,7 @@ from pydantic_ai.capabilities import ModelFallback
 agent = Agent('{{ anthropic:medium }}', capabilities=[ModelFallback('{{ openai:medium }}')])
 ```
 
-[Provider SDK clients](retries.md#provider-sdk-retries) already retry some failures on their own. For rate limits and 5xx responses with backoff that respects `Retry-After`, install a [retrying transport](retries.md#transport-retries) on the HTTP client; nothing retries at that layer by default. [Retries](retries.md) explains how the layers multiply, how to [choose one retry owner](retries.md#choosing-one-retry-owner), and [when to retry and when to fall back](retries.md#recovery-scopes). The [Gateway](gateway.md) can do failover and load balancing between providers serving the same model on its side, configured as [gateway endpoints](gateway.md#gateway-endpoints).
+[Provider SDK clients](retries.md#provider-sdk-retries) already retry some failures on their own. To retry rate limits and server errors on the same model, with backoff that respects `Retry-After`, add the [`RetryOnModelErrors`](capabilities/retry-on-model-errors.md) capability, which also takes over from the SDK's retries and composes with `ModelFallback`: each model is retried before the request falls back to the next one. Outside an agent, install a [retrying transport](retries.md#transport-retries) on the HTTP client instead. [Retries](retries.md) explains how the layers multiply, how to [choose one retry owner](retries.md#choosing-one-retry-owner), and [when to retry and when to fall back](retries.md#recovery-scopes). The [Gateway](gateway.md) can do failover and load balancing between providers serving the same model on its side, configured as [gateway endpoints](gateway.md#gateway-endpoints).
 
 ## Where do API keys go? {#keys}
 

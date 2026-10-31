@@ -6,6 +6,17 @@ description: "Configure retries in Pydantic AI: HTTP transport retries for rate 
 
 "Retry" means nine different things in an agent run, at nine different layers, and they don't share budgets. Mixing them up is the usual cause of a run that retries far more (or far less) than expected. This page is the map; each layer links to the page that configures it in detail.
 
+To retry rate limits and server errors with backoff on any provider, add the [`RetryOnModelErrors`](capabilities/retry-on-model-errors.md) capability:
+
+```python {title="retry_quickstart.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import RetryOnModelErrors
+
+agent = Agent('{{ openai:medium }}', capabilities=[RetryOnModelErrors()])
+```
+
+For model requests made outside an agent, such as [direct model requests](direct.md), use a [retrying transport](#transport-retries) instead.
+
 ## The layers
 
 | Layer | What it re-attempts | Configured with | What it adds to message history |
