@@ -162,10 +162,15 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 if not imports_successful():  # pragma: lax no cover
-    # Define placeholder errors module so parametrize decorators can be parsed
+    # Define placeholders so parametrize decorators can be parsed when google-genai is not installed
     from types import SimpleNamespace
 
     errors = SimpleNamespace(ServerError=Exception, ClientError=Exception, APIError=Exception)
+    GoogleFinishReason = SimpleNamespace(
+        IMAGE_RECITATION='IMAGE_RECITATION',
+        TOO_MANY_TOOL_CALLS='TOO_MANY_TOOL_CALLS',
+        IMAGE_OTHER='IMAGE_OTHER',
+    )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
@@ -1132,6 +1137,127 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
             }
         ]
     )
+
+
+def test_finish_reason_map_covers_all_genai_finish_reasons():
+    """Every live `google.genai` `FinishReason` value has a mapping decision in `_FINISH_REASON_MAP`.
+
+    `google-genai` grows `FinishReason` members dynamically at parse time for values its installed
+    version doesn't know statically, so a member missing from the map silently produces a `None`
+    finish reason instead of the documented normalized value.
+    """
+    from google.genai import types
+
+    from pydantic_ai.models.google import _FINISH_REASON_MAP  # pyright: ignore[reportPrivateUsage]
+
+    unmapped = [f.value for f in types.FinishReason if f.value not in _FINISH_REASON_MAP]
+    assert unmapped == []
+
+
+@pytest.mark.parametrize(
+    ('raw_finish_reason', 'expected'),
+    [
+        pytest.param(GoogleFinishReason.IMAGE_RECITATION, 'content_filter', id='image_recitation'),
+        pytest.param(GoogleFinishReason.TOO_MANY_TOOL_CALLS, 'error', id='too_many_tool_calls'),
+        pytest.param(GoogleFinishReason.IMAGE_OTHER, 'error', id='image_other'),
+    ],
+)
+async def test_finish_reason_unmapped_members_non_streaming(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+    raw_finish_reason: GoogleFinishReason,
+    expected: str,
+):
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': '1',
+            'model_version': 'gemini-2.5-flash',
+            'candidates': [
+                {
+                    'content': {'role': 'model', 'parts': [{'text': 'test response'}]},
+                    'finish_reason': raw_finish_reason,
+                }
+            ],
+        }
+    )
+    mocker.patch.object(
+        model.client.aio.models, 'generate_content', new_callable=mocker.AsyncMock, return_value=response
+    )
+    agent = Agent(model, name='test-agent', output_type=str)
+
+    result = await agent.run('test')
+
+    assert result.response.finish_reason == expected
+    assert result.response.provider_details is not None
+    assert result.response.provider_details['finish_reason'] == raw_finish_reason.value
+
+
+@pytest.mark.parametrize(
+    ('raw_finish_reason', 'expected'),
+    [
+        pytest.param(GoogleFinishReason.IMAGE_RECITATION, 'content_filter', id='image_recitation'),
+        pytest.param(GoogleFinishReason.TOO_MANY_TOOL_CALLS, 'error', id='too_many_tool_calls'),
+        pytest.param(GoogleFinishReason.IMAGE_OTHER, 'error', id='image_other'),
+    ],
+)
+async def test_finish_reason_unmapped_members_streaming(raw_finish_reason: GoogleFinishReason, expected: str):
+    async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
+        yield GenerateContentResponse.model_validate(
+            {
+                'response_id': 'resp-1',
+                'model_version': 'gemini-2.5-flash',
+                'candidates': [
+                    {
+                        'content': {'role': 'model', 'parts': [{'text': 'streamed text'}]},
+                        'finish_reason': raw_finish_reason,
+                    }
+                ],
+            }
+        )
+
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(response_iterator())),
+        _timestamp=IsDatetime(),
+        _provider_name='google',
+        _model_id_namespace='google',
+        _provider_url='',
+    )
+
+    async for _ in streamed_response:
+        pass
+
+    assert streamed_response.finish_reason == expected
+
+
+async def test_image_recitation_empty_candidate_raises_content_filter_error(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+):
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': '1',
+            'model_version': 'gemini-2.5-flash',
+            'candidates': [
+                {
+                    'content': {'role': 'model', 'parts': []},
+                    'finish_reason': GoogleFinishReason.IMAGE_RECITATION,
+                }
+            ],
+        }
+    )
+    mocker.patch.object(
+        model.client.aio.models, 'generate_content', new_callable=mocker.AsyncMock, return_value=response
+    )
+    agent = Agent(model, name='test-agent', output_type=str)
+
+    with pytest.raises(ContentFilterError, match="Finish reason: 'IMAGE_RECITATION'"):
+        await agent.run('test')
 
 
 async def test_google_model_web_search_tool(allow_model_requests: None, google_provider: GoogleProvider):

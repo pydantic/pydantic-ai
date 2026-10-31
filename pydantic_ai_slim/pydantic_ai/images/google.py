@@ -84,7 +84,7 @@ _CONTENT_FILTER_FINISH_REASONS = frozenset(
 
 `NO_IMAGE` and `IMAGE_OTHER` are deliberately absent: neither names a content-policy refusal, so both take the
 generic empty-response error instead of the moderation block that the capability converts into a prompt-rephrasing
-retry — `models/google.py` likewise leaves `IMAGE_OTHER` unmapped.
+retry — `models/google.py` maps `IMAGE_OTHER` to the `error` finish reason.
 """
 
 
