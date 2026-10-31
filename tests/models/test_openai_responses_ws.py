@@ -805,9 +805,14 @@ def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
             raise harness.connect_error
         harness.urls.append(uri)
         headers = {key.lower(): value for key, value in additional_headers.items()}
-        authorization = headers.pop('authorization')
-        assert authorization.startswith('Bearer ')
-        harness.authorization_headers.append(authorization)
+        authorization = headers.pop('authorization', None)
+        if authorization is None:
+            assert uri == 'wss://example.openai.azure.com/openai/responses?api-version=2024-12-01-preview'
+            api_key = headers.pop('api-key', None)
+            assert api_key == 'test'
+        else:
+            assert authorization.startswith('Bearer ')
+            harness.authorization_headers.append(authorization)
         harness.headers.append(headers)
         harness.options.append(options)
         socket = harness.pending.popleft()
