@@ -1,0 +1,2502 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: response.create
+    model: gpt-6-astra
+    input:
+    - role: user
+      content: Count from one to sixty in words, separated by spaces, then reply with
+        the word amber.
+    reasoning:
+      context: all_turns
+    store: false
+    include:
+    - reasoning.encrypted_content
+- kind: message
+  direction: received
+  at: 0.177
+  data:
+    type: response.created
+    response:
+      id: resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5
+      object: response
+      created_at: 1792680415
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 0
+- kind: message
+  direction: received
+  at: 0.207
+  data:
+    type: response.in_progress
+    response:
+      id: resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5
+      object: response
+      created_at: 1792680415
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 1
+- kind: message
+  direction: received
+  at: 1.999
+  data:
+    type: response.output_item.added
+    item:
+      id: rs_0aedf5a18305044c016ada21e1166487d28f7b132bf61f6ba3
+      type: reasoning
+      content: []
+      encrypted_content: gAAAAABq2iHhQyatMGFDbH9-X4Ud5fW0rwtuD3LAy4MjTiaYrcBF46tPoR095pvH6CogC3xhbLYTkuBUir_KXmx1uqhMsxHQ3nXlqLTXYiR3RvrubpvmUxcw2k5-oOe5fG4tmLSkQKrhW0MMfyXC5c6FluIyRkqVNCPHLZ8X0GbunXQ5qXJQOHJ3EDG4JMZjKM5gbf1H4wIFo6QRIZ9PI80cg7jMB0x5Ycjuw3Xo4QSV7IFHhVqrhmSOXwfCzEr7g3Zt-HkVygVewsmf4AfI0g0NxnjViENHkQ4pAADQHAkeSskKrYa-eJ3DQ6aQ-Q7fAwo4BS5LPxPZD9CvdYtBEKja6bfpuF5D-LejL52BU85hicwM10bnew64zq2xiG44GTbvwXhEo6XznJPWr5TrhvhB1KaeITU5RuHY4RihDAv0Nn6wNU-GYkErGFbBtzjI_BV2G8pal1E3a0huhKZb5_n4W-MMqg-dC7Y-8Yl9GxnyC8VbONjLNGVOajjIfjQevB4UpJGAADSk8VuXy-5n5YeTm-FBkJ5GaQzrsFJNztdhotwJhDjFT-iBO8T0_WUSYFoJSjtSGMQBkCoFkiV4NgdVtwU19s1nxPLmIUm8VqU10JK2UfgnRuCGwYcTtxqL3POfJ3luJXP6mzH4N8h7_fCdH5tZro3CPbUNG4LMU6PxRlmaApygi_zrqiP3npW52ftYerOLWNOLcUFndvJmIO9TjopcemjQk6jHkV0_LM6Pdf1wCOXozfEjpkCAVx-jZUoPs7gBaSgYpKx0Ijesn_eJ898Pa7FvK_FxVkYXftnZlKvacasAPub44l3xYVIozo1iVv82SBCnVS-pUfZxXmY74ADUwKytqkIJC8ZmLxlGgoClV_fXUZpB-eTRIr3xCAkefX8WMrJqJM2ogUnchMSwJf-vTEzPftLgKMKXvMSvywc5mwdXFhu2Gtr_kdbKOqHjrMOdKnmHLiCOAnWQrQqGaH7AaKgL_WGQm0pvGQA0OwskqixpUd6dc5heJ0kOps-jLDQfAgaI4xJ9GyVfmCLCzzxWIe1heiIHJyi6r4wxFimFpjvXBFh83-WXQMJwLK5AvrOls2f48OoJ698h5Ks6c5-ki14je-KEnDv9y7xYAT7DA6w8l-2Oao5if3JMRoBbVwpY_BFzE2CbOscRTM66L0i-YoEZd_ZOODQJ82JSN599X54u3pVfRnDqvS8Bd3bnsMsm9_O7
+      summary: []
+    output_index: 0
+    sequence_number: 2
+- kind: message
+  direction: received
+  at: 2.659
+  data:
+    type: response.output_item.done
+    item:
+      id: rs_0aedf5a18305044c016ada21e1166487d28f7b132bf61f6ba3
+      type: reasoning
+      content: []
+      encrypted_content: gAAAAABq2iHhWny_2UG3eAyannhesb1NlwWVI-WaicWauzgw0r2PatVN8bGLY8AxTlUqvAFK89uhYppjg-DxmrgsNQKRnb9T268ldvvkkuZWY8ML2LyEIA9l-ZDtBc_ulaes0aLWbvzTmD1ib8T1TKQ1F4LUgb2apOm7p7NWEmWc9pu1EGgq02Rz_u6n73XYFhrjSMiCCnjcyJdwLSN4shbf0nII5EJqUV6TDlSU7yY3AQaaVz7WqfJJoSEIsuFdbHAkggNEoWNXI9aF6Bb43JKvvDt7uJVHQGE2M-kFnIRpkNBCMcwDhkDd6ygHsmLzDCMJ3qoh0XF7NboqFqLNoKhrzzStY3UraXZlOdeU8i-iD_awP7U4rxuB86tCdt9JYcJdZFLC3qn0ZHqyEfpiuUVaQ5ocuuZpnMrsonZtoE5kuA6lFs9RwT544qTR3dxeb0I0BDsumeTpBnLLQRSVxsFvQXOHeaaAVcDExPc-cMMstVzCi-V0wgeJwHWbTltXjar1DilUyIvm1bWa0tQbGLoVNsc6tcZdLCTw8PVPHyFX6di6IQfbhZuSd_SXwQD4RuBUtJ3EWUzGtn75WzUKN1WBKJvYjNNWcfdF4ns2lhl1F6bnxO4FZjmr-QUY83rgdWtcbMMh_TmyZhE6wBjpzSOocdRevD14wC_A8XnVh8unVUe09ZSyKdwS2aoCFZkIivRdqjI258iFt80Xlv2APQ51altZhu45kG_bdQA3dGrSyOsRG7_1yWp0p_oPoNxzgRFzeytABSxkxeVbcn020MDxV7cajRhlp2P0WC37sjgOmPcCcD38yKjEyjHa6NyF2XQo-ngHWzBrwD2Ynn2C-uAIo-H0S6CwMr75kjzt3BokNdrZ3rz_9MtbSp4-07bFbpPna-L2-yX88ghwEi0DCbF5Ci_uzic3v0W3yxx37ya3d0Tf_lCVJ8Elyg-llMFGzcsE8IgTVBt7xhBJKCFgBoaj-DmysD9EPxVKGsDMsLWSNASwdaX_ZmSZ-BUeWJAoxbImq09j0luffzjkwE10QBwdiWs3gNsWyzlUhjPd0t71yDsSQ88PM2Z2Kp2ySIbu-bzQVA7V7PoVw3V4nF1ifndq7mkkVQVQt2OlxETuEdpqqG7pATGpwdUGQLIvK5rAfLtmEaoXQ6x0VzPe7C2dxY1upSCxxmxNMfoMkM12aphjSFaqL0jO7nwPcs5NarFuw1sCwZfQt7bqOeXwKyldrEPZEjhGuFDF6r383oHCQcI91oVRvMNMcfPWS5kTamhPdTGQsAvHkFTbG0MUxmqUjwghdbMKrx63gkgTc6gdTTLIIqwYw61a63jBUUtx6uq4RrSqL2YqyAYmoNruAv5PBw0FHvkuNt_PygrLpAd2vI3_fArAXUL6OYJu1_a0A3USepVgE1KLZCsGHdgyQyuad9GJHm6z0QwqRlgnBD8kvtSbOx1ExF3IWg4GM_bEdftbK7J4AkfPqG85bDpHfwcEBjFARC-riJLyIEsN8cCA6GujFXfgHQWYYE6lhvNPiwuucWxnbe915B8Er_9zLcnzjK9vqUtM8cVH9xk5vim2B0Vk9XPH6cVToPJU3AshW_6O8wtwv4qpI6HMrCp0hn6KbDX-jHzCRDU-D9Iu5nI9qHzJpidRboLPFaIgjPSAB-ZfQElWHLmjefOS
+      summary: []
+    output_index: 0
+    sequence_number: 3
+- kind: message
+  direction: received
+  at: 2.661
+  data:
+    type: response.output_item.added
+    item:
+      id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+      type: message
+      status: in_progress
+      content: []
+      phase: final_answer
+      role: assistant
+    output_index: 1
+    sequence_number: 4
+- kind: message
+  direction: received
+  at: 2.661
+  data:
+    type: response.content_part.added
+    content_index: 0
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    output_index: 1
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: ''
+    sequence_number: 5
+- kind: message
+  direction: received
+  at: 2.662
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: one
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: UJ14y28uXcmte
+    output_index: 1
+    sequence_number: 6
+- kind: message
+  direction: sent
+  at: 2.667
+  data:
+    type: response.create
+    model: gpt-6-astra
+    input:
+    - role: user
+      content: Reply with the word cobalt.
+    reasoning:
+      context: all_turns
+    store: false
+    include:
+    - reasoning.encrypted_content
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 2.668
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' two'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: ptAQ4Tt2upAD
+    output_index: 1
+    sequence_number: 7
+- kind: message
+  direction: received
+  at: 2.668
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' three'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 97zOEtgL9U
+    output_index: 1
+    sequence_number: 8
+- kind: message
+  direction: received
+  at: 2.67
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' four'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: ZfFXD3O46EN
+    output_index: 1
+    sequence_number: 9
+- kind: message
+  direction: received
+  at: 2.674
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' five'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: XIkNZ8gAJfj
+    output_index: 1
+    sequence_number: 10
+- kind: message
+  direction: received
+  at: 2.676
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' six'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: aDO91P10LFqz
+    output_index: 1
+    sequence_number: 11
+- kind: message
+  direction: received
+  at: 2.68
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' seven'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: CNuXbOGo6I
+    output_index: 1
+    sequence_number: 12
+- kind: message
+  direction: received
+  at: 2.682
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' eight'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 0u9Rx9XNUo
+    output_index: 1
+    sequence_number: 13
+- kind: message
+  direction: received
+  at: 2.749
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' nine'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: ZvFEVN6QM8J
+    output_index: 1
+    sequence_number: 14
+- kind: message
+  direction: received
+  at: 2.752
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' ten'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: hd0BhdKXdRFh
+    output_index: 1
+    sequence_number: 15
+- kind: message
+  direction: received
+  at: 2.755
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' eleven'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 49DkYcsKv
+    output_index: 1
+    sequence_number: 16
+- kind: message
+  direction: received
+  at: 2.765
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' twelve'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: SRfHjb6Bh
+    output_index: 1
+    sequence_number: 17
+- kind: message
+  direction: received
+  at: 2.788
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' thirteen'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: K7ULgy0
+    output_index: 1
+    sequence_number: 18
+- kind: message
+  direction: received
+  at: 2.797
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' fourteen'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 5RH9x7z
+    output_index: 1
+    sequence_number: 19
+- kind: message
+  direction: received
+  at: 2.8
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' fifteen'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: VhnhUWym
+    output_index: 1
+    sequence_number: 20
+- kind: message
+  direction: received
+  at: 2.811
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' sixteen'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 2Up3jozP
+    output_index: 1
+    sequence_number: 21
+- kind: message
+  direction: received
+  at: 2.821
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' seventeen'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: AAV1qu
+    output_index: 1
+    sequence_number: 22
+- kind: message
+  direction: received
+  at: 2.824
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' eighteen'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 6wOzGkn
+    output_index: 1
+    sequence_number: 23
+- kind: message
+  direction: received
+  at: 2.827
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' nineteen'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: AVq2g1L
+    output_index: 1
+    sequence_number: 24
+- kind: message
+  direction: received
+  at: 2.831
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' twenty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 9QbUNUT8n
+    output_index: 1
+    sequence_number: 25
+- kind: message
+  direction: received
+  at: 2.835
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' twenty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 0uxeQ4j4R
+    output_index: 1
+    sequence_number: 26
+- kind: message
+  direction: received
+  at: 2.84
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -one
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: U7V1GoGiaXiL
+    output_index: 1
+    sequence_number: 27
+- kind: message
+  direction: received
+  at: 2.846
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' twenty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: jp1uQ63mP
+    output_index: 1
+    sequence_number: 28
+- kind: message
+  direction: received
+  at: 2.851
+  data:
+    type: response.created
+    response:
+      id: resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3
+      object: response
+      created_at: 1792680417
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 0
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 2.875
+  data:
+    type: response.in_progress
+    response:
+      id: resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3
+      object: response
+      created_at: 1792680417
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 1
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 2.943
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -two
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: SWKx8s9qNltR
+    output_index: 1
+    sequence_number: 29
+- kind: message
+  direction: received
+  at: 2.95
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' twenty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: MrJBNfliL
+    output_index: 1
+    sequence_number: 30
+- kind: message
+  direction: received
+  at: 2.992
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -three
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 1BbrlBw9OJ
+    output_index: 1
+    sequence_number: 31
+- kind: message
+  direction: received
+  at: 3.002
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' twenty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: J6D6FwJ5V
+    output_index: 1
+    sequence_number: 32
+- kind: message
+  direction: received
+  at: 3.009
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -four
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 7Pmvzj3zPjy
+    output_index: 1
+    sequence_number: 33
+- kind: message
+  direction: received
+  at: 3.015
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' twenty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: dxes95S7a
+    output_index: 1
+    sequence_number: 34
+- kind: message
+  direction: received
+  at: 3.018
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -five
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: UCHxVY7Rvvh
+    output_index: 1
+    sequence_number: 35
+- kind: message
+  direction: received
+  at: 3.022
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' twenty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 4MAzGGQ0S
+    output_index: 1
+    sequence_number: 36
+- kind: message
+  direction: received
+  at: 3.025
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -six
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: OaBQogJWw2y2
+    output_index: 1
+    sequence_number: 37
+- kind: message
+  direction: received
+  at: 3.029
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' twenty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: de3fslNfx
+    output_index: 1
+    sequence_number: 38
+- kind: message
+  direction: received
+  at: 3.033
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -seven
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: FKBI8NZLeJ
+    output_index: 1
+    sequence_number: 39
+- kind: message
+  direction: received
+  at: 3.044
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' twenty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: yTx7Qmwwq
+    output_index: 1
+    sequence_number: 40
+- kind: message
+  direction: received
+  at: 3.05
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -eight
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: WB03c3iNKp
+    output_index: 1
+    sequence_number: 41
+- kind: message
+  direction: received
+  at: 3.054
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' twenty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: uEvwM11LX
+    output_index: 1
+    sequence_number: 42
+- kind: message
+  direction: received
+  at: 3.068
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -nine
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: Kk5zCy6lK5X
+    output_index: 1
+    sequence_number: 43
+- kind: message
+  direction: received
+  at: 3.081
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' thirty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: spl0Y0g9Q
+    output_index: 1
+    sequence_number: 44
+- kind: message
+  direction: received
+  at: 3.086
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' thirty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: PRmKlXHKq
+    output_index: 1
+    sequence_number: 45
+- kind: message
+  direction: received
+  at: 3.09
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -one
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: Mt0UTLICcRGm
+    output_index: 1
+    sequence_number: 46
+- kind: message
+  direction: received
+  at: 3.093
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' thirty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: riegMxMH6
+    output_index: 1
+    sequence_number: 47
+- kind: message
+  direction: received
+  at: 3.097
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -two
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: tTy0g1Kw2rHO
+    output_index: 1
+    sequence_number: 48
+- kind: message
+  direction: received
+  at: 3.099
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' thirty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: CqePxUXgX
+    output_index: 1
+    sequence_number: 49
+- kind: message
+  direction: received
+  at: 3.103
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -three
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: W1ukR035sY
+    output_index: 1
+    sequence_number: 50
+- kind: message
+  direction: received
+  at: 3.106
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' thirty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: iSwJ4ALBm
+    output_index: 1
+    sequence_number: 51
+- kind: message
+  direction: received
+  at: 3.109
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -four
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: jruKyLlg86u
+    output_index: 1
+    sequence_number: 52
+- kind: message
+  direction: received
+  at: 3.111
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' thirty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: kHquIBzSH
+    output_index: 1
+    sequence_number: 53
+- kind: message
+  direction: received
+  at: 3.115
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -five
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: L82luFeeRaH
+    output_index: 1
+    sequence_number: 54
+- kind: message
+  direction: received
+  at: 3.117
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' thirty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: SHF6Jk5Dw
+    output_index: 1
+    sequence_number: 55
+- kind: message
+  direction: received
+  at: 3.12
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -six
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: PyZ4dZfann1G
+    output_index: 1
+    sequence_number: 56
+- kind: message
+  direction: received
+  at: 3.123
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' thirty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 6nh55JnJT
+    output_index: 1
+    sequence_number: 57
+- kind: message
+  direction: received
+  at: 3.126
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -seven
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 3AKj0GBF0z
+    output_index: 1
+    sequence_number: 58
+- kind: message
+  direction: received
+  at: 3.13
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' thirty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: BAstji38w
+    output_index: 1
+    sequence_number: 59
+- kind: message
+  direction: received
+  at: 3.132
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -eight
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: gyxha2mTVO
+    output_index: 1
+    sequence_number: 60
+- kind: message
+  direction: received
+  at: 3.135
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' thirty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: jjVuhUbIP
+    output_index: 1
+    sequence_number: 61
+- kind: message
+  direction: received
+  at: 3.139
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -nine
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: h9cy97nwjVE
+    output_index: 1
+    sequence_number: 62
+- kind: message
+  direction: received
+  at: 3.143
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' forty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: PsVnHNRGyn
+    output_index: 1
+    sequence_number: 63
+- kind: message
+  direction: received
+  at: 3.146
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' forty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: DqcXAj3Aey
+    output_index: 1
+    sequence_number: 64
+- kind: message
+  direction: received
+  at: 3.149
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -one
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: FGqVqGGZjQzE
+    output_index: 1
+    sequence_number: 65
+- kind: message
+  direction: received
+  at: 3.151
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' forty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: d3rYCnDCoD
+    output_index: 1
+    sequence_number: 66
+- kind: message
+  direction: received
+  at: 3.154
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -two
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: yOvZsymyvXj6
+    output_index: 1
+    sequence_number: 67
+- kind: message
+  direction: received
+  at: 3.157
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' forty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: pXC9MjiscI
+    output_index: 1
+    sequence_number: 68
+- kind: message
+  direction: received
+  at: 3.16
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -three
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: iKCwstpxZ4
+    output_index: 1
+    sequence_number: 69
+- kind: message
+  direction: received
+  at: 3.163
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' forty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: NtfE54lVZo
+    output_index: 1
+    sequence_number: 70
+- kind: message
+  direction: received
+  at: 3.166
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -four
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: vLP32N97CPR
+    output_index: 1
+    sequence_number: 71
+- kind: message
+  direction: received
+  at: 3.172
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' forty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: A7mMtZFwFN
+    output_index: 1
+    sequence_number: 72
+- kind: message
+  direction: received
+  at: 3.179
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -five
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: C9QgQ9Rvg8q
+    output_index: 1
+    sequence_number: 73
+- kind: message
+  direction: received
+  at: 3.184
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' forty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: we2vfODB4u
+    output_index: 1
+    sequence_number: 74
+- kind: message
+  direction: received
+  at: 3.19
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -six
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: YqsyTucTMitH
+    output_index: 1
+    sequence_number: 75
+- kind: message
+  direction: received
+  at: 3.2
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' forty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: OoIMSHLG1m
+    output_index: 1
+    sequence_number: 76
+- kind: message
+  direction: received
+  at: 3.222
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -seven
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: W2dxd1qsTP
+    output_index: 1
+    sequence_number: 77
+- kind: message
+  direction: received
+  at: 3.228
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' forty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: wB9b2t6WOw
+    output_index: 1
+    sequence_number: 78
+- kind: message
+  direction: received
+  at: 3.233
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -eight
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: wFQjFzOfPI
+    output_index: 1
+    sequence_number: 79
+- kind: message
+  direction: received
+  at: 3.238
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' forty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: JVfqapl6cR
+    output_index: 1
+    sequence_number: 80
+- kind: message
+  direction: received
+  at: 3.241
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -nine
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: cl5RBkiI6Ko
+    output_index: 1
+    sequence_number: 81
+- kind: message
+  direction: received
+  at: 3.249
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' fifty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: nrnLNuCwPF
+    output_index: 1
+    sequence_number: 82
+- kind: message
+  direction: received
+  at: 3.252
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' fifty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 9oWy99iD9Y
+    output_index: 1
+    sequence_number: 83
+- kind: message
+  direction: received
+  at: 3.258
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -one
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 4kvSzg9SkQom
+    output_index: 1
+    sequence_number: 84
+- kind: message
+  direction: received
+  at: 3.258
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' fifty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 7BvBEEGiU8
+    output_index: 1
+    sequence_number: 85
+- kind: message
+  direction: received
+  at: 3.261
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -two
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: R7ZyJBqmlt7C
+    output_index: 1
+    sequence_number: 86
+- kind: message
+  direction: received
+  at: 3.265
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' fifty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: hYkbjRMHDQ
+    output_index: 1
+    sequence_number: 87
+- kind: message
+  direction: received
+  at: 3.267
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -three
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: hxLOYEKGZA
+    output_index: 1
+    sequence_number: 88
+- kind: message
+  direction: received
+  at: 3.269
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' fifty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: zT4nwPPbLU
+    output_index: 1
+    sequence_number: 89
+- kind: message
+  direction: received
+  at: 3.273
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -four
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: x5Iw3zXMdz4
+    output_index: 1
+    sequence_number: 90
+- kind: message
+  direction: received
+  at: 3.277
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' fifty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: RhZmNX0GXa
+    output_index: 1
+    sequence_number: 91
+- kind: message
+  direction: received
+  at: 3.284
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -five
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: GhYT6QJv0Ix
+    output_index: 1
+    sequence_number: 92
+- kind: message
+  direction: received
+  at: 3.289
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' fifty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 5N7dKshvlo
+    output_index: 1
+    sequence_number: 93
+- kind: message
+  direction: received
+  at: 3.3
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -six
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: Q7iRT6D7tZbm
+    output_index: 1
+    sequence_number: 94
+- kind: message
+  direction: received
+  at: 3.303
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' fifty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: e3AKc0ToJr
+    output_index: 1
+    sequence_number: 95
+- kind: message
+  direction: received
+  at: 3.306
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -seven
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: RvWPnV4h7X
+    output_index: 1
+    sequence_number: 96
+- kind: message
+  direction: received
+  at: 3.311
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' fifty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: dChveQS2M4
+    output_index: 1
+    sequence_number: 97
+- kind: message
+  direction: received
+  at: 3.313
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -eight
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: xfgncomqCa
+    output_index: 1
+    sequence_number: 98
+- kind: message
+  direction: received
+  at: 3.316
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' fifty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: Pcmy3ect8P
+    output_index: 1
+    sequence_number: 99
+- kind: message
+  direction: received
+  at: 3.319
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: -nine
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: 60klH5uJsCy
+    output_index: 1
+    sequence_number: 100
+- kind: message
+  direction: received
+  at: 3.323
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' sixty'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: inKRaeqW7K
+    output_index: 1
+    sequence_number: 101
+- kind: message
+  direction: received
+  at: 3.329
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' amber'
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    obfuscation: OKzUcZHQnS
+    output_index: 1
+    sequence_number: 102
+- kind: message
+  direction: received
+  at: 3.423
+  data:
+    type: response.output_text.done
+    content_index: 0
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    logprobs: []
+    output_index: 1
+    sequence_number: 103
+    text: one two three four five six seven eight nine ten eleven twelve thirteen
+      fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two
+      twenty-three twenty-four twenty-five twenty-six twenty-seven twenty-eight twenty-nine
+      thirty thirty-one thirty-two thirty-three thirty-four thirty-five thirty-six
+      thirty-seven thirty-eight thirty-nine forty forty-one forty-two forty-three
+      forty-four forty-five forty-six forty-seven forty-eight forty-nine fifty fifty-one
+      fifty-two fifty-three fifty-four fifty-five fifty-six fifty-seven fifty-eight
+      fifty-nine sixty amber
+- kind: message
+  direction: received
+  at: 3.423
+  data:
+    type: response.content_part.done
+    content_index: 0
+    item_id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+    output_index: 1
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: one two three four five six seven eight nine ten eleven twelve thirteen
+        fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two
+        twenty-three twenty-four twenty-five twenty-six twenty-seven twenty-eight
+        twenty-nine thirty thirty-one thirty-two thirty-three thirty-four thirty-five
+        thirty-six thirty-seven thirty-eight thirty-nine forty forty-one forty-two
+        forty-three forty-four forty-five forty-six forty-seven forty-eight forty-nine
+        fifty fifty-one fifty-two fifty-three fifty-four fifty-five fifty-six fifty-seven
+        fifty-eight fifty-nine sixty amber
+    sequence_number: 104
+- kind: message
+  direction: received
+  at: 3.423
+  data:
+    type: response.output_item.done
+    item:
+      id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+      type: message
+      status: completed
+      content:
+      - type: output_text
+        annotations: []
+        logprobs: []
+        text: one two three four five six seven eight nine ten eleven twelve thirteen
+          fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two
+          twenty-three twenty-four twenty-five twenty-six twenty-seven twenty-eight
+          twenty-nine thirty thirty-one thirty-two thirty-three thirty-four thirty-five
+          thirty-six thirty-seven thirty-eight thirty-nine forty forty-one forty-two
+          forty-three forty-four forty-five forty-six forty-seven forty-eight forty-nine
+          fifty fifty-one fifty-two fifty-three fifty-four fifty-five fifty-six fifty-seven
+          fifty-eight fifty-nine sixty amber
+      phase: final_answer
+      role: assistant
+    output_index: 1
+    sequence_number: 105
+- kind: message
+  direction: received
+  at: 3.427
+  data:
+    type: response.completed
+    response:
+      id: resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5
+      object: response
+      created_at: 1792680415
+      status: completed
+      access_programs: null
+      background: false
+      completed_at: 1792680418
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output:
+      - id: rs_0aedf5a18305044c016ada21e1166487d28f7b132bf61f6ba3
+        type: reasoning
+        content: []
+        encrypted_content: gAAAAABq2iHi1RBbEEsFWxL5L9-mHBJ2TuPk42CrfFAQ41SkNN6na7Wt1TB9fDgA_lKO6Vd3mBc8ZE2UESievnXEKcijTXg_HUj6zVIIN6p_2Rm_9TJXm5b8IIZkgAlpc6DYQrP7lxUlt4RwhZtJjwGRW4SOTqoDU78DfJnyEPhSlxIfaMbyxXi9YqtDQne4YCMQoQGMqXlRtuTupFUxt2UDfZEvdDJDYly_z5Bqmy9hRuP2umsIdCrDrIej6yy766XzsL12x4OZTeiGnZsfkAP-L-f1AzWgzd1CWL6Ij284hLPa122Fm6gMPsI2nygJfmr0lOnv3v2X8bUv65HR0ms8fyZce4f8YrNHWt69_Rmp0VxnmUsJlyUfILyH0kj_WeJoW2VZgB7EygildE8Bgn9Jmmd8fdQ-07Xki_xL-zHc87XuCWx199kKxEMwMQrnshrj4KU3pc8epECgwrxTeXPj4BwxgR7cvDUR45otA3kYkSgO8K8ynnGIZZjISVhMZpDp8aoog3iTnD5IS1izqqti0Z83nSjCEVCZoFUqiMujMQFVPPnmN95xUqHCr_Ymv5Iuqcgb6Bue54nV3nCUAzFfnlyN7PVgT-5Up6Eb12CspYHonll2l4bRdviZiLArKDDYkZjMuETJsw3cm0ECLchVt_0qz9GeD0hvRcNallo5rIq96BhDR5odjR_suI7gv1Bet8BB97a4uqYnim0Cmibp62Pi0RtcKMKflRKZ3M_86oE67vUyNNpsSnt-WgnNYoVrhpJImMxrtVxLFnQ89x0IWw3Fw3GP01UHAaiBkXf-luVdz4pvhh3it85oBNLLNOxL1My4bIP6ptlO94_Sq-fCpqXhc0EbQdmJ1XaL5K6MnwjS_E57yU1ZFXdAxKieVnPui0J2t4J504U_EUWfmP4zEFj_Pz2uFgxB4_1jeaeSMfI6hMJ4IIkS6TjJJCr8TaE7CbMiM5KuWIiskRQyT5yoC2ZJl_IQrH9-vnMbhLi6CfbWXot6RrysB7O3Az-7PrsnC9xApUtB3j6CFCNwds6Cp8iFCB8wF6NW7NWaK8V3WWWOLhMmukquUPKnmjiNQY1Q3ikj1TFlMBDeGZyCXPJiewQMwea7GWwExFh19059TydMkiAJqOfZ4OuC5JjeOAb6CQfgen9dCEjoMqrnHuRdvM1rufZMjIj4z_SLHpaBTBtCzsUXVh_vnyy7JoM2z5w6YPsmj1cUtupUuxehBANz0l6RCKoaZ7S301c46bAAm8qPAjR-afCrnCCAY4UUhRhTq7vQNGcSm369yn_YcgjFoIbgh8Qev8InSO09G36QAfMADinKMTNiruELQPBJyjE-i1qEF0sIi1SMnNy_tqQco-145FFrDQUFawXYoScA9qpp1Pg0a58SudbCszwrudOYvVNOZuqkrbgPXZqjjBT-DrrlPISl6U1jzuj9nAIDjkWhN1nYzrzLaiWyzqB5K_Byl68tqXH5oiKaWV7zVx7VmevS-WgyjyJA-xu9_avUgsDsHAyWkgbgffNrTlQa9y48RaHue5R1Qc_eP7foEb579S9aD-Iq4jYMzHhgk8CdP4ZgmkzK_FXG5ISv_JMTlzgFUu3YvwBQt3zOLsK4bA-gWlyisPSh_9eFugrZMq4S8SC5Zqb-WetKbMWigRyMgLtgYE6VxIA4
+        summary: []
+      - id: msg_0aedf5a18305044c016ada21e1bf6087d2a236a6795bb21cfe
+        type: message
+        status: completed
+        content:
+        - type: output_text
+          annotations: []
+          logprobs: []
+          text: one two three four five six seven eight nine ten eleven twelve thirteen
+            fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one
+            twenty-two twenty-three twenty-four twenty-five twenty-six twenty-seven
+            twenty-eight twenty-nine thirty thirty-one thirty-two thirty-three thirty-four
+            thirty-five thirty-six thirty-seven thirty-eight thirty-nine forty forty-one
+            forty-two forty-three forty-four forty-five forty-six forty-seven forty-eight
+            forty-nine fifty fifty-one fifty-two fifty-three fifty-four fifty-five
+            fifty-six fifty-seven fifty-eight fifty-nine sixty amber
+        phase: final_answer
+        role: assistant
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 25
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 122
+        output_tokens_details:
+          reasoning_tokens: 19
+        total_tokens: 147
+      user: null
+      metadata: {}
+    sequence_number: 106
+- kind: message
+  direction: received
+  at: 6.1
+  data:
+    type: response.output_item.added
+    item:
+      id: msg_0d948b71f38d99ed016ada21e5304c87d2a3f63cad0e375493
+      type: message
+      status: in_progress
+      content: []
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 2
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 6.1
+  data:
+    type: response.content_part.added
+    content_index: 0
+    item_id: msg_0d948b71f38d99ed016ada21e5304c87d2a3f63cad0e375493
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: ''
+    sequence_number: 3
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 6.111
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: c
+    item_id: msg_0d948b71f38d99ed016ada21e5304c87d2a3f63cad0e375493
+    logprobs: []
+    obfuscation: qxm7aGOsMBgDPU2
+    output_index: 0
+    sequence_number: 4
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 6.118
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: obalt
+    item_id: msg_0d948b71f38d99ed016ada21e5304c87d2a3f63cad0e375493
+    logprobs: []
+    obfuscation: weiNawQN2KK
+    output_index: 0
+    sequence_number: 5
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 6.221
+  data:
+    type: response.output_text.done
+    content_index: 0
+    item_id: msg_0d948b71f38d99ed016ada21e5304c87d2a3f63cad0e375493
+    logprobs: []
+    output_index: 0
+    sequence_number: 6
+    text: cobalt
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 6.222
+  data:
+    type: response.content_part.done
+    content_index: 0
+    item_id: msg_0d948b71f38d99ed016ada21e5304c87d2a3f63cad0e375493
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: cobalt
+    sequence_number: 7
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 6.222
+  data:
+    type: response.output_item.done
+    item:
+      id: msg_0d948b71f38d99ed016ada21e5304c87d2a3f63cad0e375493
+      type: message
+      status: completed
+      content:
+      - type: output_text
+        annotations: []
+        logprobs: []
+        text: cobalt
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 8
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 6.225
+  data:
+    type: response.completed
+    response:
+      id: resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3
+      object: response
+      created_at: 1792680417
+      status: completed
+      access_programs: null
+      background: false
+      completed_at: 1792680421
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output:
+      - id: msg_0d948b71f38d99ed016ada21e5304c87d2a3f63cad0e375493
+        type: message
+        status: completed
+        content:
+        - type: output_text
+          annotations: []
+          logprobs: []
+          text: cobalt
+        phase: final_answer
+        role: assistant
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 12
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 6
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 18
+      user: null
+      metadata: {}
+    sequence_number: 9
+    stream_id: lane-1
+- kind: message
+  direction: sent
+  at: 6.243
+  data:
+    type: response.create
+    model: gpt-6-astra
+    input:
+    - role: user
+      content: Reply with the word amber again.
+    previous_response_id: resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5
+    reasoning:
+      context: all_turns
+    store: false
+    include:
+    - reasoning.encrypted_content
+    prompt_cache_options:
+      comparison_response_id: resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5
+- kind: message
+  direction: received
+  at: 6.475
+  data:
+    type: response.created
+    response:
+      id: resp_0aedf5a18305044c016ada21e5709887d2aca8453e76a53b37
+      object: response
+      created_at: 1792680421
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5
+      prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5
+        mode: implicit
+        ttl: 30m
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 0
+- kind: message
+  direction: received
+  at: 6.5
+  data:
+    type: response.in_progress
+    response:
+      id: resp_0aedf5a18305044c016ada21e5709887d2aca8453e76a53b37
+      object: response
+      created_at: 1792680421
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5
+      prompt_cache_diagnostics:
+        type: unavailable
+      prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5
+        mode: implicit
+        ttl: 30m
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 1
+- kind: message
+  direction: received
+  at: 9.147
+  data:
+    type: response.output_item.added
+    item:
+      id: msg_0aedf5a18305044c016ada21e83c5c87d28c8c9ec77cd1da49
+      type: message
+      status: in_progress
+      content: []
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 2
+- kind: message
+  direction: received
+  at: 9.147
+  data:
+    type: response.content_part.added
+    content_index: 0
+    item_id: msg_0aedf5a18305044c016ada21e83c5c87d28c8c9ec77cd1da49
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: ''
+    sequence_number: 3
+- kind: message
+  direction: received
+  at: 9.158
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: amber
+    item_id: msg_0aedf5a18305044c016ada21e83c5c87d28c8c9ec77cd1da49
+    logprobs: []
+    obfuscation: XInNxhcdFxN
+    output_index: 0
+    sequence_number: 4
+- kind: message
+  direction: received
+  at: 9.217
+  data:
+    type: response.output_text.done
+    content_index: 0
+    item_id: msg_0aedf5a18305044c016ada21e83c5c87d28c8c9ec77cd1da49
+    logprobs: []
+    output_index: 0
+    sequence_number: 5
+    text: amber
+- kind: message
+  direction: received
+  at: 9.218
+  data:
+    type: response.content_part.done
+    content_index: 0
+    item_id: msg_0aedf5a18305044c016ada21e83c5c87d28c8c9ec77cd1da49
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: amber
+    sequence_number: 6
+- kind: message
+  direction: received
+  at: 9.218
+  data:
+    type: response.output_item.done
+    item:
+      id: msg_0aedf5a18305044c016ada21e83c5c87d28c8c9ec77cd1da49
+      type: message
+      status: completed
+      content:
+      - type: output_text
+        annotations: []
+        logprobs: []
+        text: amber
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 7
+- kind: message
+  direction: received
+  at: 9.223
+  data:
+    type: response.completed
+    response:
+      id: resp_0aedf5a18305044c016ada21e5709887d2aca8453e76a53b37
+      object: response
+      created_at: 1792680421
+      status: completed
+      access_programs: null
+      background: false
+      completed_at: 1792680424
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output:
+      - id: msg_0aedf5a18305044c016ada21e83c5c87d28c8c9ec77cd1da49
+        type: message
+        status: completed
+        content:
+        - type: output_text
+          annotations: []
+          logprobs: []
+          text: amber
+        phase: final_answer
+        role: assistant
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5
+      prompt_cache_diagnostics:
+        type: cache_hit
+      prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0aedf5a18305044c016ada21df316887d2bf8dbc27db1a82b5
+        mode: implicit
+        ttl: 30m
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 160
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 165
+      user: null
+      metadata: {}
+    sequence_number: 8
+- kind: message
+  direction: sent
+  at: 9.226
+  data:
+    type: response.create
+    model: gpt-6-astra
+    input:
+    - role: user
+      content: Reply with the word cobalt again.
+    previous_response_id: resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3
+    reasoning:
+      context: all_turns
+    store: false
+    include:
+    - reasoning.encrypted_content
+    prompt_cache_options:
+      comparison_response_id: resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 9.378
+  data:
+    type: response.created
+    response:
+      id: resp_0d948b71f38d99ed016ada21e8690087d2bc5cc8823a6ca313
+      object: response
+      created_at: 1792680424
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3
+      prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3
+        mode: implicit
+        ttl: 30m
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 0
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 9.402
+  data:
+    type: response.in_progress
+    response:
+      id: resp_0d948b71f38d99ed016ada21e8690087d2bc5cc8823a6ca313
+      object: response
+      created_at: 1792680424
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3
+      prompt_cache_diagnostics:
+        type: unavailable
+      prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3
+        mode: implicit
+        ttl: 30m
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 1
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 15.275
+  data:
+    type: response.output_item.added
+    item:
+      id: msg_0d948b71f38d99ed016ada21ee5d3087d28306f83453336127
+      type: message
+      status: in_progress
+      content: []
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 2
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 15.276
+  data:
+    type: response.content_part.added
+    content_index: 0
+    item_id: msg_0d948b71f38d99ed016ada21ee5d3087d28306f83453336127
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: ''
+    sequence_number: 3
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 15.288
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: c
+    item_id: msg_0d948b71f38d99ed016ada21ee5d3087d28306f83453336127
+    logprobs: []
+    obfuscation: 2e0kOXXAMCIkkTk
+    output_index: 0
+    sequence_number: 4
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 15.295
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: obalt
+    item_id: msg_0d948b71f38d99ed016ada21ee5d3087d28306f83453336127
+    logprobs: []
+    obfuscation: gdVy0ZrGXC7
+    output_index: 0
+    sequence_number: 5
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 15.361
+  data:
+    type: response.output_text.done
+    content_index: 0
+    item_id: msg_0d948b71f38d99ed016ada21ee5d3087d28306f83453336127
+    logprobs: []
+    output_index: 0
+    sequence_number: 6
+    text: cobalt
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 15.362
+  data:
+    type: response.content_part.done
+    content_index: 0
+    item_id: msg_0d948b71f38d99ed016ada21ee5d3087d28306f83453336127
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: cobalt
+    sequence_number: 7
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 15.363
+  data:
+    type: response.output_item.done
+    item:
+      id: msg_0d948b71f38d99ed016ada21ee5d3087d28306f83453336127
+      type: message
+      status: completed
+      content:
+      - type: output_text
+        annotations: []
+        logprobs: []
+        text: cobalt
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 8
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 15.364
+  data:
+    type: response.completed
+    response:
+      id: resp_0d948b71f38d99ed016ada21e8690087d2bc5cc8823a6ca313
+      object: response
+      created_at: 1792680424
+      status: completed
+      access_programs: null
+      background: false
+      completed_at: 1792680430
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output:
+      - id: msg_0d948b71f38d99ed016ada21ee5d3087d28306f83453336127
+        type: message
+        status: completed
+        content:
+        - type: output_text
+          annotations: []
+          logprobs: []
+          text: cobalt
+        phase: final_answer
+        role: assistant
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3
+      prompt_cache_diagnostics:
+        type: cache_hit
+      prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0d948b71f38d99ed016ada21e1da2c87d2bde45e77f7443ad3
+        mode: implicit
+        ttl: 30m
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 31
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 6
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 37
+      user: null
+      metadata: {}
+    sequence_number: 9
+    stream_id: lane-1

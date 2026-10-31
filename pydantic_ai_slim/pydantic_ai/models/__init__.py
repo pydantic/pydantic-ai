@@ -15,7 +15,7 @@ import uuid
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
@@ -198,6 +198,9 @@ ModelContextDepsT = TypeVar('ModelContextDepsT')
 @cache
 def known_model_names() -> tuple[str, ...]:
     """Return every model name known to [`KnownModelName`][pydantic_ai.models.KnownModelName].
+
+    The list is intended for autocomplete and error suggestions; it is not exhaustive of the model
+    ids accepted by providers and should not be used to validate user input.
 
     This is the public, stable way to enumerate the known model ids. Prefer it over introspecting
     the `KnownModelName` type alias directly (e.g. `get_args(KnownModelName.__value__)`), which is
@@ -975,6 +978,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def settings(self) -> ModelSettings | None:
         """Get the model settings."""
         return self._settings
+
+    def _run_scope(self) -> AbstractAsyncContextManager[None]:
+        """The context an agent run holds around its requests to this model, unless it runs in a durable workflow.
+
+        Unlike `__aenter__`, it leaves the provider's HTTP client alone. A model can use it to keep a connection it
+        opens on demand open for the run. Wrappers should inherit from `WrapperModel`, or forward this context
+        manager to their wrapped models as `WrapperModel` and `FallbackModel` do. Without forwarding, wrapped
+        models cannot acquire run-scoped resources and may fall back to HTTP.
+        """
+        return nullcontext()
 
     def __eq__(self, other: object) -> bool:
         """Compare `settings`, `profile`, and the subclass's dataclass fields; a subclass that hashes by identity compares by identity."""

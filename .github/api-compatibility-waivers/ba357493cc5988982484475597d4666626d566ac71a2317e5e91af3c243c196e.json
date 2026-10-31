@@ -1,0 +1,5 @@
+{
+  "against": "v2.63.0",
+  "reason": "`RepoContextSettings.nested_traversal` keeps its type and default; only its `Field` description changed, to describe nested traversal surfacing every directory between the traversed one and the workspace.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11687"
+}

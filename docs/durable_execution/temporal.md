@@ -705,6 +705,53 @@ The continuation passes `None` as the prompt: the carried-over history already e
 
 Carrying `usage` and `usage_limits` across the boundary keeps [usage limits](../agent.md#usage-limits) like `request_limit` bounding the whole logical run rather than resetting on each continuation. `message_history`, `usage`, and `usage_limits` are ordinary workflow arguments here, not a feature of `TemporalDurability` itself. The function and the `@workflow.run` signature that receives them are yours to shape.
 
+### Responses WebSocket connections
+
+An OpenAI Responses model can reuse a [Responses WebSocket](../models/openai.md#responses-websockets) across model activities when the worker holds the registered model open. Install `pydantic-ai-slim[openai-realtime]`, set [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport], and enter the model around the worker's lifetime:
+
+```python {test="skip" gateway_toggle="skip"}
+from temporalio import workflow
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel(
+    '{{ openai:medium.name }}',
+    settings=OpenAIResponsesModelSettings(openai_transport='websocket', max_retries=0),
+)
+agent = Agent(model, name='triage', capabilities=[TemporalDurability()])
+
+
+@workflow.defn
+class TriageWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await agent.run(prompt)).output
+
+
+async def main():
+    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
+    async with model:
+        async with Worker(client, task_queue='triage', workflows=[TriageWorkflow]):
+            await client.execute_workflow(
+                TriageWorkflow.run,
+                'Triage this request.',
+                id='triage-1',
+                task_queue='triage',
+            )
+```
+
+Each activity still checkpoints its result independently. Activities borrow the socket only on the event loop where an outer model context holds it; without that owner, or for a model created only inside an activity, requests use HTTP. Capacity overflow also uses HTTP. Set [`max_retries=0`][pydantic_ai.settings.ModelSettings.max_retries] when Temporal owns the retry budget; this disables transport retries for both WebSocket requests and HTTP overflow, compaction and token counting.
+
+Connections are worker-local resources. A replacement worker uses its own model and connection; it can resend the retained conversation when a previous response is unavailable on that connection. Keep the full message history, especially with [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store]. Replaying completed activities uses their recorded results without opening a connection or sending another model request.
+
+With [instrumentation](../logfire.md) enabled, inspect `pydantic_ai.transport` on the model activity span within each request's `chat` span. It records `'websocket'` for a socket request or `'http'` for HTTP fallback in WebSocket mode.
+
 ### Model Selection at Runtime
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'{{ openai:medium }}'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance inside a workflow:

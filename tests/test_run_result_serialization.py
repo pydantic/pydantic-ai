@@ -432,6 +432,23 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                 'usage': {'$ref': '#/$defs/RunUsage'},
                 'run_id': {'title': 'Run Id', 'type': 'string'},
                 'conversation_id': {'title': 'Conversation Id', 'type': 'string'},
+                'conversation_revision': {
+                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                    'title': 'Conversation Revision',
+                },
+                'conversation_unsaved': {
+                    'items': {
+                        'discriminator': {
+                            'mapping': {'request': '#/$defs/ModelRequest', 'response': '#/$defs/ModelResponse'},
+                            'propertyName': 'kind',
+                        },
+                        'oneOf': [{'$ref': '#/$defs/ModelRequest'}, {'$ref': '#/$defs/ModelResponse'}],
+                    },
+                    'title': 'Conversation Unsaved',
+                    'type': 'array',
+                },
+                'conversation_unchecked': {'title': 'Conversation Unchecked', 'type': 'boolean'},
+                'conversation_saved': {'title': 'Conversation Saved', 'type': 'boolean'},
                 'metadata': {
                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                     'title': 'Metadata',
