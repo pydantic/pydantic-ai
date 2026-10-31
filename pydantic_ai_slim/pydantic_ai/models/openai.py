@@ -44,7 +44,7 @@ from .._framing import neutralize_voice_tag
 from .._http import to_httpx2_timeout
 from .._instrumentation import current_model_request_span, get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
-from .._run_context import RunContext
+from .._run_context import RunContext, context_window_fraction
 from .._thinking_part import render_replayed_thinking, split_content_into_text_and_thinking
 from .._utils import (
     format_inlined_text_file as _format_inlined_text_file,
@@ -7200,11 +7200,13 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
       [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
       or when you need explicit out-of-band control over when compaction runs.
 
-      Requires either `message_count_threshold` or a custom `trigger` callable.
+      Requires `context_window_threshold`, `message_count_threshold`, or a
+      custom `trigger` callable.
 
     If `stateless` is not set, it is inferred from which parameters you
-    provide: passing any stateless-only parameter (`message_count_threshold`
-    or `trigger`) implies `stateless=True`; otherwise stateful mode is used.
+    provide: passing any stateless-only parameter
+    (`context_window_threshold`, `message_count_threshold`, or `trigger`)
+    implies `stateless=True`; otherwise stateful mode is used.
 
     Example usage:
 
@@ -7227,7 +7229,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
     # Stateless mode for ZDR environments or explicit control:
     agent = Agent(
         'openai-responses:gpt-5.2',
-        capabilities=[OpenAICompaction(message_count_threshold=20)],
+        capabilities=[OpenAICompaction(context_window_threshold=0.8)],
     )
     ```
     """
@@ -7237,6 +7239,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         *,
         stateless: bool | None = None,
         token_threshold: int | None = None,
+        context_window_threshold: float | None = None,
         message_count_threshold: int | None = None,
         trigger: Callable[[list[ModelMessage]], bool] | None = None,
     ) -> None:
@@ -7245,20 +7248,34 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         Args:
             stateless: Select the compaction mode explicitly. If `None` (the
                 default), the mode is inferred from the other parameters:
-                passing any stateless-only parameter (`message_count_threshold`
-                or `trigger`) implies `stateless=True`; otherwise stateful
-                mode is used.
+                passing any stateless-only parameter
+                (`context_window_threshold`, `message_count_threshold`,
+                or `trigger`) implies `stateless=True`; otherwise stateful mode
+                is used.
             token_threshold: Stateful-mode only. Input token threshold at which
                 OpenAI's server-side compaction is triggered. Corresponds to
                 `compact_threshold` in the `context_management` API field. If
                 `None`, OpenAI picks a server-side default.
+            context_window_threshold: Stateless-mode only. Compact when
+                [`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]
+                reaches this fraction of the model's context window. Must be
+                greater than `0` and at most `1`. If the latest response's usage
+                is unknown (e.g. before the first response), this threshold does
+                not trigger compaction; if the model's context window is unknown,
+                it never does and a warning is emitted.
             message_count_threshold: Stateless-mode only. Compact when the
-                message count exceeds this threshold.
+                message count exceeds this threshold. When combined with
+                `context_window_threshold`, compaction runs when either is reached.
             trigger: Stateless-mode only. Custom callable that decides whether
                 to compact based on the current messages. Takes precedence
-                over `message_count_threshold`.
+                over the configured thresholds.
         """
-        has_stateless_only = message_count_threshold is not None or trigger is not None
+        if context_window_threshold is not None and not 0 < context_window_threshold <= 1:
+            raise UserError('`context_window_threshold` must be greater than 0 and at most 1.')
+
+        has_stateless_only = (
+            context_window_threshold is not None or message_count_threshold is not None or trigger is not None
+        )
         has_stateful_only = token_threshold is not None
 
         if stateless is None:
@@ -7268,23 +7285,25 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
             if has_stateful_only:
                 raise UserError(
                     '`token_threshold` is only valid for stateful compaction (`stateless=False`). '
-                    'For stateless `/compact` endpoint compaction, use `message_count_threshold` or `trigger`.'
+                    'For stateless `/compact` endpoint compaction, use `context_window_threshold`, '
+                    '`message_count_threshold`, or `trigger`.'
                 )
             if not has_stateless_only:
                 raise UserError(
-                    '`stateless=True` requires `message_count_threshold` or `trigger` '
-                    'to determine when to invoke the `/compact` endpoint.'
+                    '`stateless=True` requires `context_window_threshold`, `message_count_threshold`, '
+                    'or `trigger` to determine when to invoke the `/compact` endpoint.'
                 )
         else:
             if has_stateless_only:
                 raise UserError(
-                    '`message_count_threshold` and `trigger` are only valid for stateless compaction '
-                    '(`stateless=True`). For stateful server-side compaction, use `token_threshold` '
-                    '(or omit it to use the OpenAI-managed default).'
+                    '`context_window_threshold`, `message_count_threshold`, and `trigger` are only valid '
+                    'for stateless compaction (`stateless=True`). For stateful server-side compaction, use '
+                    '`token_threshold` (or omit it to use the OpenAI-managed default).'
                 )
 
         self.stateless = stateless
         self.token_threshold = token_threshold
+        self.context_window_threshold = context_window_threshold
         self.message_count_threshold = message_count_threshold
         self.trigger = trigger
 
@@ -7307,21 +7326,32 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
 
         return resolve
 
-    def _should_compact(self, messages: Sequence[ModelMessage]) -> bool:
+    def _should_compact(self, messages: Sequence[ModelMessage], context_window: int | None) -> bool:
         if not self.stateless:
             return False
         if self.trigger is not None:
             return self.trigger(list(messages))
-        if self.message_count_threshold is not None:
-            return len(messages) > self.message_count_threshold
-        return False  # pragma: no cover
+        if self.context_window_threshold is not None:
+            used = context_window_fraction(messages, context_window)
+            if used is not None and used >= self.context_window_threshold:
+                return True
+        return self.message_count_threshold is not None and len(messages) > self.message_count_threshold
 
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        if not self._should_compact(request_context.messages):
+        context_window = request_context.model.context_window
+        if self.context_window_threshold is not None and context_window is None:
+            warnings.warn(
+                f'`context_window_threshold` cannot trigger compaction because the context window of model '
+                f'{request_context.model.model_name!r} is unknown. `OpenAICompaction` requires an `OpenAIResponsesModel`; '
+                "set its window with `profile={'context_window': ...}`, or use `message_count_threshold` or `trigger` "
+                'instead.',
+                UserWarning,
+            )
+        if not self._should_compact(request_context.messages, context_window):
             return request_context
 
         from .wrapper import WrapperModel
