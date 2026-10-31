@@ -5099,6 +5099,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # when this run is on another event loop. A durable run sends its requests from the engine's
                 # activities, steps or tasks instead, and a Temporal workflow's event loop isn't theirs.
                 self.model._refresh_http_client()  # pyright: ignore[reportPrivateUsage]
+                # The run holds the connections the model opens on demand without entering it, which would close the
+                # provider's HTTP client when the run ends.
+                await stack.enter_async_context(self.model._run_scope())  # pyright: ignore[reportPrivateUsage]
 
             async def _finalize_result(result: AgentRunResult[Any]) -> None:
                 self.usage_limits.check_cost(result.usage)
