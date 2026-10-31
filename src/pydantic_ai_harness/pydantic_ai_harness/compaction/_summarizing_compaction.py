@@ -759,9 +759,12 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     """Per-message character cap for `keep_user_messages`; oversized messages are truncated
     with an explicit marker (the shared truncation-marker convention)."""
 
-    tool_return_max_chars: int | None = field(default=500, kw_only=True)
-    """Per-return character cap when rendering tool results for the summarizer. `None` renders
-    them whole."""
+    tool_return_max_chars: int | None = field(default=None, kw_only=True)
+    """Per-return character cap when rendering tool results, retry feedback and harness data for the
+    summarizer. `None`, the default, renders them whole.
+
+    Facts that only a tool result carries reach the summary only if the summarizer sees them. Set a cap
+    when `model` is a summarizer with a smaller context window than the run's model."""
 
     preserve_loaded_capabilities: bool = field(default=True, kw_only=True)
     """When `True`, a deferred capability loaded in the summarized messages stays loaded.
