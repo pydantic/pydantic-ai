@@ -610,6 +610,36 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
     )
 
 
+def google_style_docstring_var_positional(foo: int, *args: str) -> str:  # pragma: no cover
+    """Do foobar stuff.
+
+    Args:
+        foo: The foo thing.
+        *args: The extra things.
+    """
+    return f'{foo} {args}'
+
+
+def test_docstring_google_var_positional():
+    """Google style documents `*args` with its stars, which must not hide the description."""
+    agent = Agent(FunctionModel(get_json_schema))
+    agent.tool_plain(require_parameter_descriptions=True)(google_style_docstring_var_positional)
+
+    result = agent.run_sync('')
+    json_schema = json.loads(result.output)
+    assert json_schema['parameters_json_schema'] == snapshot(
+        {
+            'additionalProperties': False,
+            'properties': {
+                'foo': {'description': 'The foo thing.', 'type': 'integer'},
+                'args': {'description': 'The extra things.', 'items': {'type': 'string'}, 'type': 'array'},
+            },
+            'required': ['foo', 'args'],
+            'type': 'object',
+        }
+    )
+
+
 class Foo(BaseModel):
     x: int
     y: str

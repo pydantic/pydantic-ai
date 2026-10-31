@@ -66,7 +66,7 @@ def doc_descriptions(
 
     params = {}
     if parameters := next((p for p in sections if p.kind == DocstringSectionKind.parameters), None):
-        params = {p.name: p.description for p in parameters.value}
+        params = {p.name.lstrip('*'): p.description for p in parameters.value}
 
     main_desc = ''
     if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
