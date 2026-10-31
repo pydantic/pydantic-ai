@@ -4419,12 +4419,19 @@ class OperatorText(str):
         return cls(await workspace.read_text(path))
 
 
+_ContentAuthor: TypeAlias = Literal['user', 'tool', 'file', 'application']
+"""Who wrote content from a `CapabilityPartSource`, as the lookalike note names them: the application writes its own."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class OperatorSource:
     """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose content the application's own code or the operator's configuration wrote."""
 
     source_kind: Literal['operator'] = 'operator'
     """Source type identifier, used as a discriminator."""
+
+    _author: ClassVar[_ContentAuthor] = 'application'
+    """Who wrote content from this source, for the lookalike note."""
 
     @property
     def trusted(self) -> bool:
@@ -4451,6 +4458,9 @@ class WorkspaceSource:
 
     source_kind: Literal['workspace'] = 'workspace'
     """Source type identifier, used as a discriminator."""
+
+    _author: ClassVar[_ContentAuthor] = 'file'
+    """Who wrote content from this source, for the lookalike note."""
 
     @classmethod
     def from_workspace(cls, workspace: Workspace, path: str) -> WorkspaceSource:
@@ -4479,6 +4489,9 @@ class ToolResultSource:
     source_kind: Literal['tool-result'] = 'tool-result'
     """Source type identifier, used as a discriminator."""
 
+    _author: ClassVar[_ContentAuthor] = 'tool'
+    """Who wrote content from this source, for the lookalike note."""
+
     @property
     def trusted(self) -> bool:
         """Always `False`: a tool's output is data, whoever wrote the tool."""
@@ -4491,6 +4504,9 @@ class UserSource:
 
     source_kind: Literal['user'] = 'user'
     """Source type identifier, used as a discriminator."""
+
+    _author: ClassVar[_ContentAuthor] = 'user'
+    """Who wrote content from this source, for the lookalike note."""
 
     @property
     def trusted(self) -> bool:
@@ -4732,7 +4748,7 @@ class CapabilityPart:
         # A kind's fields aren't statically known here, and `rendering.attributes` was checked against them.
         return getattr(self, name, None)
 
-    def rendered_attributes(self) -> dict[str, str | None]:
+    def _rendered_attributes(self) -> dict[str, str | None]:
         """The attributes this part's frame carries, in their declared order: `None` leaves one off."""
         return {
             name: None if (value := self._attribute_value(name)) is None else str(value)

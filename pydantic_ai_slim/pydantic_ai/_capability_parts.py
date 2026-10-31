@@ -11,12 +11,13 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Final, Literal, TypeAlias
+from typing import Final, TypeAlias
 
 from . import _utils
 from ._framework_frame import framework_frame_text
 from ._framing import capability_frame_tags
 from .messages import (
+    _FRAME_PLACEHOLDER,  # pyright: ignore[reportPrivateUsage]
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     CapabilityPart,
     ModelMessage,
@@ -27,6 +28,7 @@ from .messages import (
     TextContent,
     UserContent,
     UserPromptPart,
+    _ContentAuthor,  # pyright: ignore[reportPrivateUsage]
 )
 
 RENDERED_CAPABILITY_PART_KEY: Final = 'capability_part'
@@ -89,10 +91,11 @@ def _render(part: CapabilityPart) -> list[SystemPromptPart | UserPromptPart]:
     assert rendering.tag is not None
     # TODO(#11029): deliver content from a source the operator doesn't control on the tool channel instead, as a
     # framework-inserted read and its result, rebuilding #11837.
-    open_tag, close_tag = capability_frame_tags(rendering.tag, attrs=part.rendered_attributes())
+    attrs = part._rendered_attributes()  # pyright: ignore[reportPrivateUsage]
+    open_tag, close_tag = capability_frame_tags(rendering.tag, attrs=attrs)
     # Only the tags are marked as the framework's: the body is the part's content, which `prepare_messages` checks
     # for lookalike frames like any other text, so a body that closes the frame early is noted rather than trusted.
-    author = _AUTHORS[part.source.source_kind]
+    author = part.source._author  # pyright: ignore[reportPrivateUsage]
     items = [content] if isinstance(content, str | StructuredContent) else content
     body = [_with_author(item, author) for item in items]
     framed = UserPromptPart(
@@ -101,20 +104,12 @@ def _render(part: CapabilityPart) -> list[SystemPromptPart | UserPromptPart]:
     if rendering.note is None or not part.source.trusted:
         return [framed]
     reference, _ = capability_frame_tags(rendering.tag, attrs={})
-    note = rendering.note.replace('{frame}', reference)
+    note = rendering.note.replace(_FRAME_PLACEHOLDER, reference)
     return [SystemPromptPart(note, timestamp=part.timestamp, metadata=metadata), framed]
 
 
-ContentAuthor: TypeAlias = Literal['user', 'tool', 'file', 'application']
+ContentAuthor: TypeAlias = _ContentAuthor
 """Who wrote a capability part's content, for the lookalike note: the lookalike sources, or the application itself."""
-
-_AUTHORS: Final[dict[str, ContentAuthor]] = {
-    'operator': 'application',
-    'workspace': 'file',
-    'tool-result': 'tool',
-    'user': 'user',
-}
-"""The author of the content from each kind of `CapabilityPartSource`, by its `source_kind`."""
 
 CONTENT_AUTHOR_KEY: Final = 'content_author'
 """The key under the reserved `__pydantic_ai__` namespace of a rendered body's `TextContent` naming its author."""
