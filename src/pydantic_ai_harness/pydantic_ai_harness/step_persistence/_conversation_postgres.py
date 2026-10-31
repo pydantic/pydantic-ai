@@ -40,7 +40,8 @@ class PostgresConversationStore(ConversationStore):
     defaults to the step store's, so the two can share one prefix:
 
     - `{table}_conv_records(conversation_id PK, revision, head_id, scope, updated_at, record)`
-    - `{table}_conv_entries(id PK, parent_id, kind, sha256)`
+    - `{table}_conv_entries(id PK, parent_id, kind, sha256, root_id, depth)`: `root_id` is the first entry of the
+      entry's history, whose writes take turns on an advisory lock, and `depth` its distance from it.
     - `{table}_conv_messages(sha256 PK, message)`: each message's JSON once, however many entries hold it.
     - `{table}_conv_branches(conversation_id, entry_id)`: the last entry of each branch a record lists.
 
