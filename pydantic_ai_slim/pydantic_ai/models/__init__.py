@@ -56,8 +56,11 @@ from .._framing import (
     CONVERSATION_SUMMARY_TAG,
     SYSTEM_TAG,
     SYSTEM_VOICE_ANNOUNCEMENT,
+    LookalikeSource,
+    context_lookalike_note,
     neutralize_tags,
     neutralize_voice_tag,
+    opens_context_element,
     wrap,
 )
 from .._genai_prices import lookup_context_window, preload_pricing_data
@@ -91,6 +94,7 @@ from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
     BaseToolReturnPart,
+    BinaryContent,
     BinaryImage,
     CachePoint,
     CapabilityLoadDeltaPart,
@@ -1733,6 +1737,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `<context>` element that id names, so a later statement of an appending dynamic system prompt replaces
         or withdraws the first.
 
+        When the conversation has `<context>` elements, follows each user prompt, attached text file and tool result
+        whose text opens one with a note saying who wrote it, so the model doesn't take it as a change to its
+        instructions. The item itself is sent as written.
+
         Where the profile's `supports_request_scoped_system_prompts` is `False`, leaves out every
         [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose request has been answered
         and moves the current request's ones to the end of the last request.
@@ -1765,6 +1773,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
+        prefix = model_request_parameters.instruction_parts if model_request_parameters is not None else None
+        # Asked before the instruction state is projected, which drops the records it's read from.
+        first_context_request = _first_context_request(messages, prefix)
         messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
@@ -1772,7 +1783,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _project_instruction_state(
                 messages,
                 inline_system=inline_system,
-                prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
+                prefix=prefix,
             )
 
         messages = _render_system_prompt_contexts(
@@ -1795,6 +1806,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
         messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
+        if first_context_request is not None:
+            # Before the `<system>` wrap below, which turns each note into `<system>`-tagged user text where needed.
+            messages = _note_context_lookalikes(messages, first_context_request)
         # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
         # history was authored with, and an announcement opening the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
@@ -4193,6 +4207,104 @@ def _render_system_prompt_contexts(
             stated = stated or states_rule_at is not None
         rendered.append(replace(message, parts=[part for part in parts if part is not None]))
     return rendered
+
+
+def _first_context_request(messages: list[ModelMessage], prefix: Sequence[InstructionPart] | None) -> int | None:
+    """The position, among `messages`' requests, of the first one sent with a `<context>` element, or `None` if none is.
+
+    That's the first request that records an append-mode instruction window, an instruction change or an appending
+    system prompt. History is append-only, so once one exists the position never moves, and lookalike notes from it on
+    render the same on every later request, while requests sent before it never gain one. A history without such a
+    record, as a direct caller's, has `<context>` elements throughout when the instruction prefix opens an append-mode
+    block.
+    """
+    requests = (message for message in messages if isinstance(message, ModelRequest))
+    for index, request in enumerate(requests):
+        if any(_records_context_element(part) for part in request.parts):
+            return index
+    return 0 if _tagged_append_parts(prefix or []) else None
+
+
+def _records_context_element(part: ModelRequestPart) -> bool:
+    if isinstance(part, InstructionBaselinePart):
+        return any(isinstance(block, InstructionPart) and block.on_change == 'append' for block in part.instructions)
+    return isinstance(part, InstructionDeltaPart) or (
+        isinstance(part, SystemPromptPart) and part.context_id is not None
+    )
+
+
+def _note_context_lookalikes(messages: list[ModelMessage], first_request: int) -> list[ModelMessage]:
+    """Follow each user prompt, file and tool result whose text opens a `<context>` or `<context_diff>` element with a note.
+
+    Only requests from the `first_request`th on, the first sent with a `<context>` element, are noted. The note is a
+    `SystemPromptPart` saying the text was written by the user, the author of the file or the tool, not by the
+    application (`context_lookalike_note`). It goes right after the user prompt, or after the request's last tool
+    result, so it's never part of the standing system prompt and never comes between tool results, and it's worded
+    "preceding" to match. The item itself is left as written.
+
+    Returns the original list when nothing changed.
+    """
+    new_messages: list[ModelMessage] = []
+    changed = False
+    request_index = -1
+    for message in messages:
+        if isinstance(message, ModelRequest) and (request_index := request_index + 1) >= first_request:
+            timestamp = message.timestamp or _utils.now_utc()
+            parts: list[ModelRequestPart] = []
+            tool_note_at: int | None = None
+            for part in message.parts:
+                parts.append(part)
+                if isinstance(part, ToolReturnPart):
+                    if tool_note_at is not None or _tool_return_opens_context_element(part):
+                        tool_note_at = len(parts)
+                elif isinstance(part, UserPromptPart):
+                    parts.extend(
+                        SystemPromptPart(content=context_lookalike_note(source), timestamp=timestamp)
+                        for source in _user_prompt_context_lookalike_sources(part)
+                    )
+            if tool_note_at is not None:
+                parts.insert(
+                    tool_note_at, SystemPromptPart(content=context_lookalike_note('tool'), timestamp=timestamp)
+                )
+            if len(parts) != len(message.parts):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _user_prompt_context_lookalike_sources(part: UserPromptPart) -> list[LookalikeSource]:
+    """Who wrote a user prompt's text that opens a `<context>` element: the user, the author of an attached text file, or both."""
+    items: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
+    sources: list[LookalikeSource] = []
+    if any(opens_context_element(text) for item in items if (text := _typed_text(item)) is not None):
+        sources.append('user')
+    if any(opens_context_element(text) for item in items if (text := _text_file_text(item)) is not None):
+        sources.append('file')
+    return sources
+
+
+def _tool_return_opens_context_element(part: ToolReturnPart) -> bool:
+    """Whether a tool result's text, its text files included, opens a `<context>` or `<context_diff>` element."""
+    return any(
+        text is not None and opens_context_element(text)
+        for item in part.content_items(mode='str', wrap_if_error=False)
+        for text in (_typed_text(item), _text_file_text(item))
+    )
+
+
+def _typed_text(item: object) -> str | None:
+    if isinstance(item, str):
+        return item
+    if isinstance(item, TextContent):
+        return item.content
+    return None
+
+
+def _text_file_text(item: object) -> str | None:
+    if isinstance(item, BinaryContent) and _utils.is_text_like_media_type(item.media_type):
+        return item.data.decode(errors='replace')
+    return None
 
 
 def _has_instruction_state(messages: Iterable[ModelMessage]) -> bool:
