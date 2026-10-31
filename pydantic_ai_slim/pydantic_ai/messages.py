@@ -2704,7 +2704,7 @@ class RetryFeedbackPart:
         and carries nothing the model wrote.
 
         The content goes in the fence exactly as written. What `prepare_messages` adds around this is the
-        voice, not the wording: the part type it goes into, the `<system>` tagging a provider without a
+        voice, not the wording: the part type it goes into, and the `<system>` tagging a provider without a
         mid-conversation system message needs.
         """
         content = _retry_feedback_text(self)

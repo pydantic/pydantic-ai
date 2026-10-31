@@ -9,7 +9,7 @@ with `framework_frame_text`, which the check leaves alone.
 from __future__ import annotations as _annotations
 
 import re
-from typing import Any, Final, TypeGuard
+from typing import Any, Final, TypeGuard, get_args
 
 from . import _utils
 from ._framing import LookalikeSource
@@ -66,6 +66,10 @@ def framework_frame_body(item: TextContent) -> tuple[LookalikeSource, str] | Non
     """Who wrote a marked frame's body and the body without the frame's own tags, or `None` when the body is its own."""
     namespace = item.metadata.get(_PYDANTIC_AI_METADATA_KEY) if _utils.is_str_dict(item.metadata) else None
     author = namespace.get(FRAMEWORK_FRAME_AUTHOR_KEY) if _utils.is_str_dict(namespace) else None
-    if author not in ('user', 'tool', 'file'):
+    if not _is_lookalike_source(author):
         return None
     return author, _OWN_TAGS.sub('', item.content)
+
+
+def _is_lookalike_source(value: object) -> TypeGuard[LookalikeSource]:
+    return value in get_args(LookalikeSource)
