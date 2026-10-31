@@ -529,6 +529,17 @@ def test_agent_from_spec_output_type_takes_precedence():
     assert agent.output_type == MyOutput
 
 
+def test_agent_from_spec_str_output_type_takes_precedence():
+    """Test that an explicit `output_type=str` also takes precedence over `output_schema` in spec."""
+    schema = {
+        'type': 'object',
+        'properties': {'name': {'type': 'string'}},
+        'required': ['name'],
+    }
+    agent = Agent.from_spec({'model': 'test', 'output_schema': schema}, output_type=str)
+    assert agent.output_type is str
+
+
 def test_agent_from_spec_output_schema_invalid():
     """Test Agent.from_spec with a non-object output_schema raises UserError."""
     with pytest.raises(UserError, match='Schema must be an object'):
@@ -3099,6 +3110,16 @@ def test_agent_from_file_with_overrides(tmp_path: str):
     agent = Agent.from_file(spec_path, name='override-name', retries=2)
     assert agent.name == 'override-name'
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_file_output_schema(tmp_path: str):
+    """Test that `from_file` uses the spec's `output_schema` unless `output_type` is passed."""
+    schema = {'type': 'object', 'properties': {'name': {'type': 'string'}}}
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    AgentSpec(model='test', output_schema=schema).to_file(spec_path)
+    agent = Agent.from_file(spec_path)
+    assert isinstance(agent.output_type, type) and issubclass(agent.output_type, dict)
+    assert Agent.from_file(spec_path, output_type=str).output_type is str
 
 
 def test_to_file_yaml(tmp_path: str):
