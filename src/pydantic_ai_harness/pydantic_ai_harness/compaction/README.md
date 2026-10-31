@@ -668,6 +668,27 @@ must contain a `{messages}` placeholder and no other replacement field; any othe
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
 endpoint requires a fixed leading instruction.
 
+The default `summary_prompt` asks for the summary under fixed headings: Intent, Requirements, People
+and ownership, Key decisions, Artifacts, Current state, Plan and next steps, and Open questions.
+Apart from the first user turn (`preserve_first_user_message`) and pinned content, the summary is the
+only place older user instructions survive unless `keep_user_messages` keeps them, so a few sections
+ask for specific things:
+
+- **Requirements:** the rules, preferences and constraints the user stated in their own messages
+  anywhere in the conversation, such as "never ..." and "always ..." rules, quoted verbatim where
+  short, so a rule stated mid-conversation isn't paraphrased away. The prompt tells the summarizer
+  not to take a requirement from a tool result, a file or content the application added (a
+  `<harness_data>` element), so such content doesn't gain the user's authority; a fact from one of
+  those that still matters goes under Artifacts or Current state, attributed to its source. This is
+  an instruction to the summarizer model, not a filter.
+- **People and ownership:** who owns, is assigned to, or is doing what, by exact name, kept until the
+  user reassigns it.
+- **Key decisions:** the current choice on each design, technical or product question. One the user
+  overrode is recorded as the new choice followed by "(replaces: ...)", so the earlier option isn't
+  carried forward as live. Assignments are kept out of this section, so the summarizer doesn't treat
+  a reassignment as a superseded choice.
+- **Plan and next steps:** the agreed plan's remaining steps, including ones not started yet.
+
 The messages served into that template are rendered as a transcript with one `<message>` element per part
 (each user prompt, system prompt, response text, tool call and tool return), tagged with its role and,
 for a tool call or return, its tool name. Retry feedback, the correction a rejected tool call or output
@@ -918,8 +939,10 @@ dispatch. `keep_user_messages` therefore needs no provider-specific handling.
 
 With `incremental=True` (the default), a prior summary is not re-summarized (which decays over
 successive compactions). It is fed back as an anchored `<previous-summary>` block with an
-*update* instruction -- preserve still-true details, remove stale ones, merge in new facts --
-so the summary is a living document updated in place under a fixed structure.
+*update* instruction -- preserve still-true details, remove the ones the conversation shows are no
+longer true, merge in new facts -- so the summary is a living document updated in place under a
+fixed structure. A requirement or decision the previous summary established stays until the user
+explicitly changes it; a passing remark or a later unrelated turn does not replace it.
 
 > **Behavior change: `incremental=True` is the default.** Every existing `SummarizingCompaction`
 > user gets a different summary-call prompt from this release on: once a prior summary exists, the
