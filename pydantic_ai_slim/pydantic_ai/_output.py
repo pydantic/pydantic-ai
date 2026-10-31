@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin,
 
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
 from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator
-from typing_extensions import TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeForm, TypeVar
 
 from pydantic_ai._utils import get_function_type_hints
 
@@ -1033,7 +1033,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             validation_type_adapter: TypeAdapter[Any]
             unwrapped_output = _utils.unwrap_annotated(output)
             if _utils.is_model_like(unwrapped_output):
-                json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)
+                # Model detection unwraps `Annotated`; Pydantic needs the original metadata-bearing annotation.
+                json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)  # pyright: ignore[reportArgumentType]
             else:
                 self.outer_typed_dict_key = 'response'
                 output_type: type[OutputDataT] = cast(type[OutputDataT], output)
@@ -1275,9 +1276,8 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         # Constrain `kind` to the registered discriminator keys so an unknown value fails as a
         # regular `ValidationError` (mirroring the `const` discriminator we advertise to the
         # provider) instead of slipping through to the `_processors` lookup in `validate()`.
-        constrained_result = create_model(
-            UnionOutputResult.__name__, __base__=UnionOutputResult, kind=(Literal[tuple(self._processors)], ...)
-        )
+        kind_type: TypeForm[str] = Literal[tuple(self._processors)]  # pyright: ignore[reportAssignmentType]
+        constrained_result = create_model(UnionOutputResult.__name__, __base__=UnionOutputResult, kind=(kind_type, ...))
         union_model = create_model(
             UnionOutputModel.__name__, __base__=UnionOutputModel, result=(constrained_result, ...)
         )
@@ -1790,14 +1790,14 @@ def _function_return_types(func: Callable[..., Any]) -> Sequence[Any]:
     return [str]
 
 
-def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
+def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[TypeForm[object]]:
     outputs: Sequence[OutputSpec[T] | _NoneOutput[T]]
     if isinstance(output_spec, Sequence):
         outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
         outputs = (output_spec,)
 
-    outputs_flat: list[T | type[str]] = []
+    outputs_flat: list[TypeForm[object]] = []
     for output in outputs:
         if isinstance(output, NativeOutput):
             outputs_flat.extend(types_from_output_spec(output.outputs))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
@@ -1815,8 +1815,9 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
         elif (choices := _ChoicesActions.of(output)) is not None:
             # What a `Choices` set with callable values asks the model for is a key; what the action it
             # stands for returns is only known once it has run, so the keys are what a schema can describe.
-            outputs_flat.append(cast(T, choices.keys_type))
+            outputs_flat.append(choices.keys_type)
         else:
-            outputs_flat.append(cast(T, output))
+            # Function/method detection does not narrow the remaining output specs to type expressions.
+            outputs_flat.append(output)  # pyright: ignore[reportArgumentType]
 
     return outputs_flat

@@ -26,6 +26,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._agent_graph import resolve_conversation_id
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, NativeTool, WebFetch
+from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -10788,6 +10789,40 @@ async def test_agent_realtime_continues_a_text_runs_conversation() -> None:
         assert session.new_messages()[0].conversation_id == text.conversation_id
         # Handed back, the bundle still carries the text run's total, not a restarted one.
         assert session.conversation.usage.requests == text.usage.requests
+
+
+async def test_agent_realtime_carries_the_conversation_s_revision() -> None:
+    agent: Agent[None, str] = Agent(TestModel())
+    conversation = (await agent.run('Hi')).conversation
+    conversation.revision = 'rev-3'
+
+    async with agent.realtime(
+        FakeRealtimeModel(FakeRealtimeConnection([])), conversation=conversation
+    ).session() as session:
+        assert session.conversation.revision == 'rev-3'
+
+    assert session.result is not None
+    assert session.result.conversation.revision == 'rev-3'
+
+
+async def test_a_sessions_conversation_can_be_saved_again_as_the_session_goes_on() -> None:
+    store = InMemoryConversationStore()
+    agent: Agent[None, str] = Agent(TestModel())
+    conversation = (await agent.run('Hi')).conversation
+    await store.save(conversation)
+
+    async with agent.realtime(
+        FakeRealtimeModel(FakeRealtimeConnection([])), conversation=conversation
+    ).session() as session:
+        await store.save(session.conversation)
+        await session.send('And another.')
+        await store.save(session.conversation)
+
+    assert session.result is not None
+    await store.save(session.result.conversation)
+    loaded = await store.load(conversation.conversation_id)
+    assert loaded is not None
+    assert loaded.messages == session.all_messages()
 
 
 def test_agent_realtime_rejects_a_conversation_alongside_its_pieces() -> None:

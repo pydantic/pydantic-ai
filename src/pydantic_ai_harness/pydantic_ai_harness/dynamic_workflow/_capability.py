@@ -73,9 +73,9 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
     """Share the parent run's `usage` accumulator with sub-agents, tallying the whole tree's
     token and request spend in one place.
 
-    This does **not** forward the parent's `usage_limits` into sub-agent runs (`RunContext` does
-    not expose the limit value): set `sub_agent_usage_limits` to bound sub-agents, or
-    `max_agent_calls` for an exact ceiling on the number of runs.
+    Unless `sub_agent_usage_limits` is set, sub-agents also run under the parent run's
+    `usage_limits`, checked against the shared counter, so they bound the whole tree (best-effort
+    under concurrent fan-out). Use `max_agent_calls` for an exact ceiling on the number of runs.
     """
 
     inherit_model: bool = False
@@ -89,13 +89,14 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
     """
 
     sub_agent_usage_limits: UsageLimits | None = None
-    """`UsageLimits` applied to every sub-agent run, replacing pydantic-ai's default.
+    """`UsageLimits` applied to every sub-agent run, replacing the parent run's limits or pydantic-ai's default.
 
     With `forward_usage=False`, a per-run `total_tokens_limit` of `T` plus `max_agent_calls` of
     `N` bounds the tree to roughly `N * T` tokens (each run can overshoot by its final response,
     since core checks token limits after a response arrives). With `forward_usage=True` the limit
     is checked against the shared counter -- a tree-wide cap, best-effort under concurrent fan-out.
-    `None` keeps the default (`request_limit=50`, no token limit).
+    `None` runs sub-agents under the parent run's `usage_limits` with `forward_usage=True`, and
+    under pydantic-ai's default (`request_limit=50`, no token limit) with `forward_usage=False`.
     """
 
     resource_limits: WorkflowResourceLimits | Literal['unlimited'] | None = None

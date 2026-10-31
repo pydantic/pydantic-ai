@@ -15,7 +15,15 @@ from collections.abc import (
     Iterable,
     Sequence,
 )
-from contextlib import AsyncExitStack, aclosing, asynccontextmanager, contextmanager, suppress
+from contextlib import (
+    AbstractContextManager,
+    AsyncExitStack,
+    aclosing,
+    asynccontextmanager,
+    contextmanager,
+    nullcontext,
+    suppress,
+)
 from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
@@ -44,6 +52,7 @@ from pydantic_ai._instrumentation import (
 from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import (
+    ScopedTask,
     aclose_if_supported,
     cancel_and_drain,
     dataclasses_no_defaults_repr,
@@ -69,6 +78,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import (
+    _content_filter,
     _display,
     _enqueue,
     _output,
@@ -82,6 +92,7 @@ from . import (
 )
 from ._cancel import RunCancellation
 from ._context_size import context_input_tokens
+from ._conversation_marks import stored_boundary
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
@@ -144,7 +155,11 @@ from .tools import (
     RunContext,
     ToolDefinition,
 )
-from .toolsets._deferred_capability_loader import resolve_loaded_capability_instructions
+from .toolsets._deferred_capability_loader import (
+    capability_load_window,
+    capability_tool_names,
+    resolve_loaded_capability_instructions,
+)
 from .toolsets._instruction_collection import collect_toolset_instructions
 
 if TYPE_CHECKING:
@@ -346,8 +361,18 @@ def resolve_conversation(
     message_history: Sequence[_messages.ModelMessage] | None,
     usage: _usage.RunUsage | None,
     conversation_id: str | None,
-) -> tuple[Sequence[_messages.ModelMessage] | None, _usage.RunUsage | None, str | None]:
-    """Resolve a `conversation` argument into the three arguments it stands in for.
+) -> tuple[
+    Sequence[_messages.ModelMessage] | None,
+    _usage.RunUsage | None,
+    str | None,
+    str | None,
+    list[_messages.ModelMessage] | None,
+    bool,
+]:
+    """Resolve a `conversation` argument into the three arguments it stands in for, plus its revision and unsaved messages.
+
+    The last item is whether the messages before the unsaved ones may have changed since they were
+    stored, so the store has to check them.
 
     The usage is copied on the way out. A run accumulates into the `RunUsage` it is handed, so
     passing the conversation's own object would make running from a conversation change it —
@@ -355,7 +380,7 @@ def resolve_conversation(
     branch from. `copy` covers the mutable `details` mapping too, per `UsageBase.__copy__`.
     """
     if conversation is None:
-        return message_history, usage, conversation_id
+        return message_history, usage, conversation_id, None, None, False
 
     if conflicts := [
         name
@@ -372,7 +397,16 @@ def resolve_conversation(
             f'Pass the conversation on its own, or pass its pieces yourself.'
         )
 
-    return conversation.messages, copy(conversation.usage), conversation.conversation_id
+    index = conversation.new_message_index
+    unsaved = None if index is None else conversation.messages[index:]
+    return (
+        conversation.messages,
+        copy(conversation.usage),
+        conversation.conversation_id,
+        conversation.revision,
+        unsaved,
+        index is not None and stored_boundary(conversation) is None,
+    )
 
 
 def resolve_run_id(
@@ -737,6 +771,26 @@ class GraphAgentState:
     `conversation_id` on `message_history`, or a freshly generated UUID7. See the
     `Agent.iter` docstring for the resolution priority.
     """
+    conversation_revision: str | None = None
+    """The [`revision`][pydantic_ai.conversation.Conversation.revision] of the conversation this run was given, if any.
+
+    Carried to the result's `conversation` unchanged, so a store can tell whether the conversation
+    was saved by someone else while this run was going.
+    """
+    conversation_unsaved: list[_messages.ModelMessage] | None = None
+    """The messages at the end of the conversation this run was given that its store doesn't have yet.
+
+    `None` when the run wasn't given a conversation that knows its
+    [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index]. The result's
+    `conversation` finds them in the history to tell its store where the unsaved messages start.
+    """
+    conversation_unchecked: bool = False
+    """Whether the messages before `conversation_unsaved` may have changed since they were stored, say after the conversation was serialized.
+
+    The result's `conversation` then has its store compare them with the stored ones before appending.
+    """
+    conversation_saved: bool = False
+    """Whether a store saved this run's whole history, through its result, so none of it is unsaved."""
     metadata: dict[str, Any] | None = None
     last_max_tokens: int | None = None
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
@@ -1822,7 +1876,7 @@ async def model_request(  # noqa: C901
     requested = False
     # One `request_timeout` deadline covers the whole continuation chain, including the waits between segments. A
     # `FallbackModel` starts one per model it tries instead, and carries the picked model's on its suspended responses.
-    deadline = start_request_deadline(model, request_context.model_settings)
+    deadline = start_request_deadline(model, request_context.model_settings, stream=False)
     with set_current_run_context(run_context), enforce_request_deadline(deadline):
         while True:
             if response is None:
@@ -1974,8 +2028,10 @@ async def model_request_stream(
             request_context=request_context,
             return_pending=return_pending,
         )
-        # Started here, in the `wrap_model_request` task, so it also covers the wait for the first pull.
-        if (deadline := start_request_deadline(model, request_context.model_settings)) is not None:
+        # Started here, in the `wrap_model_request` task, so they also cover the wait for the first pull. The
+        # `first_event_timeout` deadline covers the whole chain until its first event, through segments that
+        # produce none, like a background job's polls before it has started.
+        if (deadline := start_request_deadline(model, request_context.model_settings, stream=True)) is not None:
             sr._enforce_request_deadline(deadline)  # pyright: ignore[reportPrivateUsage]
         try:
             yield sr
@@ -2091,15 +2147,37 @@ async def _after_streamed_model_request(
 ) -> _messages.ModelResponse:
     """Run `after_model_request` on a streamed response, which can no longer be re-attempted."""
     try:
-        return await root_capability.after_model_request(
-            run_context, request_context=request_context, response=response
-        )
+        with _after_model_request_load_window(run_context, response):
+            return await root_capability.after_model_request(
+                run_context, request_context=request_context, response=response
+            )
     except exceptions.RetryModelRequest as retry:
         raise exceptions.UserError(
             '`RetryModelRequest` cannot be raised from `after_model_request` on a streamed request: '
             'the response has already been streamed to the consumer, so there is nothing to re-attempt. '
             'Raise it from `on_model_request_error` instead, which runs while the stream is still being opened.'
         ) from retry
+
+
+def _after_model_request_load_window(
+    run_context: RunContext[Any], response: _messages.ModelResponse
+) -> AbstractContextManager[None]:
+    """Let `after_model_request` load a capability from code when the run makes another request after `response`.
+
+    That's when the response calls a tool that isn't an output tool, or one the run doesn't know, which it answers
+    with a retry: the run executes the calls and sends their results. The load rides along with that request, after
+    the results, like a load from a tool. If the step ends the run anyway, because a call needs approval or is
+    deferred or an output tool ends it first, the load is discarded, as one from a tool would be. A response without
+    such calls may be final, so the window stays closed and a load there raises.
+    """
+    tool_manager = run_context.tool_manager
+    continues = tool_manager is not None and any(
+        (tool_def := tool_manager.get_tool_def(call.tool_name)) is None or tool_def.kind != 'output'
+        for call in response.tool_calls
+    )
+    if not continues:
+        return nullcontext()
+    return capability_load_window(run_context.pending_messages, response=response)
 
 
 def _record_carried_attempts(
@@ -2189,6 +2267,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         repr=False, init=False, default=None
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
+    _capability_load_records: list[_enqueue.CapabilityLoadRecord] = field(
+        repr=False, init=False, default_factory=list[_enqueue.CapabilityLoadRecord]
+    )
+    """The records of the capability loads `RunContext.load_capability` queued, delivered on `request`."""
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
     _step_model_settings: StepModelSettings = field(
         repr=False, init=False, default=StepModelSettings(merged=None, layered=None)
@@ -2319,7 +2401,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             # the stream closes; it continues with the response `wrap_model_request` returns instead.
                             _stream_cut_short = await agent_stream._abandon_model_stream(_wrap_response)  # pyright: ignore[reportPrivateUsage]
                         # Report TTFT in a `finally` so it also lands when the consumer raises
-                        # mid-iteration and graph teardown cancels `wrap_task` at the `wait()` above,
+                        # mid-iteration and graph teardown cancels `wrap.task` at the `wait()` above,
                         # mirroring `InstrumentedModel.request_stream`. On
                         # that cancelled path `finish` is never reached today (no metrics of any
                         # kind are recorded), so this is symmetry rather than an observable fix.
@@ -2359,7 +2441,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
         else:
             wrap_awaitable = _streaming_handler(wrap_request_context)
-        wrap_task = asyncio.create_task(_outside_attempts(wrap_awaitable))
+        # The stream teardown waits for the request through `ScopedTask`, so a cancelled `anyio` scope around the
+        # consumer can't cut the model stream's shielded close short.
+        wrap = ScopedTask(_outside_attempts(wrap_awaitable))
 
         async def _wrap_response() -> _messages.ModelResponse | None:
             """The response `wrap_model_request` finishes with after abandoning the stream.
@@ -2368,8 +2452,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             stream, except `ModelRetry`, which ends the stream for the retry below.
             """
             try:
-                # Shielded so a cancelled consumer leaves `wrap_task` to the stream teardown below.
-                return await asyncio.shield(wrap_task)
+                # Shielded so a cancelled consumer leaves `wrap.task` to the stream teardown below.
+                return await asyncio.shield(wrap.task)
             except exceptions.SkipModelRequest as e:
                 return e.response
             except exceptions.ModelRetry:
@@ -2380,18 +2464,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # so the user's `wrap_model_request` cleanup runs instead of orphaning.
         ready_waiter = asyncio.create_task(stream_ready.wait())
         try:
-            await _serve_stream_offers(handoff, ready_waiter, wrap_task)
+            await _serve_stream_offers(handoff, ready_waiter, wrap.task)
         except BaseException as exc:
             # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
             # so both tasks are still ours; drain them so cleanup runs before we re-raise.
             #
-            # Unblock `_streaming_handler` before draining: if wrap_task's model
+            # Unblock `_streaming_handler` before draining: if `wrap.task`'s model
             # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
             # the handler is parked on `stream_done.wait()`. Setting stream_done lets
             # it exit so cancel_and_drain's gather can complete. Harmless no-op when
             # the task was actually cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
             stream_done.set()
-            await cancel_and_drain(ready_waiter, wrap_task)
+            await cancel_and_drain(ready_waiter, wrap.task)
             if (primed := handoff.priming) is not None:
                 # The consumer stopped the run while a stream was being opened, before anything reached it. Record
                 # the step as one it stopped partway through, rather than leave its request unanswered.
@@ -2403,7 +2487,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 self._commit_interrupted_response(ctx, partial, recorded, request_messages)
             raise
         else:
-            # Handoff succeeded: `wrap_task` is owned by the rest of the streaming
+            # Handoff succeeded: `wrap.task` is owned by the rest of the streaming
             # lifecycle below. Only the throwaway readiness waiter is ours to clean up.
             await cancel_and_drain(ready_waiter)
 
@@ -2412,11 +2496,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # to the graph task, where later tool, output, and run hooks execute.
         _apply_context_changes(before_model_request_context)
 
-        if wrap_task.done() and not stream_ready.is_set():
+        if wrap.task.done() and not stream_ready.is_set():
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
             try:
                 try:
-                    model_response = wrap_task.result()
+                    model_response = wrap.task.result()
                 except exceptions.SkipModelRequest as e:
                     model_response = e.response
             except exceptions.ModelRetry as e:
@@ -2488,7 +2572,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 if stream_error is not None:
                     # Graph teardown may already be under cancellation. Drain the wrapper task so its model
                     # stream cleanup finishes before the event iterator is closed below.
-                    await cancel_and_drain(wrap_task)
+                    await cancel_and_drain(wrap.task)
                     # Capture the partial response so `capture_run_messages` and `all_messages()`
                     # include what was streamed before the interruption.
                     # We append directly rather than via `_append_response` to skip the usage-limit
@@ -2507,7 +2591,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 else:
                     try:
                         try:
-                            model_response = await wrap_task
+                            model_response = await wrap.result()
                         except exceptions.SkipModelRequest as e:
                             # `wrap_model_request` skipped the request after the stream opened, e.g. a parallel
                             # `InputGuardrail` that blocked the prompt. The consumer then streamed the skip's
@@ -2516,6 +2600,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             if not _stream_cut_short:
                                 raise
                             model_response = e.response
+                        except asyncio.CancelledError:
+                            # `wrap_model_request` returned a response, but `wrap.result()` raised the consumer's
+                            # cancellation instead, an `anyio` one or a native one that never reached the hook: record
+                            # the response before the cancellation propagates. Skip the usage-limit check; raising
+                            # `UsageLimitExceeded` here would mask the cancellation.
+                            if not wrap.task.cancelled():
+                                model_response = wrap.task.result()
+                                if not _handler_usage_recorded:
+                                    self._record_response_usage(ctx, model_response)
+                                self._append_response(ctx, model_response, record_usage=False)
+                            raise
                     except exceptions.ModelRetry as e:
                         await _settle_pending(_pending, None)
                         self._enforce_usage_limits(ctx, accounted_responses)
@@ -2755,9 +2850,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         state.response = response
         capture_model_response_span_context(request_context, response)
         try:
-            return await ctx.deps.root_capability.after_model_request(
-                run_context, request_context=request_context, response=response
-            )
+            with _after_model_request_load_window(run_context, response):
+                return await ctx.deps.root_capability.after_model_request(
+                    run_context, request_context=request_context, response=response
+                )
         except exceptions.RetryModelRequest:
             failed.record(request_context, outcome, start)
             await self._cancel_rejected_job(request_context, outcome, state)
@@ -2797,6 +2893,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not self.is_resuming_without_prompt:
             fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.message_history.append(self.request)
+        self._capability_load_records = _deliver_capability_loads(ctx, self.request)
 
         ctx.state.run_step += 1
 
@@ -2817,6 +2914,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Note: for_run_step may already have been called by UserPromptNode for the
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+        self._capability_load_records = _reveal_tools_of_loads_before_run(
+            ctx, self.request, self._capability_load_records
+        )
 
         _display_first_run_banner(ctx)
 
@@ -2953,7 +3053,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         mirrored_messages = HistoryMirroringMessages(request_context.messages, ctx.state.message_history)
         request_context.messages = mirrored_messages
         try:
-            processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
+            # A load from code in `before_model_request` is recorded on the request being prepared, below.
+            with capability_load_window(run_context.pending_messages):
+                processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
         finally:
             # Only the before-chain keeps the old write-back; wrap and after hooks get a request-only list.
             mirrored_messages.detach()
@@ -2998,6 +3100,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     conversation_id=ctx.state.conversation_id,
                 )
 
+            # Loads a `before_model_request` hook made from code go on this request, ahead of the instructions
+            # resolved below, so the request states the capabilities' instructions as after any other load.
+            if loads := _enqueue.run_queue(run_context).pop_capability_loads():
+                for target in _history_recording_targets(ctx, messages):
+                    target.parts = [*target.parts, *loads]
+                self._capability_load_records.extend(loads)
+            self._emit_capability_load_records(ctx)
             # Diff the tools this request will actually carry — after the hooks, which may have changed them —
             # and record newcomers where both this request and the persisted history will carry them.
             request_context.model_request_parameters = _record_tool_population_changes(
@@ -3435,6 +3544,27 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return await ctx.deps.evaluate_model_selector(lambda _: model, _model_selection_context(ctx))
 
+    def _emit_capability_load_records(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+    ) -> None:
+        """Emit the records of the capability loads delivered on `request` as events, once.
+
+        A `CapabilityLoadDeltaEvent` for each load, and a `ToolAvailabilityDeltaEvent` for the reveal of
+        its tools.
+
+        Emitted after the `before_model_request` hooks, like the deltas the request records itself, so content a hook
+        delivers next to a tool's return, ahead of these records in history, comes first in the event stream too. A
+        step that never reaches that point, because `wrap_model_request` answered or retried without calling its
+        handler, emits them as it finishes, since the records are in history either way.
+        """
+        records, self._capability_load_records = self._capability_load_records, []
+        ctx.state.event_stream_buffer.extend(
+            _messages.CapabilityLoadDeltaEvent(part=part)
+            if isinstance(part, _messages.CapabilityLoadDeltaPart)
+            else _messages.ToolAvailabilityDeltaEvent(part=part)
+            for part in records
+        )
+
     async def _finish_handling_pending(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -3474,6 +3604,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         record_usage: bool,
         described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
+        self._emit_capability_load_records(ctx)
         if record_usage:
             self._record_response_usage(ctx, response, described=described)
             accounted_responses = [*accounted_responses, response]
@@ -3614,6 +3745,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
+        self._emit_capability_load_records(ctx)
         m = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error, feedback=m)
         # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
@@ -3761,18 +3893,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 # `stop_reason: 'refusal'`), so a thinking-only response is filtered too. Re-prompting it
                 # would only repeat the refused request.
                 if self.model_response.finish_reason == 'content_filter':
-                    details = self.model_response.provider_details or {}
                     body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
-
-                    if reason := details.get('finish_reason'):
-                        message = f"Content filter triggered. Finish reason: '{reason}'"
-                    elif reason := details.get('block_reason'):
-                        message = f"Content filter triggered. Block reason: '{reason}'"
-                    elif refusal := details.get('refusal'):
-                        message = f'Content filter triggered. Refusal: {refusal!r}'
-                    else:  # pragma: no cover
-                        message = 'Content filter triggered.'
-
+                    message = _content_filter.content_filter_message(self.model_response.provider_details)
                     raise exceptions.ContentFilterError(message, body=body)
 
                 # If the output type allows `None`, a response with no text output is a valid result:
@@ -4297,6 +4419,75 @@ def run_cancelled_snapshot(
         run_id=state.run_id,
         conversation_id=state.conversation_id,
     )
+
+
+def _deliver_capability_loads(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]], request: _messages.ModelRequest
+) -> list[_enqueue.CapabilityLoadRecord]:
+    """Record the capability loads `RunContext.load_capability` queued on `request`, the request being prepared.
+
+    Each is a `CapabilityLoadDeltaPart` naming the capability, followed by a `ToolAvailabilityDeltaPart`
+    revealing its tools if it has any, the reveal a model's `load_capability` call leaves after its return.
+    There's no call: the request may have no `load_capability` tool to call. Recorded before
+    `_refresh_loaded_capability_ids`, so the request sees the loaded capability in full: its tools,
+    instructions, model settings, native tools, and hooks.
+
+    Returns the records, which the request emits as events once its hooks have run, so a UI that rebuilds
+    history from the event stream keeps them.
+    """
+    queue = ctx.state.pending_messages
+    assert isinstance(queue, _enqueue.PendingMessageQueue)
+    if loads := queue.pop_capability_loads():
+        request.parts = [*request.parts, *loads]
+    return loads
+
+
+def _reveal_tools_of_loads_before_run(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+    request: _messages.ModelRequest,
+    records: list[_enqueue.CapabilityLoadRecord],
+) -> list[_enqueue.CapabilityLoadRecord]:
+    """Reveal the tools of the loads delivered on `request` that were queued without a reveal, and return all records.
+
+    A load from `before_run` is queued before any step has resolved its tools, so it can't name them. Now that this
+    step has, each one's `ToolAvailabilityDeltaPart` goes right after its `CapabilityLoadDeltaPart`, as for any other
+    load from code.
+    """
+    tool_defs = {name: tool.tool_def for name, tool in (ctx.deps.tool_manager.tools or {}).items()}
+    reveals: dict[int, _messages.ToolAvailabilityDeltaPart] = {}
+    for index, record in enumerate(records):
+        if not isinstance(record, _messages.CapabilityLoadDeltaPart) or (
+            index + 1 < len(records) and isinstance(records[index + 1], _messages.ToolAvailabilityDeltaPart)
+        ):
+            continue
+        names = sorted(
+            {name for capability_id in record.loaded for name in capability_tool_names(tool_defs, capability_id)}
+        )
+        if names:
+            reveals[id(record)] = _messages.ToolAvailabilityDeltaPart(
+                tools_added=names, tool_call_id=record.tool_call_id
+            )
+            ctx.deps.discovered_tool_names.update(names)
+    if not reveals:
+        return records
+
+    request.parts = _with_reveals(request.parts, reveals)
+    return _with_reveals(records, reveals)
+
+
+_PartT = TypeVar('_PartT', bound=_messages.ModelRequestPart)
+
+
+def _with_reveals(
+    parts: Sequence[_PartT], reveals: dict[int, _messages.ToolAvailabilityDeltaPart]
+) -> list[_PartT | _messages.ToolAvailabilityDeltaPart]:
+    """`parts` with each reveal in `reveals` right after the part it's keyed on by `id()`."""
+    result: list[_PartT | _messages.ToolAvailabilityDeltaPart] = []
+    for part in parts:
+        result.append(part)
+        if (reveal := reveals.get(id(part))) is not None:
+            result.append(reveal)
+    return result
 
 
 def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
