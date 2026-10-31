@@ -10,6 +10,7 @@ import shlex
 import shutil
 import sys
 import tempfile
+import types
 from functools import partial
 from pathlib import Path
 from typing import IO, Any
@@ -614,7 +615,10 @@ class TestRun:
         fake_e2b.run_error = TimeoutException('unavailable')
         fake_e2b.sandbox_is_running = False
         backend = await started()
-        with pytest.raises(WorkspaceUnavailableError, match=r"'sbx-1' is no longer running: .*`sandbox_timeout`"):
+        with pytest.raises(WorkspaceUnavailableError, match=r"'sbx-1' is no longer running: .*`sandbox_timeout` ran"):
+            await backend.run(['x'])
+        backend = await started(idle_timeout=600)
+        with pytest.raises(WorkspaceUnavailableError, match=r'`sandbox_timeout` or `idle_timeout` ran out'):
             await backend.run(['x'])
 
     async def test_an_attached_sandbox_names_itself_when_gone(self, fake_e2b: FakeE2B) -> None:
@@ -636,6 +640,73 @@ class TestRun:
         assert 'the command may still be running' in str(exc.value)
         # The command may still be running, so it is killed on the way out.
         assert len(fake_e2b.sandboxes[0].commands.group_stops) == 1
+
+
+class TestIdleTimeout:
+    @pytest.mark.parametrize('idle_timeout', [0, 1.5, True])
+    def test_rejects_an_invalid_idle_timeout(self, idle_timeout: object) -> None:
+        with pytest.raises(ValueError, match='idle_timeout must be an integer of at least 1 or None'):
+            E2BSandboxBackend(idle_timeout=idle_timeout)  # pyright: ignore[reportArgumentType]
+
+    async def test_create_and_attach_ask_for_the_shorter_timeout(self, fake_e2b: FakeE2B) -> None:
+        await started(sandbox_timeout=600, idle_timeout=60)
+        await started(ref=WorkspaceRef(provider='e2b', id='sbx-keep'), sandbox_timeout=30, idle_timeout=60)
+        assert fake_e2b.create_calls[-1].timeout == 60
+        assert fake_e2b.connect_calls == [('sbx-keep', 30)]
+
+    @pytest.fixture
+    def clock(self, monkeypatch: pytest.MonkeyPatch) -> list[float]:
+        """The backend's monotonic clock, which a test advances by hand; the event loop keeps the real one."""
+        now = [1_000.0]
+        monkeypatch.setattr(
+            'pydantic_ai_harness.e2b_sandbox._backend.time', types.SimpleNamespace(monotonic=lambda: now[0])
+        )
+        return now
+
+    async def test_operations_extend_the_timeout_once_a_tenth_is_used(
+        self, fake_e2b: FakeE2B, clock: list[float]
+    ) -> None:
+        backend = await started(idle_timeout=60)
+        clock[0] += 5
+        await backend.run(['true'])
+        assert fake_e2b.set_timeout_calls == []
+        clock[0] += 2
+        await backend.run(['true'])
+        await backend.write_bytes('/tmp/file', b'data')
+        assert fake_e2b.set_timeout_calls == [('sbx-1', 60)]
+
+    async def test_extension_stops_at_the_sandbox_timeout(self, fake_e2b: FakeE2B, clock: list[float]) -> None:
+        backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'), sandbox_timeout=100, idle_timeout=60)  # pyright: ignore[reportArgumentType]
+        # A sandbox passed in has an unknown lifetime: its first use extends it and starts the deadline,
+        # however long after construction that is.
+        clock[0] += 500
+        await backend.run(['true'])
+        clock[0] += 50
+        await backend.run(['true'])
+        clock[0] += 20
+        await backend.run(['true'])
+        # The second extension already reaches the deadline, 100 seconds after the first use.
+        assert fake_e2b.set_timeout_calls == [('sbx-own', 60), ('sbx-own', 50)]
+
+    async def test_no_extension_under_a_second_before_the_deadline(self, fake_e2b: FakeE2B, clock: list[float]) -> None:
+        backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'), sandbox_timeout=100, idle_timeout=60)  # pyright: ignore[reportArgumentType]
+        fake_e2b.set_timeout_error = SandboxException('500: busy')
+        await backend.run(['true'])
+        fake_e2b.set_timeout_error = None
+        clock[0] += 99.5
+        await backend.run(['true'])
+        assert fake_e2b.set_timeout_calls == []
+
+    async def test_a_one_second_idle_timeout_is_extended(self, fake_e2b: FakeE2B, clock: list[float]) -> None:
+        backend = await started(idle_timeout=1)
+        clock[0] += 0.5
+        await backend.run(['true'])
+        assert fake_e2b.set_timeout_calls == [('sbx-1', 1)]
+
+    async def test_without_idle_timeout_nothing_is_extended(self, fake_e2b: FakeE2B) -> None:
+        backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'))  # pyright: ignore[reportArgumentType]
+        await backend.run(['true'])
+        assert fake_e2b.set_timeout_calls == []
 
 
 class TestKilledSandbox:
