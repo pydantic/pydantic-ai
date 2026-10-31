@@ -82,7 +82,9 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrde
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
+    ContentFilterError,
     FallbackExceptionGroup,
+    IncompleteToolCall,
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
@@ -979,6 +981,106 @@ async def test_durability_non_model_error_still_reaches_workflow_as_activity_err
             task_queue=TASK_QUEUE,
         )
     assert output == 'ActivityError'
+
+
+# --- Subclasses of the framework's non-retryable errors aren't retried either ---
+
+
+class _AppConfigError(UserError):
+    """An application's own `UserError`, which a retry policy can't name in advance."""
+
+
+_subclass_attempts: list[str] = []
+
+
+def _raise_framework_error(kind: str) -> None:
+    _subclass_attempts.append(kind)
+    if kind == 'unexpected_model_behavior':
+        raise UnexpectedModelBehavior('Unexpected response.')
+    if kind == 'content_filter':
+        raise ContentFilterError('Content filter triggered.')
+    if kind == 'incomplete_tool_call':
+        raise IncompleteToolCall('Token limit exceeded while generating a tool call.')
+    raise _AppConfigError('The app is misconfigured.')
+
+
+def _subclass_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    prompt = messages[0].parts[0]
+    assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
+    kind, _, where = prompt.content.partition(':')
+    if where == 'model':
+        _raise_framework_error(kind)
+    return ModelResponse(parts=[ToolCallPart('raise_framework_error', {'kind': kind})])
+
+
+_subclass_toolset = FunctionToolset[None](id='subclass_toolset')
+
+
+@_subclass_toolset.tool_plain
+def raise_framework_error(kind: str) -> str:
+    _raise_framework_error(kind)
+    return 'unreachable'  # pragma: no cover
+
+
+subclass_error_agent = Agent(
+    FunctionModel(_subclass_model_fn),
+    name='durability_non_retryable_subclasses',
+    toolsets=[_subclass_toolset],
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class NonRetryableSubclassWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        try:
+            return (await subclass_error_agent.run(prompt)).output
+        except ActivityError as error:
+            application_error = error.cause
+            assert isinstance(application_error, ApplicationError)
+            return application_error.type
+
+
+@pytest.mark.parametrize('where', ['model', 'tool'])
+@pytest.mark.parametrize(
+    ('kind', 'error_type'),
+    [
+        pytest.param('unexpected_model_behavior', 'UnexpectedModelBehavior', id='listed-class'),
+        pytest.param('content_filter', 'ContentFilterError', id='unexpected-model-behavior-subclass'),
+        pytest.param('incomplete_tool_call', 'IncompleteToolCall', id='incomplete-tool-call'),
+        pytest.param('app_config', '_AppConfigError', id='user-error-subclass'),
+    ],
+)
+async def test_durability_non_retryable_error_subclasses(client: Client, where: str, kind: str, error_type: str):
+    """An activity that raises a subclass of an error the retry policy lists as non-retryable, like a
+    `ContentFilterError` or an application's own `UserError`, fails on its first attempt, as the listed class does.
+
+    Temporal's `non_retryable_error_types` matches the error's exact type name, which a subclass doesn't have. The
+    error keeps its own type name.
+    """
+    _subclass_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NonRetryableSubclassWorkflow],
+        plugins=[AgentPlugin(subclass_error_agent)],
+    ):
+        output = await client.execute_workflow(
+            NonRetryableSubclassWorkflow.run,
+            args=[f'{kind}:{where}'],
+            id=f'{NonRetryableSubclassWorkflow.__name__}_{kind}_{where}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == error_type
+    assert _subclass_attempts == [kind]
 
 
 # --- `ModelSettings['request_timeout']` runs on the workflow's clock ---

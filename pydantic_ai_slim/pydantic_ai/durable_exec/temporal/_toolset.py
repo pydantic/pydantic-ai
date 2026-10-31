@@ -163,27 +163,54 @@ both this guard and the non-retryable entry below. The core-stamped name has no 
 """
 
 
+NON_RETRYABLE_ERRORS: tuple[type[Exception], ...] = (
+    UserError,
+    PydanticUserError,
+    UnexpectedModelBehavior,
+    FallbackExceptionGroup,
+    # A retry cannot fix a workspace timeout, output flood, read-only refusal, or lost environment;
+    # restarting a command could repeat its already-completed side effects.
+    WorkspaceTimeoutError,
+    WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
+    WorkspaceUnavailableError,
+)
+"""The errors a retry can't fix, which `with_non_retryable_errors` adds to a retry policy, subclasses included."""
+
+
 def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
-    """Return a copy of `retry_policy` with the framework's non-retryable errors ensured."""
+    """Return a copy of `retry_policy` with the framework's non-retryable errors ensured.
+
+    The policy names each class, and `non_retryable_error_types_raised` covers their subclasses.
+    """
     retry_policy = copy.copy(retry_policy) if retry_policy else RetryPolicy()
     existing = retry_policy.non_retryable_error_types or []
     additional = [
-        UserError.__name__,
-        PydanticUserError.__name__,
-        UnexpectedModelBehavior.__name__,
-        FallbackExceptionGroup.__name__,
-        # A retry cannot fix a workspace timeout, output flood, read-only refusal, or lost environment;
-        # restarting a command could repeat its already-completed side effects.
-        WorkspaceTimeoutError.__name__,
-        WorkspaceOutputLimitError.__name__,
-        WorkspaceReadOnlyError.__name__,
-        WorkspaceUnavailableError.__name__,
+        *(error_type.__name__ for error_type in NON_RETRYABLE_ERRORS),
         # An over-limit payload is deterministic, so Temporal's default unlimited retries would resend the
         # same oversized result forever and hang the workflow instead of ever surfacing an error (#7110).
         *PAYLOAD_SIZE_ERROR_TYPES,
     ]
     retry_policy.non_retryable_error_types = [*existing, *(name for name in additional if name not in existing)]
     return retry_policy
+
+
+@contextmanager
+def non_retryable_error_types_raised() -> Generator[None]:
+    """Raise a subclass of one of `NON_RETRYABLE_ERRORS` as a non-retryable `ApplicationError`.
+
+    A retry policy's `non_retryable_error_types` matches the exact name of the error's class, so naming
+    `UnexpectedModelBehavior` doesn't cover `ContentFilterError`, and naming `UserError` doesn't cover an
+    application's own subclass of it. The `ApplicationError` keeps the error's class name and message, which is
+    what Temporal reports for an exception it converts, and has the error as its cause. An error of a listed class
+    itself is raised unchanged, as the policy already names it.
+    """
+    try:
+        yield
+    except NON_RETRYABLE_ERRORS as error:
+        if type(error) in NON_RETRYABLE_ERRORS:
+            raise
+        raise ApplicationError(str(error), type=type(error).__name__, non_retryable=True) from error
 
 
 @contextmanager
