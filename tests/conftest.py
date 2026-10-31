@@ -715,18 +715,18 @@ def young_gc() -> Iterator[None]:
 
 
 @contextmanager
-def no_leaked_tasks() -> Generator[None]:
+def no_leaked_tasks(loop: asyncio.AbstractEventLoop | None = None) -> Generator[None]:
     """Fail if a task started inside the block is still running at its end.
 
     Freezes every existing object out of the cyclic collector's reach for the block, as `young_gc` does, so an
     earlier test's garbage can't be finalized here and queue tasks on the running loop. Tasks already running at
-    entry are ignored.
+    entry are ignored. Pass `loop` when the test drives that loop itself instead of running on it.
     """
     gc.freeze()
     try:
-        before = asyncio.all_tasks()
+        before = asyncio.all_tasks(loop)
         yield
-        assert asyncio.all_tasks() - before == set()
+        assert asyncio.all_tasks(loop) - before == set()
     finally:
         gc.unfreeze()
 
