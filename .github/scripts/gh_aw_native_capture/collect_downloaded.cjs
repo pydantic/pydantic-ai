@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
-const { installActionsAdapter, prepareConclusionEnvironment, assertConclusionResults } = require('./actions_adapter.cjs');
+const { parseEventLines, agentConversation, installActionsAdapter, prepareConclusionEnvironment, assertConclusionResults } = require('./actions_adapter.cjs');
 
 function copyVerifiedHelpers(input, output, manifest) {
   for (const [name, digest] of Object.entries(manifest)) {
@@ -108,9 +108,9 @@ async function main() {
       assert(!text.includes('native-runtime-only-mask-456'), 'runtime-only mask survived the artifact round trip');
       assert(!text.includes('forged-native-fixture'), 'hostile fallback became authoritative after download');
       assert(!text.includes('forged-agent-errors-native-fixture'), 'unverified agent-errors became authoritative after download');
-      const events = text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+      const events = parseEventLines(text);
       const callerResults = assertConclusionResults(events, scenario, expectedJobs);
-      const conversation = events.filter(event => event.provenance.component === 'agent');
+      const conversation = agentConversation(events);
       if (scenario === 'incomplete') assert.equal(conversation.length, 0, 'download promoted an incomplete conversation');
       else {
         assert(events.some(event => event.type === 'agent.execution' && event.data.exitCode === expectedNativeExit), 'native exit changed after artifact download');

@@ -1,5 +1,8 @@
 const assert = require('node:assert/strict');
 
+const parseEventLines = text => text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+const agentConversation = events => events.filter(event => event.provenance.component === 'agent');
+
 // A local adapter for the GitHub Actions presentation surface only. It does not
 // replace capture readers, parsers, redactors, or session collectors.
 function installActionsAdapter() {
@@ -54,7 +57,7 @@ function assertConclusionResults(events, scenario, expectedJobs) {
   assert.deepEqual(observed, expectedJobs, 'final workflow job results differ from the actual supplied caller outcomes');
   const expectedAgent = scenario === 'success' ? 'success' : 'failure';
   assert.equal(observed.agent.result, expectedAgent, 'agent execution failure became a successful workflow job');
-  const results = events.filter(event => event.type === 'session.result' && event.provenance.component === 'agent');
+  const results = agentConversation(events).filter(event => event.type === 'session.result');
   if (scenario === 'incomplete') assert.equal(results.length, 0, 'incomplete recording gained a canonical result');
   else assert.equal(results.at(-1)?.data.status, expectedAgent, 'canonical agent result disagrees with the caller job');
   const execution = events.filter(event => event.type === 'agent.execution');
@@ -64,4 +67,4 @@ function assertConclusionResults(events, scenario, expectedJobs) {
   return { jobResults: observed, agentResult: expectedAgent, workflowResultFromJobs };
 }
 
-module.exports = { installActionsAdapter, prepareConclusionEnvironment, assertConclusionResults };
+module.exports = { parseEventLines, agentConversation, installActionsAdapter, prepareConclusionEnvironment, assertConclusionResults };

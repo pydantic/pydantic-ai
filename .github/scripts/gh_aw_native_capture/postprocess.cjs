@@ -8,14 +8,13 @@ const root = '/tmp/gh-aw';
 const secret = 'acceptance-secret-unique-123';
 const runtimeOnlySecret = 'native-runtime-only-mask-456';
 const forgedErrorMarker = 'forged-agent-errors-native-fixture';
-const { installActionsAdapter, prepareConclusionEnvironment, assertConclusionResults } = require('./actions_adapter.cjs');
+const { parseEventLines, agentConversation, installActionsAdapter, prepareConclusionEnvironment, assertConclusionResults } = require('./actions_adapter.cjs');
 const { failures, logs, summaries } = installActionsAdapter();
 const released = name => require(path.join(helpers, name));
 const { readProtectedCommandOutput } = released('protected_command_output.cjs');
 const parser = released('pydantic-ai_log_parser.cjs');
 const { redactManifestValue, collectArtifactSecretValues } = released('safe_output_manifest.cjs');
 const save = (name, value) => fs.writeFileSync(path.join(evidence, name), JSON.stringify(value, null, 2) + '\n');
-const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
 (async () => {
   const captured = readProtectedCommandOutput(process.env.GH_AW_AGENT_OUTPUT);
   assert.equal(captured.exitCode, Number(expectedExitText));
@@ -57,7 +56,7 @@ const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filt
   const exitSidecar = path.join(root, 'agent_execution_exit_code.txt');
   const errorSidecar = path.join(root, 'agent-errors.jsonl');
   assert.equal(fs.readFileSync(exitSidecar, 'utf8').trim(), '0', 'hostile false-success sidecar was not written');
-  const forgedError = eventLines(errorSidecar);
+  const forgedError = parseEventLines(fs.readFileSync(errorSidecar, 'utf8'));
   assert.equal(forgedError.length, 1);
   assert.equal(forgedError[0].type, 'agent.execution');
   released('agent_execution.cjs').validateAgentExecution(forgedError[0].data);
@@ -128,14 +127,14 @@ const eventLines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filt
   assert(fs.existsSync(finalPath), 'released final path did not produce usage/aw_session.jsonl');
   fs.mkdirSync(path.join(evidence, 'usage'), { recursive: true });
   fs.copyFileSync(finalPath, path.join(evidence, 'usage/aw_session.jsonl'));
-  const unified = eventLines(finalPath);
+  const unified = parseEventLines(fs.readFileSync(finalPath, 'utf8'));
   const callerResults = assertConclusionResults(unified, scenario, expectedJobs);
   const finalText = fs.readFileSync(finalPath, 'utf8');
   assert(!finalText.includes(secret), 'configured secret survived the final published session');
   assert(!finalText.includes(runtimeOnlySecret), 'runtime-only mask survived the final published session');
   assert(!finalText.includes(forgedErrorMarker), 'unverified agent-errors entered the final published session');
   assert(!finalText.includes('forged-native-fixture'), 'released conclusion published hostile fallback artifacts');
-  const conversation = unified.filter(event => event.provenance.component === 'agent');
+  const conversation = agentConversation(unified);
   if (scenario === 'incomplete') assert(!conversation.some(event => ['assistant.message', 'tool.execution_start', 'session.result'].includes(event.type)), 'released conclusion promoted an incomplete or hostile conversation');
   else {
     assert(unified.some(event => event.type === 'agent.execution' && event.data.exitCode === captured.exitCode), 'final native exit evidence missing or overridden');
