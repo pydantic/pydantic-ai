@@ -1,6 +1,18 @@
 {
   "allowed_breakages": [
     {
+      "against": "v2.64.0",
+      "fingerprint": "19d196941dfe3b9798b878fc653b33ddc1dbb09b03ff2e9e9a4db23ff51270e0",
+      "reason": "`ModelFallback`'s default `fallback_on` adds `ContentFilterError`, so it falls back when a model refuses. Anthropic's refusals guide says to discard a refused response's partial output and retry on a fallback model, which is the fallback this capability exists for; `ModelFallback` shipped in v2.64.0 days earlier, and `fallback_on=(ModelAPIError,)` restores the previous default. `FallbackModel` and the core agent's content-filter behavior are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12039"
+    },
+    {
+      "against": "v2.64.0",
+      "fingerprint": "9593cd7680a410b4154e6493c4e9d9f110894d64e7b7895f1084be17b8169b14",
+      "reason": "`ModelFallback.from_spec`'s default `fallback_on` adds `ContentFilterError`, matching `ModelFallback(...)`. Anthropic's refusals guide says to discard a refused response's partial output and retry on a fallback model, which is the fallback this capability exists for; `ModelFallback` shipped in v2.64.0 days earlier, and `fallback_on=(ModelAPIError,)` restores the previous default. `FallbackModel` and the core agent's content-filter behavior are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12039"
+    },
+    {
       "against": "v2.63.0",
       "fingerprint": "c899f363810e6caff10f37ffc738cdeef40a8b9863fd3e231247155935a3f350",
       "reason": "Adds `CapabilityLoadDeltaPart` to `ModelRequestPart`, the record `RunContext.load_capability` leaves for a capability loaded from code; the version policy permits new message parts, and every existing member is unchanged.",

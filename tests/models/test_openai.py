@@ -7110,6 +7110,45 @@ async def test_openai_response_filter_with_partial_content(allow_model_requests:
     assert result.output == 'Partial'
 
 
+@pytest.mark.parametrize('model_type', ['chat', 'responses'])
+@pytest.mark.vcr(ignore_hosts=['example.openai.azure.com'])
+async def test_azure_prompt_filter_error_stream(
+    allow_model_requests: None, model_type: Literal['chat', 'responses']
+) -> None:
+    """Azure rejects a filtered prompt with a 400 before a stream opens, which raises `ContentFilterError` as in `run()`."""
+    error = {
+        'code': 'content_filter',
+        'message': 'The content was filtered.',
+        'innererror': {
+            'code': 'ResponsibleAIPolicyViolation',
+            'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+        },
+    }
+
+    async with AsyncAzureOpenAI(
+        api_version='2024-12-01-preview',
+        azure_endpoint='https://example.openai.azure.com/',
+        api_key='test',
+        http_client=httpx2.AsyncClient(
+            transport=httpx2.MockTransport(lambda request: httpx2.Response(400, json={'error': error}))
+        ),
+    ) as client:
+        model_class = OpenAIChatModel if model_type == 'chat' else OpenAIResponsesModel
+        agent = Agent(model_class('gpt-5-mini', provider=AzureProvider(openai_client=client)))
+
+        with pytest.raises(
+            ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"
+        ) as exc_info:
+            # The error is raised while the stream is being opened, before an `async with` body would run.
+            await agent.run_stream('bad prompt').__aenter__()
+
+    assert exc_info.value.body is not None
+    assert json.loads(exc_info.value.body)[0]['provider_details'] == {
+        'finish_reason': 'content_filter',
+        'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+    }
+
+
 def test_azure_400_non_content_filter(allow_model_requests: None) -> None:
     """Test a 400 error from Azure that is NOT a content filter (different code)."""
     mock_client = MockOpenAI.create_mock(

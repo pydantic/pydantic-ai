@@ -131,21 +131,23 @@ def api_error(
         if error_type == 'not_found_error' and error_message == f'model: {model_name}':
             suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
         reported = reported_error_body(body)
-        hint = (
-            SCHEMA_TOO_COMPLEX_HINT
-            if status_code == 400
-            and _utils.is_str_dict(reported)
-            and is_schema_too_complex_error(reported.get('message'))
-            else None
-        )
+        reported_message = reported.get('message') if _utils.is_str_dict(reported) else None
+        provider_error_code = None
+        if category is None and headers and (amzn_error_type := headers.get('x-amzn-errortype')):
+            # Bedrock (`AsyncAnthropicBedrock`) reports the error's code in this header, as `Code:namespace`, and
+            # only a `message` in the body, so it's classified the way `BedrockConverseModel` classifies the code.
+            provider_error_code = amzn_error_type.split(':', 1)[0]
+            category = _model_errors.bedrock_code_category(provider_error_code, reported_message)
+        hint = SCHEMA_TOO_COMPLEX_HINT if status_code == 400 and is_schema_too_complex_error(reported_message) else None
         return ModelHTTPError.for_category(
-            category or _model_errors.http_status_category(status_code, error_message),
+            category or _model_errors.http_status_category(status_code, reported_message),
             status_code=status_code,
             model_name=model_name,
             body=body,
             headers=headers,
             suggested_model_id=suggested_model_id,
             hint=hint,
+            provider_error_code=provider_error_code,
             provider_error_type=provider_error_type,
             in_stream=in_stream,
         )
