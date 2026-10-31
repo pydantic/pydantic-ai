@@ -79,12 +79,11 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
         if len(raw_arguments) == 0:
             arguments = None
         elif len(raw_arguments) == 1:
-            # Only use the compact tuple form if the single non-default field is the first
-            # dataclass field, since the tuple form passes the value as the first positional arg.
-            first_field_name = fields(self)[0].name
+            # The compact tuple form passes the value as the first positional argument.
+            first_field = fields(self)[0]
             key = next(iter(raw_arguments))
             value = raw_arguments[key]
-            if key == first_field_name and not serializes_as_string_keyed_dict(value):
+            if key == first_field.name and not first_field.kw_only and not serializes_as_string_keyed_dict(value):
                 arguments = (value,)
             else:
                 arguments = raw_arguments
