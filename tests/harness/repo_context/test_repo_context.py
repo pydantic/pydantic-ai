@@ -455,9 +455,15 @@ project
         cap = RepoContext[object](walk_up='all', home_dir=str(tmp_path / 'home'), nested_traversal=False)
         ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(tmp_path / 'home' / 'project')))
         await cap.before_run(ctx)
-        rendered = _render_capability_instructions(cap, ctx) or ''
-        assert 'above home' not in rendered
-        assert rendered.index('home') < rendered.index('project')
+        assert _render_capability_instructions(cap, ctx) == snapshot("""\
+<context-file path="../AGENTS.md">
+home
+</context-file>
+
+<context-file path="AGENTS.md">
+project
+</context-file>\
+""")
 
     async def test_walk_up_loads_one_file_per_directory(self, tmp_path: Path) -> None:
         (tmp_path / '.git').mkdir()
