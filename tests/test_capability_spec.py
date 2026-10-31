@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 import warnings
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
+from pydantic import ValidationError
 
 from pydantic_ai import Capability as TopLevelCapability
 from pydantic_ai._run_context import RunContext
@@ -90,6 +92,10 @@ pytestmark = []
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
+
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 
 
 def test_capability_top_level_export() -> None:
@@ -688,6 +694,174 @@ def test_agent_from_spec_model_override():
     model = TestModel(model_name='override')
     agent = Agent.from_spec({'model': 'test'}, model=model)
     assert agent.model is model
+
+
+def _openai_compatible_model(**fields: Any) -> dict[str, Any]:
+    return {'provider': 'openai-compatible', 'provider_name': 'my-gateway', 'model_name': 'qwen/qwen3', **fields}
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'fields, model_class',
+    [
+        ({'base_url': 'https://gateway.example.com/v1'}, 'OpenAIChatModel'),
+        ({'base_url_env': 'MY_GATEWAY_BASE_URL', 'api': 'responses'}, 'OpenAIResponsesModel'),
+    ],
+)
+def test_agent_from_spec_openai_compatible_model(
+    monkeypatch: pytest.MonkeyPatch, fields: dict[str, Any], model_class: str
+) -> None:
+    """An `openai-compatible` model spec builds the model with the `base_url` and the API key from the env vars."""
+    monkeypatch.setenv('MY_GATEWAY_BASE_URL', 'https://gateway.example.com/v1')
+    monkeypatch.setenv('MY_GATEWAY_API_KEY', 'gateway-key')
+
+    agent = Agent.from_spec({'model': _openai_compatible_model(api_key_env='MY_GATEWAY_API_KEY', **fields)})
+
+    model = agent.model
+    assert isinstance(model, OpenAIChatModel | OpenAIResponsesModel)
+    assert type(model).__name__ == model_class
+    assert model.model_name == 'qwen/qwen3'
+    assert model.system == 'my-gateway'
+    provider = model._provider  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider.base_url == 'https://gateway.example.com/v1/'
+    assert provider.client.api_key == 'gateway-key'
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+def test_agent_from_spec_openai_compatible_model_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without `api_key_env`, `OPENAI_API_KEY` isn't sent to the service."""
+    monkeypatch.setenv('OPENAI_API_KEY', 'openai-key')
+
+    agent = Agent.from_spec({'model': _openai_compatible_model(base_url='http://localhost:8000/v1')})
+
+    assert isinstance(agent.model, OpenAIChatModel)
+    assert agent.model.client.api_key == 'api-key-not-set'
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'fields, message',
+    [
+        (
+            {'base_url_env': 'MY_GATEWAY_BASE_URL'},
+            "The environment variable `MY_GATEWAY_BASE_URL` named by the model spec's `base_url_env` is not set or empty.",
+        ),
+        (
+            {'base_url': 'http://localhost:8000/v1', 'api_key_env': 'MY_GATEWAY_API_KEY'},
+            "The environment variable `MY_GATEWAY_API_KEY` named by the model spec's `api_key_env` is not set or empty.",
+        ),
+    ],
+)
+def test_agent_from_spec_openai_compatible_model_missing_env_var(
+    monkeypatch: pytest.MonkeyPatch, fields: dict[str, Any], message: str
+) -> None:
+    monkeypatch.delenv('MY_GATEWAY_BASE_URL', raising=False)
+    monkeypatch.setenv('MY_GATEWAY_API_KEY', '')
+
+    with pytest.raises(UserError, match=re.escape(message)):
+        Agent.from_spec({'model': _openai_compatible_model(**fields)})
+
+
+def test_agent_from_spec_model_override_skips_openai_compatible_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `model` passed to `from_spec` replaces the spec's model without building it or reading its env vars."""
+    monkeypatch.delenv('MY_GATEWAY_BASE_URL', raising=False)
+
+    agent = Agent.from_spec(
+        {'model': _openai_compatible_model(base_url_env='MY_GATEWAY_BASE_URL')}, model=TestModel(model_name='override')
+    )
+
+    assert isinstance(agent.model, TestModel)
+
+
+@pytest.mark.parametrize(
+    'fields, error',
+    [
+        ({}, 'Exactly one of `base_url` and `base_url_env` must be set.'),
+        (
+            {'base_url': 'http://localhost:8000/v1', 'base_url_env': 'MY_GATEWAY_BASE_URL'},
+            'Exactly one of `base_url` and `base_url_env` must be set.',
+        ),
+        ({'base_url': 'http://localhost:8000/v1', 'api_key': 'secret'}, 'Extra inputs are not permitted'),
+        ({'base_url': 'http://localhost:8000/v1', 'api': 'completions'}, "Input should be 'chat' or 'responses'"),
+    ],
+)
+def test_agent_spec_openai_compatible_model_validation(fields: dict[str, Any], error: str) -> None:
+    """The base URL comes from exactly one source, and an inline `api_key` is rejected rather than ignored."""
+    with pytest.raises(ValidationError, match=re.escape(error)):
+        AgentSpec.model_validate({'model': _openai_compatible_model(**fields)})
+
+
+@pytest.mark.parametrize(
+    'fmt, expected',
+    [
+        (
+            'yaml',
+            snapshot("""\
+# yaml-language-server: $schema=agent_schema.json
+model:
+  provider: openai-compatible
+  provider_name: my-gateway
+  model_name: qwen/qwen3
+  base_url_env: MY_GATEWAY_BASE_URL
+"""),
+        ),
+        (
+            'json',
+            snapshot("""\
+{
+  "$schema": "agent_schema.json",
+  "model": {
+    "provider": "openai-compatible",
+    "provider_name": "my-gateway",
+    "model_name": "qwen/qwen3",
+    "base_url_env": "MY_GATEWAY_BASE_URL"
+  }
+}
+"""),
+        ),
+    ],
+)
+def test_to_file_roundtrip_openai_compatible_model(tmp_path: Path, fmt: str, expected: str) -> None:
+    spec = AgentSpec.model_validate({'model': _openai_compatible_model(base_url_env='MY_GATEWAY_BASE_URL')})
+    spec_path = tmp_path / f'agent.{fmt}'
+    spec.to_file(spec_path)
+
+    assert spec_path.read_text(encoding='utf-8') == expected
+    assert AgentSpec.from_file(spec_path).model == spec.model
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize('via', ['run', 'override'])
+async def test_run_time_spec_openai_compatible_model(via: str) -> None:
+    """An `openai-compatible` model in a run-time spec is built too."""
+    agent = Agent('test')
+    spec = {'model': _openai_compatible_model(base_url='http://localhost:8000/v1')}
+
+    with agent.override(spec=spec) if via == 'override' else nullcontext():
+        async with agent.iter('hello', spec=spec if via == 'run' else None) as run:
+            assert isinstance(run.ctx.deps.model, OpenAIChatModel)
+            assert run.ctx.deps.model.system == 'my-gateway'
+
+
+@pytest.mark.parametrize('via', ['run', 'override', 'override-around-run'])
+async def test_run_time_model_skips_spec_openai_compatible_model(monkeypatch: pytest.MonkeyPatch, via: str) -> None:
+    """A `model` passed alongside a run-time spec, or overridden around it, replaces the spec's model without building it."""
+    monkeypatch.delenv('MY_GATEWAY_BASE_URL', raising=False)
+    agent = Agent('test')
+    spec = {'model': _openai_compatible_model(base_url_env='MY_GATEWAY_BASE_URL')}
+    model = TestModel(custom_output_text='explicit model')
+
+    if via == 'override':
+        with agent.override(model=model, spec=spec):
+            result = await agent.run('hello')
+    elif via == 'override-around-run':
+        with agent.override(model=model):
+            result = await agent.run('hello', spec=spec)
+    else:
+        result = await agent.run('hello', model=model, spec=spec)
+
+    assert result.output == 'explicit model'
 
 
 def test_agent_from_spec_capabilities_merged():
@@ -1806,6 +1980,37 @@ def test_model_json_schema_with_capabilities():
                     'title': 'ModelSettings',
                     'type': 'object',
                 },
+                'OpenAICompatibleModelSpec': {
+                    'additionalProperties': False,
+                    'oneOf': [
+                        {'properties': {'base_url': {'type': 'string'}}, 'required': ['base_url']},
+                        {'properties': {'base_url_env': {'type': 'string'}}, 'required': ['base_url_env']},
+                    ],
+                    'properties': {
+                        'provider': {'const': 'openai-compatible', 'title': 'Provider', 'type': 'string'},
+                        'provider_name': {'title': 'Provider Name', 'type': 'string'},
+                        'model_name': {'title': 'Model Name', 'type': 'string'},
+                        'api': {'default': 'chat', 'enum': ['chat', 'responses'], 'title': 'Api', 'type': 'string'},
+                        'base_url': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Base Url',
+                        },
+                        'base_url_env': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Base Url Env',
+                        },
+                        'api_key_env': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Api Key Env',
+                        },
+                    },
+                    'required': ['provider', 'provider_name', 'model_name'],
+                    'title': 'OpenAICompatibleModelSpec',
+                    'type': 'object',
+                },
                 'ToolOrOutput': {
                     'properties': {
                         'function_tools': {'items': {'type': 'string'}, 'title': 'Function Tools', 'type': 'array'}
@@ -2786,7 +2991,11 @@ def test_model_json_schema_with_capabilities():
             },
             'additionalProperties': False,
             'properties': {
-                'model': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Model'},
+                'model': {
+                    'anyOf': [{'type': 'string'}, {'$ref': '#/$defs/OpenAICompatibleModelSpec'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Model',
+                },
                 'name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Name'},
                 'description': {
                     'anyOf': [{'type': 'string'}, {'type': 'null'}],
