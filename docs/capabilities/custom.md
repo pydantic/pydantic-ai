@@ -441,7 +441,7 @@ Capability parts are stored in the message history like any other part, so they 
 
 The [UI adapters](../ui/overview.md) keep capability parts on the server: they aren't sent to the frontend, and [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops one a client sends back, since a client could write one in the application's voice. A conversation whose model should keep seeing them keeps its history on the server, for example with [conversation storage](../persistence.md).
 
-Calling `ctx.enqueue` from a capability's hook or tool with a bare [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart], or with user text that contains something that looks like a framework frame (such as a `<system>` tag), emits a `UserWarning` pointing here. Application code, such as a tool registered on the agent, enqueues either as before.
+Calling `ctx.enqueue` from a capability's hook or tool with a bare [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart], or with user text that contains something that looks like a framework frame (such as a `<system>` tag), emits a `UserWarning` pointing here. Application code, such as a tool registered on the agent or a function registered with [`Hooks`][pydantic_ai.capabilities.Hooks], enqueues either as before.
 
 ## Framing data in prompt text
 

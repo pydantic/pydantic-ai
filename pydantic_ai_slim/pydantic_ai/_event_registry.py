@@ -16,6 +16,7 @@ import dataclasses
 import functools
 import warnings
 from collections.abc import Callable, Mapping
+from types import GenericAlias
 from typing import Any, Generic, TypeVar, cast, overload
 
 import pydantic
@@ -366,7 +367,9 @@ def _late_adapter(cls: type[Any], config: tuple[tuple[str, Any], ...]) -> pydant
 
     A list, because a `TypeAdapter` of a dataclass can't take a config of its own.
     """
-    return pydantic.TypeAdapter(list[cls], config=cast(pydantic.ConfigDict, dict(config)))
+    # `list[cls]` built at runtime: `cls` is a class the registry holds, which no type expression can name.
+    items: Any = GenericAlias(list, (cls,))
+    return pydantic.TypeAdapter(items, config=cast(pydantic.ConfigDict, dict(config)))
 
 
 def _canonicalizing_schema(handler: pydantic.GetCoreSchemaHandler, event_cls: type[Any]) -> Any:

@@ -998,7 +998,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         next one sent. Anything else is added to the history as its own messages, and so is content
         enqueued after it.
 
-        Called from a capability's hook or tool, it stamps each
+        Called from a capability's hook or tool, except an app-facing callback capability such as
+        [`Hooks`][pydantic_ai.capabilities.Hooks], whose functions are the application's, it stamps each
         [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] that has no `capability_id` yet with the capability's
         run id, and warns on a bare [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or user text that looks
         like a framework frame, which a capability part should say instead.
@@ -1052,7 +1053,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # Queued first: a context with nowhere to deliver to, such as one inside a durable unit, raises there. The
         # parts are stamped in place right after, so they carry the id by the time the run delivers them.
         self.pending_messages.append(pending)
-        if (capability_id := self._calling_capability_id()) is not None:
+        capability_id = self._calling_capability_id()
+        owner = self._capability if self._capability is not None else self.capabilities.get(capability_id or '')
+        # An app-facing callback capability, such as `Hooks`, runs the application's own functions: what they enqueue
+        # is the application's, as `emit` treats their events.
+        if capability_id is not None and not (owner is not None and owner._emits_app_events):  # pyright: ignore[reportPrivateUsage]
             stamp_capability_parts(pending.messages, capability_id)
             if reason := hand_built_capability_speech(pending.messages):
                 warnings.warn(

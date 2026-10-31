@@ -15,7 +15,7 @@ from pydantic import ConfigDict, TypeAdapter
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._capability_parts import render_capability_parts
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CAPABILITY_PART_TYPES,
@@ -945,6 +945,27 @@ def test_enqueue_from_a_capability_warns_on_hand_built_speech(item: Any, reason:
     agent = Agent(FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('Done.')])), capabilities=[Reporter([item])])
     with pytest.warns(UserWarning, match=re.escape(reason) + r'.*Define a `CapabilityPart` subclass'):
         agent.run_sync('Run the tests.')
+
+
+def test_enqueue_from_hooks_is_application_code() -> None:
+    """`Hooks` runs the application's own functions: what they enqueue is neither stamped nor warned about."""
+    hooks: Hooks[None] = Hooks()
+
+    @hooks.on.before_model_request
+    async def add_note(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        if ctx.run_step == 1:
+            ctx.enqueue(SystemPromptPart('The user is on the free plan.'), report())
+        return request_context
+
+    agent = Agent(FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('Done.')])), capabilities=[hooks])
+    result = agent.run_sync('Run the tests.')
+    [part] = [
+        part
+        for message in result.all_messages()
+        for part in getattr(message, 'parts', [])
+        if isinstance(part, TaskReportPart)
+    ]
+    assert part.capability_id is None
 
 
 def test_enqueue_from_a_capability_does_not_warn_on_plain_text_or_parts() -> None:
