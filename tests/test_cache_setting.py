@@ -8,16 +8,18 @@ budget and lookback helpers, the retention resolver, and the `Caching` capabilit
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Caching
+from pydantic_ai._run_context import RunContext
+from pydantic_ai._utils import now_utc
+from pydantic_ai.capabilities import CachePolicy, CachePolicyName, Caching
 from pydantic_ai.exceptions import ModelHTTPError, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart, idle_gaps
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._prompt_cache import (
     excess_cache_points,
@@ -566,14 +568,90 @@ class TestCachingCapability:
 
     def test_caching_defaults(self):
         caching = Caching()
-        assert caching.retention is True
+        assert caching.retention == 'auto'
         assert caching.id == 'caching'
-        assert caching.get_model_settings() == {'cache': True}
+        assert callable(caching.get_model_settings())
+        assert Caching(True).get_model_settings() == {'cache': True}
+
+    @pytest.mark.parametrize(
+        ('retention', 'idle', 'expected'),
+        [
+            ('sticky', timedelta(seconds=30), '5m'),
+            ('sticky', timedelta(minutes=10), '1h'),
+            ('auto', timedelta(seconds=30), '5m'),
+            ('auto', timedelta(minutes=10), '1h'),
+        ],
+    )
+    async def test_sticky_policy_switches_after_idle(
+        self, retention: CachePolicyName, idle: timedelta, expected: CacheRetention
+    ):
+        """5 minutes while the conversation runs at machine pace, 1 hour once a response sat idle longer than that."""
+        model = _RecordingFunctionModel(
+            _echo, profile=ModelProfile(supports_cache=True, supported_cache_retentions=('5m', '1h'))
+        )
+        model.recorded_cache = []
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('hi')], timestamp=now_utc() - idle - timedelta(seconds=1)),
+            ModelResponse(parts=[TextPart('hello')], timestamp=now_utc() - idle),
+        ]
+
+        await Agent(model, capabilities=[Caching(retention)]).run('again', message_history=history)
+
+        assert set(model.recorded_cache) == {expected}
+
+    async def test_auto_policy_uses_provider_default_without_tiers(self):
+        """On a provider without a short and a long tier, `'auto'` leaves retention to the provider."""
+        model = _RecordingFunctionModel(
+            _echo, profile=ModelProfile(supports_cache=True, supported_cache_retentions=('30m',))
+        )
+        model.recorded_cache = []
+
+        await Agent(model, capabilities=[Caching()]).run('hi')
+
+        assert set(model.recorded_cache) == {True}
+
+    async def test_custom_policy(self):
+        """A user's `CachePolicy` plugs in the same way as the built-in ones, and sees the run's messages."""
+        seen: list[int] = []
+
+        class ByHistoryLength(CachePolicy):
+            def retention(self, ctx: RunContext[Any]) -> bool | CacheRetention:
+                seen.append(len(ctx.messages))
+                return '1h' if len(ctx.messages) > 2 else '5m'
+
+        model = _RecordingFunctionModel(
+            _echo, profile=ModelProfile(supports_cache=True, supported_cache_retentions=('5m', '1h'))
+        )
+        model.recorded_cache = []
+        agent = Agent(model, capabilities=[Caching(ByHistoryLength(), messages=False)])
+
+        result = await agent.run('one')
+        await agent.run('two', message_history=result.all_messages())
+
+        assert model.recorded_cache[0] == {'retention': '5m', 'messages': False}
+        assert model.recorded_cache[-1] == {'retention': '1h', 'messages': False}
+        assert set(seen) == {1, 3}
 
     def test_caching_from_spec(self):
         agent = Agent.from_spec({'model': 'test', 'capabilities': [{'Caching': {'retention': '1h'}}]})
         children = agent._root_capability.capabilities
         assert [child for child in children if isinstance(child, Caching)] == [Caching('1h')]
+
+
+def test_idle_gaps():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('a')], timestamp=start),
+        ModelResponse(parts=[TextPart('b')], timestamp=start + timedelta(seconds=5)),
+        ModelRequest(parts=[UserPromptPart('c')], timestamp=start + timedelta(minutes=9)),
+        ModelResponse(parts=[TextPart('d')], timestamp=(start + timedelta(minutes=10)).replace(tzinfo=None)),
+        ModelRequest(parts=[UserPromptPart('e')]),
+    ]
+
+    assert idle_gaps(history, now=start + timedelta(minutes=12)) == [
+        timedelta(minutes=8, seconds=55),
+        timedelta(minutes=2),
+    ]
 
 
 class TestCachingNotEnabled:
@@ -705,9 +783,9 @@ class TestStablePrefixOnly:
     @pytest.mark.parametrize(
         ('caching', 'expected'),
         [
-            (Caching(), {'cache': True}),
+            (Caching(True), {'cache': True}),
             (Caching('1h'), {'cache': '1h'}),
-            (Caching(messages=False), {'cache': {'messages': False}}),
+            (Caching(True, messages=False), {'cache': {'messages': False}}),
             (Caching('1h', messages=False), {'cache': {'retention': '1h', 'messages': False}}),
             (Caching(False, messages=False), {'cache': False}),
         ],

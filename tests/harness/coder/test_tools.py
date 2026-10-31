@@ -153,7 +153,7 @@ class TestCoder:
     @pytest.mark.parametrize(
         ('caching', 'before', 'after', 'model_settings', 'agent_settings', 'run_settings', 'expected'),
         [
-            pytest.param(True, [], [], None, None, None, True, id='default'),
+            pytest.param(True, [], [], None, None, None, '5m', id='default'),
             pytest.param(False, [], [], None, None, None, None, id='left-out'),
             pytest.param(True, [], [], {'cache': False}, None, None, False, id='model-disables'),
             pytest.param(True, [], [], None, {'cache': False}, None, False, id='agent-disables'),
@@ -174,7 +174,7 @@ class TestCoder:
         run_settings: ModelSettings | None,
         expected: CacheSetting | None,
     ) -> None:
-        """Prompt caching is on unless the model, the agent, a capability, or the run configures `cache`."""
+        """Prompt caching is on, with the `'auto'` retention policy, unless the model, the agent, a capability, or the run configures `cache`."""
         seen: list[CacheSetting | None] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

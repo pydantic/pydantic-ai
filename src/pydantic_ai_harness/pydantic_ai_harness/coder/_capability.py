@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
+from pydantic_ai.capabilities import AbstractCapability, AutoCachePolicy, Capability, CombinedCapability
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
@@ -41,14 +41,16 @@ class _BoundToolOutputs(ToolOutputLimits[AgentDepsT]):
 
 @dataclass
 class _DefaultCaching(AbstractCapability[AgentDepsT]):
-    """`Caching()` that yields to a `cache` value set before it, by the model, the agent, or a capability.
+    """`Caching()` (the `'auto'` retention policy) that yields to a `cache` value set before it, by the model, the agent, or a capability.
 
     Without `Caching`'s fixed id, so a `Caching` bound next to `Coder` is not combined away.
     """
 
     def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings]:
         def unless_configured(ctx: RunContext[AgentDepsT]) -> ModelSettings:
-            return ModelSettings() if 'cache' in (ctx.model_settings or {}) else ModelSettings(cache=True)
+            if 'cache' in (ctx.model_settings or {}):
+                return ModelSettings()
+            return ModelSettings(cache=AutoCachePolicy().retention(ctx))
 
         return unless_configured
 
