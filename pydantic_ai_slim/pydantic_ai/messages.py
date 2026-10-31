@@ -4357,8 +4357,7 @@ class OperatorText(str):
     file in a workspace the operator trusts. Wrapping a string in `OperatorText(...)` is how your code says it's
     the operator's. Build one from a workspace file with [`from_workspace`][pydantic_ai.messages.OperatorText.from_workspace],
     which refuses a workspace whose files the operator doesn't control
-    ([`Workspace.trusted`][pydantic_ai.workspaces.Workspace.trusted], such as an
-    [`UntrustedWorkspace`][pydantic_ai.workspaces.UntrustedWorkspace]).
+    ([`Workspace.trusted`][pydantic_ai.workspaces.Workspace.trusted]).
     """
 
     __slots__ = ()

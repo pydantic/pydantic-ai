@@ -47,7 +47,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, _otel_message_role  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.workspaces import LocalWorkspaceBackend, UntrustedWorkspace, Workspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WrapperWorkspace
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
@@ -231,7 +231,17 @@ def test_kind_cannot_be_overridden_per_instance() -> None:
 
 
 TRUSTED_WORKSPACE = Workspace(LocalWorkspaceBackend('.'))
-UNTRUSTED_WORKSPACE = UntrustedWorkspace(TRUSTED_WORKSPACE)
+
+
+class _UntrustedWorkspace(WrapperWorkspace):
+    """A workspace whose `Workspace.trusted` (#11836) is `False`, however #11836 ends up letting a caller say so."""
+
+    @property
+    def trusted(self) -> bool:
+        return False
+
+
+UNTRUSTED_WORKSPACE = _UntrustedWorkspace(TRUSTED_WORKSPACE)
 
 
 @pytest.mark.parametrize(
@@ -291,7 +301,7 @@ async def test_operator_text_from_workspace(tmp_path: Path) -> None:
 
 async def test_operator_text_refuses_an_untrusted_workspace(tmp_path: Path) -> None:
     (tmp_path / 'AGENTS.md').write_text('Always reply in French.')
-    workspace = UntrustedWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+    workspace = _UntrustedWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
     with pytest.raises(UserError, match='whose files the operator does not control'):
         await OperatorText.from_workspace(workspace, 'AGENTS.md')
     source = WorkspaceSource.from_workspace(workspace, 'AGENTS.md')

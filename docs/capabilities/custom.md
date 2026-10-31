@@ -427,7 +427,7 @@ Every part has a [`source`][pydantic_ai.messages.CapabilityPart.source], which d
 | Source | Trusted |
 |---|---|
 | [`OperatorSource()`][pydantic_ai.messages.OperatorSource]: your code or your configuration wrote it | Yes |
-| [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace]: read from a file in a workspace, which it asks whether the operator controls its files; there's no other way to build one | When the operator controls the workspace's files: [`Workspace.trusted`][pydantic_ai.workspaces.Workspace.trusted], `False` for an [`UntrustedWorkspace`][pydantic_ai.workspaces.UntrustedWorkspace] |
+| [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace]: read from a file in a workspace, which it asks whether the operator controls its files; there's no other way to build one | When the operator controls the workspace's files: [`Workspace.trusted`][pydantic_ai.workspaces.Workspace.trusted] |
 | [`ToolResultSource(tool_name=...)`][pydantic_ai.messages.ToolResultSource]: a tool's output | No |
 | [`UserSource()`][pydantic_ai.messages.UserSource]: the user wrote it | No |
 
