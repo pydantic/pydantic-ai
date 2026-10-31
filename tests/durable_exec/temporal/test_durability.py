@@ -86,7 +86,9 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelOverloadedError,
     ModelRateLimitError,
@@ -880,6 +882,10 @@ def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Mo
         raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='test-model')
     if prompt.content == 'not_found':
         raise ModelHTTPError.for_category(ModelNotFoundError, status_code=404, model_name='test-model')
+    if prompt.content == 'empty_response':
+        raise ModelEmptyResponseError('test-model', 'Streamed response ended without content or tool calls')
+    if prompt.content == 'invalid_response':
+        raise ModelInvalidResponseError('test-model', 'Invalid response', body='<html>Bad gateway</html>')
     raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-model')
 
 
@@ -941,6 +947,21 @@ class NonRetryableModelErrorWorkflow:
             3,
             'ModelNotFoundError ModelHTTPError non_retryable=False',
             id='unlisted-rejection-category',
+        ),
+        pytest.param(
+            # An unusable response used to be a plain `UnexpectedModelBehavior`, which the framework adds to every
+            # retry policy. It still reports that name, so Temporal doesn't retry it, and the workflow gets the model
+            # error for a `ModelFallback` or retry capability to handle.
+            'empty_response',
+            1,
+            'ModelEmptyResponseError UnexpectedModelBehavior non_retryable=False',
+            id='empty-response',
+        ),
+        pytest.param(
+            'invalid_response',
+            1,
+            'ModelInvalidResponseError UnexpectedModelBehavior non_retryable=False',
+            id='invalid-response',
         ),
     ],
 )

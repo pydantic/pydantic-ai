@@ -19,6 +19,7 @@ from .._gateway_cost import fill_gateway_header_cost
 from .._run_context import RunContext
 from ..exceptions import (
     ModelAPIError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     UserError,
 )
@@ -1404,7 +1405,7 @@ class GoogleModel(Model[Client]):
         except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         streamed_response = GeminiStreamedResponse(
             model_request_parameters=model_request_parameters,

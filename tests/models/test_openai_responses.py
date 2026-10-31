@@ -73,6 +73,7 @@ from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelRateLimitError,
     ModelRequestRejectedError,
@@ -20265,7 +20266,7 @@ async def test_forced_stream_without_events_raises(allow_model_requests: None):
     # The nested-list form is how the shared mock represents a single, empty stream.
     mock_client = MockOpenAIResponses.create_mock_stream([[]])
     model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
-    with pytest.raises(UnexpectedModelBehavior, match='without content'):
+    with pytest.raises(ModelEmptyResponseError, match='without content'):
         await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
 
 
