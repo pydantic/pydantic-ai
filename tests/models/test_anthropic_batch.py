@@ -216,7 +216,6 @@ async def test_anthropic_batch_refuses_a_different_registered_client(allow_model
         {'anthropic_speed': 'fast'},
         {'max_tokens': 0},
         {'timeout': 10},
-        {'max_retries': 0},
         {'extra_body': {'speed': 'standard'}},
         {'extra_body': {'stream': True}},
     ],
@@ -225,6 +224,13 @@ async def test_anthropic_batch_rejects_synchronous_only_parameters(settings: Mod
     model = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key='test'))
     with pytest.raises(UserError, match='not support'):
         await model.batch_encode(_request(settings=settings))
+
+
+async def test_anthropic_batch_ignores_max_retries() -> None:
+    """The provider runs a batched request itself, so an SDK retry count is ignored rather than rejected."""
+    model = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key='test'))
+    encoded = await model.batch_encode(_request(settings={'max_retries': 0}))
+    assert encoded == await model.batch_encode(_request())
 
 
 async def test_anthropic_batch_preserves_supported_settings() -> None:

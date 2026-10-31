@@ -80,6 +80,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    CapabilityLoadDeltaPart,
     CapabilityPart,
     InstructionBaselinePart,
     ModelMessage,
@@ -672,6 +673,8 @@ def _part_text(part: MessagePart) -> str:
         return f'model settings changed: {part.settings!r}'
     if isinstance(part, CapabilityPart):
         return f'{part.kind}: {part.model_content()!r}'
+    if isinstance(part, CapabilityLoadDeltaPart):
+        return f'loaded capabilities changed: loaded={part.loaded!r}'
     return str(part.content)
 
 

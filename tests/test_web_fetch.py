@@ -159,6 +159,26 @@ class TestWebFetchLocalTool:
         assert 'Hello' in result['content']
         assert 'World' in result['content']
 
+    async def test_fetch_html_excludes_script_and_style_source(self):
+        html = '<script>window.x = 1;</script><style>.a{color:red}</style><p>Text</p><img src="a.png">'
+        with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock) as mock_download:
+            mock_download.return_value = _html_response(html)
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['content'] == 'Text'
+
+    async def test_max_content_length_bounds_page_text_not_script_source(self):
+        html = f'<script>{"window.x = 1;" * 50}</script><p>{"A" * 60}</p>'
+        with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock) as mock_download:
+            mock_download.return_value = _html_response(html)
+            tool = WebFetchLocalTool(max_content_length=40, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['content'] == 'A' * 40 + '\n\n[Content truncated]'
+
     async def test_fetch_html_title_with_whitespace(self):
         """Title whitespace is stripped."""
         html = '<html><head><title>  Hello  </title></head><body><p>Content</p></body></html>'

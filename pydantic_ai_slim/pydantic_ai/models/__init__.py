@@ -15,7 +15,7 @@ import uuid
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
@@ -99,6 +99,8 @@ from ..messages import (
     BaseToolReturnPart,
     BinaryContent,
     BinaryImage,
+    CachePoint as CachePoint,
+    CapabilityLoadDeltaPart,
     CapabilityPart,
     CompactionPart,
     DocumentMediaType,
@@ -202,6 +204,9 @@ ModelContextDepsT = TypeVar('ModelContextDepsT')
 @cache
 def known_model_names() -> tuple[str, ...]:
     """Return every model name known to [`KnownModelName`][pydantic_ai.models.KnownModelName].
+
+    The list is intended for autocomplete and error suggestions; it is not exhaustive of the model
+    ids accepted by providers and should not be used to validate user input.
 
     This is the public, stable way to enumerate the known model ids. Prefer it over introspecting
     the `KnownModelName` type alias directly (e.g. `get_args(KnownModelName.__value__)`), which is
@@ -836,9 +841,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the tuning knobs among them,
     like `temperature`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
 
-    This covers the fields a model class sends to its provider. `request_timeout` is enforced by Pydantic AI for
-    every model, and `thinking`, `cache` and `tool_choice` are resolved through the model profile, so they're not
-    listed here.
+    This covers the fields a model class sends to its provider. `request_timeout` and `first_event_timeout` are
+    enforced by Pydantic AI for every model, and `thinking`, `cache` and `tool_choice` are resolved through the model
+    profile, so they're not listed here.
 
     It's declared on the model class because whether a setting reaches the provider is mostly decided by the API and
     SDK the class speaks. The OpenAI model classes add the ignored settings their profile lists in
@@ -1000,6 +1005,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
+    def _run_scope(self) -> AbstractAsyncContextManager[None]:
+        """The context an agent run holds around its requests to this model, unless it runs in a durable workflow.
+
+        Unlike `__aenter__`, it leaves the provider's HTTP client alone. A model can use it to keep a connection it
+        opens on demand open for the run. Wrappers should inherit from `WrapperModel`, or forward this context
+        manager to their wrapped models as `WrapperModel` and `FallbackModel` do. Without forwarding, wrapped
+        models cannot acquire run-scoped resources and may fall back to HTTP.
+        """
+        return nullcontext()
+
     def __eq__(self, other: object) -> bool:
         """Compare `settings`, `profile`, and the subclass's dataclass fields; a subclass that hashes by identity compares by identity."""
         if not isinstance(other, type(self)) or other.__class__ is not self.__class__:
@@ -1077,13 +1092,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Whether these (merged) settings include a provider-specific cache setting, which takes precedence."""
         return False
 
-    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
-        """Start the `request_timeout` deadline of a request to this model made now, if it's set here or on the model.
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        """Start the deadlines of a request to this model made now, if they're set here or on the model.
 
-        A model that makes its requests through other models, each under a deadline of its own, overrides this to
-        return `None`, as [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
+        That's `request_timeout`'s, and on a streamed request `first_event_timeout`'s. A model that makes its
+        requests through other models, each under deadlines of their own, overrides this to return `None`, as
+        [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
         """
-        return RequestDeadline.start(self.model_name, merge_model_settings(self.settings, model_settings))
+        return RequestDeadline.start(
+            self.model_name, merge_model_settings(self.settings, model_settings), stream=stream
+        )
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         """Whether a model that needs prompt caching configured on the request got no caching configuration at all.
@@ -1729,6 +1747,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         mid-conversation effort change and the profile sets `supports_mid_conversation_effort`; everywhere else it
         drops them, so the current effort goes out as the request-level setting.
 
+        Drops [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart]s: the
+        model sees a capability's load as its instructions and tools, not as the record that loads it.
+
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
         instruction baseline or compaction. A change to a loaded deferred capability's block is kept
@@ -1773,6 +1794,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         # A no-op on the agent's path, which renders them before handing this the history.
         messages = render_capability_parts(messages)
+        messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
             # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
@@ -2370,7 +2392,8 @@ class StreamedResponse(ABC):
     """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
     was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
     _request_deadline: RequestDeadline | None = field(default=None, init=False, repr=False)
-    """The `ModelSettings['request_timeout']` deadline each pull of the next event runs under, if any.
+    """The `ModelSettings['request_timeout']` and `ModelSettings['first_event_timeout']` deadlines each pull of the next
+    event runs under, if any.
 
     Set before iteration starts by whoever opened the stream under that deadline."""
 
@@ -2488,7 +2511,7 @@ class StreamedResponse(ABC):
         return self._event_iterator
 
     def _enforce_request_deadline(self, deadline: RequestDeadline) -> None:
-        """Pull each event under `deadline`, the `request_timeout` deadline this stream was opened under."""
+        """Pull each event under `deadline`, the deadlines this stream was opened under."""
         assert self._event_iterator is None, 'The request deadline must be set before the stream is iterated'
         self._request_deadline = deadline
 
@@ -3857,6 +3880,7 @@ def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
         | InstructionDeltaPart
         | InstructionBaselinePart
         | ToolAvailabilityDeltaPart
+        | CapabilityLoadDeltaPart
         | ModelSettingsDeltaPart,
     ):
         return False
@@ -4186,6 +4210,26 @@ def _project_instruction_state(
     return projected
 
 
+def _drop_capability_load_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """`messages` without their `CapabilityLoadDeltaPart`s, or `messages` itself when there are none.
+
+    A request left with no parts is kept, as it is when every other part of it is dropped.
+    """
+    if not any(
+        isinstance(part, CapabilityLoadDeltaPart)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    ):
+        return messages
+    return [
+        replace(message, parts=[part for part in message.parts if not isinstance(part, CapabilityLoadDeltaPart)])
+        if isinstance(message, ModelRequest)
+        else message
+        for message in messages
+    ]
+
+
 def _project_model_settings_deltas(messages: list[ModelMessage], *, keep: bool) -> list[ModelMessage]:
     """Leave the `ModelSettingsDeltaPart`s a model with a mid-conversation effort channel renders, or drop them all.
 
@@ -4476,6 +4520,7 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 # TODO(v3): remove `RetryPromptPart`
 _UnpreparedPart: TypeAlias = (
     ToolAvailabilityDeltaPart
+    | CapabilityLoadDeltaPart
     | ModelSettingsDeltaPart
     | RetryFeedbackPart
     | RetryPromptPart  # pyright: ignore[reportDeprecated]
@@ -4484,11 +4529,11 @@ _UnpreparedPart: TypeAlias = (
 )
 """The request parts `prepare_messages` translates away before any adapter sees them.
 
-Each of these carries something no provider API has a field for — a mid-conversation change to the
-tool list or the thinking effort, a retry that isn't a plain turn, or a capability's record — and `prepare_messages` turns it
-into the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that step never
-ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart`
-on a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
+Each of these carries something no provider API has a field for — a mid-conversation change to the tool list or the
+thinking effort, a capability load from code, a retry that isn't a plain turn, or a capability's record — and `prepare_messages` turns it into
+the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that
+step never ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
+a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` or a request-side `CompactionPart` never reaches this branch either:
 adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts.
 """

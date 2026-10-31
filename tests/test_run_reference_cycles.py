@@ -9,15 +9,17 @@ import asyncio
 import datetime
 import gc
 import weakref
-from collections.abc import AsyncIterator, Generator
+from collections.abc import AsyncIterator, Callable, Generator
 from dataclasses import dataclass
 from types import AsyncGeneratorType
-from typing import Literal
+from typing import Any, Literal
 
 import anyio
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai._utils import ScopedTask
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler, WrapRunHandler
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -27,8 +29,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -329,6 +333,175 @@ async def test_interrupted_iteration_releases_dependencies(exit_kind: Literal['b
     del deps, run
     if exit_kind != 'error':
         assert ref() is None
+
+
+class RunDeadline(AbstractCapability[Deps]):
+    """A `wrap_run` whose frame refers to the task running it, through the `asyncio.timeout()` it holds."""
+
+    async def wrap_run(self, ctx: RunContext[Deps], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        deadline = asyncio.timeout(READINESS_WAIT_TIMEOUT)
+        async with deadline:
+            return await handler()
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('exit_kind', ['break', 'cancel'])
+async def test_interrupted_iteration_releases_dependencies_of_wrap_run_holding_its_task(
+    exit_kind: Literal['break', 'cancel'],
+) -> None:
+    agent = Agent(TestModel(), deps_type=Deps, capabilities=[RunDeadline()])
+    deps = Deps()
+    ref = weakref.ref(deps)
+    async with agent.iter('hello', deps=deps, infer_name=False) as run:
+        await anext(run)
+        if exit_kind == 'cancel':
+            run.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await anext(run)
+    del deps, run
+    assert ref() is None
+
+
+class FrameMarker:
+    """Held only by a hook's frame, so a weak reference to it shows whether the frame was released."""
+
+
+class WrapRunPendingCleanup(AbstractCapability[Deps]):
+    """`RunDeadline` with cleanup after `handler()` that waits until it's cancelled."""
+
+    def __init__(self) -> None:
+        self.cleanup_started = anyio.Event()
+        self.frame: weakref.ref[FrameMarker] | None = None
+
+    async def wrap_run(self, ctx: RunContext[Deps], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        marker = FrameMarker()
+        self.frame = weakref.ref(marker)
+        deadline = asyncio.timeout(READINESS_WAIT_TIMEOUT)
+        async with deadline:
+            try:
+                return await handler()
+            finally:
+                self.cleanup_started.set()
+                await anyio.Event().wait()
+
+
+class WrapModelRequestPendingCleanup(AbstractCapability[Deps]):
+    """`WrapRunPendingCleanup` for `wrap_model_request`."""
+
+    def __init__(self) -> None:
+        self.cleanup_started = anyio.Event()
+        self.frame: weakref.ref[FrameMarker] | None = None
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Deps], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        marker = FrameMarker()
+        self.frame = weakref.ref(marker)
+        deadline = asyncio.timeout(READINESS_WAIT_TIMEOUT)
+        async with deadline:
+            try:
+                return await handler(request_context)
+            finally:
+                self.cleanup_started.set()
+                await anyio.Event().wait()
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('cancel_until_done', [False, True])
+@pytest.mark.parametrize('exit_kind', ['run', 'iter_break', 'run_stream'])
+async def test_native_cancel_during_teardown_releases_hook_frame_holding_its_task(
+    exit_kind: Literal['run', 'iter_break', 'run_stream'], cancel_until_done: bool
+) -> None:
+    # The cancellation propagates through the stdlib `AsyncExitStack.__aexit__`, whose frame cycles with it and keeps
+    # `deps` alive until garbage collection on its own, so this checks that the hook's frame was released.
+    capability = WrapModelRequestPendingCleanup() if exit_kind == 'run_stream' else WrapRunPendingCleanup()
+    agent = Agent(TestModel(), deps_type=Deps, capabilities=[capability])
+
+    async def drive() -> None:
+        if exit_kind == 'run':
+            await agent.run('hello', deps=Deps(), infer_name=False)
+        elif exit_kind == 'iter_break':
+            async with agent.iter('hello', deps=Deps(), infer_name=False) as run:
+                await anext(run)
+        else:
+            async with agent.run_stream('hello', deps=Deps(), infer_name=False) as result:
+                await result.get_output()
+
+    task = asyncio.create_task(drive())
+    await asyncio.wait_for(capability.cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    if cancel_until_done:
+        # A supervisor that cancels until the task is done lands more cancels while the teardown waits for the hook's
+        # task, including after that task has finished.
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+            while not task.done():
+                await asyncio.sleep(0)
+                task.cancel()
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+    with pytest.raises(asyncio.CancelledError):
+        task.result()
+    del task
+    assert capability.frame is not None
+    assert capability.frame() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize(
+    ('method', 'cancellation', 'body_returns'),
+    [
+        ('wait', 'native', False),
+        ('wait', 'anyio', False),
+        ('result', 'native', False),
+        ('result', 'anyio', False),
+        ('result', 'native', True),
+    ],
+)
+async def test_scoped_task_is_released_without_gc_after_its_awaiter_is_cancelled(
+    method: Literal['wait', 'result'], cancellation: Literal['native', 'anyio'], body_returns: bool
+) -> None:
+    # Not through an agent run: there the cancellation already cycles with the stdlib `AsyncExitStack.__aexit__` frame,
+    # which hides this one. `wait()` and `result()` delete their `cancellation` local before they raise or return; a
+    # local left in that frame would cycle with the cancellation's traceback and keep the `ScopedTask` alive until GC.
+    # The `body_returns` case fails without that `del` only on CPython versions whose traceback links the frame of
+    # `wait_passing_on_cancellation()` back to `result()`'s, such as 3.12.15 and 3.13.3.
+    refs: list[weakref.ref[ScopedTask[int]]] = []
+    cancel_awaiter: Callable[[], object] | None = None
+
+    async def body() -> int:
+        assert cancel_awaiter is not None
+        cancel_awaiter()
+        try:
+            await anyio.sleep_forever()
+        except asyncio.CancelledError:
+            if not body_returns:
+                raise
+        return 42
+
+    async def await_scoped_task() -> int | None:
+        scoped = ScopedTask(body())
+        refs.append(weakref.ref(scoped))
+        if method == 'wait':
+            await scoped.wait()
+        else:
+            return await scoped.result()
+
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        if cancellation == 'native':
+            awaiter = asyncio.create_task(await_scoped_task())
+            cancel_awaiter = awaiter.cancel
+            await asyncio.wait((awaiter,))
+            if body_returns:
+                assert awaiter.result() == 42
+            else:
+                with pytest.raises(asyncio.CancelledError):
+                    awaiter.result()
+            del awaiter
+        else:
+            with anyio.CancelScope() as scope:
+                cancel_awaiter = scope.cancel
+                await await_scoped_task()
+            assert scope.cancelled_caught
+    assert refs[0]() is None
 
 
 @pytest.mark.usefixtures('no_gc')

@@ -19,6 +19,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    CapabilityLoadDeltaPart,
     CapabilityPart,
     EndStrategy,
     ExternalToolset,
@@ -5180,7 +5181,14 @@ def test_include_return_schema_via_capability():
         p
         for p in request.parts
         if not isinstance(
-            p, (ToolAvailabilityDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart, CapabilityPart)
+            p,
+            (
+                ToolAvailabilityDeltaPart,
+                CapabilityLoadDeltaPart,
+                InstructionBaselinePart,
+                ModelSettingsDeltaPart,
+                CapabilityPart,
+            ),
         )
     ]
     assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject

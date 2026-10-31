@@ -16,6 +16,7 @@ from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
+    CapabilityLoadDeltaPart,
     CapabilityPart,
     CompactionPart,
     InstructionBaselinePart,
@@ -160,12 +161,11 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
         # builds one by hand and passes it as `message_history` still puts an instance here, and
         # this reads the history before the model translates it.
         return [str(part.content)]
-    # Control bookkeeping rather than message text: it records which tools became available, and
-    # the schemas themselves travel in the request's tool definitions. Those schemas are not free
-    # -- this estimator counts no tool definitions at all, so revealing tools mid-run costs
-    # context it does not see (tracked separately); skipping the part is not a claim that the
-    # reveal was free.
-    elif isinstance(part, ToolAvailabilityDeltaPart | ModelSettingsDeltaPart):
+    # Control bookkeeping rather than message text: it records which tools became available or capabilities were loaded,
+    # and the schemas themselves travel in the request's tool definitions. Those schemas are not free -- this estimator
+    # counts no tool definitions at all, so revealing tools mid-run costs context it does not see (tracked separately);
+    # skipping the part is not a claim that the reveal was free.
+    elif isinstance(part, ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart):
         return []
     elif isinstance(part, CompactionPart):
         # A summary the application wrote, sent as text.
