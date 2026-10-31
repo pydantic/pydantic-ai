@@ -860,6 +860,8 @@ Some providers accept data they can't use: OpenAI ignores encrypted reasoning fr
 
 So a response from an `OpenAIProvider` at one `base_url` continued at another (a different gateway, say) gets its text, function calls and encrypted reasoning sent, but not its `previous_response_id` or item IDs, which the other endpoint couldn't look up. The base URLs are compared ignoring the case of the scheme and host, a default port and a trailing `/`. [`Model.accepts_server_state()`][pydantic_ai.models.Model.accepts_server_state] tells you whether a model would send a response's server-side state back; when two URLs reach the same stored state, like a proxy alias, override [`shares_server_state_with()`][pydantic_ai.providers.Provider.shares_server_state_with] on your provider. Files you upload yourself aren't judged this way: an [`UploadedFile`][pydantic_ai.messages.UploadedFile] is sent to the endpoint of whichever model you pass it to, so pass it to one that can read it.
 
+The canonical system names the service a provider speaks to, whose signed data it verifies and whose provider-native features it shares, so a renamed subclass keeps both. Code that decides by service rather than by provider name reads it too, such as the [Pydantic AI Harness `Advisor`](harness/advisor.md), which uses it to tell whether an executor takes Anthropic or OpenRouter advisor model IDs. It doesn't group providers by wire protocol: `azure`, and providers like `deepseek` that speak the OpenAI API, each have their own.
+
 ## Sharing messages between agents
 
 The same `message_history` parameter also works when the next run uses a

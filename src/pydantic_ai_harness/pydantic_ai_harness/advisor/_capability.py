@@ -7,13 +7,13 @@ import inspect
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Self
+from typing import Any, Literal, Self, cast
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, ModelSelection, NativeOrLocalTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import KnownModelName, ModelRequestContext, parse_model_id
+from pydantic_ai.models import AbstractModel, KnownModelName, Model, ModelRequestContext, parse_model_id
 from pydantic_ai.native_tools import AdvisorTool
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
@@ -39,6 +39,17 @@ def _caller_stacklevel() -> int:
         frame = frame.f_back
         stacklevel += 1
     return stacklevel
+
+
+def _executor_service(model: AbstractModel) -> str:
+    """The service the executor reaches, which decides the native advisor's model-ID namespace.
+
+    The provider's canonical system rather than its name, so a provider subclass that only renames
+    itself, such as a `claude-code` `AnthropicProvider`, still gets the Anthropic advisor. Not the
+    model's, which `BedrockConverseModel` reports as `'anthropic'` for Claude's thinking signatures.
+    """
+    provider = cast('Model[Any]', model).provider if isinstance(model, Model) else None
+    return provider.canonical_system if provider is not None else model.system
 
 
 @dataclass(init=False)
@@ -315,7 +326,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     def _native_advisor(self, ctx: RunContext[AgentDepsT]) -> AdvisorTool | None:
         """Build a native tool only when an explicit advisor model name is lossless."""
         native_provider, native_model_name = self._parse_native_model(self.model)
-        provider = ctx.model.system
+        provider = _executor_service(ctx.model)
         if provider != native_provider or native_model_name is None:
             return None
         if provider == 'openrouter' and self.max_uses is not None:
@@ -325,7 +336,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     def _required_native_advisor(self, ctx: RunContext[AgentDepsT]) -> AdvisorTool:
         """Build a required native tool or reject a cross-provider executor."""
         native_provider, native_model_name = self._parse_native_model(self.model)
-        if ctx.model.system != native_provider:
+        if _executor_service(ctx.model) != native_provider:
             raise UserError(f"Advisor(mode='native') requires a {native_provider} executor, not {ctx.model.system}")
         assert native_model_name is not None
         return self._advisor_tool(native_model_name)

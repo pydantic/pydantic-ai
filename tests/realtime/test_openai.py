@@ -4591,9 +4591,18 @@ async def test_custom_provider_base_url_derives_websocket_url(monkeypatch: pytes
 def test_azure_provider_is_rejected() -> None:
     from pydantic_ai.providers.azure import AzureProvider
 
-    provider = AzureProvider(azure_endpoint='https://res.openai.azure.com/openai/v1/', api_key='k')
-    with pytest.raises(UserError, match='Azure OpenAI is not supported'):
-        OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    class RenamedAzureProvider(AzureProvider):
+        @property
+        def name(self) -> str:
+            return 'my-azure'
+
+    names: set[str] = set()
+    for provider_cls in (AzureProvider, RenamedAzureProvider):
+        provider = provider_cls(azure_endpoint='https://res.openai.azure.com/openai/v1/', api_key='k')
+        names.add(provider.name)
+        with pytest.raises(UserError, match='Azure OpenAI is not supported'):
+            OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    assert names == {'azure', 'my-azure'}
 
 
 def test_profile() -> None:
