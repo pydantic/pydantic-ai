@@ -628,7 +628,17 @@ def test_docstring_google_var_args():
 
     result = agent.run_sync('')
     json_schema = json.loads(result.output)
-    assert json_schema['parameters_json_schema'] == snapshot({'additionalProperties': {'type': 'integer'}, 'properties': {'foo': {'description': 'The foo thing.', 'type': 'integer'}, 'args': {'description': 'The extra things.', 'items': {'type': 'string'}, 'type': 'array'}}, 'required': ['foo', 'args'], 'type': 'object'})
+    assert json_schema['parameters_json_schema'] == snapshot(
+        {
+            'additionalProperties': {'type': 'integer'},
+            'properties': {
+                'foo': {'description': 'The foo thing.', 'type': 'integer'},
+                'args': {'description': 'The extra things.', 'items': {'type': 'string'}, 'type': 'array'},
+            },
+            'required': ['foo', 'args'],
+            'type': 'object',
+        }
+    )
 
 
 class Foo(BaseModel):
