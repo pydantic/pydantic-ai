@@ -174,7 +174,7 @@ A capability that tells the model something mid-conversation (a sub-agent's repo
 ```python
 from dataclasses import dataclass
 
-from pydantic_ai import DataCapabilityPart, OperatorSource, InstructionCapabilityPart
+from pydantic_ai import DataCapabilityPart, InstructionCapabilityPart, OperatorSource
 
 
 @dataclass(kw_only=True)
