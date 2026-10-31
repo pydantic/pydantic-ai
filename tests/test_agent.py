@@ -218,6 +218,7 @@ requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral n
 READINESS_WAIT_TIMEOUT = 10
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
     """`run_sync` must replace a closed thread-current event loop.
 
@@ -237,6 +238,7 @@ def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.Abstract
     assert not asyncio.all_tasks(replacement_loop)
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_run_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
     """`run_sync` must create and install an event loop when the thread has none.
 
