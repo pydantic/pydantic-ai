@@ -33,6 +33,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from .._operation_backend import durable_unit_scope
 from .._utils import managed_model_scope, reject_serving_wrapper
 from ._activity_execution import execute_activity
 from ._durability import (
@@ -115,15 +116,16 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            async with managed_model_scope(
-                model_for_request, owned=not self._is_registered_model(model_for_request)
-            ) as active_model:
-                messages = self._reprepare_messages(params, active_model)
-                return await active_model.request(
-                    messages,
-                    cast(ModelSettings | None, params.model_settings),
-                    params.model_request_parameters,
-                )
+            with durable_unit_scope():
+                async with managed_model_scope(
+                    model_for_request, owned=not self._is_registered_model(model_for_request)
+                ) as active_model:
+                    messages = self._reprepare_messages(params, active_model)
+                    return await active_model.request(
+                        messages,
+                        cast(ModelSettings | None, params.model_settings),
+                        params.model_request_parameters,
+                    )
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         # Union with None for backward compatibility with activity payloads created before deps was added
@@ -145,21 +147,22 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            async with managed_model_scope(
-                model_for_request, owned=not self._is_registered_model(model_for_request)
-            ) as active_model:
-                messages = self._reprepare_messages(params, active_model)
-                async with open_durable_unit_stream(
-                    active_model,
-                    messages,
-                    cast(ModelSettings | None, params.model_settings),
-                    params.model_request_parameters,
-                    run_context,
-                ) as streamed_response:
-                    await self.event_stream_handler(run_context, streamed_response)
+            with durable_unit_scope():
+                async with managed_model_scope(
+                    model_for_request, owned=not self._is_registered_model(model_for_request)
+                ) as active_model:
+                    messages = self._reprepare_messages(params, active_model)
+                    async with open_durable_unit_stream(
+                        active_model,
+                        messages,
+                        cast(ModelSettings | None, params.model_settings),
+                        params.model_request_parameters,
+                        run_context,
+                    ) as streamed_response:
+                        await self.event_stream_handler(run_context, streamed_response)
 
-                    async for _ in streamed_response:
-                        pass
+                        async for _ in streamed_response:
+                            pass
             return streamed_response.get()
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization

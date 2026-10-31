@@ -43,7 +43,7 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     import grpc
     import httpx
-    from anthropic import AsyncAnthropic
+    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock
     from botocore.exceptions import (
         BotoCoreError,
         ClientError,
@@ -67,6 +67,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.google import GoogleProvider
@@ -76,6 +77,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from pydantic_ai.providers.zai import ZaiProvider
     from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
     from .mock_xai import MockXai, get_grok_text_chunk
@@ -140,6 +142,39 @@ def _anthropic(handler: Handler) -> Model:
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+
+
+def _zai(handler: Handler) -> Model:
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=client))
+
+
+def _anthropic_bedrock(handler: Handler) -> Model:
+    client = AsyncAnthropicBedrock(
+        aws_region='us-east-1',
+        aws_access_key='test',
+        aws_secret_key='test',
+        base_url='http://localhost',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return AnthropicModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=AnthropicProvider(anthropic_client=client)
+    )
+
+
+def _bedrock_invoke_error(status_code: int, code: str, message: str) -> Handler:
+    """A Bedrock InvokeModel error: the code is in the `x-amzn-errortype` header, the body has only a `message`."""
+    return _json(
+        status_code,
+        {'message': message},
+        headers={'X-Amzn-ErrorType': f'{code}:http://internal.amazon.com/coral/com.amazon.bedrock/'},
+    )
 
 
 def _groq(handler: Handler) -> Model:
@@ -446,6 +481,45 @@ CASES = [
         has_cause=False,
     ),
     Case(
+        id='zai-insufficient-balance',
+        model=_zai,
+        handler=_json(
+            429,
+            {'error': {'code': '1113', 'message': 'Insufficient balance or no resource package. Please recharge.'}},
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': '1113'},
+    ),
+    Case(
+        id='zai-plan-limit',
+        model=_zai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'code': '1310',
+                    'message': 'Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-02.',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': '1310'},
+    ),
+    Case(
+        id='zai-rate-limit',
+        model=_zai,
+        handler=_json(429, {'error': {'code': '1302', 'message': 'Rate limit reached for requests'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '1302'},
+    ),
+    Case(
+        id='openai-numeric-code-rate-limit',
+        model=_openai,
+        handler=_json(429, {'error': {'code': '1113', 'message': 'Too many requests'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '1113'},
+    ),
+    Case(
         id='anthropic-overloaded',
         model=_anthropic,
         handler=_json(529, {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}}),
@@ -479,6 +553,36 @@ CASES = [
         ),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
+    ),
+    Case(
+        id='anthropic-bedrock-context-window',
+        model=_anthropic_bedrock,
+        handler=_bedrock_invoke_error(400, 'ValidationException', 'prompt is too long: 210000 tokens > 200000 maximum'),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': 'ValidationException'},
+    ),
+    Case(
+        id='anthropic-bedrock-input-too-long',
+        model=_anthropic_bedrock,
+        handler=_bedrock_invoke_error(400, 'ValidationException', 'Input is too long for requested model.'),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': 'ValidationException'},
+    ),
+    Case(
+        id='anthropic-bedrock-quota',
+        model=_anthropic_bedrock,
+        handler=_bedrock_invoke_error(
+            400, 'ServiceQuotaExceededException', 'Your request exceeds the service quota for your account.'
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_code': 'ServiceQuotaExceededException'},
+    ),
+    Case(
+        id='anthropic-bedrock-validation',
+        model=_anthropic_bedrock,
+        handler=_bedrock_invoke_error(400, 'ValidationException', 'Malformed input request, please reformat.'),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'provider_error_code': 'ValidationException'},
     ),
     Case(
         id='anthropic-stream-overloaded',
