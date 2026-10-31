@@ -468,6 +468,31 @@ iter_handler_stream_agent = Agent(
     capabilities=[DBOSDurability(event_stream_handler=runtime_event_stream_handler)],
 )
 
+_rejection_events: list[AgentStreamEvent] = []
+
+
+async def _collect_rejection_events(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _rejection_events.append(event)
+
+
+async def _announce_then_answer(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+    yield 'The store opens at 9 am.' if len(messages) > 1 else "I'll look that up."
+
+
+rejection_stream_agent = Agent(
+    FunctionModel(stream_function=_announce_then_answer),
+    name='rejection_stream_agent',
+    capabilities=[DBOSDurability(event_stream_handler=_collect_rejection_events)],
+)
+
+
+@rejection_stream_agent.output_validator
+def _reject_announcements(ctx: RunContext, output: str) -> str:
+    if output.startswith("I'll look"):
+        raise ModelRetry('Answer the question.')
+    return output
+
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
@@ -888,6 +913,25 @@ async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
         and isinstance((event := attributes.get('event')), str)
     ]
     assert exported_event_messages != []
+
+
+async def test_dbos_reports_a_rejected_streamed_response_between_the_attempts(
+    allow_model_requests: None, dbos: DBOS
+) -> None:
+    """In a DBOS workflow, the rejected response's events, then `ModelResponseRejectedEvent`, then the retry's events."""
+    _rejection_events.clear()
+
+    @DBOS.workflow()
+    async def run_rejection_workflow() -> str:
+        return (await rejection_stream_agent.run('When does the store open?')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        output = await run_rejection_workflow()
+
+    assert output == 'The store opens at 9 am.'
+    assert [event.event_kind for event in _rejection_events] == snapshot(
+        ['part_start', 'final_result', 'part_end', 'model_response_rejected', 'part_start', 'final_result', 'part_end']
+    )
 
 
 async def test_dbos_agent_iter_in_workflow_fires_event_stream_handler(

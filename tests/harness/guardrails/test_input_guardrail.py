@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseRejectedEvent,
     PartEndEvent,
     PartStartEvent,
     SystemPromptPart,
@@ -1589,6 +1590,8 @@ def _text_events(events: Sequence[AgentStreamEvent | AgentRunResultEvent[str]]) 
             seen.append(('end', event.part.content))
         elif isinstance(event, FinalResultEvent):
             seen.append('final result')
+        elif isinstance(event, ModelResponseRejectedEvent):
+            seen.append(('rejected', event.response.text))
         else:
             assert isinstance(event, AgentRunResultEvent)
             seen.append(('output', event.result.output))
@@ -1617,6 +1620,7 @@ class TestInputGuardrailParallelStreaming:
         assert _text_events(events) == [
             ('start', 'leaked '),
             'final result',
+            ('rejected', 'leaked '),
             ('start', 'nope'),
             'final result',
             ('end', 'nope'),
@@ -1657,6 +1661,7 @@ class TestInputGuardrailParallelStreaming:
         assert _text_events(events) == [
             ('start', 'leaked '),
             'final result',
+            ('rejected', 'leaked '),
             ('start', 'nope'),
             'final result',
             ('end', 'nope'),
