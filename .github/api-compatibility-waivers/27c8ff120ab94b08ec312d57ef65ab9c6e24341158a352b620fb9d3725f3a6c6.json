@@ -1,0 +1,5 @@
+{
+  "against": "v2.62.0",
+  "reason": "`make_spinner` was renamed to `build_spinner` (#11326); the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
+}
