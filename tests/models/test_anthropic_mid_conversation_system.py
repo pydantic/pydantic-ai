@@ -65,6 +65,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.models.anthropic._message_passes import END_OF_TOOL_RESULTS_TEXT
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     from .test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
@@ -1387,7 +1388,12 @@ async def test_haiku_follows_a_withdrawn_instruction_after_a_tool_result(
     """
     withdrawn = False
     agent = Agent(
-        AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        AnthropicModel(
+            'claude-haiku-5-5',
+            provider=AnthropicProvider(api_key=anthropic_api_key),
+            # Recorded before superseded instructions were marked in place; this test measures the end block alone.
+            profile=AnthropicModelProfile(mark_superseded_instructions_in_place=False),
+        ),
         instructions='You are a concise assistant.',
     )
 

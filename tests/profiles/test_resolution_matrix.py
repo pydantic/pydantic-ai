@@ -131,6 +131,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'supports_inline_system_prompts': False,
     'supports_request_scoped_system_prompts': False,
     'supports_mid_conversation_effort': False,
+    'mark_superseded_instructions_in_place': False,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': dedent(
         """
@@ -256,6 +257,7 @@ def test_anthropic_claude_sonnet_4_6():
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'mark_superseded_instructions_in_place': True,
             'anthropic_enforces_strict_schema_limits': True,
             'anthropic_supports_on_demand_compaction': True,
             'supports_auto_cache': True,
@@ -2906,6 +2908,38 @@ def test_anthropic_tool_availability_delta_support(model_name: str, supported: b
     profile = AnthropicProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('tool_addition_mode') == ('by_reference' if supported else None)
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+@pytest.mark.parametrize(
+    'model_name,marks',
+    [
+        # Measured on the Messages API: these kept following a lifted restriction unless it was marked.
+        ('claude-haiku-5-5', True),
+        ('claude-sonnet-4-6', True),
+        ('claude-sonnet-5-5', True),
+        ('us.anthropic.claude-sonnet-5-5-v1:0', True),
+        # Measured to follow the lift with the change alone.
+        ('claude-haiku-4-5', False),
+        ('claude-opus-5-5', False),
+        # Not measured, so left at the default.
+        ('claude-sonnet-5', False),
+        ('claude-opus-5', False),
+    ],
+)
+def test_anthropic_mark_superseded_instructions_support(model_name: str, marks: bool):
+    """Pins the measured per-model matrix for `mark_superseded_instructions_in_place` on the Messages API."""
+    profile = AnthropicProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('mark_superseded_instructions_in_place') is marks
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_converse_does_not_mark_superseded_instructions():
+    """Claude Sonnet 5.5 on the Bedrock Converse API followed a lifted restriction with the change alone."""
+    profile = BedrockProvider.model_profile('us.anthropic.claude-sonnet-5-5-v1:0')
+    assert profile is not None
+    assert not profile.get('mark_superseded_instructions_in_place', False)
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
