@@ -41,7 +41,9 @@ def make_task_output(body: str, *, task_id: str, agent_name: str, outcome: str, 
     attrs = ''.join(f' {name}="{html.escape(value)}"' for name, value in attributes.items())
     body = _TASK_FRAME_TAG_OPENER.sub('&lt;', neutralize_tags(body))
     metadata = {'origin': _TASK_REPORT_ORIGIN, 'task_id': task_id, 'generation': generation}
-    return UserPromptPart([framework_frame_text(f'<task_output{attrs}>\n{body}\n</task_output>', metadata=metadata)])
+    return UserPromptPart(
+        [framework_frame_text(f'<task_output{attrs}>\n{body}\n</task_output>', metadata=metadata, author='tool')]
+    )
 
 
 def make_task_question(question: str, *, task_id: str, agent_name: str, question_id: str) -> UserPromptPart:
@@ -53,7 +55,7 @@ def make_task_question(question: str, *, task_id: str, agent_name: str, question
     body = _TASK_FRAME_TAG_OPENER.sub('&lt;', neutralize_tags(question))
     metadata = {'origin': _TASK_QUESTION_ORIGIN, 'task_id': task_id, 'question_id': question_id}
     return UserPromptPart(
-        [framework_frame_text(f'<task_question{attrs}>\n{body}\n</task_question>', metadata=metadata)]
+        [framework_frame_text(f'<task_question{attrs}>\n{body}\n</task_question>', metadata=metadata, author='tool')]
     )
 
 

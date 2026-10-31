@@ -57,7 +57,7 @@ def _model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> Mod
                         == {
                             'origin': 'pydantic-ai-harness.background_tools.result.v1',
                             'tool_call_id': 'research-call',
-                            '__pydantic_ai__': {'framework_frame': True},
+                            '__pydantic_ai__': {'framework_frame': True, 'framework_frame_author': 'tool'},
                         }
                         for item in part.content
                     )
