@@ -16,7 +16,7 @@ from pydantic_clai2.models.profiles import check_name
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.menus.slash_search import KeyHandler, slash_search
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 _HINT = 'a add - d remove - [ ] reorder - Esc discard'
 

@@ -12,8 +12,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart, ModelRequest
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._combine import one_per_id
-from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
+from pydantic_ai_harness._mcp import credential, one_connection, per_run_connection, prefixed_toolset, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -26,14 +25,8 @@ LOGFIRE_EU_MCP_URL = 'https://logfire-eu.pydantic.dev/mcp'
 _INSTRUCTIONS = (
     'Timestamps in tool schemas and examples, and project creation timestamps, are examples or metadata rather than '
     'the current time. Query transport bounds apply in addition to SQL time predicates and default to a short '
-    'window, so widen them explicitly when needed. Create a Logfire link only when the user asks for one. '
-    "Logfire tool names here start with `logfire_`, which the server's own text leaves out: `query_run` is "
-    '`logfire_query_run`.'
+    'window, so widen them explicitly when needed. Create a Logfire link only when the user asks for one.'
 )
-
-_TOOL_PREFIX = 'logfire'
-"""Every tool is named `logfire_<server tool name>`, so Logfire's tools never collide with another toolset's."""
-
 
 _ID = 'logfire-mcp'
 
@@ -50,6 +43,11 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
     `None` or `''` means the default, `logfire-mcp`.
     """
     description: str | None = 'Query Logfire telemetry and manage observability resources.'
+    tool_prefix: str | None = 'logfire'
+    """Prepended with `_` to the server's tool names, as in `logfire_<tool>`, so they don't collide with other tools.
+
+    Give two instances distinct prefixes to use both. `None` keeps the names the server gives its tools.
+    """
     auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
         default=None, repr=False
     )
@@ -84,10 +82,10 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_per_id(capabilities)
+        return one_connection(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
-        """Build the LogfireMCP connection and optional read-only selection, with tool names prefixed `logfire_`."""
+        """Build the LogfireMCP connection, optional read-only selection, and tool name prefix."""
         if self.client is not None:
             toolset: AbstractToolset[AgentDepsT] = MCPToolset(
                 self.client, id=self.id, include_instructions=self.include_instructions
@@ -98,7 +96,7 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
             toolset = self._connect(self.auth)
         if self.read_only:
             toolset = read_only_toolset(toolset)
-        return toolset.prefixed(_TOOL_PREFIX)
+        return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(
@@ -112,7 +110,14 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
         """Return query guidance and the current UTC hour."""
         if not self.include_instructions:
             return None
-        return [InstructionPart(_INSTRUCTIONS, name='guidance'), self._current_utc]
+        if self.tool_prefix is None:
+            return [InstructionPart(_INSTRUCTIONS, name='guidance'), self._current_utc]
+        # Logfire's server instructions and tool descriptions name its tools without the prefix.
+        prefix_note = (
+            f"Logfire tool names here start with `{self.tool_prefix}_`, which the server's own text leaves out: "
+            f'`query_run` is `{self.tool_prefix}_query_run`.'
+        )
+        return [InstructionPart(f'{_INSTRUCTIONS} {prefix_note}', name='guidance'), self._current_utc]
 
     def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         # The hour moves on during a conversation, so each new one is appended to the history rather than

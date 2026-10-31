@@ -34,7 +34,9 @@ from pydantic_ai.capabilities import (
     DynamicCapability,
     FileUnderstanding,
     HandleDeferredToolCalls,
+    Hooks,
     LocalWorkspace,
+    ModelFallback,
     NativeTool,
     PrefixTools,
     PrepareOutputTools,
@@ -64,9 +66,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
+from ._inline_snapshot import snapshot
 from .append_only import (
     CLOCK,
     PROVIDERS,
@@ -87,6 +91,7 @@ from .append_only import (
     inject_clock,
     provider_imports_successful,
     run_conversation,
+    ui_imports_successful,
 )
 from .conftest import try_import
 
@@ -94,6 +99,10 @@ with try_import() as mcp_imports_successful:
     from fastmcp.server import FastMCP
 
     from pydantic_ai.mcp import MCPToolset
+
+# The module is skipped without the provider extras, so this needs no flag of its own.
+with try_import():
+    from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
 pytestmark = pytest.mark.skipif(not provider_imports_successful(), reason='anthropic or openai not installed')
 
@@ -129,6 +138,8 @@ FIXTURES: dict[str, Fixture] = {
     'HandleDeferredToolCalls': lambda _: HandleDeferredToolCalls(lambda ctx, requests: requests.build_results()),
     'LocalWorkspace': lambda tmp_path: LocalWorkspace(tmp_path),
     'MCP': lambda _: MCP(local=MCPToolset(_mcp_server())),
+    # The step's model answers, so the fallback model is never sent anything.
+    'ModelFallback': lambda _: ModelFallback(TestModel()),
     'NativeTool': lambda _: NativeTool(CodeExecutionTool()),
     'PrefixTools': lambda _: PrefixTools(Toolset(FunctionToolset([_no_op_tool])), prefix='extra'),
     'PrepareOutputTools': lambda _: PrepareOutputTools(lambda ctx, tools: tools),
@@ -145,6 +156,11 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 EXEMPT: dict[str, Exempt] = {
+    'BatchModelRequests': Exempt(
+        "Sends each request through the provider's batch API, which the scenario doesn't serve. A batch item's body is "
+        "built by the same code as the model's own request, so it's the unbatched request's (see the providers' "
+        '`batch_encode` tests).'
+    ),
     'NativeOrLocalTool': Exempt(
         'Base class that needs a subclass; `WebSearch`, `WebFetch`, `XSearch` and `MCP` are its cases.'
     ),
@@ -162,14 +178,22 @@ UNSUPPORTED: dict[tuple[str, Provider], str] = {
 }
 """(capability, provider) pairs where the capability refuses the provider, so there is no conversation to check."""
 
-KNOWN: dict[str, tuple[Known, ...]] = {
-    'agent:dynamic_system_prompt': (
-        Known('prefix', 'https://github.com/pydantic/pydantic-ai/issues/10521', 'system', 'system-prompt'),
-    ),
-}
+KNOWN: dict[str, tuple[Known, ...]] = {}
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
 ALLOWED: dict[str, Allowed] = {
+    'agent:dynamic_system_prompt': Allowed(
+        'docs/agent.md: by default, a dynamic system prompt that changes is rewritten in place in the history, so '
+        "the start of every later request changes; `on_change='append'` keeps it (#10521)",
+        (('system', 'system-prompt'),),
+    ),
+    'agent:effort_change': Allowed(
+        'docs/capabilities/thinking.md: an API without a mid-conversation effort channel gets each change as the request-level '
+        'effort, which is part of the cache key',
+        (('settings', 'setting:reasoning_effort'),),
+        max_moves=2,
+        providers=('openai-chat',),
+    ),
     'agent:dynamic_instructions': Allowed(
         'docs/agent.md: dynamic instructions are re-rendered for every request, after the static ones and outside '
         'the cached prefix; append mode is #8188',
@@ -194,6 +218,12 @@ ALLOWED: dict[str, Allowed] = {
         tuple(('tools', f'tool:{name}') for name in ('write_note', 'read_note', 'delete_note')),
         providers=('openai-chat',),
     ),
+    'deferred:loaded_from_code': Allowed(
+        'docs/capabilities/on-demand.md: Chat Completions has no deferred-tool channel, so a load adds the '
+        "capability's tools to `tools`, like #9405's mid-run newcomers",
+        tuple(('tools', f'tool:{name}') for name in ('write_note', 'read_note', 'delete_note')),
+        providers=('openai-chat',),
+    ),
     # Since #10938, a `no_output` retry leaves out the request-scoped prompt no user message would clear, so
     # Anthropic drops it from the tail like the OpenAI APIs.
     'retry:no-output-retry+request-scoped': Allowed(
@@ -213,15 +243,49 @@ def _dynamic_system_prompt(agent: Agent[Any, Any], clock: Clock) -> None:
         return f'The time is {clock.now:%H:%M}.'
 
 
+def _dynamic_system_prompt_append(agent: Agent[Any, Any], clock: Clock) -> None:
+    @agent.system_prompt(dynamic=True, on_change='append')
+    def now() -> str:
+        return f'The time is {clock.now:%H:%M}.'
+
+
+def _dynamic_system_prompt_withdrawal(agent: Agent[Any, Any], clock: Clock) -> None:
+    calls = 0
+
+    @agent.system_prompt(dynamic=True, on_change='append')
+    def now() -> str | None:
+        nonlocal calls
+        calls += 1
+        return f'The time is {clock.now:%H:%M}.' if calls == 1 else None
+
+
 def _dynamic_instructions(agent: Agent[Any, Any], clock: Clock) -> None:
     @agent.instructions
     def now() -> str:
         return f'The time is {clock.now:%H:%M}.'
 
 
+def _effort_by_step(ctx: RunContext[Any]) -> ModelSettings:
+    """Raise the effort as the conversation goes on: at a tool-result step of the first run, and as the second starts."""
+    responses = sum(isinstance(message, ModelResponse) for message in ctx.messages)
+    return ModelSettings(thinking='low' if responses == 0 else 'medium' if responses < 3 else 'high')
+
+
 AGENT_FEATURES: dict[str, Scenario] = {
     'agent:dynamic_system_prompt': Scenario(configure=_dynamic_system_prompt, check_ids=False),
+    'agent:dynamic_system_prompt_append': Scenario(configure=_dynamic_system_prompt_append, check_ids=False),
+    'agent:dynamic_system_prompt_withdrawal': Scenario(configure=_dynamic_system_prompt_withdrawal, check_ids=False),
     'agent:dynamic_instructions': Scenario(configure=_dynamic_instructions, check_ids=False),
+    # The models whose APIs can change effort mid-conversation (#10385); Chat Completions can't.
+    'agent:effort_change': Scenario(
+        run_kwargs={'model_settings': _effort_by_step},
+        model_names={'openai-responses': 'gpt-6.1-sol', 'openai-chat': 'gpt-6.1-sol'},
+        serialize_history=True,
+    ),
+    # A UI endpoint that keeps the history on the server (#11372): the client sends its whole conversation back,
+    # and `manage_message_history='server'` must still only ever append to the requests the stored history built.
+    'ui:server_held_history_vercel': Scenario(ui_adapter='vercel', serialize_history=True),
+    'ui:server_held_history_agui': Scenario(ui_adapter='agui', serialize_history=True),
 }
 """Agent features, not capabilities, that render state into the prompt, run through the same checks."""
 
@@ -337,6 +401,112 @@ RETRY_SCENARIOS: dict[str, Scenario] = {
 """Conversations that retry, continued from stored history. Each also runs with a request-scoped system prompt
 on every request, which a retried step must still leave out of the next request."""
 
+
+def _timekeeping() -> list[AbstractCapability[Any]]:
+    capability = Capability[Any](
+        id='timekeeping', defer_loading=True, description='Tell the time.', instructions='Give times in UTC.'
+    )
+
+    @capability.instructions
+    def now() -> str:
+        return f'The time is {CLOCK.now:%H:%M}.'
+
+    return [capability]
+
+
+def _notes() -> list[AbstractCapability[Any]]:
+    return [
+        Capability[Any](
+            id='notes',
+            description='Notes.',
+            instructions='Keep notes short.',
+            tools=[write_note, read_note, delete_note],
+            defer_loading=True,
+        )
+    ]
+
+
+def _open_notes(agent: Agent[Any, Any], clock: Clock) -> None:
+    @agent.tool
+    async def open_notes(ctx: RunContext[Any]) -> str:
+        """Open the notes."""
+        ctx.load_capability('notes')
+        return 'Opened.'
+
+
+def _notes_loaded_before_run() -> list[AbstractCapability[Any]]:
+    hooks = Hooks[Any]()
+
+    @hooks.on.before_run
+    async def load_notes(ctx: RunContext[Any]) -> None:
+        ctx.load_capability('notes')
+
+    return [*_notes(), hooks]
+
+
+def _notes_loaded_before_model_request() -> list[AbstractCapability[Any]]:
+    hooks = Hooks[Any]()
+
+    @hooks.on.before_model_request
+    async def load_notes(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        ctx.load_capability('notes')
+        return request_context
+
+    return [*_notes(), hooks]
+
+
+LOADED_CAPABILITY_CASES: dict[str, tuple[Callable[[], list[AbstractCapability[Any]]], Scenario]] = {
+    # The clock moves on every request, so every request after the load records a change to its instructions.
+    'deferred:dynamic_instructions': (
+        _timekeeping,
+        Scenario(
+            turns=(
+                Turn(calls=(('load_capability', {'id': 'timekeeping'}),)),
+                Turn(calls=(_LOOK_UP,)),
+                Turn(text='Here is the weather.'),
+                Turn(calls=(('look_up', {'topic': 'sports'}),)),
+                Turn(text='Here is more.'),
+            ),
+            serialize_history=True,
+        ),
+    ),
+    # A tool loads the capability with `ctx.load_capability`, which records it without a `load_capability` call.
+    'deferred:loaded_from_code': (
+        _notes,
+        Scenario(
+            configure=_open_notes,
+            turns=(
+                Turn(calls=(('open_notes', {}),)),
+                Turn(calls=(('write_note', {'content': 'Weather is sunny.'}),)),
+                Turn(text='Noted.'),
+                Turn(calls=(('look_up', {'topic': 'sports'}),)),
+                Turn(text='Here is more.'),
+            ),
+            serialize_history=True,
+        ),
+    ),
+    # A `before_run` or `before_model_request` hook loads the capability, which takes effect on that request.
+    **{
+        f'deferred:loaded_{hook}': (
+            capabilities,
+            Scenario(
+                turns=(
+                    Turn(calls=(('write_note', {'content': 'Weather is sunny.'}),)),
+                    Turn(text='Noted.'),
+                    Turn(calls=(('look_up', {'topic': 'sports'}),)),
+                    Turn(text='Here is more.'),
+                ),
+                serialize_history=True,
+            ),
+        )
+        for hook, capabilities in (
+            ('before_run', _notes_loaded_before_run),
+            ('before_model_request', _notes_loaded_before_model_request),
+        )
+    },
+}
+"""Deferred capabilities loaded mid-conversation, by the model or from code, whose instructions may then change."""
+
 RETRY_CASES: dict[str, tuple[Scenario, bool]] = {
     **{f'retry:{name}': (scenario, False) for name, scenario in RETRY_SCENARIOS.items()},
     **{f'retry:{name}+request-scoped': (scenario, True) for name, scenario in RETRY_SCENARIOS.items()},
@@ -348,14 +518,25 @@ CAPABILITIES = discover_capabilities(('pydantic_ai.capabilities', 'pydantic_ai.m
 def test_every_capability_has_a_case():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
     tables = FIXTURES.keys() | EXEMPT.keys() | KNOWN.keys() | ALLOWED.keys() | {name for name, _ in UNSUPPORTED}
-    stale = tables - CAPABILITIES.keys() - AGENT_FEATURES.keys() - RETRY_CASES.keys() - VARIANTS.keys()
+    stale = (
+        tables
+        - CAPABILITIES.keys()
+        - AGENT_FEATURES.keys()
+        - RETRY_CASES.keys()
+        - VARIANTS.keys()
+        - LOADED_CAPABILITY_CASES.keys()
+    )
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
 @pytest.mark.parametrize(
     'name',
-    sorted(CAPABILITIES.keys() - EXEMPT.keys()) + sorted(AGENT_FEATURES) + sorted(RETRY_CASES) + sorted(VARIANTS),
+    sorted(CAPABILITIES.keys() - EXEMPT.keys())
+    + sorted(AGENT_FEATURES)
+    + sorted(RETRY_CASES)
+    + sorted(VARIANTS)
+    + sorted(LOADED_CAPABILITY_CASES),
 )
 async def test_conversation_only_appends(
     name: str, provider: Provider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
@@ -364,8 +545,13 @@ async def test_conversation_only_appends(
         pytest.skip(reason)
     if name == 'MCP' and not mcp_imports_successful():  # pragma: lax no cover
         pytest.skip('mcp not installed')
+    if name.startswith('ui:') and not ui_imports_successful():  # pragma: lax no cover
+        pytest.skip('ag-ui-protocol not installed')
     if name in AGENT_FEATURES:
         capabilities, scenario = [], AGENT_FEATURES[name]
+    elif name in LOADED_CAPABILITY_CASES:
+        build, scenario = LOADED_CAPABILITY_CASES[name]
+        capabilities = build()
     elif name in RETRY_CASES:
         scenario, nudged = RETRY_CASES[name]
         capabilities = [_RequestScopedNudge()] if nudged else []
@@ -551,7 +737,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
                 'example',
                 (('messages', 'tool-return'),),
                 tail=True,
-                records=('request-only user prompt',),
+                records=('request-scoped system prompt',),
             ),
             'fail',
             'request 2 rewrote the last message of request 1',
@@ -564,7 +750,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
                 'example',
                 (('messages', 'tool-return'), ('messages', 'user-prompt')),
                 tail=True,
-                records=('request-only user prompt',),
+                records=('request-scoped system prompt',),
             ),
             'fail',
             'dropped UserPromptPart (persisted history) from the last message of request 0',
@@ -880,3 +1066,29 @@ def test_a_request_scoped_prompt_left_visible_fails():
     result = ConversationResult('anthropic', bodies, (b'', b''), [])
     with pytest.raises(pytest.fail.Exception, match=re.escape('request 1 still shows')):
         check_conversation('example', result)
+
+
+@pytest.mark.parametrize('protocol', ['vercel', 'agui'])
+async def test_server_held_ui_history_keeps_openai_responses_chaining(
+    protocol: Literal['vercel', 'agui'], monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+):
+    """A later turn through a server-held UI endpoint continues the OpenAI Responses chain.
+
+    With `openai_previous_response_id='auto'`, a request chains only when the history it continues is the one
+    the previous response answered (#10509, #10656, #11331). The stored history keeps each response's
+    `provider_response_id` and history digest through a JSON round trip, so the second run's first request sends
+    `previous_response_id` and only its new turn, though the client sent its whole conversation.
+    """
+    if not ui_imports_successful():  # pragma: lax no cover
+        pytest.skip('ag-ui-protocol not installed')
+    scenario = Scenario(
+        ui_adapter=protocol,
+        serialize_history=True,
+        run_kwargs={'model_settings': OpenAIResponsesModelSettings(openai_previous_response_id='auto')},
+    )
+    result = await run_conversation('openai-responses', [], scenario, inject_clock(monkeypatch))
+
+    # The first run makes three requests; the fourth is the second run's first.
+    continued = json.loads(result.conversation[3])
+    assert continued['previous_response_id'] == 'resp_3'
+    assert continued['input'] == snapshot([{'role': 'user', 'content': 'And what else?'}])

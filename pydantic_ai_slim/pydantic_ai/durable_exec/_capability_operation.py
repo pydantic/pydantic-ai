@@ -30,7 +30,7 @@ ResultT = TypeVar('ResultT')
 P = ParamSpec('P')
 A = TypeVar('A', bound=Awaitable[Any])
 
-_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset'})
+_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset', 'get_wrapper_model'})
 """Sync hooks marked so collection can report why they cannot be durable.
 
 The decorator still attaches a marker to these sync hooks so binding raises the specific
@@ -53,6 +53,7 @@ _NEVER_DURABLE_HOOKS = {
     'wrap_run_event_stream': '`wrap_run_event_stream` receives a live stream and cannot be a durable operation.',
     'get_toolset': '`get_toolset` returns a live toolset and cannot be a durable operation.',
     'get_wrapper_toolset': '`get_wrapper_toolset` returns a live toolset and cannot be a durable operation.',
+    'get_wrapper_model': '`get_wrapper_model` returns a live model and cannot be a durable operation.',
     'get_workspace': '`get_workspace` returns a live workspace backend and cannot be a durable operation.',
 }
 
@@ -98,6 +99,9 @@ class ModelRequestContextProjection:
     model_request_parameters: ModelRequestParameters
     model_id: str | None
     streaming: bool
+    attempt: int = 1
+    """Which attempt at the request step this is, which a durable `prepare_model_request`, `after_model_request` or
+    `on_model_request_error` hook reads as it would in-process."""
 
     @classmethod
     def from_context(cls, context: ModelRequestContext) -> ModelRequestContextProjection:
@@ -107,6 +111,7 @@ class ModelRequestContextProjection:
             model_request_parameters=context.model_request_parameters,
             model_id=context.model_id,
             streaming=context.streaming,
+            attempt=context.attempt,
         )
 
     def build_context(self, model: Model) -> ModelRequestContext:
@@ -119,6 +124,7 @@ class ModelRequestContextProjection:
         )
         context.model_id = self.model_id
         context.streaming = self.streaming
+        context.attempt = self.attempt
         return context
 
     def apply(self, context: ModelRequestContext, model: Model | None = None) -> None:
@@ -129,6 +135,7 @@ class ModelRequestContextProjection:
         context.model_request_parameters = self.model_request_parameters
         context.model_id = self.model_id
         context.streaming = self.streaming
+        context.attempt = self.attempt
 
 
 @dataclass(frozen=True)
@@ -165,6 +172,7 @@ class CapabilityCacheIdentity(CacheIdentity[CapabilityOperationParams]):
     """
 
     def project(self, params: CapabilityOperationParams) -> tuple[object, ...]:
+        # Prefect reads the trailing RunContext to scope replay counters to their owning run.
         return (params.model_id, params.arguments, params.run_context)
 
 
@@ -421,7 +429,39 @@ def _capability_operation_schema(
         parameters=[p for p in signature.parameters.values() if p.name != ctx_parameter]
     )
     cast(Any, schema_target).__signature__ = schema_signature
-    return function_schema(schema_target, GenerateToolJsonSchema, takes_ctx=False)
+
+    annotations = schema_target.__annotations__
+    parameters = schema_signature.parameters.values()
+    cache_key = (
+        (
+            function.__module__,
+            function.__qualname__,
+            function.__doc__,
+            tuple(annotations.items()),
+            tuple((p.name, p.kind) for p in parameters),
+        )
+        if annotation_replacements
+        and annotations.keys() <= annotation_replacements.keys()
+        and all(p.name in annotation_replacements and p.default is p.empty for p in parameters)
+        else None
+    )
+    if cache_key is not None and (cached := _FRAMEWORK_TYPED_SCHEMAS.get(cache_key)) is not None:
+        return replace(cached, function=schema_target)
+    schema = function_schema(schema_target, GenerateToolJsonSchema, takes_ctx=False)
+    if cache_key is not None:
+        _FRAMEWORK_TYPED_SCHEMAS[cache_key] = schema
+    return schema
+
+
+_FRAMEWORK_TYPED_SCHEMAS: dict[tuple[Any, ...], FunctionSchema] = {}
+"""Schemas of operations whose arguments are all framework-typed, such as a durable `before_model_request`.
+
+Generating the `ModelRequestContextProjection` schema, which covers every message type, is most of
+the cost of building an agent with such an operation, and Temporal's workflow sandbox re-imports the
+workflow module on every run, so a module-level agent would rebuild it each time. The key holds only
+the method's names, docstring and parameter shapes plus framework types that the sandbox passes
+through, so a re-imported module hits the same entry, and no user-defined type is ever part of a key.
+"""
 
 
 def _schema_target(function: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:

@@ -20,24 +20,30 @@ import pytest
 from pydantic_ai import (
     Agent,
     ModelAPIError,
+    ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
 )
+from pydantic_ai.capabilities import ModelFallback
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
     import grpc
     import httpx
-    from anthropic import AsyncAnthropic
+    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock
     from botocore.exceptions import (
         BotoCoreError,
         ClientError,
@@ -50,6 +56,7 @@ with try_import() as imports_successful:
     from huggingface_hub import AsyncInferenceClient
     from huggingface_hub.errors import HfHubHTTPError
     from openai import AsyncOpenAI
+    from tenacity import retry_if_exception_type, stop_after_attempt, wait_none
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.cohere import CohereModel
@@ -60,6 +67,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.google import GoogleProvider
@@ -69,6 +77,8 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from pydantic_ai.providers.zai import ZaiProvider
+    from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
     from .mock_xai import MockXai, get_grok_text_chunk
     from .test_bedrock import _bedrock_model_with_error  # pyright: ignore[reportPrivateUsage]
@@ -88,10 +98,20 @@ _CATEGORIES: tuple[type[ModelAPIError], ...] = (
     ModelConnectionError,
     ModelTimeoutError,
     ModelContextWindowExceededError,
+    ModelRequestRejectedError,
+    ModelAuthenticationError,
+    ModelNotFoundError,
 )
 
 _OVERLOADED: set[type[ModelAPIError]] = {ModelHTTPError, ModelUnavailableError, ModelOverloadedError}
 """An overloaded provider is also unavailable."""
+
+_REJECTED: set[type[ModelAPIError]] = {ModelHTTPError, ModelRequestRejectedError}
+_AUTHENTICATION: set[type[ModelAPIError]] = {ModelHTTPError, ModelRequestRejectedError, ModelAuthenticationError}
+"""A rejected authentication is also a rejected request."""
+_NOT_FOUND: set[type[ModelAPIError]] = {ModelHTTPError, ModelRequestRejectedError, ModelNotFoundError}
+_CONTEXT_WINDOW: set[type[ModelAPIError]] = {ModelHTTPError, ModelRequestRejectedError, ModelContextWindowExceededError}
+"""A context window overflow is also a rejected request."""
 
 
 def _openai(handler: Handler) -> Model:
@@ -122,6 +142,39 @@ def _anthropic(handler: Handler) -> Model:
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+
+
+def _zai(handler: Handler) -> Model:
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=client))
+
+
+def _anthropic_bedrock(handler: Handler) -> Model:
+    client = AsyncAnthropicBedrock(
+        aws_region='us-east-1',
+        aws_access_key='test',
+        aws_secret_key='test',
+        base_url='http://localhost',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return AnthropicModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=AnthropicProvider(anthropic_client=client)
+    )
+
+
+def _bedrock_invoke_error(status_code: int, code: str, message: str) -> Handler:
+    """A Bedrock InvokeModel error: the code is in the `x-amzn-errortype` header, the body has only a `message`."""
+    return _json(
+        status_code,
+        {'message': message},
+        headers={'X-Amzn-ErrorType': f'{code}:http://internal.amazon.com/coral/com.amazon.bedrock/'},
+    )
 
 
 def _groq(handler: Handler) -> Model:
@@ -193,6 +246,32 @@ def _raise(kind: Literal['connect', 'timeout', 'pool']) -> Handler:
             raise error_class('failed', request=request)
         error_class2 = {'connect': httpx2.ConnectError, 'timeout': httpx2.ReadTimeout, 'pool': httpx2.PoolTimeout}[kind]
         raise error_class2('failed', request=request)
+
+    return handler
+
+
+def _gave_up(
+    status_code: int, headers: dict[str, str] | None = None, *, content: bytes | None = None, read: bool = True
+) -> Handler:
+    """What a retrying transport raises once its `validate_response` rejected the last attempt's status.
+
+    With `read=False`, the response's body was never read, as when the transport closes a response from the network
+    that its `validate_response` rejected.
+    """
+
+    def handler(request: Any) -> Any:
+        if isinstance(request, httpx.Request):
+            stream = None if read else httpx.ByteStream(content or b'')
+            response = httpx.Response(
+                status_code, headers=headers, content=content if read else None, stream=stream, request=request
+            )
+            raise httpx.HTTPStatusError(f'Server error {status_code}', request=request, response=response)
+        assert isinstance(request, httpx2.Request)
+        stream2 = None if read else httpx2.ByteStream(content or b'')
+        response2 = httpx2.Response(
+            status_code, headers=headers, content=content if read else None, stream=stream2, request=request
+        )
+        raise httpx2.HTTPStatusError(f'Server error {status_code}', request=request, response=response2)
 
     return handler
 
@@ -276,7 +355,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': 'context_length_exceeded'},
     ),
     Case(
@@ -328,7 +407,7 @@ CASES = [
                 }
             }
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={
             'status_code': 400,
             'in_stream': True,
@@ -379,7 +458,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
     ),
     Case(
@@ -397,9 +476,48 @@ CASES = [
             200,
             {'error': {'code': 400, 'message': "This endpoint's maximum context length is 128000 tokens."}},
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
         has_cause=False,
+    ),
+    Case(
+        id='zai-insufficient-balance',
+        model=_zai,
+        handler=_json(
+            429,
+            {'error': {'code': '1113', 'message': 'Insufficient balance or no resource package. Please recharge.'}},
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': '1113'},
+    ),
+    Case(
+        id='zai-plan-limit',
+        model=_zai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'code': '1310',
+                    'message': 'Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-02.',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': '1310'},
+    ),
+    Case(
+        id='zai-rate-limit',
+        model=_zai,
+        handler=_json(429, {'error': {'code': '1302', 'message': 'Rate limit reached for requests'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '1302'},
+    ),
+    Case(
+        id='openai-numeric-code-rate-limit',
+        model=_openai,
+        handler=_json(429, {'error': {'code': '1113', 'message': 'Too many requests'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '1113'},
     ),
     Case(
         id='anthropic-overloaded',
@@ -433,8 +551,38 @@ CASES = [
                 'request_id': 'req_011CXsbVC34PujYNC6P8wAbP',
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
+    ),
+    Case(
+        id='anthropic-bedrock-context-window',
+        model=_anthropic_bedrock,
+        handler=_bedrock_invoke_error(400, 'ValidationException', 'prompt is too long: 210000 tokens > 200000 maximum'),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': 'ValidationException'},
+    ),
+    Case(
+        id='anthropic-bedrock-input-too-long',
+        model=_anthropic_bedrock,
+        handler=_bedrock_invoke_error(400, 'ValidationException', 'Input is too long for requested model.'),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': 'ValidationException'},
+    ),
+    Case(
+        id='anthropic-bedrock-quota',
+        model=_anthropic_bedrock,
+        handler=_bedrock_invoke_error(
+            400, 'ServiceQuotaExceededException', 'Your request exceeds the service quota for your account.'
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_code': 'ServiceQuotaExceededException'},
+    ),
+    Case(
+        id='anthropic-bedrock-validation',
+        model=_anthropic_bedrock,
+        handler=_bedrock_invoke_error(400, 'ValidationException', 'Malformed input request, please reformat.'),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'provider_error_code': 'ValidationException'},
     ),
     Case(
         id='anthropic-stream-overloaded',
@@ -486,7 +634,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': None, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
@@ -502,7 +650,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': 'context_length_exceeded'},
     ),
     Case(
@@ -557,7 +705,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
     ),
     Case(
@@ -566,7 +714,7 @@ CASES = [
         handler=_json(
             400, {'error': {'code': 400, 'message': 'Invalid value at `temperature`', 'status': 'INVALID_ARGUMENT'}}
         ),
-        categories={ModelHTTPError},
+        categories=_REJECTED,
         attrs={'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
     ),
     Case(
@@ -583,7 +731,7 @@ CASES = [
                 'code': '3051',
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={
             'status_code': 400,
             'provider_error_code': '3051',
@@ -615,7 +763,7 @@ CASES = [
                 'The limit for this model is 132000 tokens.',
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400},
     ),
     Case(
@@ -722,6 +870,22 @@ CASES = [
         attrs={'status_code': 429, 'provider_error_code': 'organization_usage_limit_exceeded'},
     ),
     Case(
+        id='openai-too-many-requests',
+        model=_openai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'message': 'No capacity',
+                    'type': 'too_many_requests',
+                    'code': 'no_capacity',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': 'no_capacity'},
+    ),
+    Case(
         id='openai-stream-credit-balance-exhausted',
         model=_openai,
         handler=_sse_data({'error': {'message': 'No credits left', 'code': 'credit_balance_exhausted'}}),
@@ -751,6 +915,19 @@ CASES = [
         handler=_sse_data({'error': {'message': 'Slow down', 'code': 'slow_down', 'type': 'rate_limit_error'}}),
         categories={ModelHTTPError, ModelRateLimitError},
         attrs={'status_code': 429, 'in_stream': True, 'provider_error_type': 'rate_limit_error'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-too-many-requests',
+        model=_openai,
+        handler=_sse_data({'error': {'message': 'No capacity', 'type': 'too_many_requests', 'code': 'no_capacity'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={
+            'status_code': 429,
+            'in_stream': True,
+            'provider_error_code': 'no_capacity',
+            'provider_error_type': 'too_many_requests',
+        },
         stream=True,
     ),
     Case(
@@ -936,6 +1113,538 @@ CASES = [
         categories={ModelHTTPError, ModelUnavailableError},
         attrs={'status_code': 503},
     ),
+    Case(
+        id='openai-invalid-api-key',
+        model=_openai,
+        handler=_json(
+            401,
+            {
+                'error': {
+                    'message': 'Incorrect API key provided: sk-test. You can find your API key at '
+                    'https://platform.openai.com/account/api-keys.',
+                    'type': 'invalid_request_error',
+                    'param': None,
+                    'code': 'invalid_api_key',
+                }
+            },
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401, 'provider_error_code': 'invalid_api_key'},
+    ),
+    Case(
+        id='openai-unsupported-country',
+        model=_openai,
+        handler=_json(
+            403,
+            {
+                'error': {
+                    'message': 'Country, region, or territory not supported',
+                    'type': 'request_forbidden',
+                    'param': None,
+                    'code': 'unsupported_country_region_territory',
+                }
+            },
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 403, 'provider_error_code': 'unsupported_country_region_territory'},
+    ),
+    Case(
+        id='openai-model-not-found',
+        model=_openai,
+        handler=_json(
+            404,
+            {
+                'error': {
+                    'message': 'The model `gpt-5.2` does not exist or you do not have access to it.',
+                    'type': 'invalid_request_error',
+                    'param': None,
+                    'code': 'model_not_found',
+                }
+            },
+        ),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': 'model_not_found'},
+    ),
+    Case(
+        # The Responses API sends an unknown model as a 400; its code says what it is.
+        id='openai-model-not-found-400',
+        model=_openai,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'message': "The requested model 'gpt-5.2' does not exist.",
+                    'type': 'invalid_request_error',
+                    'param': 'model',
+                    'code': 'model_not_found',
+                }
+            },
+        ),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 400, 'provider_error_code': 'model_not_found'},
+    ),
+    Case(
+        id='openai-bad-request',
+        model=_openai,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'message': "Invalid value for 'temperature': expected a number.",
+                    'type': 'invalid_request_error',
+                    'param': 'temperature',
+                    'code': None,
+                }
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
+    ),
+    Case(
+        id='openai-unprocessable',
+        model=_openai,
+        handler=_json(422, {'error': {'message': 'Unprocessable entity', 'type': 'invalid_request_error'}}),
+        categories=_REJECTED,
+        attrs={'status_code': 422},
+    ),
+    Case(
+        id='openai-conflict',
+        model=_openai,
+        handler=_json(409, {'error': {'message': 'Conflict', 'type': 'invalid_request_error'}}),
+        categories={ModelHTTPError},
+        attrs={'status_code': 409},
+    ),
+    Case(
+        # Its status before a stream opens depends on the API, so an in-stream one gets none, only the category.
+        id='openai-stream-model-not-found',
+        model=_openai,
+        handler=_sse_data({'error': {'message': 'The model does not exist.', 'code': 'model_not_found'}}),
+        categories={ModelRequestRejectedError, ModelNotFoundError},
+        attrs={'in_stream': True, 'provider_error_code': 'model_not_found'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-body-unauthorized',
+        model=_openrouter,
+        handler=_json(200, {'error': {'code': 401, 'message': 'No auth credentials found'}}),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401, 'provider_error_code': '401'},
+        has_cause=False,
+    ),
+    Case(
+        # OpenRouter sends flagged input as a 403 with the moderation result; it's not a credentials problem.
+        id='openrouter-http-moderation',
+        model=_openrouter,
+        handler=_json(
+            403,
+            {
+                'error': {
+                    'code': 403,
+                    'message': 'openai/gpt-5.2 requires moderation',
+                    'metadata': {
+                        'reasons': ['violence'],
+                        'flagged_input': 'How do I...',
+                        'provider_name': 'OpenAI',
+                        'model_slug': 'openai/gpt-5.2',
+                    },
+                }
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 403},
+    ),
+    Case(
+        id='openrouter-body-moderation',
+        model=_openrouter,
+        handler=_json(
+            200,
+            {
+                'error': {
+                    'code': 403,
+                    'message': 'openai/gpt-5.2 requires moderation',
+                    'metadata': {
+                        'reasons': ['violence'],
+                        'flagged_input': 'How do I...',
+                        'provider_name': 'OpenAI',
+                        'model_slug': 'openai/gpt-5.2',
+                    },
+                }
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 403, 'provider_error_code': '403'},
+        has_cause=False,
+    ),
+    Case(
+        id='openrouter-http-forbidden',
+        model=_openrouter,
+        handler=_json(403, {'error': {'code': 403, 'message': 'Forbidden'}}),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 403},
+    ),
+    Case(
+        id='openrouter-http-bad-request',
+        model=_openrouter,
+        handler=_json(400, {'error': {'code': 400, 'message': 'Provider returned error'}}),
+        categories=_REJECTED,
+        attrs={'status_code': 400},
+    ),
+    Case(
+        id='anthropic-authentication',
+        model=_anthropic,
+        handler=_json(
+            401, {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'invalid x-api-key'}}
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401, 'provider_error_type': 'authentication_error'},
+    ),
+    Case(
+        id='anthropic-permission',
+        model=_anthropic,
+        handler=_json(
+            403,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'permission_error',
+                    'message': 'Your API key does not have permission to use the specified resource.',
+                },
+            },
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 403, 'provider_error_type': 'permission_error'},
+    ),
+    Case(
+        id='anthropic-not-found',
+        model=_anthropic,
+        handler=_json(
+            404, {'type': 'error', 'error': {'type': 'not_found_error', 'message': 'model: claude-sonnet-4-5'}}
+        ),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_type': 'not_found_error'},
+    ),
+    Case(
+        id='anthropic-invalid-request',
+        model=_anthropic,
+        handler=_json(
+            400,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': 'messages: text content blocks must be non-empty',
+                },
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
+    ),
+    Case(
+        id='anthropic-request-too-large',
+        model=_anthropic,
+        handler=_json(
+            413,
+            {'type': 'error', 'error': {'type': 'request_too_large', 'message': 'Request exceeds the maximum size'}},
+        ),
+        categories={ModelHTTPError},
+        attrs={'status_code': 413, 'provider_error_type': 'request_too_large'},
+    ),
+    Case(
+        id='anthropic-stream-invalid-request',
+        model=_anthropic,
+        handler=_sse(
+            _ANTHROPIC_MESSAGE_START,
+            ('error', {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Invalid request'}}),
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'in_stream': True, 'provider_error_type': 'invalid_request_error'},
+        stream=True,
+    ),
+    Case(
+        id='groq-model-not-found',
+        model=_groq,
+        handler=_json(
+            404,
+            {
+                'error': {
+                    'message': 'The model `llama-3.3-70b-versatile` does not exist or you do not have access to it.',
+                    'type': 'invalid_request_error',
+                    'code': 'model_not_found',
+                }
+            },
+        ),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': 'model_not_found'},
+    ),
+    Case(
+        id='groq-invalid-api-key',
+        model=_groq,
+        handler=_json(
+            401,
+            {'error': {'message': 'Invalid API Key', 'type': 'invalid_request_error', 'code': 'invalid_api_key'}},
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401, 'provider_error_code': 'invalid_api_key'},
+    ),
+    Case(
+        # Gemini sends an invalid API key as `INVALID_ARGUMENT`; the error's `reason` says what it is.
+        id='google-api-key-invalid',
+        model=_google,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'code': 400,
+                    'message': 'API key not valid. Please pass a valid API key.',
+                    'status': 'INVALID_ARGUMENT',
+                    'details': [
+                        {
+                            '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+                            'reason': 'API_KEY_INVALID',
+                            'domain': 'googleapis.com',
+                            'metadata': {'service': 'generativelanguage.googleapis.com'},
+                        }
+                    ],
+                }
+            },
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
+    ),
+    Case(
+        id='google-permission-denied',
+        model=_google,
+        handler=_json(
+            403,
+            {
+                'error': {
+                    'code': 403,
+                    'message': "Method doesn't allow unregistered callers.",
+                    'status': 'PERMISSION_DENIED',
+                    'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': []}],
+                }
+            },
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 403, 'provider_error_code': 'PERMISSION_DENIED'},
+    ),
+    Case(
+        id='google-unauthenticated',
+        model=_google,
+        handler=_json(
+            401,
+            {
+                'error': {
+                    'code': 401,
+                    'message': 'Request had invalid authentication credentials.',
+                    'status': 'UNAUTHENTICATED',
+                }
+            },
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401, 'provider_error_code': 'UNAUTHENTICATED'},
+    ),
+    Case(
+        id='google-not-found',
+        model=_google,
+        handler=_json(
+            404,
+            {
+                'error': {
+                    'code': 404,
+                    'message': 'models/gemini-2.5-flash is not found for API version v1beta, or is not supported for '
+                    'generateContent.',
+                    'status': 'NOT_FOUND',
+                }
+            },
+        ),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': 'NOT_FOUND'},
+    ),
+    Case(
+        id='google-failed-precondition',
+        model=_google,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'code': 400,
+                    'message': 'User location is not supported for the API use.',
+                    'status': 'FAILED_PRECONDITION',
+                }
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'provider_error_code': 'FAILED_PRECONDITION'},
+    ),
+    Case(
+        id='mistral-unauthorized',
+        model=_mistral,
+        handler=_json(401, {'detail': 'Unauthorized'}),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401},
+    ),
+    Case(
+        id='mistral-unprocessable',
+        model=_mistral,
+        handler=_json(
+            422,
+            {
+                'object': 'error',
+                'message': {'detail': [{'type': 'missing', 'loc': ['body', 'messages'], 'msg': 'Field required'}]},
+                'type': 'invalid_request_message_order',
+                'code': '3230',
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 422, 'provider_error_code': '3230'},
+    ),
+    Case(
+        id='cohere-unauthorized',
+        model=_cohere,
+        handler=_json(401, {'id': 'x', 'message': 'invalid api token'}),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401},
+    ),
+    Case(
+        id='cohere-not-found',
+        model=_cohere,
+        handler=_json(404, {'id': 'x', 'message': "model 'command-r7b-12-2024' not found"}),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404},
+    ),
+    Case(
+        id='cohere-bad-request',
+        model=_cohere,
+        handler=_json(400, {'id': 'x', 'message': 'invalid request: message must be at least 1 token long'}),
+        categories=_REJECTED,
+        attrs={'status_code': 400},
+    ),
+    Case(
+        id='openai-transport-gave-up',
+        model=_openai,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='openai-transport-gave-up-stream',
+        model=_openai,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-transport-gave-up',
+        model=_openrouter,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='openrouter-transport-gave-up-stream',
+        model=_openrouter,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+        stream=True,
+    ),
+    Case(
+        id='anthropic-transport-gave-up',
+        model=_anthropic,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='anthropic-transport-gave-up-stream',
+        model=_anthropic,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+        stream=True,
+    ),
+    Case(
+        id='groq-transport-gave-up',
+        model=_groq,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='groq-transport-gave-up-stream',
+        model=_groq,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+        stream=True,
+    ),
+    Case(
+        id='google-transport-gave-up',
+        model=_google,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='google-transport-gave-up-stream',
+        model=_google,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+        stream=True,
+    ),
+    Case(
+        id='mistral-transport-gave-up',
+        model=_mistral,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='mistral-transport-gave-up-stream',
+        model=_mistral,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503},
+        stream=True,
+    ),
+    Case(
+        id='cohere-transport-gave-up',
+        model=_cohere,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='openai-transport-gave-up-unread-body',
+        model=_openai,
+        handler=_gave_up(503, content=b'{"error": "unavailable"}', read=False),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='openai-transport-gave-up-text-body',
+        model=_openai,
+        handler=_gave_up(503, content=b'upstream overloaded'),
+        categories=_OVERLOADED,
+        attrs={'status_code': 503, 'body': 'upstream overloaded'},
+    ),
+    Case(
+        id='openai-transport-gave-up-json-body',
+        model=_openai,
+        handler=_gave_up(500, content=b'{"error": "boom"}'),
+        categories={ModelHTTPError, ModelServerError},
+        attrs={'status_code': 500, 'body': {'error': 'boom'}},
+    ),
+    Case(
+        id='openai-transport-gave-up-rate-limit',
+        model=_openai,
+        handler=_gave_up(429, headers={'retry-after': '3'}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'retry_after': 3.0},
+    ),
 ]
 
 
@@ -954,6 +1663,82 @@ async def test_http_provider_error_category(allow_model_requests: None, case: Ca
     for attr, expected in case.attrs.items():
         assert getattr(exc, attr) == expected, attr
     assert (exc.__cause__ is not None) == case.has_cause
+
+
+def _retrying_client(handler: Handler) -> httpx2.AsyncClient:
+    """A client with a retrying transport like the retries guide's: 3 attempts, rejecting every error status."""
+
+    def validate_response(response: httpx2.Response) -> None:
+        response.raise_for_status()
+
+    transport = AsyncHTTPX2TenacityTransport(
+        config=RetryConfig(
+            retry=retry_if_exception_type(httpx2.HTTPStatusError),
+            wait=wait_none(),
+            stop=stop_after_attempt(3),
+            reraise=True,
+        ),
+        wrapped=httpx2.MockTransport(handler),
+        validate_response=validate_response,
+    )
+    return httpx2.AsyncClient(transport=transport)
+
+
+def _retrying_openai(client: httpx2.AsyncClient) -> Model:
+    return OpenAIChatModel(
+        'gpt-5.2', provider=OpenAIProvider(api_key='test', base_url='http://localhost/v1', http_client=client)
+    )
+
+
+def _retrying_anthropic(client: httpx2.AsyncClient) -> Model:
+    return AnthropicModel(
+        'claude-sonnet-4-5', provider=AnthropicProvider(api_key='test', base_url='http://localhost', http_client=client)
+    )
+
+
+def _retrying_google(client: httpx2.AsyncClient) -> Model:
+    return GoogleModel(
+        'gemini-2.5-flash', provider=GoogleProvider(api_key='test', http_client=client, base_url='http://localhost')
+    )
+
+
+def _retrying_mistral(client: httpx2.AsyncClient) -> Model:
+    return MistralModel(
+        'mistral-large-latest',
+        provider=MistralProvider(api_key='test', base_url='http://localhost', http_client=client),
+    )
+
+
+@pytest.mark.parametrize(
+    'make_model',
+    [_retrying_openai, _retrying_anthropic, _retrying_google, _retrying_mistral],
+    ids=['openai', 'anthropic', 'google', 'mistral'],
+)
+async def test_model_fallback_after_retrying_transport_gives_up(
+    allow_model_requests: None, make_model: Callable[[httpx2.AsyncClient], Model]
+):
+    """A status the retrying transport gave up on is a `ModelHTTPError`, so `ModelFallback` moves on."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(503, json={'error': {'message': 'unavailable'}})
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('from the fallback model')])
+
+    agent = Agent(
+        make_model(_retrying_client(handler)),
+        model_settings={'max_retries': 0},
+        capabilities=[ModelFallback(FunctionModel(fallback))],
+    )
+    result = await agent.run('hello')
+
+    assert result.output == 'from the fallback model'
+    assert len(requests) == 3
+    [attempt] = result.response.failed_attempts or []
+    assert attempt.outcome == 'error'
+    assert attempt.error is not None and attempt.error.startswith('ModelUnavailableError: status_code: 503')
 
 
 def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientError:
@@ -1024,15 +1809,69 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
                 'The model returned the following errors: Input is too long for requested model.',
                 400,
             ),
-            {ModelHTTPError, ModelContextWindowExceededError},
+            _CONTEXT_WINDOW,
             {'status_code': 400, 'provider_error_code': 'ValidationException'},
             id='context-window',
         ),
         pytest.param(
             lambda: _bedrock_error('ValidationException', 'Malformed input request.', 400),
-            {ModelHTTPError},
+            _REJECTED,
             {'status_code': 400, 'provider_error_code': 'ValidationException'},
             id='validation',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('ValidationException', 'The provided model identifier is invalid.', 400),
+            _NOT_FOUND,
+            {'status_code': 400, 'provider_error_code': 'ValidationException'},
+            id='invalid-model-identifier',
+        ),
+        pytest.param(
+            lambda: _bedrock_error(
+                'AccessDeniedException', "You don't have access to the model with the specified model ID.", 403
+            ),
+            _AUTHENTICATION,
+            {'status_code': 403, 'provider_error_code': 'AccessDeniedException'},
+            id='access-denied',
+        ),
+        pytest.param(
+            lambda: _bedrock_error(
+                'UnrecognizedClientException', 'The security token included in the request is invalid.', 403
+            ),
+            _AUTHENTICATION,
+            {'status_code': 403, 'provider_error_code': 'UnrecognizedClientException'},
+            id='unrecognized-client',
+        ),
+        pytest.param(
+            # The code says what it is whatever the status.
+            lambda: _bedrock_error(
+                'ExpiredTokenException', 'The security token included in the request is expired', 400
+            ),
+            _AUTHENTICATION,
+            {'status_code': 400, 'provider_error_code': 'ExpiredTokenException'},
+            id='expired-token',
+        ),
+        pytest.param(
+            # Transient despite its 403: AWS says to try again once the Marketplace subscription is processed.
+            lambda: _bedrock_error(
+                'MPAgreementBeingCreated',
+                'Your AWS Marketplace subscription for this model is still being processed. Try again after 15 minutes.',
+                403,
+            ),
+            {ModelHTTPError, ModelUnavailableError},
+            {'status_code': 403, 'provider_error_code': 'MPAgreementBeingCreated'},
+            id='marketplace-agreement-being-created',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('ResourceNotFoundException', 'Model not found.', 404),
+            _NOT_FOUND,
+            {'status_code': 404, 'provider_error_code': 'ResourceNotFoundException'},
+            id='resource-not-found',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('validationException', 'Malformed input request.', None),
+            _REJECTED,
+            {'status_code': 400, 'in_stream': True, 'provider_error_code': 'validationException'},
+            id='stream-validation',
         ),
         pytest.param(
             lambda: _bedrock_error('throttlingException', 'Too many tokens, please wait before trying again.', None),
@@ -1042,7 +1881,7 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
         ),
         pytest.param(
             lambda: _bedrock_error('validationException', 'Input is too long for requested model.', None),
-            {ModelHTTPError, ModelContextWindowExceededError},
+            _CONTEXT_WINDOW,
             {'status_code': 400, 'in_stream': True, 'provider_error_code': 'validationException'},
             id='stream-context-window',
         ),
@@ -1144,7 +1983,7 @@ def _rpc_error(status: str, details: str) -> grpc.RpcError:
         pytest.param(
             'INVALID_ARGUMENT',
             "This model's maximum prompt length is 131072 but the request contains 150004 tokens.",
-            {ModelHTTPError, ModelContextWindowExceededError},
+            _CONTEXT_WINDOW,
             {'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
             id='context-window',
         ),
@@ -1228,6 +2067,34 @@ def _rpc_error(status: str, details: str) -> grpc.RpcError:
             {ModelConnectionError, ModelTimeoutError},
             {'phase': None, 'provider_error_code': 'DEADLINE_EXCEEDED', 'in_stream': False},
             id='deadline-exceeded',
+        ),
+        pytest.param(
+            'INVALID_ARGUMENT',
+            'Invalid request content',
+            _REJECTED,
+            {'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
+            id='invalid-argument',
+        ),
+        pytest.param(
+            'UNAUTHENTICATED',
+            'Incorrect API key provided',
+            _AUTHENTICATION,
+            {'status_code': 401, 'provider_error_code': 'UNAUTHENTICATED'},
+            id='unauthenticated',
+        ),
+        pytest.param(
+            'PERMISSION_DENIED',
+            'The API key does not have permission to use this model',
+            _AUTHENTICATION,
+            {'status_code': 403, 'provider_error_code': 'PERMISSION_DENIED'},
+            id='permission-denied',
+        ),
+        pytest.param(
+            'NOT_FOUND',
+            'The model grok-4-1-fast-non-reasoning does not exist',
+            _NOT_FOUND,
+            {'status_code': 404, 'provider_error_code': 'NOT_FOUND'},
+            id='not-found',
         ),
     ],
 )
@@ -1338,6 +2205,11 @@ async def test_huggingface_error_category(allow_model_requests: None):
             id='quota',
         ),
         pytest.param(500, b'{"error":"Internal Server Error"}', {ModelHTTPError, ModelServerError}, id='server-error'),
+        pytest.param(
+            401, b'{"error":"Invalid credentials in Authorization header"}', _AUTHENTICATION, id='unauthorized'
+        ),
+        pytest.param(404, b'{"error":"Model m does not exist"}', _NOT_FOUND, id='not-found'),
+        pytest.param(422, b'{"error":"Input validation error"}', _REJECTED, id='unprocessable'),
     ],
 )
 async def test_huggingface_status_category(

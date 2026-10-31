@@ -11,7 +11,6 @@ from functools import cached_property
 from typing import Any, NotRequired, cast
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import httpx2
 import pytest
 from cassetter import Cassette
@@ -314,6 +313,7 @@ async def test_multiple_completions(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -333,6 +333,7 @@ async def test_multiple_completions(allow_model_requests: None):
                 parts=[TextPart(content='hello again')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -389,6 +390,7 @@ async def test_three_completions(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -411,6 +413,7 @@ async def test_three_completions(allow_model_requests: None):
                 parts=[TextPart(content='hello again')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -433,6 +436,7 @@ async def test_three_completions(allow_model_requests: None):
                 parts=[TextPart(content='final message')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -734,6 +738,7 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -811,6 +816,7 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -885,6 +891,7 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -1691,6 +1698,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -1728,6 +1736,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=3, output_tokens=2),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -1757,6 +1766,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -1871,6 +1881,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -1909,6 +1920,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=3, output_tokens=2),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -1945,6 +1957,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2059,6 +2072,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='gpt-4',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2089,6 +2103,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 parts=[ToolCallPart(tool_name='final_result', args='{"won": true}', tool_call_id='1')],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='gpt-4',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2190,6 +2205,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='gpt-4',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2220,6 +2236,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(input_tokens=4, output_tokens=4),
                 model_name='gpt-4',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2321,6 +2338,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='gpt-4',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2359,6 +2377,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='gpt-4',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2389,6 +2408,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(input_tokens=4, output_tokens=4),
                 model_name='gpt-4',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2678,6 +2698,7 @@ async def test_image_as_binary_content_tool_response(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='FI5qQGzDE')],
                 usage=RequestUsage(input_tokens=65, output_tokens=16, cost=Decimal('0.00001215')),
                 model_name='pixtral-12b-latest',
+                model_id='mistral:pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2708,6 +2729,7 @@ async def test_image_as_binary_content_tool_response(
                 ],
                 usage=RequestUsage(input_tokens=1540, output_tokens=54, cost=Decimal('0.0002391')),
                 model_name='pixtral-12b-latest',
+                model_id='mistral:pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2771,6 +2793,7 @@ async def test_image_url_input(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2817,6 +2840,7 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2896,6 +2920,7 @@ async def test_pdf_url_input(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2941,6 +2966,7 @@ async def test_pdf_as_binary_content_input(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -3127,7 +3153,7 @@ async def test_model_transport_error(
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
-    response = httpx.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
+    response = httpx2.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
     mock_client = MockMistralAI.create_mock(SDKError('test error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
@@ -3135,14 +3161,14 @@ def test_model_status_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
     exc = exc_info.value
     assert str(exc) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
-    # SDKError.headers is httpx.Headers; _map_api_errors converts it with dict() — verify it lands correctly.
+    # SDKError.headers is httpx2.Headers; _map_api_errors converts it with dict() — verify it lands correctly.
     assert exc.headers is not None
     assert exc.headers.get('retry-after') == '30'
     assert exc.headers.get('x-request-id') == 'rid-1'
 
 
 def test_model_non_http_error(allow_model_requests: None) -> None:
-    response = httpx.Response(300, content=b'redirect')
+    response = httpx2.Response(300, content=b'redirect')
     mock_client = MockMistralAI.create_mock(SDKError('Connection error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
@@ -3230,6 +3256,7 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -3306,9 +3333,11 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                     cost=Decimal('0.0071247'),
                 ),
                 model_name='o3-mini-2025-01-31',
+                model_id='openai:o3-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 5, 22, 29, 38, tzinfo=UTC),
@@ -3348,6 +3377,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                 ],
                 usage=RequestUsage(input_tokens=664, output_tokens=747, cost=Decimal('0.005063')),
                 model_name='magistral-medium-latest',
+                model_id='mistral:magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -3419,6 +3449,7 @@ By following these steps, you can ensure a safe crossing.\
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=232, cost=Decimal('0.00118')),
                 model_name='magistral-medium-latest',
+                model_id='mistral:magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -3651,7 +3682,7 @@ def test_get_timeout_ms() -> None:
     assert MistralModel._get_timeout_ms(30) == 30000  # pyright: ignore[reportPrivateUsage]
     assert MistralModel._get_timeout_ms(1.5) == 1500  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(NotImplementedError, match=re.escape('Timeout object is not yet supported for MistralModel.')):
-        MistralModel._get_timeout_ms(httpx.Timeout(30))  # pyright: ignore[reportPrivateUsage]
+        MistralModel._get_timeout_ms(httpx2.Timeout(30))  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_content_handles_reference_chunk() -> None:
@@ -3693,6 +3724,7 @@ async def test_stream_cancel(allow_model_requests: None):
                 parts=[TextPart(content='hello ')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='gpt-4',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',

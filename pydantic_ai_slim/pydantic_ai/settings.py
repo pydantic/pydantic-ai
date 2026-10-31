@@ -313,6 +313,27 @@ class ModelSettings(TypedDict, total=False):
     It is not sent to the provider. See [Timeouts](../timeouts.md#model-request-deadlines).
     """
 
+    first_event_timeout: float
+    """A deadline for a streamed request to produce its first output, in seconds, enforced by Pydantic AI for every model.
+
+    It runs from when the request is made until the stream's first event: a part starting or a delta of one, thinking
+    included. A provider event that carries no output, like OpenAI's `response.created`, doesn't count. Like
+    [`request_timeout`][pydantic_ai.settings.ModelSettings.request_timeout], it covers every attempt the provider SDK
+    and HTTP transport make, and the continuations of a response the provider paused or runs in the background,
+    until one of them produces output. Once the first event has arrived it no longer applies, so a long response,
+    or a long pause in the middle of one, isn't cut off.
+
+    When it runs out, the request is cancelled and
+    [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] is raised, with `setting` set to
+    `'first_event_timeout'`. Nothing has been streamed yet, so a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability falls back to the next model by default,
+    and gives it a fresh deadline. With `request_timeout` also set, whichever deadline passes first applies.
+
+    It only applies to streamed requests: on a non-streamed one, `request_timeout` covers the same wait. It is not
+    sent to the provider. See [Timeouts](../timeouts.md#waiting-for-the-first-event).
+    """
+
     max_retries: int
     """Override how many times the provider SDK's client retries a failed request, for one request.
 
@@ -328,7 +349,8 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI (Responses WebSockets retry only explicit 408, 409, 429 or 5xx rejection frames received before the
+      first response event; disconnects and errors after response events start propagate to the caller)
     * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
@@ -647,7 +669,7 @@ class ModelSettings(TypedDict, total=False):
       `bedrock_cache_tool_definitions` and `bedrock_cache_messages`)
     * OpenRouter (Anthropic and Gemini models only; as `openrouter_cache_instructions`,
       `openrouter_cache_tool_definitions` and `openrouter_cache_messages`)
-    * OpenAI (GPT-5.6 and later on the OpenAI API only; as `openai_prompt_cache_options` and
+    * OpenAI (GPT-5.6 and later on the OpenAI API and the Azure OpenAI v1 API; as `openai_prompt_cache_options` and
       `openai_cache_instructions`)
     """
 
@@ -715,6 +737,7 @@ ModelSettingName: TypeAlias = Literal[
     'top_k',
     'timeout',
     'request_timeout',
+    'first_event_timeout',
     'max_retries',
     'parallel_tool_calls',
     'tool_choice',
@@ -732,6 +755,19 @@ ModelSettingName: TypeAlias = Literal[
 ]
 """The name of a [`ModelSettings`][pydantic_ai.settings.ModelSettings] field, as listed in a model class's
 [`unsupported_settings`][pydantic_ai.models.Model.unsupported_settings]."""
+
+
+class RecordedModelSettings(TypedDict, total=False):
+    """The model settings a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] records, by their unified [`ModelSettings`][pydantic_ai.settings.ModelSettings] keys.
+
+    Only settings that shape what the model produces belong here, never transport or client settings such as
+    `extra_headers`, `timeout` or `extra_body`. Each value is JSON-native, so a recorded change round-trips
+    through storage and UI protocols unchanged. The framework records `thinking` today; a model adapter decides
+    which recorded keys it can send mid-conversation and sends the rest as request-level settings.
+    """
+
+    thinking: ThinkingEffort | None
+    """The effort level in effect, or `None` when the unified `thinking` setting names no level (`True`, `False` or unset)."""
 
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:

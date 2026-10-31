@@ -2,9 +2,10 @@
 
 Capabilities that constrain, screen, budget, or steer a run: repair malformed tool arguments,
 guard prompts/tool calls/outputs, scan tool results for prompt injection, cap spend, ask the user
-a question mid-run, re-inject reminders, and review the trajectory with a judge model. All are
-`AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `PromptInjectionDefender` needs
-an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
+a question mid-run, re-inject reminders, interrupt repeated-action loops, and review the trajectory with a
+judge model. All are
+`AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `RepairToolArguments` (`[repair-tool-arguments]`) and
+`PromptInjectionDefender` need an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 `DeferredToolRequests`, `HandleDeferredToolCalls`), use the core mechanism documented in the
 `building-pydantic-ai-agents` skill (`references/TOOLS-ADVANCED.md`); do not rebuild it here.
 
@@ -20,6 +21,7 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 | Get human approval for some tool calls, decided per call | `ToolGuardrail` returning `GuardrailResult.approve()` |
 | Get human approval for a whole tool | core `requires_approval=True` (core skill) |
 | Detect indirect prompt injection in emails/web pages returned by tools | `PromptInjectionDefender` |
+| Keep injected instructions, exfiltration commands, hidden text out of memory and skills | `Memory(scanner=ArtifactScanner())`, `Skills(..., scanner=ArtifactScanner())` |
 | Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
 | Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
@@ -27,11 +29,13 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
+| Interrupt an agent that keeps repeating the same tool call, result, or response | `DetectLoops` |
 
 ## RepairToolArguments
 
 Runs `json-repair` on raw tool-call argument strings in `before_tool_validate`, for every tool on the
-agent. No extra (`json-repair` is a base dependency), no options.
+agent. Needs the `repair-tool-arguments` extra, which installs `json-repair`
+(`uv add "pydantic-ai-harness[repair-tool-arguments]"`; `[coder]` includes it); no options.
 
 ```python
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -262,6 +266,37 @@ Gotchas: `defense` plus `block_high_risk` or `semantic_detection` raises `UserEr
 diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). With a custom ML
 `defense`, call `defense.warmup_tier2()` at startup.
 
+## ArtifactScanner
+
+Pattern scanner for agent-written artifacts that later sessions load: memory files and skills. Not a
+capability; pass it to `Memory(scanner=...)` and `Skills(scanner=...)`, or call `scan()` directly.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import ArtifactScanner, Memory, Skills
+
+scanner = ArtifactScanner()  # threats=[...] narrows; extra_patterns={'name': regex} adds 'custom' ones
+agent = Agent(
+    'anthropic:claude-sonnet-5-5',
+    capabilities=[LocalWorkspace('.'), Memory(scanner=scanner), Skills('.agents/skills', scanner=scanner)],
+)
+result = scanner.scan('Ignore previous instructions', source='notes.md')
+result.flagged, result.summary()  # True, 'injection (ignore_instructions)'
+```
+
+Threats: `injection`, `role_override`, `exfiltration`, `html_comment`, `invisible_unicode` (plus
+`custom` for `extra_patterns`). With a scanner: `write_memory` refuses flagged text with a
+`ToolFailed`-style result (nothing stored); a flagged `MEMORY.md` is replaced by a notice in the
+snapshot; `read_memory` refuses a flagged file; flagged `search_memory` snippets become a notice; a
+flagged skill is skipped with a `UserWarning` and `SkippedSkill(reason='flagged', scan=...)`.
+Each decision emits an `artifact_scan flagged` span (source and excerpts only with `trace_include_content`).
+
+Gotchas: regex only, so paraphrases slip through and quoted attacks false-positive. `html_comment`
+flags linter directives in skills; narrow `threats` there. Memory files read via `FileSystem` and
+bundled skill files are not scanned. Subclass and override `scan` to plug in another detector.
+
 ## ToolCallJudge
 
 Asks a second model one yes/no risk question after a selected tool call's arguments validate and
@@ -418,20 +453,22 @@ Gotchas:
 - Omitted usage increments `response.usage.unmeasured_requests`. When `price` is unset or returns `None`,
   any known cost subtotal still accrues, but the response remains unpriced and `on_unpriced` applies.
   Known token and cost totals are lower bounds.
-- The built-in stores are `InMemorySpendStore` (default; per process and instance, lost on restart)
-  and `RedisSpendStore` (shared across workers; install `redis` yourself, `RedisClient` is a protocol).
-  For a restart-safe budget on one machine without Redis, implement `BatchSpendStore`:
+- The built-in stores are `InMemorySpendStore` (default; per process and instance, lost on restart),
+  `RedisSpendStore` (shared across workers; install `redis` yourself, `RedisClient` is a protocol), and
+  `PostgresSpendStore(pool, table='spend')` (shared across workers; pass a caller-owned `asyncpg` pool,
+  tables `{table}_counters` and `{table}_dedup` are created on first use). For another backend, implement
+  `BatchSpendStore`:
   `get_many(keys) -> Mapping[str, Spent]` (unknown keys read as zero) and `add_many(entries:
   Sequence[SpendEntry]) -> Mapping[str, Spent]` (new totals; skip an entry whose `token` was already
   applied to its `key`, honour `ttl`), both async. `SpendStore` (`get`/`add`) is deprecated. Pass the
   same store object to two `SpendLimits` to share counters. `defer_loading=True` is refused.
 - `SpendLimits` counts every billed response, including one a nested hook rejects, whatever the
   capability order; cached and `SkipModelRequest` responses aren't charged.
-- Each response a `FallbackModel` rejected is charged as its own request, with its own
-  `SpendRecordedEvent` (`failed_attempt=True`). `price` receives it as a `ModelResponse` with the
-  attempt's model, provider and usage but no `parts` and no `provider_url`, so a `price` that reads
-  the output or keys on the endpoint will misprice it. `Spent.requests` can exceed
-  `RunUsage.requests`.
+- Each response a `FallbackModel` or the `ModelFallback` capability rejected is charged as its own request,
+  with its own `SpendRecordedEvent` (`failed_attempt=True`). `Spent.requests` can exceed `RunUsage.requests`.
+- For a `FallbackModel` rejection, `price` receives a `ModelResponse` rebuilt from the attempt's model,
+  provider and usage, with no `parts` and no `provider_url`, so a `price` that reads the output or keys
+  on the endpoint will misprice it. A `ModelFallback` capability rejection reaches `price` as the real response.
 - Spec-loadable except callables (`store`, `price`, `scope`, `clock`).
 
 ## AskUser
@@ -472,8 +509,19 @@ print(agent.run_sync('Set up storage').output)
 ```
 
 - Answerer: any `async (AskUserRequest) -> AskUserResponse`. `request.id` matches replies in a UI.
+- Two required positional parameters receive `(ctx, request)` (`ContextAnswerer[DepsT]`), including lambdas.
+  If both call shapes bind, a first parameter annotated `RunContext[DepsT]` selects the context form; otherwise request-only.
+  Only the first annotation is inspected; unresolved `RunContext` references are recognized.
+  Read the asking run's dependencies and messages through `ctx`, not the request.
+  A delegated question receives the child's context. For durable field access, follow
+  https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#agent-run-context-and-dependencies.
+- Type a stored callback as `AnyAnswerer[DepsT]` when either signature is possible.
 - Decline: return `AskUserResponse(cancelled=True)`; the model gets a "user declined" tool result.
 - Free text: `AskUserAnswer(header=..., custom_answer='...')` with `selected` empty.
+- Answer notes: `AskUserAnswer.note` accompanies selected labels or a custom answer with text and attachments.
+  Notes reach the user channel in `answer_note` frames and remain user turns during compaction.
+  See [Adding notes to an answer](https://pydantic.dev/docs/ai/harness/ask-user/#adding-notes-to-an-answer)
+  for supported content, validation and provenance; annotate tool results with `AskUserResult` from `pydantic_ai_harness.ask_user`.
 - An answer that does not fit (unknown header/label, several picks on single-select, missing
   answer) raises `ValueError` and fails the run; call `check_response(request, response)` (from
   `pydantic_ai_harness.ask_user`) first.
@@ -493,8 +541,13 @@ print(agent.run_sync('Set up storage').output)
 
 ## SystemReminders
 
-Appends reminders to the tail of each model request as an ephemeral user part behind a
-`CachePoint`: never written to message history, never busts the prompt cache.
+By default, enqueues reminders at the tail of each model request as a request-scoped `SystemPromptPart`
+(`scope='request'`): the model sees each one only in the model request it's part of, and the next
+request, even the next step of the same run, no longer shows it. It's kept in message history, and
+it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
+(e.g. `anthropic_cache`); its breakpoint lands before the reminder. `cache_ttl` is deprecated and
+has no effect. With `interval>1` the model sees a reminder only on the requests where it fires, so
+text it must follow at every step belongs in the agent's instructions, not in a `Reminder`.
 
 ```python
 from pydantic_ai import Agent
@@ -507,8 +560,8 @@ agent = Agent(
     capabilities=[
         SystemReminders(
             reminders=[
-                Reminder('Stay focused on the original request.', interval=5),
-                Reminder('Run the tests before finishing.', interval=10, max_fires=2),
+                Reminder('Stay focused on the original request.', interval=5, tag=None),
+                Reminder('Run the tests before finishing.', interval=10, max_fires=2, tag=None),
             ],
             dynamic_reminders=[
                 GoalReanchor(),
@@ -519,18 +572,36 @@ agent = Agent(
 )
 ```
 
-- `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag='system-reminder')`:
+- `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag=None, scope='request')`:
   requests are counted from 1 per run, so `interval=4` fires on requests 4, 8, 12; `first_after=N`
   moves the first fire to request N, then every `interval` after (`first_after=1, interval=4` fires
-  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition; `tag=None` sends raw text.
-- `dynamic_reminders`: callables `(ctx) -> str | None`, sync or async, evaluated on **every**
-  request, injected raw (no tag).
-- `GoalReanchor()` restates the run's first user prompt; free.
-- `LLMReminder(model=...)` (model required) makes one extra model call per request; its agent is
-  built on first use, so no provider key is needed at construction. On any error it sends
-  `GoalReanchor` text instead, with no warning or log; gate it with your own cadence wrapper.
-- `cache_ttl='5m' | '1h'`. Observe with `ReminderFiredEvent` (`on_fire` is deprecated).
-- Each tail capability (this, `Planning`) adds a cache breakpoint; Anthropic allows 4.
+  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. Pass `tag=None`: left unset it warns that the
+  default used to be `'system-reminder'`. A reminder needs no tag, since it's already sent as a
+  system prompt; `tag='name'` wraps the text in `<name>`. `scope='conversation'` records each firing
+  as a lasting `SystemPromptPart` re-sent on every later request (one more part per firing, so bound it
+  with `interval`/`max_fires`); use it for guidance that must outlast its step, instructions for text
+  that holds on every step, and the default `'request'` for per-step nudges or changing values.
+- `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
+  on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
+  quote user input or tool output as data.
+- `GoalReanchor()` points the model back at the run's first user prompt without repeating it (at the
+  compaction summary once native compaction took the prompt); free. `LLMReminder` returns a
+  `GeneratedReminder`, not a `str`, so it stays data: a fixed note in system voice and the generated
+  text on the user channel (`<generated_reminder model="...">`), kept in history together as one record.
+  A plain `str` a dynamic reminder returns is operator text in system voice. Framing tags in quoted
+  text are escaped.
+- `LLMReminder(model=..., interval=10)` (model required) makes one extra model call every `interval`
+  requests (10th, 20th, ...; pass `interval` explicitly: left unset it warns that the default used to
+  be `1`). Each firing adds a note and the generated text to history for good, so a run of R requests
+  gains `2 * (R // interval)` parts. Its agent is built on first use, so no provider key is needed at
+  construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
+  traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
+  the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
+- Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
+  (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
+  gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
+- Neither `SystemReminders` nor `Planning` adds a cache breakpoint; the model's caching settings
+  place them.
 - Not spec-serializable.
 
 ## TrajectoryJudge
@@ -567,14 +638,65 @@ output validators, and gets no deps.
 
 Gotchas: judge usage counts against the run's `usage` and `usage_limits` (a tick that cannot fit
 the request limit is skipped); one evaluation in flight per judge (a slow judge skips ticks); judge
-failures are raised on the run at the next tick or run end (use a `FallbackModel` in a custom
-agent to degrade); rejected with `UserError` inside Temporal/DBOS/Prefect durable execution. It
+failures are raised on the run at the next tick or run end (give a custom agent the `ModelFallback`
+capability to degrade); rejected with `UserError` inside Temporal/DBOS/Prefect durable execution. It
 observes and steers only; enforcement belongs to guardrails. Try `SystemReminders` first.
 
 `TrajectoryJudge(model='openai:...')` builds its judge `Agent` in the constructor, so defining it
 at import time fails without that provider's API key. Pass
 `agent=Agent('openai:...', defer_model_check=True, instructions=...)` instead; a custom agent does
 not get the built-in judge instructions, so its `instructions` must describe the review.
+
+## DetectLoops
+
+Before each model request, checks the current run's history for four patterns: `repeated_call` (same
+tool and canonical arguments `repeated_call_threshold=5` times in the last `window=10` calls),
+`repeated_result` (same call returning the same result `repeated_result_threshold=3` times in a row;
+`ModelRetry` with the same message counts), `alternating_calls` (A-B-A-B for
+`alternating_calls_threshold=3` cycles), and `repeated_text` (`repeated_text_threshold=3` consecutive
+responses with no tool calls and the same text). A threshold of `None` turns a check off.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import DetectLoops
+from pydantic_ai_harness.detect_loops import LoopDetectedError
+
+
+def stuck(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'missing.txt'})])
+
+
+agent = Agent(FunctionModel(stuck), capabilities=[DetectLoops(action='error')])
+
+
+@agent.tool_plain
+def read_file(path: str) -> str:
+    return 'Error: file not found'
+
+
+try:
+    agent.run_sync('Summarize missing.txt')
+except LoopDetectedError as error:
+    print(error.loop.pattern)
+    #> repeated_result
+```
+
+- `action='nudge'` (default) enqueues a `SystemPromptPart` (conversation scope, so it keeps
+  applying) into the current request; find it by `metadata['origin'] == 'pydantic-ai-harness.detect_loops.nudge.v1'`, never by
+  text. `'error'` raises `LoopDetectedError` (an `AgentRunError`, `.loop` is the `DetectedLoop`). A
+  sync or async `(ctx, loop)` callable decides itself; type `ctx` as `RunContext[object]` on an agent
+  without `deps_type`.
+- Calls, results, and text are recorded as they arrive (the capability runs outermost), so
+  compaction can't make calls look alike.
+  One loop per request; its responses are then not counted again. Only the current run counts, so
+  `message_history` from earlier runs starts at zero. Hooks run in workflow code under Temporal,
+  DBOS, and Prefect, so replay reaches the same decisions; keep a handler free of I/O.
+- Agents that poll on purpose trip `repeated_result` after 3 identical statuses: raise or disable it.
+- Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
+  `.tool_names`; `.fingerprints` only with `trace_include_content`); no arguments or results.
 
 ## See also
 
@@ -587,4 +709,5 @@ not get the built-in judge instructions, so its `instructions` must describe the
 - https://pydantic.dev/docs/ai/harness/ask-user/
 - https://pydantic.dev/docs/ai/harness/system-reminders/
 - https://pydantic.dev/docs/ai/harness/trajectory-judge/
+- https://pydantic.dev/docs/ai/harness/detect-loops/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)

@@ -247,5 +247,13 @@ engine provides a suitable at-most-once mode. Test replay and recovery, resource
 control-flow exceptions, persisted-output upgrades, and ordinary execution outside the durable
 runtime before publishing an integration.
 
+A replayed or recovered run must also get the same identity. Inside the durable context, override
+[`get_default_run_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_run_id] to return a
+replay-stable ID, such as one derived from the workflow instance ID, and return
+[`conversation_id_from_run_id(run_id)`][pydantic_ai.durable_exec.conversation_id_from_run_id] from
+[`get_default_conversation_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_conversation_id],
+as the Temporal, DBOS and Prefect capabilities do. Each agent run in the same workflow needs its own
+`run_id`.
+
 See [durable capability operations](../capabilities/custom.md#durable-capability-operations) for how
 capability authors contribute decorated methods that arrive through the same backend.

@@ -1,0 +1,5 @@
+{
+  "against": "v2.60.0",
+  "reason": "False positive: `TemporalDurability.engine_spec` is the same `DurabilityEngineSpec` value, now defined once as the module constant `TEMPORAL_ENGINE_SPEC` so the run context can word its errors; Griffe compares the expression text.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11088"
+}

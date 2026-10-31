@@ -12,6 +12,8 @@ checkpointing, a resumed run would repeat every model request and tool call.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![A Lambda handler decorated with durable_execution and durable_agent_handler runs an agent named support that has the AWSLambdaDurability capability. In the first invocation, each model request and tool call runs as a durable step, and Lambda records its result in the checkpoint log under a step name such as support__model.request; the invocation times out during the second model request. The resumed invocation runs the handler again from the top: the two completed steps return their recorded results without calling the model or the tool again, and only the unfinished model request runs, is recorded, and finishes the run.](https://pydantic.dev/docs/ai/img/harness/aws-lambda.svg)
+
 ## Installation
 
 uv:
@@ -229,6 +231,10 @@ checkpoint came from. The default model keeps the plain, suffix-less name.
   state. A turn costs one model step plus one step per tool call, so the operation budget is
   generous, but large tool results consume the state budget: return a reference (an S3 key, say)
   rather than a blob.
+- **Batched requests wait in the invocation.** Under [`BatchModelRequests`](https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution), submitting a
+  request and each check on its batch are durable steps, but the waits between checks are plain
+  sleeps: the invocation has to stay up for as long as the batch takes, within its timeout, and a
+  recovered run sleeps again through the waits it already did.
 
 ## Per-tool configuration
 

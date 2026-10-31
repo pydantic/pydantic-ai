@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2.plugins import DepsT, Plugin
-from pydantic_clai2.runtime._session import supports_local_workspace
+from pydantic_clai2.runtime.session import supports_local_workspace
 
 
 class RepoContextSettings(BaseModel):
@@ -26,7 +26,11 @@ class RepoContextSettings(BaseModel):
         default=False, description="Expose `inventory_agent_context`, which maps the repo's coding-assistant assets."
     )
     nested_traversal: bool = Field(
-        default=False, description="Surface a directory's instruction file when the agent reads or lists it."
+        default=False,
+        description=(
+            'Surface the instruction files of a directory the agent reads or lists, and of every directory between it '
+            'and the workspace.'
+        ),
     )
     nested_inject: Literal['pointer', 'contents'] = Field(
         default='pointer', description='What nested traversal adds: a one-line pointer or the file contents.'

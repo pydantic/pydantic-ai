@@ -25,6 +25,7 @@ from pydantic_ai import Agent, UserError
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
+    ScopedTask,
     await_maybe,
     check_object_json_schema,
     dataclasses_no_defaults_repr,
@@ -32,6 +33,7 @@ from pydantic_ai._utils import (
     get_first_param_type,
     group_by_temporal,
     is_async_callable,
+    is_google_files_api_url,
     is_str_dict,
     merge_json_schema_defs,
     replace_no_init,
@@ -44,6 +46,34 @@ from pydantic_ai.models.test import TestModel
 from ._inline_snapshot import snapshot
 from .conftest import undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
+
+READINESS_WAIT_TIMEOUT = 5
+
+
+@pytest.mark.parametrize(
+    'url,expected',
+    [
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/files/abc123', True, id='file'),
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/files', True, id='bare-prefix'),
+        # Current prefix behavior, not a URL-validity requirement.
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/filesOther', True, id='prefix-only'),
+        pytest.param(
+            'https://generativelanguage.googleapis.com/v1beta/files/abc?alt=media#ref', True, id='query-fragment'
+        ),
+        pytest.param('', False, id='empty'),
+        pytest.param('http://generativelanguage.googleapis.com/v1beta/files/abc123', False, id='http'),
+        pytest.param('https://generativelanguage.googleapis.com/v1/files/abc123', False, id='other-version'),
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/file/abc123', False, id='other-path'),
+        pytest.param('https://GENERATIVELANGUAGE.googleapis.com/v1beta/files/abc123', False, id='case-sensitive'),
+        pytest.param('https://generativelanguage.googleapis.com.evil/v1beta/files/abc123', False, id='other-host'),
+        pytest.param('https://generativelanguage.googleapis.com:443/v1beta/files/abc123', False, id='explicit-port'),
+        pytest.param(' https://generativelanguage.googleapis.com/v1beta/files/abc123', False, id='leading-space'),
+        pytest.param('gs://bucket/file.png', False, id='cloud-storage'),
+    ],
+)
+def test_is_google_files_api_url(url: str, expected: bool):
+    """Pin classification directly: cassette matching alone does not protect prefix edge cases."""
+    assert is_google_files_api_url(url) is expected
 
 
 async def test_await_maybe():
@@ -1483,3 +1513,25 @@ def test_replace_no_init() -> None:
     with pytest.raises(TypeError, match='its `__copy__` does not return a new instance'):
         replace_no_init(self_copying, name='b')
     assert self_copying.name == 'a', 'the original must not be mutated in place'
+
+
+async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation_as_context() -> None:
+    # Directly on `ScopedTask`: its callers in the run set the run error's `__context__` themselves. `result()` reads
+    # the task's outcome outside the `except` block that caught the awaiter's cancellation, so the task's error doesn't
+    # get that cancellation as its context.
+    started = asyncio.Event()
+
+    async def body() -> int:
+        started.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await anyio.sleep_forever()
+        raise ValueError('boom')
+
+    awaiter = asyncio.create_task(ScopedTask(body()).result())
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        await started.wait()
+        awaiter.cancel('stop')
+        await asyncio.wait((awaiter,))
+    with pytest.raises(ValueError, match='boom') as exc_info:
+        awaiter.result()
+    assert exc_info.value.__context__ is None

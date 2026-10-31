@@ -16,6 +16,8 @@ follow `parallel_execution_mode`, which runs them one at a time by default (see
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![An agent named analyst runs inside a pgtask task. On the first attempt its model request and its tool call each finish and are saved to Postgres as pgtask steps, named analyst__model.request and analyst__function_toolset__{id}.call_tool:{tool}; then the worker crashes during the next model request, which is not saved. pgtask runs the task again: the two saved steps return their stored results without calling the model or the tool, and only the unfinished model request runs live.](https://pydantic.dev/docs/ai/img/harness/pgtask.svg)
+
 ## Installation
 
 uv:
@@ -130,6 +132,10 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   fine.
 - Streaming inside a task isn't live: the whole model response is received and saved first, and
   then its events are sent to you.
+- Under [`BatchModelRequests`](https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution), submitting a request and each check on its batch are
+  saved steps, but the waits between checks are plain sleeps: the task has to keep running for as
+  long as the batch takes, within its timeout, and a recovered run sleeps again through the waits
+  it already did.
 
 ## Running tools at the same time
 

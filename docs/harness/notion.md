@@ -8,6 +8,8 @@ Let an agent search and change content in a Notion workspace. `Notion` gives the
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the Notion capability connects to Notion's hosted MCP server at mcp.notion.com/mcp with a Notion OAuth access token. The model sees the server's tool names unchanged, such as notion-search, because they already start with the service. Your auth function returns the token for each run; a Notion integration token is not accepted. read_only=True drops tools the server does not mark read-only.](../img/harness/notion.svg)
+
 ## Install and connect
 
 ```bash
@@ -63,11 +65,17 @@ Each run connects as its own user, so concurrent runs never share an account. `r
 
 Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Notion" button that signs them in with Notion OAuth and saves the access token to their account. Before each run, put it in the deps, or load it in an async `auth` function.
 
-With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `notion`, so `defer_loading=True` works without one. To add more than one `Notion` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
+With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `notion`, so `defer_loading=True` works without one. To add more than one `Notion` to an agent, give each a distinct `id` and `tool_prefix`; two that share an `id` but differ raise an error.
 
 ## Provider settings
 
 Connect with a Notion OAuth access token. Notion integration tokens are a different kind of credential and do not work with the hosted MCP server. Notion decides which pages and tools the user can reach. Some search and connected-source tools need a matching Notion plan and permissions.
+
+## Tool names
+
+`Notion` has no default prefix, unlike most hosted MCP capabilities: the server's tool names already start with the service, as in `notion-search`, so a default prefix would repeat it (`notion_notion-search`). The agent sees the names as they are. Set `tool_prefix` to put a prefix and `_` in front of them, for example `tool_prefix='work'` gives `work_notion-search`.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](../toolsets.md) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
 
 ## Tool selection and approval
 
@@ -94,6 +102,6 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` still applies. `include_instructions=False` stops the server's instructions from reaching the model.
 
-A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections whose tool names overlap, give them distinct `id`s and add [PrefixTools](../capabilities/prefix-tools.md).
+A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections, give each a distinct `id` and `tool_prefix`.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/notion/)

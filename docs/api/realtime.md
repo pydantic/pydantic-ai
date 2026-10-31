@@ -50,7 +50,7 @@ provider-specific (see [Concurrent tool execution](../realtime/tools.md#concurre
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
 
 **Browser / WebRTC** — for browser voice agents, the media flows browser ↔ provider directly while the
-backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Connecting a frontend](../realtime/deployment.md#browser-webrtc-server-sideband)):
+backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Deployment](../realtime/deployment.md#browser-webrtc-server-sideband)):
 
 | Object | Role |
 | --- | --- |
@@ -110,6 +110,7 @@ completes.
 vocabulary yielded by a connection:
 [`AudioDelta`][pydantic_ai.realtime.codec.AudioDelta],
 [`OutputTranscript`][pydantic_ai.realtime.codec.OutputTranscript],
+[`OutputSpeechTimestamps`][pydantic_ai.realtime.codec.OutputSpeechTimestamps],
 [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript],
 [`ToolCall`][pydantic_ai.realtime.codec.ToolCall],
 [`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled],
@@ -255,8 +256,10 @@ session. The session translates codec events into the shared vocabulary from
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], deferred calls and their inline resolution as
 [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /
 [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], enqueued-message delivery as
-[`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], and the rest as the
-control-plane events above (`RealtimeInputSpeechStartEvent`, `RealtimeInputSpeechEndEvent`,
+[`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], events emitted with
+[`RunContext.emit`][pydantic_ai.tools.RunContext.emit] as the
+[`CustomEvent`][pydantic_ai.messages.CustomEvent] or [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]
+that was emitted, and the rest as the control-plane events above (`RealtimeInputSpeechStartEvent`, `RealtimeInputSpeechEndEvent`,
 `RealtimeOutputSpeechStartEvent`, `RealtimeOutputSpeechEndEvent`, `RealtimeInputTranscriptionErrorEvent`,
 `RealtimeResponseInterruptedEvent`, `RealtimeSessionReconnectEvent`, and `RealtimeSessionErrorEvent`), plus
 [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent], which the

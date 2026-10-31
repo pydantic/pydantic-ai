@@ -14,7 +14,7 @@ capability you attach to an [`Agent`][pydantic_ai.Agent]:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ._base import BaseDurabilityCapability
+    from ._base import BaseDurabilityCapability, conversation_id_from_run_id
     from ._capability_operation import (
         CapabilityMethodDeclaration,
         CapabilityOperationParams,
@@ -66,6 +66,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     'BaseDurabilityCapability',
+    'conversation_id_from_run_id',
     'ToolsetCallToolId',
     'CallableOperationBackend',
     'ModelCancelSuspendedResponseId',
@@ -119,6 +120,7 @@ __all__ = [
 
 _exports = {
     'BaseDurabilityCapability': ('._base', 'BaseDurabilityCapability'),
+    'conversation_id_from_run_id': ('._base', 'conversation_id_from_run_id'),
     'DurabilityCodec': ('._codec', 'DurabilityCodec'),
     'DurabilityEngineSpec': ('._spec', 'DurabilityEngineSpec'),
     'IDENTITY_CODEC': ('._codec', 'IDENTITY_CODEC'),

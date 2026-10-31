@@ -4,7 +4,7 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
@@ -67,9 +67,10 @@ from pydantic_ai import (
     WebCitationSource,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._utils import PeekableAsyncStream
-from pydantic_ai.capabilities import AbstractCapability, Capability, Citations, NativeTool, ToolSearch
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.capabilities import AbstractCapability, Capability, Citations, Hooks, NativeTool, ToolSearch
+from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
@@ -79,9 +80,10 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
     UploadedFile,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
+    AbstractNativeTool,
     AdvisorTool,
     CodeExecutionTool,
     MCPServerTool,
@@ -102,7 +104,6 @@ from ..cassette_utils import single_request_body
 from ..conftest import (
     IsDatetime,
     IsInstance,
-    IsList,
     IsNow,
     IsStr,
     RequestCapture,
@@ -114,7 +115,6 @@ from ..conftest import (
     try_import,
 )
 from ..parts_from_messages import part_types_from_messages
-from .citation_utils import IsCitationList
 from .conftest import (
     AnthropicModelFactory,
     cache_breakpoints,
@@ -204,13 +204,12 @@ with try_import() as imports_successful:
         AnthropicModel,
         AnthropicModelSettings,
         AnthropicStreamedResponse,
-        _fetched_page,  # pyright: ignore[reportPrivateUsage]
-        _is_expired_container_error,  # pyright: ignore[reportPrivateUsage]
-        _map_citations,  # pyright: ignore[reportPrivateUsage]
-        _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.anthropic._citations import fetched_page, map_citations
+    from pydantic_ai.models.anthropic._errors import is_expired_container_error
+    from pydantic_ai.models.anthropic._response import map_usage
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.profiles.anthropic import anthropic_model_profile
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -232,18 +231,6 @@ pytestmark = [
 ]
 
 
-def _citation_delta_event(index: int) -> PartDeltaEvent:
-    return PartDeltaEvent(
-        index=index,
-        delta=TextPartDelta(
-            content_delta='',
-            provider_name='anthropic',
-            provider_details={'citations': IsList(length=(1, ...))},
-            citations_delta=IsCitationList(),
-        ),
-    )
-
-
 def test_anthropic_content_block_citation_is_a_document_citation():
     """A citation of a custom content document's blocks becomes a document citation of the whole text part.
 
@@ -260,7 +247,7 @@ def test_anthropic_content_block_citation_is_a_document_citation():
     )
 
     # The location is inside the cited document, not the answer, so it stays in the raw citation data.
-    assert _map_citations([citation], 'answer') == [
+    assert map_citations([citation], 'answer') == [
         Citation(
             sources=[DocumentCitationSource(document_id='file-1', title='Report', excerpts=['block excerpt'])],
             anchor=ContentCitationAnchor(start=0, end=6),
@@ -399,7 +386,7 @@ def test_anthropic_client_search_result_citation_is_not_normalized(source: str):
         type='search_result_location',
     )
 
-    assert _map_citations([citation], 'answer') is None
+    assert map_citations([citation], 'answer') is None
 
 
 def _web_fetch_result(content: BetaWebFetchBlock | BetaWebFetchToolResultErrorBlock) -> BetaWebFetchToolResultBlock:
@@ -420,8 +407,8 @@ def test_anthropic_pdf_or_failed_fetch_is_not_a_fetched_page():
     )
     error = BetaWebFetchToolResultErrorBlock(type='web_fetch_tool_result_error', error_code='url_not_accessible')
 
-    assert _fetched_page(_web_fetch_result(pdf)) is None
-    assert _fetched_page(_web_fetch_result(error)) is None
+    assert fetched_page(_web_fetch_result(pdf)) is None
+    assert fetched_page(_web_fetch_result(error)) is None
 
 
 @pytest.mark.parametrize('stream', [pytest.param(False, id='request'), pytest.param(True, id='stream')])
@@ -553,7 +540,7 @@ def test_anthropic_character_citation_not_on_fetched_page_is_a_document_citation
         type='char_location',
     )
 
-    assert _map_citations([citation], 'answer', [('https://example.com/page', 'Page text')]) == [
+    assert map_citations([citation], 'answer', [('https://example.com/page', 'Page text')]) == [
         Citation(
             sources=[DocumentCitationSource(title='Page', excerpts=['Other text'])],
             anchor=ContentCitationAnchor(start=0, end=6),
@@ -590,7 +577,7 @@ def test_anthropic_fetched_page_url_only_when_one_page_matches(pages: list[tuple
         type='char_location',
     )
 
-    [mapped] = _map_citations([citation], 'answer', pages) or []
+    [mapped] = map_citations([citation], 'answer', pages) or []
 
     expected: CitationSource = (
         WebCitationSource(url, title='Terms', excerpts=['Terms'])
@@ -606,7 +593,7 @@ def test_anthropic_citation_without_source_fields_is_skipped():
         cited_text='', document_index=0, start_char_index=0, end_char_index=0, type='char_location'
     )
 
-    assert _map_citations([citation], 'answer') is None
+    assert map_citations([citation], 'answer') is None
 
 
 def test_anthropic_citation_of_unknown_type_is_skipped():
@@ -620,7 +607,7 @@ def test_anthropic_citation_of_unknown_type_is_skipped():
         ),
     )
 
-    assert _map_citations(block.citations or [], block.text) is None
+    assert map_citations(block.citations or [], block.text) is None
 
 
 def test_anthropic_citation_of_empty_text_is_unanchored():
@@ -629,7 +616,7 @@ def test_anthropic_citation_of_empty_text_is_unanchored():
         type='web_search_result_location', url='https://example.com', cited_text='', encrypted_index='opaque-index'
     )
 
-    assert _map_citations([citation], '') == [Citation(sources=[WebCitationSource(url='https://example.com')])]
+    assert map_citations([citation], '') == [Citation(sources=[WebCitationSource(url='https://example.com')])]
 
 
 async def test_anthropic_stream_mixed_web_and_document_citations(allow_model_requests: None):
@@ -910,6 +897,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                     cost=Decimal('0.000044'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -934,6 +922,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                     cost=Decimal('0.000044'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -1143,7 +1132,7 @@ async def test_cache_point_after_replayed_mcp_tool_result(
     accepts and honors `cache_control` on an `mcp_tool_result` block.
     """
     agent = Agent(
-        anthropic_model('claude-sonnet-4-5', capture=True),
+        anthropic_model('claude-sonnet-5-5', capture=True),
         capabilities=[NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'))],
     )
 
@@ -1169,7 +1158,7 @@ async def test_cache_point_after_replayed_mcp_tool_result(
             }
         ]
     )
-    assert [(usage.cache_write_tokens, usage.cache_read_tokens) for usage in usages] == snapshot([(2907, 0), (0, 2907)])
+    assert [(usage.cache_write_tokens, usage.cache_read_tokens) for usage in usages] == snapshot([(3578, 0), (0, 3578)])
 
 
 @pytest.mark.vcr()
@@ -1862,7 +1851,11 @@ async def test_anthropic_cache_instructions(allow_model_requests: None):
         [
             {
                 'type': 'text',
-                'text': 'This is a test system prompt with instructions.',
+                'text': """\
+This is a test system prompt with instructions.
+
+Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.\
+""",
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             }
         ]
@@ -1914,7 +1907,17 @@ async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None
         ]
     )
     assert system == snapshot(
-        [{'type': 'text', 'text': 'System instructions to cache.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
+        [
+            {
+                'type': 'text',
+                'text': """\
+System instructions to cache.
+
+Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.\
+""",
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            }
+        ]
     )
 
 
@@ -1979,12 +1982,125 @@ async def test_anthropic_cache_instructions_mixed_static_dynamic(allow_model_req
         [
             {
                 'type': 'text',
+                'text': "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.",
+            },
+            {
+                'type': 'text',
                 'text': 'Static instructions that should be cached.',
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
             {
                 'type': 'text',
                 'text': 'Dynamic context that changes per run.',
+            },
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions_add_a_point_after_appending_blocks(allow_model_requests: None):
+    """An `on_change='append'` block keeps the prefix the same between requests, so it gets a cache point of its own.
+
+    The point after the static instructions stays, and a dynamic block that rewrites the prefix stays after both.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='Static instructions that should be cached.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions
+    def dynamic_context() -> str:
+        return 'Dynamic context that changes per run.'
+
+    @agent.instructions(name='catalog', on_change='append')
+    def catalog() -> str:
+        return 'Catalog: a, b.'
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['system'] == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.",
+            },
+            {
+                'type': 'text',
+                'text': 'Static instructions that should be cached.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': """\
+<context id="agent:catalog">
+Catalog: a, b.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {'type': 'text', 'text': 'Dynamic context that changes per run.'},
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions_keep_the_static_point_for_per_user_appending_blocks(
+    allow_model_requests: None,
+):
+    """A per-user `on_change='append'` block doesn't stop a new conversation from reading the static instructions.
+
+    Two conversations whose append block differs both send a cache point at the end of the static instructions, so the
+    second reads the prefix the first wrote, even though the point after the append block is different in each.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock([c, c])
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        deps_type=str,
+        instructions='Static instructions that should be cached.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions(name='memory', on_change='append')
+    def memory(ctx: RunContext[str]) -> str:
+        return f'Memory for {ctx.deps}.'
+
+    await agent.run('test prompt', deps='alice')
+    await agent.run('test prompt', deps='bob')
+
+    alice, bob = (kwargs['system'] for kwargs in get_mock_chat_completion_kwargs(mock_client))
+    # Claude Haiku 4.5 takes no mid-conversation system messages, so the `<system>` tag announcement opens the
+    # standing prompt, ahead of the static instructions and their cache point.
+    assert alice[:2] == bob[:2]
+    assert alice[2] != bob[2]
+    assert bob == snapshot(
+        [
+            {'type': 'text', 'text': SYSTEM_VOICE_ANNOUNCEMENT},
+            {
+                'type': 'text',
+                'text': 'Static instructions that should be cached.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': """\
+<context id="agent:memory">
+Memory for bob.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
         ]
     )
@@ -2017,7 +2133,11 @@ async def test_anthropic_cache_instructions_all_dynamic(allow_model_requests: No
         [
             {
                 'type': 'text',
-                'text': 'A static system prompt.',
+                'text': """\
+A static system prompt.
+
+Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.\
+""",
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
             {
@@ -2055,6 +2175,10 @@ async def test_anthropic_cache_instructions_all_static_with_toolset(allow_model_
         [
             {
                 'type': 'text',
+                'text': "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.",
+            },
+            {
+                'type': 'text',
                 'text': 'You are a helpful assistant.',
             },
             {
@@ -2073,7 +2197,8 @@ async def test_anthropic_cache_instructions_all_dynamic_no_system_prompt(allow_m
         usage=BetaUsage(input_tokens=10, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    # A model with mid-conversation system messages, so no `<system>` tag announcement precedes the instructions.
+    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
@@ -2304,7 +2429,7 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
 
 
 async def test_anthropic_native_output_decimal_strict(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class Payment(BaseModel):
         amount: Decimal
@@ -2318,7 +2443,7 @@ async def test_anthropic_native_output_decimal_strict(allow_model_requests: None
 async def test_anthropic_task_budget_adds_output_config_and_beta(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ):
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(
@@ -2514,7 +2639,7 @@ async def test_anthropic_mixed_strict_tool_run(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """Exercise both strict=True and strict=False tool definitions against the live API."""
-    m = anthropic_model('claude-sonnet-4-5', capture=True)
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
     agent = Agent(
         m,
         system_prompt='Always call `country_source` first, then call `capital_lookup` with that result before replying.',
@@ -2645,6 +2770,76 @@ async def test_limit_cache_points_all_settings(allow_model_requests: None):
     assert cache_count == 2
 
 
+async def test_limit_cache_points_drops_the_appending_blocks_point_first(allow_model_requests: None):
+    """Over the budget, the point after the append blocks goes before any message point or the static one.
+
+    The static instructions point is what a new conversation reads, and the message points cover the conversation,
+    while the point after the append blocks only helps a new conversation whose append blocks are the same.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='Static instructions that should be cached.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_tool_definitions=True,
+            anthropic_cache_instructions=True,
+            anthropic_cache_messages=True,
+        ),
+    )
+
+    @agent.instructions(name='catalog', on_change='append')
+    def catalog() -> str:
+        return 'Catalog: a, b.'
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    # Tools, static instructions, append blocks, this `CachePoint` and the last message: five points, one over.
+    await agent.run(['Context', CachePoint(), 'Question'])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['tools'][-1]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+    assert completion_kwargs['system'] == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.",
+            },
+            {
+                'type': 'text',
+                'text': 'Static instructions that should be cached.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': """\
+<context id="agent:catalog">
+Catalog: a, b.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            },
+        ]
+    )
+    assert completion_kwargs['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'Question', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                ],
+            }
+        ]
+    )
+
+
 @pytest.mark.parametrize(
     'setting,expected_ttl',
     [
@@ -2673,7 +2868,7 @@ async def test_anthropic_cache(allow_model_requests: None, setting: bool | Liter
     assert completion_kwargs['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
 
     # System prompt should remain a plain string (no per-block cache_control added)
-    assert completion_kwargs['system'] == 'System instructions.'
+    assert completion_kwargs['system'] == f'System instructions.\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
 
 
 @pytest.mark.parametrize(
@@ -2772,7 +2967,17 @@ async def test_anthropic_cache_with_explicit_breakpoints(allow_model_requests: N
 
     # Explicit breakpoints on system and tools should also be present
     assert completion_kwargs['system'] == snapshot(
-        [{'type': 'text', 'text': 'System instructions.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
+        [
+            {
+                'type': 'text',
+                'text': """\
+System instructions.
+
+Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.\
+""",
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            }
+        ]
     )
     tools = completion_kwargs['tools']
     assert tools[-1]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
@@ -3025,7 +3230,7 @@ async def test_request_stream_fallback_for_high_max_tokens(
 ):
     """When the Anthropic SDK raises ValueError for high max_tokens, request() falls back to streaming."""
     # https://github.com/anthropics/anthropic-sdk-python/blob/49d639a671cb0ac30c767e8e1e68fdd5925205d5/src/anthropic/_base_client.py#L726
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(
@@ -3049,17 +3254,18 @@ async def test_request_stream_fallback_for_high_max_tokens(
             ModelResponse(
                 parts=[TextPart(content='2')],
                 usage=RequestUsage(
-                    input_tokens=20,
-                    output_tokens=5,
+                    input_tokens=23,
+                    output_tokens=3,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 20,
-                        'output_tokens': 5,
+                        'input_tokens': 23,
+                        'output_tokens': 3,
                     },
-                    cost=Decimal('0.000135'),
+                    cost=Decimal('0.000076'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3108,6 +3314,7 @@ async def test_request_structured_response(allow_model_requests: None):
                     cost=Decimal('0.0000224'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3189,6 +3396,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000056'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3229,6 +3437,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000104'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3261,6 +3470,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000224'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3364,24 +3574,24 @@ async def test_multiple_parallel_tool_calls(
     """
 
     agent = Agent(
-        anthropic_model('claude-haiku-4-5', capture=True),
+        anthropic_model('claude-haiku-5-5', capture=True),
         system_prompt=system_prompt,
         tools=[retrieve_entity_info],
     )
 
     result = await agent.run('Alice, Bob, Charlie and Daisy are a family. Who is the youngest?')
     assert content_blocks(request_capture.body(), 'tool_result') == snapshot([])
-    assert 'Daisy is the youngest' in result.output
+    assert result.output == snapshot("""\
+**Daisy** is the youngest.
+
+The lookup shows that Daisy is Charlie's younger sister, so Charlie is older than her. Alice and Bob are Charlie's parents, so they are older than any of their children. That leaves Daisy as the youngest.\
+""")
 
     all_messages = result.all_messages()
     first_response = all_messages[1]
     second_request = all_messages[2]
     assert first_response.parts == snapshot(
         [
-            TextPart(
-                content="I'll retrieve information about Alice, Bob, Charlie, and Daisy to determine who is the youngest.",
-                part_kind='text',
-            ),
             ToolCallPart(
                 tool_name='retrieve_entity_info', args='{"name": "Alice"}', tool_call_id=IsStr(), part_kind='tool-call'
             ),
@@ -3653,6 +3863,7 @@ async def test_stream_structured(allow_model_requests: None):
                     parts=[TextPart(content='FINAL_PAYLOAD')],
                     usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
                     model_name='claude-3-5-haiku-123',
+                    model_id='anthropic:claude-haiku-4-5',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
@@ -3706,7 +3917,7 @@ async def test_text_content_input(allow_model_requests: None, anthropic_api_key:
 
 
 async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(
@@ -3717,14 +3928,9 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
     )
     assert result.output == snapshot(
         """\
-This is a **potato**, specifically a yellow or gold potato variety. You can tell by its characteristic:
+This is a **potato**, specifically one with smooth, thin yellowish-tan skin and small brown eyes/spots. Its oval, slightly elongated shape and pale yellow flesh suggest a waxy or all-purpose variety, such as a Yukon Gold or a similar yellow-fleshed potato.
 
-- Oval/oblong shape
-- Golden-yellow skin with small dark spots or "eyes"
-- Smooth, waxy appearance
-- Typical potato size and form
-
-This looks like it could be a Yukon Gold or similar yellow potato variety, which are popular for cooking due to their buttery texture and flavor.\
+Potatoes are tubers from the plant *Solanum tuberosum*, and they're a staple vegetable used in dishes like mashed potatoes, fries, roasts, and soups.\
 """
     )
 
@@ -3732,7 +3938,7 @@ This looks like it could be a Yukon Gold or similar yellow potato variety, which
 async def test_image_url_input_force_download(
     allow_model_requests: None, anthropic_api_key: str, disable_ssrf_protection_for_vcr: None
 ):
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(
@@ -3745,13 +3951,17 @@ async def test_image_url_input_force_download(
         ]
     )
     assert result.output == snapshot(
-        'This is a **potato**. It appears to be a yellow or gold-colored variety, possibly a Yukon Gold or similar cultivar, based on its tan-golden skin and oval shape. The dark spots visible on the surface are typical lenticels (natural pores) found on potato skin.'
+        """\
+This is a **potato**, specifically a yellow-fleshed variety (it looks like a waxy or all-purpose type such as Yukon Gold or a similar yellow potato). You can tell from its smooth, thin, golden-tan skin, oval shape, and the small brown eyes and dots scattered across the surface.
+
+Potatoes are a starchy tuber from the nightshade family, Solanaceae. They're used in countless dishes, including mashed, roasted, fried, or boiled.\
+"""
     )
 
 
 async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(
@@ -3762,7 +3972,7 @@ async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str)
 
 
 async def test_image_url_input_invalid_mime_type(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(
@@ -3772,17 +3982,7 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
         ]
     )
     assert result.output == snapshot(
-        """\
-This is a **dog**, specifically a **Labrador Retriever** (or Lab). You can identify it by its characteristic features:
-
-- Golden/yellow coat color
-- Friendly, smiling expression with tongue out
-- Floppy ears
-- Broad head and muzzle
-- Athletic build
-
-Labrador Retrievers are one of the most popular dog breeds, known for being friendly, loyal, and intelligent companions.\
-"""
+        'This is a **dog**, and it appears to be a **Beagle** (or a Beagle mix). You can tell from the tan, white, and black coloring, the floppy ears, and the white muzzle and chest. The dog is sitting outdoors with its mouth open and tongue out, looking happy and alert.'
     )
 
 
@@ -4009,7 +4209,7 @@ def test_expired_container_error(status_code: int, error_type: str | None, messa
         response=httpx2.Response(status_code=status_code, request=httpx2.Request('POST', 'https://example.com/v1')),
         body=body,
     )
-    assert _is_expired_container_error(error) is expected
+    assert is_expired_container_error(error) is expected
 
 
 def test_model_connection_error(allow_model_requests: None) -> None:
@@ -4090,12 +4290,16 @@ async def test_count_tokens_connection_error(allow_model_requests: None) -> None
 async def test_document_binary_content_input(
     allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
 ):
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(['What is the main content on this document?', document_content])
     assert result.output == snapshot(
-        'The main content on this document is simply the text "Dummy PDF file" displayed as a heading. The document appears to be a placeholder or test PDF file with minimal content - just a single title/heading and otherwise blank space.'
+        """\
+This document is essentially blank. It has one page, and the only content is the heading **"Dummy PDF file"** in bold at the top left. The rest of the page is empty.
+
+It looks like a placeholder or test file, the kind used for checking PDF uploads, viewers, or software workflows.\
+"""
     )
 
 
@@ -4308,7 +4512,7 @@ async def test_anthropic_citations_tool_return_documents(allow_model_requests: N
 
 
 async def test_document_url_input(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     document_url = DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf')
@@ -4316,20 +4520,16 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
     result = await agent.run(['What is the main content on this document?', document_url])
     assert result.output == snapshot(
         """\
-The main content of this document is:
+This document is a **sample PDF file** that contains placeholder text.
 
-**A sample/demonstration PDF file** containing:
+**Structure:**
+- **Title:** "Sample PDF"
+- **Subtitle:** "This is a simple PDF file. Fun fun fun."
+- **Body:** Four paragraphs of "Lorem ipsum" filler text
 
-1. **Title**: "Sample PDF" with the subtitle "This is a simple PDF file. Fun fun fun."
+**About the body text:** Lorem ipsum is scrambled Latin that designers and developers use as a stand-in for real content. It lets them test layout, typography, and formatting without meaningful text distracting from the design. This document has no real information in it.
 
-2. **Body text**: Multiple paragraphs of **Lorem Ipsum** placeholder text - this is dummy text commonly used in design and publishing to demonstrate the visual form of a document without relying on meaningful content.
-
-This appears to be a test or example PDF file, likely used for:
-- Testing PDF readers or software
-- Demonstrating PDF formatting
-- Placeholder content for design purposes
-
-The Lorem Ipsum text itself has no actual meaning - it's derived from Latin but is intentionally scrambled to serve as neutral filler text.\
+**Purpose:** A file like this is typically used to test PDF viewers, uploads, text extraction, or document-processing tools.\
 """
     )
 
@@ -4337,53 +4537,52 @@ The Lorem Ipsum text itself has no actual meaning - it's derived from Latin but 
 async def test_text_document_url_input(
     allow_model_requests: None, anthropic_api_key: str, disable_ssrf_protection_for_vcr: None
 ):
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
     assert result.output == snapshot("""\
-# Main Content Summary
+This is a sample TXT file, created to show what that file type looks like. Its main content is an excerpt from Wikipedia's article on **"John Doe"**, the placeholder name.
 
-This is a **test/example TXT file** (Version 1.0) that demonstrates the plain text file format.
+**Key points from the text:**
 
-## Primary Topic:
-The document explains the use of **placeholder names like "John Doe" and "Jane Doe"** in legal and everyday contexts.
+1. **Placeholder names in legal contexts**
+   - "John Doe" is used for males, "Jane Doe" or "Jane Roe" for females, and "Jonnie Doe" and "Janie Doe" for children.
+   - They stand in for a party whose identity is unknown or must be withheld, and they are also used for unidentified corpses or hospital patients.
+   - The practice is common in the U.S. and Canada but rare elsewhere, including the UK, where it originated. The UK, Australia, and New Zealand use names like "Joe Bloggs" or "John Smith" instead.
 
-## Key Points Covered:
+2. **Other uses of "John Doe"**
+   - It can mean a typical or average male, similar to "John Q. Public" or "Joe Public."
+   - It is often used as a sample name on forms.
+   - It appears in popular culture, such as the Frank Capra film *Meet John Doe* and a 2002 American TV series called *John Doe*.
 
-1. **Legal Usage**: These names are used for parties whose identity is unknown or must be withheld in legal cases
+3. **Variants and related names**
+   - Unidentified children may be called "Baby Doe," as in the "Precious Doe" case in Kansas City.
+   - Other examples include "Cali Doe" and "Princess Doe."
+   - When two anonymous parties appear in one case, "Doe" and "Roe" may be used together, as in "John Doe v. Jane Roe."
+   - Multiple unknown parties can be numbered (John Doe #1, #2, and so on). Operation Delego cited 21 of them.
+   - Older alternatives such as "John Stiles" and "Richard Miles" are now rarely used, and "Mary Major" has appeared in some American federal cases.
 
-2. **Geographic Variations**: \n\
-   - Common in the US and Canada
-   - UK, Australia, and New Zealand use "Joe Bloggs" or "John Smith" instead
-
-3. **Various Applications**:
-   - Unidentified corpses or hospital patients
-   - Typical/generic person examples (like "John Q. Public")
-   - Form-filling examples
-   - Pop culture references (e.g., "Meet John Doe" film)
-
-4. **Related Names**: Baby Doe, Jane Roe, Precious Doe, and numbered variants (John Doe #1, #2, etc.)
-
-## Document Metadata:
-- Created by: online-convert.com
-- Content source: Wikipedia article on "John Doe"
-- License: Attribution-ShareAlike 4.0
-
-The document serves as a functional example file for demonstrating the TXT format while providing informative content about placeholder naming conventions.\
+**Metadata:** The file was created by online-convert.com, and the text comes from Wikipedia under a Creative Commons Attribution-ShareAlike 4.0 license, which allows free use and sharing.\
 """)
 
 
 async def test_text_document_as_binary_content_input(
     allow_model_requests: None, anthropic_api_key: str, text_document_content: BinaryContent
 ):
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(['What does this text file say?', text_document_content])
-    assert result.output == snapshot('The text file says "Dummy TXT file".')
+    assert result.output == snapshot("""\
+The text file contains just one line:
+
+**"Dummy TXT file"**
+
+It looks like a placeholder file, probably used for testing or as a sample, with no other content.\
+""")
 
 
 async def test_uploaded_file_with_text(allow_model_requests: None) -> None:
@@ -4702,7 +4901,7 @@ def test_init_with_provider_string(env: TestEnv):
 async def test_anthropic_model_instructions(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-3-opus-latest', capture=True)
+    m = anthropic_model('claude-opus-5-5', capture=True)
     agent = Agent(m)
 
     @agent.instructions
@@ -4721,24 +4920,25 @@ async def test_anthropic_model_instructions(
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The capital of France is Paris.')],
+                parts=[TextPart(content='The capital of France is **Paris**.')],
                 usage=RequestUsage(
-                    input_tokens=20,
-                    output_tokens=10,
+                    input_tokens=27,
+                    output_tokens=14,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 20,
-                        'output_tokens': 10,
+                        'input_tokens': 27,
+                        'output_tokens': 14,
                     },
-                    cost=Decimal('0.00105'),
+                    cost=Decimal('0.000388'),
                 ),
-                model_name='claude-3-opus-20240229',
+                model_name='claude-opus-5-5',
+                model_id='anthropic:claude-opus-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
+                provider_response_id='msg_011CgNNmg6aTfLBYKQGP8A4B',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4748,8 +4948,10 @@ async def test_anthropic_model_instructions(
 
 
 async def test_anthropic_model_thinking_part(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}, anthropic_effort='max'
+    )
     agent = Agent(m, model_settings=settings)
 
     result = await agent.run('How do I cross the street?')
@@ -4757,38 +4959,42 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=UTC),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='This is a straightforward safety question about crossing the street. I should provide clear, helpful guidance on how to safely cross a street.',
-                        signature='Eo0DCpsBCBIYAipA69qyFi+sCo412EDny7YyS6bZCGAzKzIWQDi9+JvIkWrWp4Ln1nTCZk0bi+3+xTP29JUvmQwNsKw6B9ZbLhwRsjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB3Onv1QYSDKQh/pzKmKY3KNFRkxoMG0gjmaHZ364EjyD8IjAvY2ourooz1iaUcZzAgdPqsJg/1hUvJ8gC+htkUhMZaVrj8g7aQ2MeMK+3hBiG3SMqngHljUCYwl57tiMhfA/T55G+H7CQkUOpTTxnyDrnTbe1vHtaOVRukxsGeKYqa/8HnYHQD8x9H3mnnjy+KBj8GJyShxpSUCSv55If0NlHR2HiUT6MNCqWStfKsP9Ac5+jllBRcs8zfIgtvq6bNZbXiscyscYjV2T1OlQiBMPbbdksZTUHMiegl0mDlUwP1DY8fgR6fL88F9dy73fWLCE3bRgB',
+                        content="""\
+This is a simple, practical safety question, so I should give clear step-by-step guidance: find a crosswalk, stop at the curb, look both directions, use pedestrian signals, and make eye contact with drivers before crossing.
+
+""",
+                        signature='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',
                         provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=43,
-                    output_tokens=277,
+                    input_tokens=16,
+                    output_tokens=834,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 43,
-                        'output_tokens': 277,
-                        'thinking_tokens': 32,
+                        'input_tokens': 16,
+                        'output_tokens': 834,
+                        'thinking_tokens': 316,
                     },
-                    output_reasoning_tokens=32,
-                    cost=Decimal('0.004284'),
+                    output_reasoning_tokens=316,
+                    cost=Decimal('0.008372'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011CfY86N7So5nDSVMmT1gBt',
+                provider_response_id='msg_011CgPFHGLzG9KoGJyuCsGCH',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4809,7 +5015,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=UTC),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4817,33 +5023,41 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 parts=[
                     ThinkingPart(
                         content="""\
-The user is asking for an analogy between crossing a street and crossing a river. This is an interesting question that asks me to think about the similar principles but adapted to a different context.
+I'm mapping the street-crossing framework onto river crossing: finding a safe spot like a bridge or ford instead of a crosswalk, assessing depth and current speed, checking weather and upstream conditions instead of traffic signals, and watching for hazards like debris or strainers the way one would look and listen for cars.
 
-Let me think about the key parallels:
-- Street crossing: safety, finding the right spot, looking for hazards, timing, method of crossing
-- River crossing: similar considerations but adapted to water
+Then I'm filling in the actual technique—communicating a plan, facing upstream while wading with a pole for balance, crossing at a downstream angle, choosing wide shallow riffles over dangerous spots near waterfalls, and knowing what to do if you fall (float feet-first, avoid standing in fast water). I'm planning to keep the same numbered, analogy-driven format as before, pairing each street-crossing step with its river equivalent, like swapping "look left, right, left" for "look upstream, downstream, upstream."
 
-I should provide practical advice for crossing a river safely.\
+I'm now drafting the actual structure: choosing the crossing spot (the "crosswalk"), stopping to scout the edge, and checking conditions like weather and water level before committing. I'm emphasizing that rivers don't yield the way traffic does, so careful site selection and scouting matter even more than on a street.
+
+Then I'm working through the remaining steps—watching and listening upstream and downstream for hazards, communicating the plan with a partner, and preparing gear by keeping shoes on, loosening pack straps, and securing valuables before entering the water.
+
+Next I'd cover crossing technique itself: moving deliberately with small shuffling steps, maintaining three points of contact, and using group formations with the strongest person upstream. I'd also note what to do if someone falls in—floating feet-first on the back rather than trying to stand—and mention boats or rafts as safer alternatives to swimming.
+
+I'm now thinking about structure: whether to open with a compact street-to-river analogy table or weave the comparison into each step's parentheses, and deciding to keep the whole thing concise rather than overly long.
+
+I should also include a safety note — something like even knee-deep fast-moving water can knock an adult off their feet — to reinforce how dangerous crossings can be, then move to writing the final answer.
+
 """,
-                        signature='Es8FCpsBCBIYAipAwOMgDScktpRxOxezSKZlgDv0BuZLzd16JKHtifEj7Gexjinz1tHPsfOKFpDV5Ps2AcRHhy9FLlJ+2nrqsaKvxDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB5env1QYSDOBsWwrA73Lhj5+pyRoM6yekk9bgiyOJWJKAIjBkzvQqpD2HN5Er+Xl6x18dSGuhTbDp7woRb0n2yIbwHSfOfZqVxdpNt8oj63ienHkq4APsDBEEUy7tLmZ0f4AmaHZER9BX9jH4+bYtPUGkBf+oF1a8j0T6v5tNpbG/4aNREh4tmpwYserqz+BiQHNPcnAFJNY9tNrifTHAl8e8xxMOxrTnZOi9SRf8dn/cuVvYbqa5dF7C28GhB1qdEyDaeuzUT1kMbtPytC1sWys4Keo4fpR9lULQynVL95Tt7UBjjjYymstvig2TYrIeBf7ha58fx13WmdM1iX2PnIIaCw6D0euszAwrTavz59RMvovTDcU5A5dQHWRXSB/7BsHu0nxfxSONrcVkgtM/lEraaj81zMXifj72/PRSob4FLzRPZTp1jTasCGJUwJzg6pjOdIBkUqaMrbxc4MLdocLPOkV9jtKiOMMB3VIVqp2Xt+85w9P6WqWJhB4TlT0vOYzOewIt454F+8wA0Jq35w0G2Bt3s4nvPDFxAKFAv5heaaTXE5X3AlmidVb6RlyDPq8+rVzq02tcMjJQicfj4i9nNNNjXJsl+NolxFw3pinctxUezmkNiUZNGto0OI1jsy9ZYWdnJessWUqzBayTmralzFgqpGr/+hxTYBnfdDJlzr9ljuHdkfffNvnAslNXxp0/KGGgcrldzp7G7YEYt4sg8c/8wZlFi2xE+P7yEHg/vEoHoiMYAQ==',
+                        signature='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',
                         provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=307,
-                    output_tokens=440,
+                    input_tokens=877,
+                    output_tokens=2879,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 307,
-                        'output_tokens': 440,
-                        'thinking_tokens': 98,
+                        'input_tokens': 877,
+                        'output_tokens': 2879,
+                        'thinking_tokens': 1928,
                     },
-                    output_reasoning_tokens=98,
-                    cost=Decimal('0.007521'),
+                    output_reasoning_tokens=1928,
+                    cost=Decimal('0.030544'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5054,6 +5268,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                     cost=Decimal('0.001644'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
+                model_id='anthropic:claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5497,6 +5712,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                     cost=Decimal('0.004548'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
+                model_id='anthropic:claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5567,6 +5783,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                     cost=Decimal('0.003111'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
+                model_id='anthropic:claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5673,14 +5890,9 @@ async def test_anthropic_model_thinking_part_from_other_model(
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='How do I cross the street?',
-                        timestamp=IsDatetime(),
-                    ),
-                ],
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5688,58 +5900,51 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        id='rs_0adf9326b12bfdc3006ade2a0a74a887d28e59c8362e628f15',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        id='rs_0adf9326b12bfdc3006ade2a0a74a887d28e59c8362e628f15',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        id='rs_0adf9326b12bfdc3006ade2a0a74a887d28e59c8362e628f15',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        id='rs_0adf9326b12bfdc3006ade2a0a74a887d28e59c8362e628f15',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
-                        provider_name='openai',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        id='rs_0adf9326b12bfdc3006ade2a0a74a887d28e59c8362e628f15',
                         provider_name='openai',
                     ),
                     TextPart(
                         content=IsStr(),
-                        id='msg_68c1fdbecbf081a18085a084257a9aef06da9901a3d98ab7',
+                        id='msg_0adf9326b12bfdc3006ade2a1fd9ec87d2a589b8e65ce1203f',
                         provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
+                    details={'reasoning_tokens': 1600},
                     input_tokens=23,
-                    output_tokens=2211,
-                    output_reasoning_tokens=1920,
-                    details={'reasoning_tokens': 1920},
-                    cost=Decimal('0.02213875'),
+                    output_reasoning_tokens=1600,
+                    output_tokens=2041,
+                    cost=Decimal('0.02043875'),
                 ),
                 model_name='gpt-5-2025-08-07',
+                model_id='openai:gpt-5',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={
-                    'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 10, 22, 37, 27, tzinfo=UTC),
-                    'service_tier': 'default',
-                },
-                provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
+                canonical_system='openai',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'service_tier': 'default'},
+                provider_response_id='resp_0adf9326b12bfdc3006ade2a09836087d2999e7ed1bfb2c2f7',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5750,9 +5955,11 @@ async def test_anthropic_model_thinking_part_from_other_model(
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
         model=AnthropicModel(
-            'claude-sonnet-4-0',
+            'claude-sonnet-5-5',
             provider=AnthropicProvider(api_key=anthropic_api_key),
-            settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+            settings=AnthropicModelSettings(
+                anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}, anthropic_effort='max'
+            ),
         ),
         message_history=result.all_messages(),
     )
@@ -5765,8 +5972,8 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5780,22 +5987,25 @@ async def test_anthropic_model_thinking_part_from_other_model(
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1343,
-                    output_tokens=538,
                     details={
+                        'input_tokens': 1807,
+                        'output_tokens': 4416,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 1343,
-                        'output_tokens': 538,
+                        'thinking_tokens': 3330,
                     },
-                    cost=Decimal('0.012099'),
+                    input_tokens=1807,
+                    output_tokens=4416,
+                    output_reasoning_tokens=3330,
+                    cost=Decimal('0.047774'),
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_016e2w8nkCuArd5HFSfEwke7',
+                provider_response_id='msg_011CgPFMji8cpbnJX7TnCsdg',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5805,8 +6015,10 @@ async def test_anthropic_model_thinking_part_from_other_model(
 
 
 async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}, anthropic_effort='max'
+    )
     agent = Agent(m, model_settings=settings)
 
     event_parts: list[Any] = []
@@ -5834,29 +6046,37 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content=IsStr(),
-                        signature=IsStr(),
+                        content="""\
+This is a straightforward safety question, so I'll give a clear, step-by-step answer covering crosswalks, signals, looking both ways, avoiding distractions, and special cases like missing crosswalks or multi-lane roads, keeping it concise but thorough, possibly noting country-specific traffic direction differences.
+
+I should add other practical tips too: staying visible with bright clothing at night, being extra careful on multi-lane roads where one stopped car can hide another approaching one, crossing straight rather than diagonally if there's no crosswalk, and holding a child's hand. I'll close by offering to tailor the advice if they have a specific scenario in mind, and keep the overall response moderate in length.
+
+""",
+                        signature='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',
                         provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=43,
-                    output_tokens=282,
+                    input_tokens=16,
+                    output_tokens=1257,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 43,
-                        'output_tokens': 282,
+                        'input_tokens': 16,
+                        'output_tokens': 1257,
+                        'thinking_tokens': 708,
                     },
-                    cost=Decimal('0.004359'),
+                    output_reasoning_tokens=708,
+                    cost=Decimal('0.012602'),
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01ALwQ87pTS7hH1PjSdC9wJD',
+                provider_response_id='msg_011CgPEc1JmcvDEKvKXo12cB',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5876,27 +6096,66 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' This is basic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' safety information that could')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' help prevent')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' accidents.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='')),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='EvMCCkYICxgCKkCHP2cSuEdcJK/0rFwqES/ecn+VurRpNTwI4XNyM0vnNfGsc9OmE8YYHauwBZ/uaRpmlEn2I4/kszHlcpptO82JEgyRMSbPkJYaegxYF3AaDHZbSm9EzZ6CM+YtliIw3iNVP/ilYrfoneo8S2+ad/5xSC62nKbk6joLtKmqXgXwYFJRpjIUjM2V7EGReOPRKtoBKfNHVmdNf7SeMhHalX/ObSeJ1G/NjDyGQAsDjyHGd7uY1r5gAIn3Cpdv5r+gHYJmWT+w2uiKZsBDRoSf4O3Km0l752EhPD4InEhqpCKyqhbUZ3dt5+JVKQHk2iyTBhQMB/XBYgZTstIpRqQRXU5ypcrydgnqj3mD1G9C7YC0ZTCNvFluAx0OL8q+cQwufgfqKquLEf2+XMYzhx9jYkVFEpnf/s1nx6gNBATKfF3Dmrs2r4tWu2QJB+FjlRuDp/8dxUxgJbmyhGxb7XsYeb1vgb7wwzDvP/UhjfQYAQ=='
+                    signature_delta='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'
                 ),
             ),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
-                    content='This is a straightforward question about pedestrian safety. I should provide clear, helpful advice about how to safely cross a street. This is basic safety information that could help prevent accidents.',
-                    signature='EvMCCkYICxgCKkCHP2cSuEdcJK/0rFwqES/ecn+VurRpNTwI4XNyM0vnNfGsc9OmE8YYHauwBZ/uaRpmlEn2I4/kszHlcpptO82JEgyRMSbPkJYaegxYF3AaDHZbSm9EzZ6CM+YtliIw3iNVP/ilYrfoneo8S2+ad/5xSC62nKbk6joLtKmqXgXwYFJRpjIUjM2V7EGReOPRKtoBKfNHVmdNf7SeMhHalX/ObSeJ1G/NjDyGQAsDjyHGd7uY1r5gAIn3Cpdv5r+gHYJmWT+w2uiKZsBDRoSf4O3Km0l752EhPD4InEhqpCKyqhbUZ3dt5+JVKQHk2iyTBhQMB/XBYgZTstIpRqQRXU5ypcrydgnqj3mD1G9C7YC0ZTCNvFluAx0OL8q+cQwufgfqKquLEf2+XMYzhx9jYkVFEpnf/s1nx6gNBATKfF3Dmrs2r4tWu2QJB+FjlRuDp/8dxUxgJbmyhGxb7XsYeb1vgb7wwzDvP/UhjfQYAQ==',
+                    content="""\
+This is a straightforward safety question, so I'll give a clear, step-by-step answer covering crosswalks, signals, looking both ways, avoiding distractions, and special cases like missing crosswalks or multi-lane roads, keeping it concise but thorough, possibly noting country-specific traffic direction differences.
+
+I should add other practical tips too: staying visible with bright clothing at night, being extra careful on multi-lane roads where one stopped car can hide another approaching one, crossing straight rather than diagonally if there's no crosswalk, and holding a child's hand. I'll close by offering to tailor the advice if they have a specific scenario in mind, and keep the overall response moderate in length.
+
+""",
+                    signature='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',
                     provider_name='anthropic',
                 ),
                 next_part_kind='text',
             ),
-            PartStartEvent(index=1, part=TextPart(content='Here are'), previous_part_kind='thinking'),
+            PartStartEvent(index=1, part=TextPart(content='# How to'), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
@@ -5927,226 +6186,104 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-- Stop\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' at')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' the curb and')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' look')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' left, right')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-, then left again
--\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Wait for a')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' clear')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' gap')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- in traffic
-- Walk\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' br')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='iskly but')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=" don't run")),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-- Keep\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' looking')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for traffic as')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you cross')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-
-**General\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- safety tips:**
-- Put\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' away')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' phones and remove')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' head')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-phones
--\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Wear bright')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' reflective clothing in')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' low light')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-- Never\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' assume')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' drivers')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' see you')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
--\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Avoid crossing between')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- parked cars
-- Walk\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' facing')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' traffic')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' when there')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="'s no")),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' sidew')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-alk
-
-**In\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' busy')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' urban')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- areas:**
-- Follow\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' pedest')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='rian signals strictly')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-- Be\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' extra cautious of')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' cyclists')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' bike')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- lanes
-- Watch\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for buses')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and large')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' vehicles with')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' blind')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- spots
-
-The\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' key is to')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' be visible')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', alert, and predict')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='able in')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' your movements. Always')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' prioritize safety over speed')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' when')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' crossing')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' streets.')),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartEndEvent(
                 index=1,
                 part=TextPart(
                     content="""\
-Here are the basic steps for safely crossing the street:
+# How to Cross the Street Safely
 
-**At intersections with traffic lights:**
-- Wait for the pedestrian "Walk" signal
-- Look both ways before stepping into the street
-- Make eye contact with drivers when possible
-- Stay alert for turning vehicles
+## Basic steps
+1. **Choose a safe spot.** Use a crosswalk or intersection with a signal if you can. Avoid crossing near curves, hills, or parked vehicles that block your view.
+2. **Stop at the curb.** Stand a step back from the edge.
+3. **Check the signal.** If there's a button, press it and wait for the "walk" symbol (usually a white walking figure).
+4. **Look and listen.** Look left, right, then left again. In countries where traffic drives on the left (UK, Japan, Australia), check right, left, then right. Watch for turning cars, bikes, and scooters.
+5. **Make eye contact with drivers.** Don't assume they see you.
+6. **Walk, don't run.** Go straight across at a steady pace and keep scanning for traffic.
+7. **Finish crossing.** If the signal starts flashing while you're already in the street, keep going. If it's flashing before you step out, wait for the next one.
 
-**At intersections without signals:**
-- Use crosswalks when available
-- Stop at the curb and look left, right, then left again
-- Wait for a clear gap in traffic
-- Walk briskly but don't run
-- Keep looking for traffic as you cross
+## Extra safety tips
+- **Put your phone away** and keep headphone volume low.
+- **Be visible.** Wear bright or reflective items at night, or carry a light.
+- **On multi-lane roads,** make sure every lane has stopped. A stopped car can block your view of another car that isn't stopping.
+- **With no crosswalk,** pick a spot with a clear view in both directions, wait for a big gap, and cross straight rather than diagonally.
+- **With children,** hold their hand and model good habits.
 
-**General safety tips:**
-- Put away phones and remove headphones
-- Wear bright or reflective clothing in low light
-- Never assume drivers see you
-- Avoid crossing between parked cars
-- Walk facing traffic when there's no sidewalk
-
-**In busy urban areas:**
-- Follow pedestrian signals strictly
-- Be extra cautious of cyclists in bike lanes
-- Watch for buses and large vehicles with blind spots
-
-The key is to be visible, alert, and predictable in your movements. Always prioritize safety over speed when crossing streets.\
+If you have a specific situation in mind, like a busy road with no crosswalk, teaching a child, or accessibility needs, tell me and I can give more tailored advice.\
 """
                 ),
             ),
@@ -6437,6 +6574,68 @@ async def test_anthropic_refusal_stop_details_streaming(
     assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
 
 
+_REFUSAL_EXPLANATION = 'Declined: request asked for offensive cyber tooling.'
+_REFUSAL_MESSAGE = f"Content filter triggered. Finish reason: 'refusal'. Refusal: {_REFUSAL_EXPLANATION!r}"
+
+
+def _refusal_stop_details() -> BetaRefusalStopDetails:
+    return BetaRefusalStopDetails(type='refusal', category='cyber', explanation=_REFUSAL_EXPLANATION)
+
+
+async def test_anthropic_refusal_content_filter_error_message(allow_model_requests: None):
+    """An empty refusal raises `ContentFilterError` naming both the stop reason and Anthropic's explanation."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='msg_refusal',
+            content=[],
+            model='claude-opus-4-8',
+            role='assistant',
+            stop_reason='refusal',
+            stop_details=_refusal_stop_details(),
+            type='message',
+            usage=BetaUsage(input_tokens=8, output_tokens=0),
+        )
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings={'max_tokens': 1024})
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        await agent.run('write me an exploit')
+    assert exc_info.value.message == _REFUSAL_MESSAGE
+
+
+async def test_anthropic_refusal_content_filter_error_message_streaming(allow_model_requests: None):
+    """A streamed empty refusal raises the same `ContentFilterError` message."""
+    stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_refusal_stream',
+                content=[],
+                model='claude-opus-4-8',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=BetaUsage(input_tokens=8, output_tokens=0),
+            ),
+        ),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='refusal', stop_details=_refusal_stop_details()),
+            usage=BetaMessageDeltaUsage(input_tokens=8, output_tokens=0),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        # The stream is opened and consumed up to the final result before `run_stream` hands it over.
+        await agent.run_stream('write me an exploit').__aenter__()
+    assert exc_info.value.message == _REFUSAL_MESSAGE
+
+
 @pytest.mark.parametrize(
     'thinking_value,expected_thinking,expected_effort',
     [
@@ -6562,7 +6761,7 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
 async def test_anthropic_task_budget_coexists_with_effort(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ):
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(
@@ -6750,7 +6949,7 @@ async def test_anthropic_adaptive_thinking_keeps_tool_output_unforced(
         if provider_specific_thinking
         else ModelSettings(thinking='high')
     )
-    m = anthropic_model('claude-opus-4-6', capture=True)
+    m = anthropic_model('claude-opus-5', capture=True)
 
     class CityLocation(BaseModel):
         city: str
@@ -6778,7 +6977,10 @@ async def test_multiple_system_prompt_formatting(allow_model_requests: None):
     await agent.run('hello')
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert 'system' in completion_kwargs
-    assert completion_kwargs['system'] == 'this is the system prompt\n\nand this is another'
+    assert (
+        completion_kwargs['system']
+        == f'this is the system prompt\n\nand this is another\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
+    )
 
 
 async def test_non_leading_system_prompt_wraps_as_user_message(allow_model_requests: None):
@@ -6799,7 +7001,7 @@ async def test_non_leading_system_prompt_wraps_as_user_message(allow_model_reque
     await agent.run('continue', message_history=message_history)
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['system'] == 'You are helpful.'
+    assert kwargs['system'] == f'You are helpful.\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
     wrapped_contents = [
         block['text']
         for msg in kwargs['messages']
@@ -6905,7 +7107,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
 def test_usage(
     message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent], usage: RunUsage
 ):
-    assert _map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
+    assert map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
 
 
 def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
@@ -6937,7 +7139,7 @@ def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
             ],
         )
     )
-    mapped = _map_usage(message, 'anthropic', '', 'unknown')
+    mapped = map_usage(message, 'anthropic', '', 'unknown')
     assert mapped.input_tokens == 212
     assert mapped.details['input_tokens'] == 23  # still accessible on `details`
     attributes = mapped.opentelemetry_attributes()
@@ -6963,9 +7165,9 @@ def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
 
 def test_streaming_usage():
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
-    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    initial_usage = map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(delta=Delta(), usage=BetaMessageDeltaUsage(output_tokens=5), type='message_delta')
-    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    final_usage = map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(input_tokens=1, output_tokens=5, details={'input_tokens': 1, 'output_tokens': 5})
     )
@@ -6978,13 +7180,13 @@ def test_streaming_usage_thinking_tokens():
     cassette cannot protect because the matcher replays whatever delta was recorded regardless.
     """
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
-    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    initial_usage = map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(
         delta=Delta(),
         usage=BetaMessageDeltaUsage(output_tokens=5, output_tokens_details=BetaOutputTokensDetails(thinking_tokens=3)),
         type='message_delta',
     )
-    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    final_usage = map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(
             input_tokens=1,
@@ -6998,17 +7200,17 @@ def test_streaming_usage_thinking_tokens():
 def test_map_usage_bedrock_start_event_without_message():
     """On Bedrock the SDK drops SSE event types, so Bedrock-only chunks are non-validating
     `construct_type`d into `BetaRawMessageStartEvent(message=None)`, violating the annotation.
-    `_map_usage` must not dereference `message.message.usage` on such events (https://github.com/pydantic/pydantic-ai/issues/5774).
+    `map_usage` must not dereference `message.message.usage` on such events (https://github.com/pydantic/pydantic-ai/issues/5774).
 
     A unit test rather than VCR: the `message=None` event is an SDK construct artifact, not a
     server response shape, so it can't be elicited from a recorded request.
     """
     # `model_construct` skips validation, mirroring the SDK's `construct_type` on Bedrock.
     start = BetaRawMessageStartEvent.model_construct(type='message_start', message=None)
-    assert _map_usage(start, 'anthropic', '', 'unknown') == snapshot(RequestUsage())
+    assert map_usage(start, 'anthropic', '', 'unknown') == snapshot(RequestUsage())
 
     existing = RequestUsage(input_tokens=7, output_tokens=3)
-    assert _map_usage(start, 'anthropic', '', 'unknown', existing_usage=existing) == existing
+    assert map_usage(start, 'anthropic', '', 'unknown', existing_usage=existing) == existing
 
 
 async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_model_requests: None):
@@ -7087,11 +7289,11 @@ def test_streaming_usage_with_compaction():
         ),
         type='message_start',
     )
-    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    initial_usage = map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(
         delta=Delta(), usage=BetaMessageDeltaUsage(input_tokens=23, output_tokens=500), type='message_delta'
     )
-    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    final_usage = map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(
             input_tokens=212,
@@ -7119,7 +7321,7 @@ async def test_anthropic_model_empty_message_on_history(
 
     Check <https://github.com/pydantic/pydantic-ai/pull/1027> for more details.
     """
-    m = anthropic_model('claude-sonnet-4-5', capture=True)
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run(
@@ -7131,38 +7333,35 @@ async def test_anthropic_model_empty_message_on_history(
     )
     assert request_capture.body()['system'] == snapshot([{'type': 'text', 'text': 'You are a helpful assistant.'}])
     assert result.output == snapshot("""\
-I'd be happy to help you get a potato! Here are a few ways I can assist:
+I can't hand you a real potato, but here's a virtual one: 🥔
 
-1. **If you need to buy potatoes**: I can suggest where to find them (grocery stores, farmers markets, supermarkets like Walmart, Kroger, Safeway, etc.)
+If you need one for something specific, I can help with:
 
-2. **If you need potato recipes**: I can share cooking ideas like baked potatoes, mashed potatoes, french fries, potato soup, etc.
+- **Cooking:** recipes for baked, mashed, roasted, or fried potatoes, or tips like how long to boil them
+- **Gardening:** how to grow potatoes at home
+- **Substitutes:** what to use if a recipe calls for one and you're out
+- **Something else:** a science project, a potato battery, a costume, or whatever you have in mind
 
-3. **If you need growing tips**: I can provide information on how to grow potatoes in your garden
-
-4. **If you need substitutes**: I can suggest alternatives if you're out of potatoes for a recipe
-
-What specifically would you like to know about potatoes?\
+What do you need it for?\
 """)
 
 
 async def test_anthropic_web_search_tool(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-sonnet-4-0', capture=True)
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'})
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
 
     result = await agent.run('What is the weather in San Francisco today?')
-    # The native tool declaration and `tool_choice` as actually sent. `tool_choice` is `None` here
-    # while the cassette still records `{'type': 'auto'}`: requests carrying no function tools stopped
-    # sending it when #3611 added the `tool_choice` setting. Pre-existing drift that the lax cassette
-    # matchers hid — this PR adds the detection, it did not change the behaviour.
+    # The native tool declaration and `tool_choice` as actually sent: a request carrying no function
+    # tools sends no `tool_choice`.
     assert (request_capture.body()['tools'], request_capture.body().get('tool_choice')) == snapshot(
         (
             [
                 {
                     'name': 'web_search',
-                    'type': 'web_search_20250305',
+                    'type': 'web_search_20260209',
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -7177,246 +7376,186 @@ async def test_anthropic_web_search_tool(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=UTC),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content="""\
-The user is asking about the weather in San Francisco today. This is asking for current, real-time information that would require a web search since weather conditions change frequently and I need up-to-date information. According to the guidelines, I should search for current conditions or recent events, and this clearly falls under that category.
-
-I should search for San Francisco weather today to get the most current information.\
-""",
-                        signature='Et0ECkYIBxgCKkCXTXBKWJ3QYffHphenTDDE5jxo/vbyyvFuY7Gi5PGLYFdjxF0KQ4BGT7bGzB53hSRPgJtjUD975U7TZ4f9IheWEgy4pMKmvEJ0D9XDrxsaDDpjMZqhX/EnpJmjGyIwreKtd2Xj+RpguF1YI50dldiwk6qQNW2rK+xLwmWY5qF75b7WZrmOZ3endXYEQjBMKsQDmsnYnUODvD5Uh/yRIUgOp+6P5JrYjLabtsC3wfuIISLVe5QhC/3Ep7K/x55u97qy/DIhCAOz38x4YId37Pqq8XARrRq5CPwzxBzsMfPwpeV5eRHLQmasZxpOhivd1lMLC7B6D9EdpWefKWE+Ux1cMxpfaQj45cpMn93qLyCLGtNqnZJ2nPT7eoOtavZ9VvN5LsJOIWYEkxK+iq/6XYSJE5JlqBtDt9Y5P1QT/QnhFwfxjD/Cs3+RrGzKp2loEjmeYzNBwEfbY+pyKHJUS3bsxWyyi0d9Gc6Zfj4Xiuf/G0ninvXpSQheXi5gcvqIir6ZhcC40vHwvdVtJipSLkqMoPQcppCTOa2ATFyLKZIlug2OjoWIHrC5xnkCuKLXVMtHTF0mdrW0R/SgecnequYprzPeCc+Niqf4CVk62qtp+H06oWKQvHbP+s7kuAbdnhJjkcETiN8fP7+eLzKjRFAVnT0tixaNFjB6lWbg2ePyQDhqeVn6i/ULCzKyoY/hSIfZXUFwTCSDW42WvITFfPfWBBW+p6R/8peJ/KS2q0wHT2G3N4N7xFaNLOTXE0iPPtWsdqZw4cNQi9IUGKayqZ+/02tJYaEYAQ==',
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args="{\"code\": \"r = await web_search({\\\"query\\\": \\\"San Francisco weather today\\\"})\\nfor i,x in enumerate(r[:5]):\\n    print(i, x.get('title'), x.get('url'), x.get('page_age'))\\n    print(x.get('content','')[:800].replace('\\\\n',' '))\\n    print('---')\"}",
+                        tool_call_id='srvtoolu_01PipHV6fag6qe2vYY8XXsch',
                         provider_name='anthropic',
                     ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'San Francisco weather today'},
-                        tool_call_id='srvtoolu_01EoSNE7k4dUJyGatASCV5qs',
+                        tool_call_id='srvtoolu_01KG5V9uUBUy6HFE2ATi8dB7',
                         provider_name='anthropic',
+                        provider_details={
+                            'anthropic_caller': {
+                                'tool_id': 'srvtoolu_01PipHV6fag6qe2vYY8XXsch',
+                                'type': 'code_execution_20260120',
+                            }
+                        },
                     ),
                     NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
                                 'encrypted_content': IsStr(),
-                                'page_age': '6 days ago',
-                                'title': 'San Francisco, CA Weather Forecast | AccuWeather',
+                                'page_age': '247 days ago',
+                                'title': 'San Francisco, CA Weather Forecast, Conditions, and Maps',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.yahoo.com/us/ca/san-francisco/',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco, CA Weather forecast, Conditions and Maps - Yahoo Weather',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.yahoo.com/en-sg/us/ca/san-francisco/',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '81 days ago',
+                                'title': 'San Francisco, CA Current Weather',
+                                'type': 'web_search_result',
+                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '9 days ago',
+                                'title': 'San Francisco, CA Weather Forecast',
                                 'type': 'web_search_result',
                                 'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
                             },
                             {
                                 'encrypted_content': IsStr(),
-                                'page_age': '6 days ago',
-                                'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
+                                'page_age': '3 days ago',
+                                'title': 'San Francisco, CA Weather Forecast',
                                 'type': 'web_search_result',
-                                'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
+                                'url': 'https://www.foxweather.com/local-weather/california/san-francisco',
                             },
                             {
                                 'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
-                                'type': 'web_search_result',
-                                'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
-                                'type': 'web_search_result',
-                                'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': '1 week ago',
-                                'title': 'National Weather Service',
-                                'type': 'web_search_result',
-                                'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': '1 week ago',
-                                'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
-                                'type': 'web_search_result',
-                                'url': 'https://www.nbcbayarea.com/weather/',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
+                                'page_age': '9 days ago',
                                 'title': 'San Francisco, CA Current Weather - The Weather Network',
                                 'type': 'web_search_result',
-                                'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
+                                'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current',
                             },
                             {
                                 'encrypted_content': IsStr(),
-                                'page_age': '6 days ago',
-                                'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                                'type': 'web_search_result',
-                                'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
+                                'page_age': '304 days ago',
+                                'title': 'San Francisco, CA Hourly Weather Forecast',
                                 'type': 'web_search_result',
                                 'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
                             },
                             {
                                 'encrypted_content': IsStr(),
-                                'page_age': '1 week ago',
-                                'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
+                                'page_age': None,
+                                'title': 'San Francisco, California, United States Weather Forecast',
                                 'type': 'web_search_result',
-                                'url': 'https://abc7news.com/weather/',
+                                'url': 'https://www.msn.com/en-xl/weather/forecast/in-San-Francisco,%20California',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'Five Day Forecast San Francisco',
+                                'type': 'web_search_result',
+                                'url': 'https://stripe.jhu.edu/news/five-day-forecast-san-francisco',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco Weather Forecast California, United States of America',
+                                'type': 'web_search_result',
+                                'url': 'https://www.weatherapi.com/weather/q/san-francisco-2550230',
                             },
                         ],
-                        tool_call_id='srvtoolu_01EoSNE7k4dUJyGatASCV5qs',
+                        tool_call_id='srvtoolu_01KG5V9uUBUy6HFE2ATi8dB7',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={
+                            'anthropic_caller': {
+                                'tool_id': 'srvtoolu_01PipHV6fag6qe2vYY8XXsch',
+                                'type': 'code_execution_20260120',
+                            }
+                        },
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'encrypted_stdout': IsStr(),
+                            'return_code': 1,
+                            'stderr': IsStr(),
+                            'type': 'encrypted_code_execution_result',
+                        },
+                        tool_call_id='srvtoolu_01PipHV6fag6qe2vYY8XXsch',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
-                    TextPart(
-                        content="""\
-Based on the search results, here's the weather information for San Francisco today (September 16, 2025):
-
-**Current Conditions:**
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Temperature: 66°F with clear skies',
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args='{"code": "print(type(r), str(r)[:1500])"}',
+                        tool_call_id='srvtoolu_016Mhr9UiXu2TbA9UATC8FTc',
                         provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
                     ),
-                    TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Wind: W at 3 mph with gusts up to 5 mph',
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': IsStr(),
+                            'type': 'code_execution_result',
+                            'abort_reason': None,
+                        },
+                        tool_call_id='srvtoolu_016Mhr9UiXu2TbA9UATC8FTc',
+                        timestamp=IsDatetime(),
                         provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
                     ),
-                    TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Air quality is poor and unhealthy for sensitive groups',
+                    ThinkingPart(
+                        content='',
+                        signature='CAQSmgYKEAgTGAI4AUIIdGhpbmtpbmcSDGIsSAFlqWIKKqL2ShoMQnAcQSrDf2A1C7FLIjDXNO5JTg8C2vslDU5hBHb/1Az3xM7JtYbsvy53kglFp6B/WcCRnRBsdP/eFj/OLpAqtwXxkpIH4V1ZKe7/sSMxoqxhqLuds4RFfAXAM8LDnvH4ckl0qzBFF2UW2eal0OyZn7SgZ3jEeja75yGPoFNsy3LAEk4AwEMX6eckPT+roklXzmaq5vm8ASSZJjmdVmsxfh5h0Ox0/RHnal1jbSz3go8K4hAfznzcmOR205jCvV44otKA/0Za9zZYrtZ/eezcGAWS6y6MqXiTFFIPh6ODqwboYciVHkftPeq6CV8DFWYlsi5zJYsFu2K/t51FlxUJ1931H09gm9h12oMLa/0ZJOlu2tC+Kaqd5jUZ+blfK/CSLMzVnL7GnO62+37JAGCUisjXno3c+vWNi+BTQZPLWlkSiXerw1ihIt9VV3TKtC97WRikXB0Vk9Qk1iFenesPQ+ZITTZve0ZtFSBEwsw2RoHDuLyuJTmTO+K3Ih6S9WRXyNWiqZ6D2Fuu3FiAPB3F7Hl4IQvYkP7gOB7eyDcf5teXDzUcM+veyhV9EF2yrkiXBG+gCeqopF9iROsWlEcsCxQwKoX9YQhPaqLI3A1BnVQSK5MxUVatXkKqh28KVHigapXp9EalbOLqL5M0fZM2oh+f0xkfyjYVBSflk3b14Z1Kwdb4qN1jWdhrgIPYfFBBTqv1zMHUfLzimtkNnPODusc2UItPrSqCA2YkKizbZ2AZ1Ea8FjI4r/WRU9+zuQI94CZyVektZJvoAEI/X8c+cKjgvW4tTZ46j/PfpmKnxxCnmU/zMH64NiFpRQtiVw69tfAklmCdo/OrxCr00BvETn0dKjVr+Ed8qRx5xgbhdbJACe66wloMiV28LpvuHchBRZydTXEYnn8aYLEKCgndz6Q7XR/F5xBRSHRcocMzHjDnG6GeStTPa8O2kcxSzcHe2ymX66VwoYamBs9vtA8Ar44fG5rvCBRwxniQ2T5JNUTGuu+0yl9GCRgB',
                         provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
+According to Yahoo Weather, San Francisco is mostly sunny today, with a high of 69°F and a low of 52°F. It was 67°F at the time of the snapshot, and the page lists RealFeel at 68°F.
 
+- **Wind:** Light, around 8 mph from the northwest or west.
+- **Evening:** It cools gradually, to about 62°F by 7 PM and the mid-50s by midnight.
+- **Sun:** Sunrise is around 7:27 AM and sunset around 6:21 PM.
 
-**Today's Forecast:**
-- \
-"""
-                    ),
-                    TextPart(
-                        content='High: 78°F with partly cloudy skies',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Winds W at 10 to 20 mph',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(
-                        content='8% chance of precipitation',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Some clouds in the morning will give way to mainly sunny skies for the afternoon',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-
-**Tonight:**
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Low: 57°F with clear to partly cloudy conditions',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Winds W at 10 to 20 mph',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-
-Overall, it's a pleasant day in San Francisco with mild temperatures and mostly sunny conditions, though the air quality is poor, so sensitive individuals should limit outdoor activities.\
+The page may not be fully up to date, so check a live source like weather.gov or the Yahoo Weather page for current conditions.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=8984,
-                    output_tokens=520,
+                    input_tokens=20194,
+                    output_tokens=484,
                     web_searches=1,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 8984,
-                        'output_tokens': 520,
+                        'input_tokens': 20194,
+                        'output_tokens': 484,
+                        'thinking_tokens': 63,
                         'web_search_requests': 1,
                     },
-                    cost=Decimal('0.044752'),
+                    output_reasoning_tokens=63,
+                    cost=Decimal('0.055228'),
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_0119wM5YxCLg3hwUWrxEQ9Y8',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_014eo6GTSsDHL4Tb1T31jivt'},
+                provider_response_id='msg_011CgPJ2NDPJ1bB9P8Ap2iqZ',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -7434,230 +7573,160 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=UTC),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content='The user is now asking about the weather in Mexico City today. I should search for current weather information for Mexico City.',
-                        signature='EqgCCkYIBxgCKkAhyrWtc4MfwZtLCpH/f41h3xS0UBTKetW5LA6ADj/q/8G5GiD+31L8MWU5+8QbLKrdzKIr5RZTEmval6pjPCxwEgygcM1WHSKHKa3PiscaDDtaNmY6L04w/DaCFSIw4mjvUNimq2ShpHNyVrezsnnXaRyyt2Ei4Iik2sCgzARFHGyDNzerHS/aCxzMR8MFKo8BVo7IxMBObxJIn43oG4aHroTyH4tX0IB3HPE1L1O/RZ9HfrmCc/KJwvIc79klaolMdyFvc343GJbssZxF1YJ+8YgGJtrzsKaawjsNelJBqkNWdF/TFwY0G+zGS90yWmHp4hFylIib5OTYz1Dm8O066biiZps8EDkINIoiIfkslPdnP3FWiCl9g6+gSiJd+WwYAQ==',
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args="{\"code\": \"import json\\nr = await web_search({\\\"query\\\": \\\"Mexico City weather today\\\"})\\nif isinstance(r,str): r=json.loads(r)\\nfor i,x in enumerate(r[:5]):\\n    print(i, x.get('title'), x.get('url'), x.get('page_age'))\\n    print(x.get('content','')[:600].replace('\\\\n',' '))\\n    print('---')\"}",
+                        tool_call_id='srvtoolu_01DLwgmLwRdDk4UaUR5mLf45',
                         provider_name='anthropic',
                     ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'Mexico City weather today'},
-                        tool_call_id='srvtoolu_01SnV7n4h3ZQtz14JriSp4xa',
+                        tool_call_id='srvtoolu_017HE14GWW1z3am5UdtNvuws',
                         provider_name='anthropic',
+                        provider_details={
+                            'anthropic_caller': {
+                                'tool_id': 'srvtoolu_01DLwgmLwRdDk4UaUR5mLf45',
+                                'type': 'code_execution_20260120',
+                            }
+                        },
                     ),
                     NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
                                 'encrypted_content': IsStr(),
-                                'page_age': '1 month ago',
-                                'title': 'Weather Forecast and Conditions for Mexico City, Mexico - The Weather Channel | Weather.com',
+                                'page_age': '22 days ago',
+                                'title': 'Mexico City, MX Weather Forecast, Conditions, and Maps',
                                 'type': 'web_search_result',
-                                'url': 'https://weather.com/weather/today/l/6121681b2c5df01145b9723d497c595c53ae08104787aa1c26bafdf2fb875c07',
+                                'url': 'https://weather.yahoo.com/mx/distrito-federal/mexico-city/',
                             },
                             {
                                 'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'Mexico City, México City, Mexico Weather Forecast | AccuWeather',
-                                'type': 'web_search_result',
-                                'url': 'https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': 'August 12, 2025',
-                                'title': 'Weather Forecast and Conditions for Cuauhtémoc, Mexico - The Weather Channel | Weather.com',
-                                'type': 'web_search_result',
-                                'url': 'https://weather.com/weather/today/l/Cuauht%C3%A9moc+Mexico?canonicalCityId=7164197a006f4e553a538a0b73c06757',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'Mexico City, CMX, MX Current Weather - The Weather Network',
-                                'type': 'web_search_result',
-                                'url': 'https://www.theweathernetwork.com/en/city/mx/ciudad-de-mexico/mexico-city/current?_guid_iss_=1',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'Mexico City, Mexico 10-Day Weather Forecast | Weather Underground',
-                                'type': 'web_search_result',
-                                'url': 'https://www.wunderground.com/forecast/mx/mexico-city',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': 'August 12, 2025',
-                                'title': 'Mexico City, Mexico Weather Conditions | Weather Underground',
+                                'page_age': '11 days ago',
+                                'title': 'Mexico City, MX Weather Conditions',
                                 'type': 'web_search_result',
                                 'url': 'https://www.wunderground.com/weather/mx/mexico-city',
                             },
                             {
                                 'encrypted_content': IsStr(),
-                                'page_age': 'June 19, 2025',
-                                'title': 'Weather for Mexico City, Ciudad de México, Mexico',
+                                'page_age': '13 days ago',
+                                'title': 'Mexico City, CMX, MX Current Weather - The Weather Network',
                                 'type': 'web_search_result',
-                                'url': 'https://www.timeanddate.com/weather/mexico/mexico-city',
+                                'url': 'https://www.theweathernetwork.com/en/city/mx/ciudad-de-mexico/mexico-city/current',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '0 days ago',
+                                'title': 'Mexico City, Distrito Federal, MX Weather Today: Hourly Forecast',
+                                'type': 'web_search_result',
+                                'url': 'https://www.weatherbug.com/weather-forecast/hourly/mexico-city-distrito-federal-mx?day=today',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '855 days ago',
+                                'title': 'Mexico City, México City, Mexico Current Weather',
+                                'type': 'web_search_result',
+                                'url': 'https://www.accuweather.com/en/mx/mexico-city/242560/current-weather/242560',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '0 days ago',
+                                'title': 'Mexico City Weather Forecast',
+                                'type': 'web_search_result',
+                                'url': 'https://windbornesystems.com/weather/mexico/&gsessionid=09dWUR6SEm-9EIRUWYfTEZC5xTUMNYIFdlwhWo41E-Ejnt6E17snNA/',
                             },
                             {
                                 'encrypted_content': IsStr(),
                                 'page_age': None,
-                                'title': '10-Day Weather Forecast for Mexico City, Mexico - The Weather Channel | weather.com',
+                                'title': 'Mexico-City, Ciudad-de-México Weather Forecast',
                                 'type': 'web_search_result',
-                                'url': 'https://weather.com/weather/tenday/l/6121681b2c5df01145b9723d497c595c53ae08104787aa1c26bafdf2fb875c07',
+                                'url': 'https://www.msn.com/en-us/weather/forecast/in-Mexico-City,Ciudad-de-M%C3%A9xico',
                             },
                             {
                                 'encrypted_content': IsStr(),
                                 'page_age': None,
-                                'title': 'Yr - Mexico City - Hourly weather forecast',
+                                'title': 'CDMX, Iztapalapa, Mexico City, Mexico Weather Forecast',
                                 'type': 'web_search_result',
-                                'url': 'https://www.yr.no/en/forecast/hourly-table/2-3530597/Mexico/Mexico%20City/Mexico%20City?i=0',
+                                'url': 'https://www.msn.com/en-us/weather/forecast/in-Mexico-City,%20CDMX',
                             },
                             {
                                 'encrypted_content': IsStr(),
                                 'page_age': None,
-                                'title': '10-Day Weather Forecast for Cuauhtémoc, Mexico - The Weather Channel | weather.com',
+                                'title': 'Climate of Mexico',
                                 'type': 'web_search_result',
-                                'url': 'https://weather.com/weather/tenday/l/Cuauht%C3%A9moc+Mexico?canonicalCityId=7164197a006f4e553a538a0b73c06757',
+                                'url': 'https://en.wikipedia.org/wiki/Climate_of_Mexico',
                             },
                         ],
-                        tool_call_id='srvtoolu_01SnV7n4h3ZQtz14JriSp4xa',
+                        tool_call_id='srvtoolu_017HE14GWW1z3am5UdtNvuws',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={
+                            'anthropic_caller': {
+                                'tool_id': 'srvtoolu_01DLwgmLwRdDk4UaUR5mLf45',
+                                'type': 'code_execution_20260120',
+                            }
+                        },
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'encrypted_stdout': IsStr(),
+                            'return_code': 0,
+                            'stderr': '',
+                            'type': 'encrypted_code_execution_result',
+                        },
+                        tool_call_id='srvtoolu_01DLwgmLwRdDk4UaUR5mLf45',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
-                    TextPart(
-                        content="""\
-Based on the search results, here's the weather information for Mexico City today (September 16, 2025):
-
-**Current Conditions:**
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Temperature: 59°F (15°C) with clouds and sun',
+                    ThinkingPart(
+                        content='',
+                        signature='CAQSmgYKEAgTGAI4AUIIdGhpbmtpbmcSDBdFsoH5QTTB3H0aYxoMyMG77HlWoavkTJ1eIjDnvC2hsTWBCAzgACBxUBvU5NCRXte3q5oNKLzXkvCOz3keLqxLEg1CDDefI4lmZn4qtwVxdPQP5CPScL35D9doFtexRKQNwLdfHecBeznwssz7oxXd+YgKWOPnPtuzMoAOBZAJyCprYdzqulK8P4CJ99Hk/vYHlcibqvdJCLiysjqp73Du3w97X6AUXtAU2DBnScOdeA1De8g/R08lGEhTbEyjQ60R/HlGdxClfpPJYJyMhZKg+J2PE8jiRcShtZZ6waYBSSelpkQn4nagxulGgfQNme6zQG8hrstn4nZbDqcJOpqgHwRVdK5dIiMxpo4cGf2NAd1FoQhWheOgz04EZluLpWQG/88YYVkW3gr3yXwUg9ukYM5i3VfQpf/eHIQHceacX+O1gNJsQKUm+bACQO4SLDObq7UMOxeUKOm5ODSnKxFBWZDeTL1p26XVAJdaU0SpFKBLcKN0uNc598Tckioe29gTwAk6CBSX+muOdFvZsiNkm9knfsoYwFT5+Ol/a58yqL6I42Gp8eEQVe9X080m3ymzPr87cfN7GpRrwtn1iem6gB7MKcBgOgniafhauJXgpNP5gnnk+jl7AYT9RiJB1LureZdrCtZMR2kxXjS6auu5XV4NdeFGVef/5k03hZi4GsdECeS5GfPY/FmPUcP/TAlZLjC0aGUKeHcYOwBBCZPRQK8jGS5eVylR4tjzqBhwVsliadaJto8+Heaov9Jtfops22V9myuc1ekkmqDSXr3XyC4OLCosg84uLHkhGqh281nuK4kUDOHtZqTi7t/cV24/alZ/YXpwZMHF6VVDdc342lDzVdiJCc2I3RVpKZO6cXA0E84r5Fc6S7y657In/dHFfzXxA0GzvFvW+UTeyp1RPqx0lRHsCAeqHw/1JolgF1yTWyvA/+Ia/xjAKKc7vt8AmSuyZSP+LPD1PSlBXGr6ydt6lW31CFSm5P8Od9ocKPYOExlqG0AHSEbnLn6FOTe3cswOVhgB',
                         provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
+The sources I found for Mexico City don't agree, and most are cached pages that may be days old, so treat this as approximate. The freshest result, WeatherBug's hourly forecast, shows it **cloudy and about 60°F** this evening. That's with a 5% chance of rain, light north-northwest wind around 5 mph, gusts to 10 mph, and 60% humidity.
 
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Wind: NNE at 6 mph with gusts up to 6 mph',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
+Other snapshots, from different days, give a similar picture:
+- **Weather Underground:** Overcast, with a high near 69°F and a low near 52°F. It listed a low chance of rain and north winds of 10 to 20 mph.
+- **The Weather Network:** Partly cloudy, with a high of 23°C (73°F) and a low of 13°C (55°F), and a 20–30% chance of rain.
+- **Yahoo Weather:** Showers with a high of 64°F and a low of 51°F, and a 60% chance of rain. This page looked about three weeks old.
 
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Air quality is poor and unhealthy for sensitive groups',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-
-**Today's Forecast:**
-- \
-"""
-                    ),
-                    TextPart(
-                        content='High: 72°F (22°C) - mostly cloudy with a touch of rain this afternoon',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(
-                        content='High 73F with partly cloudy conditions early followed by scattered thunderstorms. Winds NNE at 10 to 15 mph, 70% chance of rain',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Scattered thunderstorms developing during the afternoon. High near 75F with winds NNE at 10 to 15 mph and 70% chance of rain',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-
-**Tonight:**
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Low: 58°F with cloudy conditions and a couple of showers',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Cloudy overnight with low 57F and winds NNW at 10 to 15 mph',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-
-Mexico City is experiencing typical rainy season weather with moderate temperatures, high humidity, and afternoon thunderstorms expected. Like San Francisco, the air quality is poor, so those with respiratory sensitivities should take precautions.\
+Mexico City is at high altitude, so mild days and cool nights are typical. It's worth bringing a light jacket, and an umbrella if the rainy-season showers are in the forecast. For a reliable current reading, check a live source such as the Servicio Meteorológico Nacional or the Weather Underground page.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=19859,
-                    output_tokens=544,
+                    input_tokens=18060,
+                    output_tokens=631,
                     web_searches=1,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 19859,
-                        'output_tokens': 544,
+                        'input_tokens': 18060,
+                        'output_tokens': 631,
+                        'thinking_tokens': 48,
                         'web_search_requests': 1,
                     },
-                    cost=Decimal('0.077737'),
+                    output_reasoning_tokens=48,
+                    cost=Decimal('0.05243'),
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01Vatv9GeGaeqVHfSGhkU7mo',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_014eo6GTSsDHL4Tb1T31jivt'},
+                provider_response_id='msg_011CgPJ35kDq6dRp1Kd57bLh',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -7669,8 +7738,8 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
 async def test_anthropic_model_web_search_tool_stream(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-sonnet-4-0', capture=True)
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'})
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
 
     event_parts: list[Any] = []
@@ -7688,7 +7757,7 @@ async def test_anthropic_model_web_search_tool_stream(
             [
                 {
                     'name': 'web_search',
-                    'type': 'web_search_20250305',
+                    'type': 'web_search_20260209',
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -7713,277 +7782,200 @@ async def test_anthropic_model_web_search_tool_stream(
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content="""\
-The user is asking about the weather in San Francisco today. This is clearly a request for current, real-time information that changes daily, so I should use web search to get up-to-date weather information. According to the guidelines, today's date is September 16, 2025.
-
-I should search for current weather in San Francisco. I'll include "today" in the search query to get the most current information.\
-""",
-                        signature='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args='{"code": "r = await web_search({\\"query\\": \\"San Francisco weather today\\"})\\nfor i, x in enumerate(r[:5]):\\n    print(i, x.get(\\"title\\"), x.get(\\"url\\"), x.get(\\"page_age\\"))\\n    print(x.get(\\"content\\", \\"\\")[:600].replace(\\"\\\\n\\", \\" \\"))\\n    print()\\n"}',
+                        tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7',
                         provider_name='anthropic',
                     ),
                     NativeToolCallPart(
                         tool_name='web_search',
-                        args='{"query": "San Francisco weather today"}',
-                        tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                        args={'query': 'San Francisco weather today'},
+                        tool_call_id='srvtoolu_01Uz9RVTqKcsiR6t8YDsSmP8',
                         provider_name='anthropic',
+                        provider_details={
+                            'anthropic_caller': {
+                                'tool_id': 'srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7',
+                                'type': 'code_execution_20260120',
+                            }
+                        },
                     ),
                     NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
-                                'encrypted_content': IsStr(),
-                                'page_age': '6 days ago',
-                                'title': 'San Francisco, CA Weather Forecast | AccuWeather',
+                                'encrypted_content': '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',
+                                'page_age': '247 days ago',
+                                'title': 'San Francisco, CA Weather Forecast, Conditions, and Maps',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.yahoo.com/us/ca/san-francisco/',
+                            },
+                            {
+                                'encrypted_content': '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',
+                                'page_age': None,
+                                'title': 'San Francisco, CA Weather forecast, Conditions and Maps - Yahoo Weather',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.yahoo.com/en-sg/us/ca/san-francisco/',
+                            },
+                            {
+                                'encrypted_content': 'EowLCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDO1jc9muieHmC8wuoRoMvR0NDjwIOg6WaJfhIjDduNbImggEv9KTlWkA1J+YbsWLsOnO1ZthafuUDytTA01FnKSicFiuv40OLGsaRjoqjwqmVZ5eNK4RHLZp+nnmDhsHaBXlsAVj9RWSUex+Q7K1O5Jfy6N9PtZSo1KxVoAnKskWeHsNJpgb+2wB4TyYgpOGHWT5oZOuD7ZtB740IFX8ARdILH5p679sZUtMNWmdH8yTJa7SUGp0W90x2UdvB1VP3hDwvByYe7KJaGzEAsGKEDcVJ1zsmX7JacFQrGF5TyxdCNa7jtweOMyoySPFZeyk4qKfwuWhFBe4REHg9+LcL6v0stMmVIlnHyMTk+2LMiD92nCp40G5+W4Xp7NnjoVXZJ+Px+NPFf5szg/M6u+1sRZxfI3fi0O11HccDDomgvgyAvaVhxQs2qpvk2wcfhI3csG55H2PbtptXfORWA/ucwSJY5JvrTc4QUSvTPnQqN37S2JULUNCb1lHsZ24msdD02RX7nnN6qyzeVK/RXukogTPG/YRPPpjMJUAq/IUa/K6vOJDJD7ZXODM6H3HIRT8HlsWYfDRlHOxg4cR7V4vE96I+GsWUcLUy0IwS+jcFLHdGmW5dEKqsMfZTW4fGwbpF0BGLPYhdb0wkANmolhRMYyCHK6StjjCWQ9hDcD5U8tx665s9N/lqCRSGfpgvsNIRYHmWfYW9f/4+MfOkTamN2LNpXeTOShD33bHDAbTPwEuAtoAEAcCveO+YQfYSgAFWlKcXw26nOKGrggsHh7h2b6yHDT54bHlRjk46tklHXnPFrTRC7hTyo+CoBNoQUKEqIz/nf3ly+F3Uny8lqxX5NRu+Kd1+gP1totLYXj/MuDMKhcaqauenJemFdD2QNRwL7FDDaLBTa9j7NrmrX2IQQQ6f3IoyKs9wkz6pp4J7IuQco93oIUs0tX+zt7RT8Z34kU3Ip/ntwIymdOlw8UrIoNfnOpDoptIHmWyjN6190ds0O3+cnkLmDu3lnMXoeYS7KvKOtAmewvUCKCqMzJFxsy7MXLuEBbM/AbXBYGlYgpcYMkbGE/XeeFOJOGt7mMvXxGilNWoQ1ZUadrnfun8gWMK+aqtCPqKE7JBNNpKKV5us15kPn7+D8zgmnCNOso3XNpwRgiZFgC524RCRvOAf7gxTtwD04tQ3EXyS0h3caGyRKb8+2X0/5JLpGrqclngDKqineDBD3gxTMEhh3FzdwoV0qWORhyWEjKqprem3f1BwpVB9X8FIBCoijnh1NjQtb0r3yPUjewm/kGVhTNgZ/kVsoB2Qm7YttkhxGsYMB5Z0k2YCpY/Wds6g1kYM9918/zb5CaCgWNIDDu+BwNYxbHB96V6246YIrU8hA2gQngbwzkqfj34LIphKf8Nr7z19rkjt1oGqYE4OHL4PFvAlPrxayXdOLV5bcl0vt93tVG45K2a+IvERsrQLa6CkF976vygbzQTOuC/0RFTSyUvMyrEkofJtelab7AJ3MkMNAGDpGV7OFmu0KD2X0IurVjHzFLz7bmJ+TX78md01ueMctRCaVYmG0W80pYikjp5ZUn5BYY+5WuWxLBVYCIreGFOZ2TvuKuanZ0XMvOp0+jvhnPj39E4ibeqZ4jpp3gPsv63LC7yIFbFEK+rf9QTV7lt29gZINb396dXKgA8HbBoQXIoGhx9jQwfihtWShZ9fGEvkWA4M8LkYai7ZoMb31jxcAJDohSM6qvaLVEEegGIh3TLg0E0EgwRMey7HNmPDD8jL2fGoGMpUgtKpBEBxpLsMzy6clMfpjyJEu2AWNW6eAd7QjSq1tSHIoNxairS5hgD',
+                                'page_age': '81 days ago',
+                                'title': 'San Francisco, CA Current Weather',
+                                'type': 'web_search_result',
+                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629',
+                            },
+                            {
+                                'encrypted_content': 'EpwJCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDIr7SYuoqqiGWxRBqhoMBN4BIuA44HRGDbc/IjAfrksYnXWyj/jdP3UhmpajH/ATUwlyMuo6IVUcv0DgCgzAgoeAT4iEzXfymjHFt6wqnwjFNFY3M9wRecbz6RRlTiOE15VL9CFK+Bb/rOsyAAipcV1M2pJgZwlzNrkXwxLPfwV3V0XhAc0qk/4cV6lTb4aRWNq2Nx/CHZqEB+v2sTbKiH5la6rSsJq2mpJqGG5Zh+FJk0ZcvXOIP8/8AiUW2NEpaMq0BBKwAe7IZ5XruVXX2KGc6YzQGUwm9rzJuxi6lK3SaUCmFpIjUlwV9EHip9M3CTy7mXM8fMM3c4MbGjbel3ALJddVM1e5+vB4mAroj+3uyO5HXwQdSrrFSuRGTButo3KO6ry8OaiQCqOtHJRibjO319PIA/vTkA20LS14BjcXW2PknP10n2kNaLEGxZZTsZNEpoW6bvZzxLYrJ15/7mRxZ4ikmelyaY3uW1Kpf8RA7IcD53GvGfksPhWHvLnwDOA6733n+w4LN0x7Zkg8xflIGab3QxFxwJeI/nvnBtS//CaPdoxSFfiS1ftRKqU9bCdBGl4BGfYTiMvyGZOI34P/HX2BcxbIMan5SK+HNS8UZSzn3iTiEGYZqwhvZcP3J3xjbXikmHrVCw1CSagoY1njWWaBgY45Lv1IsH++Br7zUYgMsFsK0rzJWoqEuRZXfOBqGlx+OipgUVAwvgiiK51xIKxWTxRk0hj3usjFV0fvXItpkH8OZo+ejS90RxqDYlZsucdv6gPF1dbm//HOqfbBBZPx42mA8dw6thfY17mjY5y0YsbuL2yQOYQZ4swRSzLb47hOEtwrXz/QjS+g8obYEO69xXByOzlpQHngJIf+DrlYMBrNuJA7c0BMl9FeuKVudMsF8h6HDARF3Gx1L9wMJ267MUAg1dAAfxLJn/ElZifmmCSUpu7BPhMgLSSlAVxtsELtjrZRSRzSllmN3NfeC+4xczXgTzQcvkHzIPW8IgGzEMcOi2CvB7SlhAwmFu22qwkd+5N9B2rWx43wtD1E+2lXhcxU1uxkULCBKMLr92oiR98DLe6pRIHFYIZj54kdJIAy1cU3kFOPhazvLLakt/T2r6MMkbxMlTOjpGCikKiQ/CD4duSBsYvvnyNVxNacZcgcitknRUuaPWziO7yXzOWhJGGjRvtEA74shM1kRDMLsHc6CZXpq/l4RprS0wZ0ElfloBES7FPBabpDGQbtIORiCurQzyjqbZT05/PdqqdWJs/4nNJfPBhY6Jvm3d44LACPeIZq5Gu1j4gsI/Az1m7hK9fcA0ySgVWd8JR3wDr7s23LZNwMN74VDas5ix9eppqUFvSwJO8Nd/AVGG5q4dppNHgwI88e8aRUCYuPvVxmuoElCUH6b+7jRfz0mlbF7xigVGmbwMCQ54/lkYV0lBI12hEANNIz8TEFN6SHzbx4bqJcX1clRCqRXx9F181l9fDqHL5XFHD3XYK2n2i0928zbBdCAw1UWC2CEhgD',
+                                'page_age': '9 days ago',
+                                'title': 'San Francisco, CA Weather Forecast',
                                 'type': 'web_search_result',
                                 'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
                             },
                             {
-                                'encrypted_content': IsStr(),
-                                'page_age': '6 days ago',
-                                'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
+                                'encrypted_content': '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',
+                                'page_age': '2 days ago',
+                                'title': 'San Francisco, CA Weather Forecast',
                                 'type': 'web_search_result',
-                                'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
+                                'url': 'https://www.foxweather.com/local-weather/california/san-francisco',
                             },
                             {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
-                                'type': 'web_search_result',
-                                'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
-                                'type': 'web_search_result',
-                                'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': '1 week ago',
-                                'title': 'National Weather Service',
-                                'type': 'web_search_result',
-                                'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': '1 week ago',
-                                'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
-                                'type': 'web_search_result',
-                                'url': 'https://www.nbcbayarea.com/weather/',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
+                                'encrypted_content': 'EogQCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDPuKE2nPQjUV3b0kMxoMxw2dxrsmth06erC8IjAiANdbhMECkE0cjbpifRz5CMCZOgB6Q9cXoDnHjkAT6YF86x79hARGzZK32cbLfUAqiw8OJJXAWz2c5RPYK0PmnKBzMlUYtTkpzMIqbGzgx+vaB92IxfvQX7vVFgQaHKDYe+A3wcT93uO53ypLJLoKXzuG5tVupfWXZPuNsEeCybBiWvbJGQPRU5A2JJJk09lGrwNNgYBSrBf/YqS4lxZ87nPY4O22p6AfWWbd9hKbLnNt+t9sfQ/tnH7zL4Gr624uy1i45trzwQIMEYXzu7NAQHvHlSpj+cqaKMGLOikWd+H6G/q6zLt1jmyWHUxJOSlNp1yntyW1tov7GsZ3h6usHolMtMwiVtgSc47R9sn2njkZyTkfhaWAcJIOZr83Gi2Pwmpeahpt70IgU6UpPihESm2y1xd6wkx7U7AwWW+70mMwETR2fwaMVFPpXXOxPUd/udWM+k+r/bIzY9jUG+3aqWiFcdeSIWmFPBatBBbdLrcSfjq4S4pDLdaozjeKTA6LPIY7kSoOeeaFJkpCBBrvzQGpzywjxb850HbSqHDLCqJl5MP9q+j15u1ZP8IqlMZbNYBSbRkOrOmIVlob9OOWDT3GOb5Z2bdO8nZIbGJcP0xs5+2lrc0HAVWC7wYTkduHJ6ZpKoUB04SeFn1E0c6KYh4DZsCAG1qe0ZbJ0QFJ+P1R85U/KDJKdfbofocHTWNzpmolGgxvApq3Hg9M+CNcjB5cRlR98dBLujPP0p+7oFBGYYT78MqURwJYeHuwJK1ZGKQKdcAWfpkncbqpOVqTyJvpHC8K28w6mRxlENXQjMNRDlCUrkZay+bOKs+Yv6w9pKGm8YHREyOWadrWrF50sze4PXuOg2CHPhImvVabPcTwmM7aq8r56ASCdfee+Vpxo3XktmrznrqqvOxwMAW5Z2RaWK9BJErDrlVJZ4OaECBt5jlcEZmdoUcAKZthFA55eZrIC3mXJ8M6OvSOORxrhlS5gGaPBiT4ubpY7qYlGHgJFmKf6cOxstRzpWkly50LJ4wOUQiLxlmfBQQcI4YdWZdCgxkaISTGI+HcEAttv51ntlH7XIwJ9U8nqwGiXvKA/VVHGqbfDSnm7/w7gtCbria0EMBQobm6CjzgPiwu763JkwBuwxS19fjy2UEqsoNoRA61IYRl0FMoGjtVws+EFKGSF/ZQS9Aim3MDE3MaP+V890+5C0ZQ0xoN58Cbx+SFC3Z/vLKz0meBIeP6Qewm43RA1xWMqrwxhAReRPsQiF22K/umAjbNuwWtaRCGRYIfftwndlbK7X51L5k9MbV4JjlsBRR/yCQhlEfDZaCY/1xJYWbPBjzHyEx68hc5zQzp9QiZ9reLonS0crDTqpLDRd89O0e/MmqzaEM6cu8uJIc+9Z4RMMoPyg1k6Ivd97FcWZ+xynaES/DcTfU5oUaR/P4G2dJZRpkVJGX/sN+bI9oMthmSwkvdhWknMYHugLdQWV9u57kVJTQLj4sM7LB/HCEIql1smiYyFEQ7qIEmHE8NiCs1A3qndUsKX2/voJuMePuyIs3ADYRUCEzMF6wh68+Nz8bBgwMOYZLrwnTSD44SIuuoKdAMrplFI5bzjlp0YUVdTebof5I5iKOPA+QY4xy5W3aVZ6qk4Xr01XPScGG4uUPToGlUYfVh0XOjxwYHGx8Yo4Y54wrmmvpcnJrz5Eb5Dr8so5961IhIeckBgAvju8WPlwya55Yq7zu0WNFg9M2EpBDPZWjbztIcj7OBp0Wsfilvug1mq05pjZ3Xf2IJ0vJi0q63Punhk0WVpwQSK2XWofIGRg6bIpmPh5Ou2quZZlv7CoUGKAXFY68LbBQ9o1pGqKc5q72g79AGHXR+R71YOpAmEfO/yxdi3pRi8q22UJ8izcMqV6NivkakdLyhGjDVjaMP2Dz35OZjcQ6es/mhE9W5lBVqkNisntTOOVDOu4l3C1blgGUTtoMnh7uxc82JGxseGneYnwOlwJ1msucl7Q6UybG+f2iEbeafBMd5CZ/VcddF7t1cUNT6gfYnprcZCBfNwgaRa/rLWohPi1neiXq7i/mYueYCYhAhClhvww31Jq2oHsTqLsUJh9Fi+cRuL2k4JPeGxs1g8+inWhkBPgeHJWsvRGQfQ2nPgPXjn1+BJZGCIHzOHNI+arhQr1tHvS/o3KTYeuIbfMA3gYvgHMn7+prU1XF3sAI8uwq5F25imKHeM8M8zJLnLSCtovM9ZuK+stL+sLMIcOCYKgcI8h8NZzaey/kYlw0mX6Q4lh4/D5nQX+B3s9NPMHoj6cbzwtl137ToRGetJZJhSImIIWmQ+KD2kY2o0BR95U7VUiELm5oqDpDJ+i8OTOTPtySmSmSVWXghjtJzo90WlQfJ7YZASWmHiQ6/8lwcmbPUcKjlBWSBEkci3NmE5kOsO9HPBfQaPOFm9cSq8nTAkcnJmMn/63d/eS2EToekCtpeUizGunM2623ob0bgEgaHCTSYpjDY5tX6pZRlMXY9w53KomJjD303/AzLC+ED+Qgqzp8r1eAkHXjQ6vFO74GZFFezOn1oCQLl6Dks8Z0Z63LiH4ltulMMgpCVJBj6C7wL4naPRSBFlGcrBbKg4+UhLVSURwyZUeWcmDbI5kpqiS4dDLEL7GG50DyJFRgD',
+                                'page_age': '9 days ago',
                                 'title': 'San Francisco, CA Current Weather - The Weather Network',
                                 'type': 'web_search_result',
-                                'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
+                                'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current',
                             },
                             {
-                                'encrypted_content': IsStr(),
-                                'page_age': '6 days ago',
-                                'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                                'type': 'web_search_result',
-                                'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
+                                'encrypted_content': 'Eq0GCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDNKLGC9Hu0ukgoq6yRoMxp4TN4UFMOgkyE0xIjDqw4pCf98bYHPV/zKSwNbnCU/7MxEVK40TXYM3GoeBSoF5HjEtHxGS3fkmis9NmCQqsAXGJdmf42X3cel27Q37A3D7dNzc75qMI+yajgRZgCn/bFptSnaikzwUvzkqDUdxnSiOVjOTTCPdnvWQh/z8OAceI3t9QH5kVqtHZ3T+Cvm2GRjiGdHj9QF4BiYNyvk2T2oJSoLSCifbuYLgKZWe81AYmybWXVS3KPA6C1zbrFkFvgf9i0J75zHj4qnH50/pRp0JOV+Gb2R+HcJuMLkHU8otZLa3C/GIG0RUSG2XSTB+Fp5ImDlBRfYavXjmXMR5+Xs2PyFjBIoVYcjoE5WvDqJER7uzHltrH02Twin9Ne8DIiRjsJ39vOtj1GJIriyrrwJHzJhoWyiizV7cY0i3J5VcIMp3IxSfqb++Jtu7UAIb+UbnWVxZV+Q3SDEX2W+PGyiR9hX8elcNJfhkMp7VemeIz998LAqosnh7lkLESRSgehNLc5sTwi6J+0x0k8ve1PzlWMpILwr8i30UWF8/QC1klaRVqwbZnK+AtKOwbWB39hpG4hKaH3e3SwKJSSTbwcUztbc0QLDnv34m2zGalTJMQyZ4ZKW6RAVCMNcbW5zic+OCRpT24KeNKDfmf3+CYf/WXznc/8FEn9AbQPA12IAYHso8aYm2r0f1E242jrWGJaW1DtFJNI4TDQWOI4pbZqZ8HDmnic3b/w6TkDgtKhXRmNGJpku8FWTWgOZtW1qyWkqdVvpa0XTdk5J8f2tRMrSnPV3HX4kaiSvV/v+Q2QCTvoXhoqYLxknuGo7fpAmqIAZ5+YQyJ1Q24OlWbwYpFC5+KtVkQc2+vrwDfDUuoMBpC6bLkKuYMiQzYhCQec+6V4yKmMHlwm/6G0+YAhbhUs/TYqsBxzJ4nCZBcmvVF24seE7zPjkiRx5bzFgL33D5NZceUhY/V5skjRE7NCWSLvqD69jlJnNL4Dai6fY05IXtGAM=',
+                                'page_age': '304 days ago',
+                                'title': 'San Francisco, CA Hourly Weather Forecast',
                                 'type': 'web_search_result',
                                 'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
                             },
                             {
-                                'encrypted_content': IsStr(),
-                                'page_age': '1 week ago',
-                                'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
+                                'encrypted_content': 'Eu4FCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDOiw1GXc1Poqjsp70BoMS5rmH48qqZget+XkIjCa0KtcGYeCvtX3AZl/Oj10kGIDsljAV5VjbLhoTSJNriVC+wts0DmLpQaTl9S9NL4q8QQuWh+2fkpGBtNprYxSBfzC4Bnaz09PqffV4PwU6PI5ssOiEa+7rVp/rFb+d05tvlsw8zznxJEvtMjdgnl7k3avUGwkyo/ZU2B9hFk8x75z4cECsFDAUtm4OZcDlCd/K042nXwKJbydF0QQ3L9fhfUUpOb7ccQJh6WSwk4wjw98JVjjYNTjyYlfSuPMx9UUrrU7rw5Etf+v4HQWtMTxtNoHRAYxcyJIF9LRCsHlI1R00HKU4gCUIZIkBPEoOJU/dSw3QYthOQxA2h0JdJnHs2J8CS3DSpVq5kp3sqWZhi4lh8idjEin3qDpanGeLrUNmmAdSclnK2laeFaMnapv0UKFs9lWzP4lokCEDyUZbwzMF/6kP8dGedROVRjavJaG1jtp+FkiYBMW2v+0XNFKZ36rby0oBQrvSDW1ZP6V2D29lEalgO4jLTm0V99ettosKG7pxXkIS1I+nD9jChU+ON8G6QOecmXuKux1ExcPX60o4Ik/hrgHV+4c9x0oZ9q2oT3Rh94E3qSIBm6AdJYDsQ1wahAGdQ/IWRG7fOFLAsdHU+Zsze5dbkm8s+Y1inHYkLqyAeCPqYAJ7YpidiMKZt6SDS/u+gT7QzwLALsnNplwhfOWkQq4N4DGsU84xDEaJpT1H9+42Iqp5xSBXOp8UjTLyBiHQ3TA5aZAV5E4aTA2eCWA5hZiaUfAfula/mF7EybQK+iQh3PABtNfjRFx+waZdtPNuyHyyURFG4ins+1e2+iADIE54vgyhc/jQsgpruMCUPXI4dAdbB1oKesKY5ICCh0PShlxLcka/yOYLj9KMulWAjzkC4mvfyR8MU5/p1HeGAM=',
+                                'page_age': None,
+                                'title': 'San Francisco, California, United States Weather Forecast',
                                 'type': 'web_search_result',
-                                'url': 'https://abc7news.com/weather/',
+                                'url': 'https://www.msn.com/en-xl/weather/forecast/in-San-Francisco,%20California',
+                            },
+                            {
+                                'encrypted_content': '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',
+                                'page_age': None,
+                                'title': 'Five Day Forecast San Francisco',
+                                'type': 'web_search_result',
+                                'url': 'https://stripe.jhu.edu/news/five-day-forecast-san-francisco',
+                            },
+                            {
+                                'encrypted_content': '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',
+                                'page_age': None,
+                                'title': 'San Francisco Weather Forecast California, United States of America',
+                                'type': 'web_search_result',
+                                'url': 'https://www.weatherapi.com/weather/q/san-francisco-2550230',
                             },
                         ],
-                        tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                        tool_call_id='srvtoolu_01Uz9RVTqKcsiR6t8YDsSmP8',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={
+                            'anthropic_caller': {
+                                'tool_id': 'srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7',
+                                'type': 'code_execution_20260120',
+                            }
+                        },
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'encrypted_stdout': 'Eo4BCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDF1rucVxednaODlaoRoMwvoLkREiqI8TwfttIjAzj0lP4rRPmP39MvRoRJFWXv++rCt1GXJDU7b4j4KhS5m3KkweGZpEv93qgGbYOIMqEudQT77u00wyTgLUXsgW4xpg/xgD',
+                            'return_code': 1,
+                            'stderr': """\
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/asyncio/runners.py", line 190, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/asyncio/base_events.py", line 654, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/tmp/srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7/cell.py", line 10, in <module>
+    print(i, x.get("title"), x.get("url"), x.get("page_age"))
+             ^^^^^
+AttributeError: 'str' object has no attribute 'get'
+""",
+                            'type': 'encrypted_code_execution_result',
+                        },
+                        tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
-                    TextPart(
-                        content='Based on the search results, I can see that the information is a bit dated (most results are from about 6 days to a week ago), but I can provide you with the available weather information for San Francisco. Let me search for more current information.'
-                    ),
                     NativeToolCallPart(
-                        tool_name='web_search',
-                        args='{"query": "San Francisco weather September 16 2025"}',
-                        tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                        tool_name='code_execution',
+                        args='{"code": "print(type(r), str(r)[:1500])"}',
+                        tool_call_id='srvtoolu_01KZCsUJvJhExkMJeX2fP1CE',
                         provider_name='anthropic',
                     ),
                     NativeToolReturnPart(
-                        tool_name='web_search',
-                        content=[
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'San Francisco weather in September 2025 | Weather25.com',
-                                'type': 'web_search_result',
-                                'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'Weather in San Francisco in September 2025 (California) - detailed Weather Forecast for a month',
-                                'type': 'web_search_result',
-                                'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'San Francisco, CA Monthly Weather | AccuWeather',
-                                'type': 'web_search_result',
-                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'Weather San Francisco in September 2025: Temperature & Climate',
-                                'type': 'web_search_result',
-                                'url': 'https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'San Francisco weather in September 2025 | California',
-                                'type': 'web_search_result',
-                                'url': 'https://www.weather2travel.com/california/san-francisco/september/',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'San Francisco, Weather for September, USA',
-                                'type': 'web_search_result',
-                                'url': 'https://www.holiday-weather.com/san_francisco/averages/september/',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'Monthly Weather Forecast for San Francisco, CA - weather.com',
-                                'type': 'web_search_result',
-                                'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': '3 weeks ago',
-                                'title': 'September 2025 Weather - San Francisco',
-                                'type': 'web_search_result',
-                                'url': 'https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': None,
-                                'title': 'San Francisco Weather in September | Thomas Cook',
-                                'type': 'web_search_result',
-                                'url': 'https://www.thomascook.com/holidays/weather/usa/california/san-francisco/september/',
-                            },
-                            {
-                                'encrypted_content': IsStr(),
-                                'page_age': '4 days ago',
-                                'title': IsStr(),
-                                'type': 'web_search_result',
-                                'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
-                            },
-                        ],
-                        tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '<class \'str\'> [{"type": "web_search_result", "title": "San Francisco, CA Weather Forecast, Conditions, and Maps", "url": "https://weather.yahoo.com/us/ca/san-francisco/", "content": "San Francisco. Mostly Sunny today with a high of 69\\u00b0F and a low of 52\\u00b0F. \\u2026 Stay ahead with real-time alerts on the Yahoo Weather app.\\n\\n# San Francisco\\n67\\u00b0\\n\\nRealFeel\\u00ae 68\\u00b0\\n\\nMostly Sunny today with a high of 69\\u00b0F and a low of 52\\u00b0F.\\n\\nH\\n\\n69\\u00b0\\n\\nL\\n\\n52\\u00b0\\n\\n7:27 AM\\n\\n6:21 PM\\n\\n## Next 8 days\\n1 in+/hr\\n\\n50%\\n\\n0.5 in/hr\\n\\nPrecipitation\\n\\nChance\\n\\nRate\\n\\nWind\\n\\nMPH\\n\\nNow\\n\\n67\\u00b0\\n\\n8 NW\\n\\n5 PM\\n\\n65\\u00b0\\n\\n9 W\\n\\n6 PM\\n\\n64\\u00b0\\n\\n8 W\\n\\n6:21 PM\\n\\nSunset\\n\\n8 W\\n\\n7 PM\\n\\n62\\u00b0\\n\\n7 W\\n\\n8 PM\\n\\n61\\u00b0\\n\\n6 W\\n\\n9 PM\\n\\n59\\u00b0\\n\\n6 W\\n\\n10 PM\\n\\n56\\u00b0\\n\\n6 W\\n\\n11 PM\\n\\n55\\u00b0\\n\\n5 W\\n\\nMidnight\\n\\n54\\u00b0\\n\\n4 SW\\n\\n1 AM\\n\\n54\\u00b0\\n\\n4 SW\\n\\n2 AM\\n\\n54\\u00b0\\n\\n4 SW\\n\\n3 AM\\n\\n54\\u00b0\\n\\n4 SW\\n\\n4 AM\\n\\n53\\u00b0\\n\\n4 SW\\n\\n5 AM\\n\\n52\\u00b0\\n\\n4 SW\\n\\n6 AM\\n\\n51\\u00b0\\n\\n4 SW\\n\\n7 AM\\n\\n52\\u00b0\\n\\n4 W\\n\\n7:28 AM\\n\\nSunrise\\n\\n4 W\\n\\n8 AM\\n\\n52\\u00b0\\n\\n4 NW\\n\\n9 AM\\n\\n54\\u00b0\\n\\n4 N\\n\\n10 AM\\n\\n56\\u00b0\\n\\n4 E\\n\\n11 AM\\n\\n59\\u00b0\\n\\n5 E\\n\\nNoon\\n\\n61\\u00b0\\n\\n6 NW\\n\\n1 PM\\n\\n63\\u00b0\\n\\n6 W\\n\\n2 PM\\n\\n65\\u00b0\\n\\n7 W\\n\\n3 PM\\n\\n64\\u00b0\\n\\n7 W\\n\\n4 PM\\n\\n64\\u00b0\\n\\n9 W\\n\\n5 PM\\n\\n61\\u00b0\\n\\n9 W\\n\\n6 PM\\n\\n59\\u00b0\\n\\n8 W\\n\\n6:19 PM\\n\\nSunset\\n\\n8 W\\n\\n7 PM\\n\\n58\\u00b0\\n\\n7 W\\n\\n8 PM\\n\\n57\\u00b0\\n\\n7 W\\n\\n9 PM\\n\\n57\\u0\n',
+                            'type': 'code_execution_result',
+                            'abort_reason': None,
+                        },
+                        tool_call_id='srvtoolu_01KZCsUJvJhExkMJeX2fP1CE',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
-                    TextPart(
-                        content="""\
-Based on the search results, I can provide you with information about San Francisco's weather today (September 16, 2025):
-
-According to AccuWeather's forecast, \
-"""
-                    ),
-                    TextPart(
-                        content='today (September 16) shows a high of 76°F and low of 59°F',
+                    ThinkingPart(
+                        content='',
+                        signature='CAQSqgYKEAgTGAI4AUIIdGhpbmtpbmcSDJW8dg3tJ6+CXcndPhoMyY+BmCMYTZBJj4jXIjBBR8qsPriR/ntTyc2dmdnCTvUzow9FcMNvUXHBN278UVz10i6HZTmkYls0D9ZAdUkqxwU1O6LeiH3pFoOl6SYwDxKMrZMjPkZlD/yB2g5XU9YoyzuIK/02TiRAXyVC3kbPeRbSeOCMtYaRnZQG2YbRCndROC5EW5NeZkANilKKjYV2mBbZpnJa1p8lyOkI4q46L+6MEueq+U1d2jAJL8uYXioOIsZ6i9IHnC0k7yTWOq4kCK1fKTEiKc233OSlerQRQb+YWffvOMuRJXaR2fTnujkwghyZabno3KEJYx21Y6Kq8PT4ofkTbDcdbDCLOGK9vduMChR6f1UIw6PWBHuLwLjNn0MpNRBl3Yfpm+XU/fm7NIXEa1KoXh9MHXQlrUjBnXbITJgt5KXd4qXc1NMLvSkpBjyk8F2XVXAfuOaJPkX8e0hMke6Ol/DLIyzb1xFuh0dNGh3jaSt6g5xzZD1yMm9N6qHesh0W3oGY6KV/6mHQqBxZLZpkbeecqa4VG9d90lzM5xBVoA/+LnSqDJRmUdPjNF2K52tUM9WPX2I2GDHGQhZvsi5lsQKNHvns06gXvCdnmwG9JM13OVRmVRD5oPWK7iOqAMLIr1VqU+CDHr7+Lx+2+NNiNU747b+ZKVASNjNGrLOh5qucA7mAq7Coh9PpcO4isxuSGfEM4zchHNPlzySDtm0473ASkJAtCg4JuB10Sf0T/zdJx5bpizgU0fAHVlEGEi7iH0Lm8QtIPRoc+Qn9JmzbRLw/Aev046gDMOa2yZUsHbjR/krITBscP5+3mlZOAEOyr/9NXyjfa/mPE32mKQkAk7PLrjRrLqgyIHckcjxi5Vtpr8hZnK1gwfcx7IX75wMS3hP6Gew8cStRlS5ay9K2PLg3G1lzpCsRgpGpSwG1qz7eWHLxVVuAko9WyCdOabwSE06QegcuJ+fVEfRWAx22BzwEGqHCSX6aKnIo10qmzJd274VQtPF8dv7mjsvnVq5k01QyetBLdEabVtT0lx5jqAMYAQ==',
                         provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
- for San Francisco.
+San Francisco is mostly sunny today, according to Yahoo Weather.
 
-From the recent San Francisco Chronicle weather report, \
-"""
-                    ),
-                    TextPart(
-                        content='average mid-September highs in San Francisco are around 70 degrees',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-, so today's forecast of 76°F is slightly above the typical temperature for this time of year.
+- **Now:** about 67°F, and it feels like 68°F.
+- **High and low:** 69°F and 52°F.
+- **Wind:** light, about 8–9 mph from the west or northwest.
+- **Evening:** temperatures drop through the 60s after sunset at about 6:21 PM, and fall to the mid-50s by midnight.
+- **Overnight:** lows are in the low 50s.
+- **Sunrise:** about 7:27 AM.
 
-The general weather pattern for San Francisco in September includes:
-- \
-"""
-                    ),
-                    TextPart(
-                        content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
+The page showed a 50% precipitation chance in its chart. I couldn't tell which hours that applied to, and the "mostly sunny" summary suggests rain is unlikely.
 
-- \
-"""
-                    ),
-                    TextPart(
-                        content='There are normally 9 hours of bright sunshine each day in San Francisco in September',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(
-                        content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month',
-                        provider_name='anthropic',
-                        provider_details={'citations': IsList(length=(1, ...))},
-                        citations=IsCitationList(),
-                    ),
-                    TextPart(
-                        content="""\
-
-
-So for today, you can expect partly sunny to sunny skies with a high around 76°F (24°C) and a low around 59°F (15°C), with very little chance of rain. It's shaping up to be a pleasant day in San Francisco!\
+The page doesn't state the time it was retrieved, so the "now" reading may be a little out of date. For live conditions, check [Yahoo Weather](https://weather.yahoo.com/us/ca/san-francisco/) or weather.gov.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=22397,
-                    output_tokens=637,
-                    web_searches=2,
+                    input_tokens=20202,
+                    output_tokens=594,
+                    web_searches=1,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 22397,
-                        'output_tokens': 637,
-                        'web_search_requests': 2,
+                        'input_tokens': 20202,
+                        'output_tokens': 594,
+                        'thinking_tokens': 70,
+                        'web_search_requests': 1,
                     },
-                    cost=Decimal('0.096746'),
+                    output_reasoning_tokens=70,
+                    cost=Decimal('0.056344'),
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01QmxBSdEbD9ZeBWDVgFDoQ5',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01RfW3JwgKPESeLKaF95WvtY'},
+                provider_response_id='msg_011CgPEgJ8ANGiShNxDeQGDZ',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -7993,66 +7985,111 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
-            PartDeltaEvent(
+            PartStartEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta='The user is asking about the weather'),
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7',
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7')
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' in San Francisco today. This is clearly a request'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' for current, real-time information'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' that changes daily, so I should use'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' web search to get up-to-date weather'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' information. According to the guidelines, today'),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s date is September 16, ")),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-2025.
-
-I should search for current\
-"""
+                delta=ToolCallPartDelta(
+                    args_delta='{"code": "r = await web', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' weather in San Francisco. I\'ll include "'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta='today" in the search query to get the most current'),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' information.')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ=='
+                delta=ToolCallPartDelta(
+                    args_delta='_search({\\"query\\": \\"San', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'
                 ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta=' Francisco weather today\\"', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta='})\\nfor i', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta=', x in enumerate(', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='r[', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta=':5]):\\n    print(', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='i, x.get(\\"title', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='\\"), x.get(\\"url\\"', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='), x.get(\\"page_age', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='\\"))\\n    print(x.', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='get(\\"content\\", \\"\\")[:', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='600', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='].replace(\\"\\\\n\\",', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta=' \\" \\"))\\n    print()', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='\\n', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7')
             ),
             PartEndEvent(
                 index=0,
-                part=ThinkingPart(
-                    content="""\
-The user is asking about the weather in San Francisco today. This is clearly a request for current, real-time information that changes daily, so I should use web search to get up-to-date weather information. According to the guidelines, today's date is September 16, 2025.
-
-I should search for current weather in San Francisco. I'll include "today" in the search query to get the most current information.\
-""",
-                    signature='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    args='{"code": "r = await web_search({\\"query\\": \\"San Francisco weather today\\"})\\nfor i, x in enumerate(r[:5]):\\n    print(i, x.get(\\"title\\"), x.get(\\"url\\"), x.get(\\"page_age\\"))\\n    print(x.get(\\"content\\", \\"\\")[:600].replace(\\"\\\\n\\", \\" \\"))\\n    print()\\n"}',
+                    tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7',
                     provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-call',
@@ -8060,46 +8097,32 @@ I should search for current weather in San Francisco. I'll include "today" in th
             PartStartEvent(
                 index=1,
                 part=NativeToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h', provider_name='anthropic'
+                    tool_name='web_search',
+                    args={'query': 'San Francisco weather today'},
+                    tool_call_id='srvtoolu_01Uz9RVTqKcsiR6t8YDsSmP8',
+                    provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
                 ),
-                previous_part_kind='thinking',
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='{"query": ', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='"Sa', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='n Fr', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='anc', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='isc', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='o weather', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta=' tod', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='ay"}', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+                previous_part_kind='builtin-tool-call',
             ),
             PartEndEvent(
                 index=1,
                 part=NativeToolCallPart(
                     tool_name='web_search',
-                    args='{"query": "San Francisco weather today"}',
-                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    args={'query': 'San Francisco weather today'},
+                    tool_call_id='srvtoolu_01Uz9RVTqKcsiR6t8YDsSmP8',
                     provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
                 ),
                 next_part_kind='builtin-tool-return',
             ),
@@ -8109,152 +8132,156 @@ I should search for current weather in San Francisco. I'll include "today" in th
                     tool_name='web_search',
                     content=[
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': '6 days ago',
-                            'title': 'San Francisco, CA Weather Forecast | AccuWeather',
+                            'encrypted_content': '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',
+                            'page_age': '247 days ago',
+                            'title': 'San Francisco, CA Weather Forecast, Conditions, and Maps',
+                            'type': 'web_search_result',
+                            'url': 'https://weather.yahoo.com/us/ca/san-francisco/',
+                        },
+                        {
+                            'encrypted_content': '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',
+                            'page_age': None,
+                            'title': 'San Francisco, CA Weather forecast, Conditions and Maps - Yahoo Weather',
+                            'type': 'web_search_result',
+                            'url': 'https://weather.yahoo.com/en-sg/us/ca/san-francisco/',
+                        },
+                        {
+                            'encrypted_content': 'EowLCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDO1jc9muieHmC8wuoRoMvR0NDjwIOg6WaJfhIjDduNbImggEv9KTlWkA1J+YbsWLsOnO1ZthafuUDytTA01FnKSicFiuv40OLGsaRjoqjwqmVZ5eNK4RHLZp+nnmDhsHaBXlsAVj9RWSUex+Q7K1O5Jfy6N9PtZSo1KxVoAnKskWeHsNJpgb+2wB4TyYgpOGHWT5oZOuD7ZtB740IFX8ARdILH5p679sZUtMNWmdH8yTJa7SUGp0W90x2UdvB1VP3hDwvByYe7KJaGzEAsGKEDcVJ1zsmX7JacFQrGF5TyxdCNa7jtweOMyoySPFZeyk4qKfwuWhFBe4REHg9+LcL6v0stMmVIlnHyMTk+2LMiD92nCp40G5+W4Xp7NnjoVXZJ+Px+NPFf5szg/M6u+1sRZxfI3fi0O11HccDDomgvgyAvaVhxQs2qpvk2wcfhI3csG55H2PbtptXfORWA/ucwSJY5JvrTc4QUSvTPnQqN37S2JULUNCb1lHsZ24msdD02RX7nnN6qyzeVK/RXukogTPG/YRPPpjMJUAq/IUa/K6vOJDJD7ZXODM6H3HIRT8HlsWYfDRlHOxg4cR7V4vE96I+GsWUcLUy0IwS+jcFLHdGmW5dEKqsMfZTW4fGwbpF0BGLPYhdb0wkANmolhRMYyCHK6StjjCWQ9hDcD5U8tx665s9N/lqCRSGfpgvsNIRYHmWfYW9f/4+MfOkTamN2LNpXeTOShD33bHDAbTPwEuAtoAEAcCveO+YQfYSgAFWlKcXw26nOKGrggsHh7h2b6yHDT54bHlRjk46tklHXnPFrTRC7hTyo+CoBNoQUKEqIz/nf3ly+F3Uny8lqxX5NRu+Kd1+gP1totLYXj/MuDMKhcaqauenJemFdD2QNRwL7FDDaLBTa9j7NrmrX2IQQQ6f3IoyKs9wkz6pp4J7IuQco93oIUs0tX+zt7RT8Z34kU3Ip/ntwIymdOlw8UrIoNfnOpDoptIHmWyjN6190ds0O3+cnkLmDu3lnMXoeYS7KvKOtAmewvUCKCqMzJFxsy7MXLuEBbM/AbXBYGlYgpcYMkbGE/XeeFOJOGt7mMvXxGilNWoQ1ZUadrnfun8gWMK+aqtCPqKE7JBNNpKKV5us15kPn7+D8zgmnCNOso3XNpwRgiZFgC524RCRvOAf7gxTtwD04tQ3EXyS0h3caGyRKb8+2X0/5JLpGrqclngDKqineDBD3gxTMEhh3FzdwoV0qWORhyWEjKqprem3f1BwpVB9X8FIBCoijnh1NjQtb0r3yPUjewm/kGVhTNgZ/kVsoB2Qm7YttkhxGsYMB5Z0k2YCpY/Wds6g1kYM9918/zb5CaCgWNIDDu+BwNYxbHB96V6246YIrU8hA2gQngbwzkqfj34LIphKf8Nr7z19rkjt1oGqYE4OHL4PFvAlPrxayXdOLV5bcl0vt93tVG45K2a+IvERsrQLa6CkF976vygbzQTOuC/0RFTSyUvMyrEkofJtelab7AJ3MkMNAGDpGV7OFmu0KD2X0IurVjHzFLz7bmJ+TX78md01ueMctRCaVYmG0W80pYikjp5ZUn5BYY+5WuWxLBVYCIreGFOZ2TvuKuanZ0XMvOp0+jvhnPj39E4ibeqZ4jpp3gPsv63LC7yIFbFEK+rf9QTV7lt29gZINb396dXKgA8HbBoQXIoGhx9jQwfihtWShZ9fGEvkWA4M8LkYai7ZoMb31jxcAJDohSM6qvaLVEEegGIh3TLg0E0EgwRMey7HNmPDD8jL2fGoGMpUgtKpBEBxpLsMzy6clMfpjyJEu2AWNW6eAd7QjSq1tSHIoNxairS5hgD',
+                            'page_age': '81 days ago',
+                            'title': 'San Francisco, CA Current Weather',
+                            'type': 'web_search_result',
+                            'url': 'https://www.accuweather.com/en/us/san-francisco/94103/current-weather/347629',
+                        },
+                        {
+                            'encrypted_content': 'EpwJCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDIr7SYuoqqiGWxRBqhoMBN4BIuA44HRGDbc/IjAfrksYnXWyj/jdP3UhmpajH/ATUwlyMuo6IVUcv0DgCgzAgoeAT4iEzXfymjHFt6wqnwjFNFY3M9wRecbz6RRlTiOE15VL9CFK+Bb/rOsyAAipcV1M2pJgZwlzNrkXwxLPfwV3V0XhAc0qk/4cV6lTb4aRWNq2Nx/CHZqEB+v2sTbKiH5la6rSsJq2mpJqGG5Zh+FJk0ZcvXOIP8/8AiUW2NEpaMq0BBKwAe7IZ5XruVXX2KGc6YzQGUwm9rzJuxi6lK3SaUCmFpIjUlwV9EHip9M3CTy7mXM8fMM3c4MbGjbel3ALJddVM1e5+vB4mAroj+3uyO5HXwQdSrrFSuRGTButo3KO6ry8OaiQCqOtHJRibjO319PIA/vTkA20LS14BjcXW2PknP10n2kNaLEGxZZTsZNEpoW6bvZzxLYrJ15/7mRxZ4ikmelyaY3uW1Kpf8RA7IcD53GvGfksPhWHvLnwDOA6733n+w4LN0x7Zkg8xflIGab3QxFxwJeI/nvnBtS//CaPdoxSFfiS1ftRKqU9bCdBGl4BGfYTiMvyGZOI34P/HX2BcxbIMan5SK+HNS8UZSzn3iTiEGYZqwhvZcP3J3xjbXikmHrVCw1CSagoY1njWWaBgY45Lv1IsH++Br7zUYgMsFsK0rzJWoqEuRZXfOBqGlx+OipgUVAwvgiiK51xIKxWTxRk0hj3usjFV0fvXItpkH8OZo+ejS90RxqDYlZsucdv6gPF1dbm//HOqfbBBZPx42mA8dw6thfY17mjY5y0YsbuL2yQOYQZ4swRSzLb47hOEtwrXz/QjS+g8obYEO69xXByOzlpQHngJIf+DrlYMBrNuJA7c0BMl9FeuKVudMsF8h6HDARF3Gx1L9wMJ267MUAg1dAAfxLJn/ElZifmmCSUpu7BPhMgLSSlAVxtsELtjrZRSRzSllmN3NfeC+4xczXgTzQcvkHzIPW8IgGzEMcOi2CvB7SlhAwmFu22qwkd+5N9B2rWx43wtD1E+2lXhcxU1uxkULCBKMLr92oiR98DLe6pRIHFYIZj54kdJIAy1cU3kFOPhazvLLakt/T2r6MMkbxMlTOjpGCikKiQ/CD4duSBsYvvnyNVxNacZcgcitknRUuaPWziO7yXzOWhJGGjRvtEA74shM1kRDMLsHc6CZXpq/l4RprS0wZ0ElfloBES7FPBabpDGQbtIORiCurQzyjqbZT05/PdqqdWJs/4nNJfPBhY6Jvm3d44LACPeIZq5Gu1j4gsI/Az1m7hK9fcA0ySgVWd8JR3wDr7s23LZNwMN74VDas5ix9eppqUFvSwJO8Nd/AVGG5q4dppNHgwI88e8aRUCYuPvVxmuoElCUH6b+7jRfz0mlbF7xigVGmbwMCQ54/lkYV0lBI12hEANNIz8TEFN6SHzbx4bqJcX1clRCqRXx9F181l9fDqHL5XFHD3XYK2n2i0928zbBdCAw1UWC2CEhgD',
+                            'page_age': '9 days ago',
+                            'title': 'San Francisco, CA Weather Forecast',
                             'type': 'web_search_result',
                             'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': '6 days ago',
-                            'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
+                            'encrypted_content': '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',
+                            'page_age': '2 days ago',
+                            'title': 'San Francisco, CA Weather Forecast',
                             'type': 'web_search_result',
-                            'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
+                            'url': 'https://www.foxweather.com/local-weather/california/san-francisco',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
-                            'type': 'web_search_result',
-                            'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
-                            'type': 'web_search_result',
-                            'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 week ago',
-                            'title': 'National Weather Service',
-                            'type': 'web_search_result',
-                            'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 week ago',
-                            'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
-                            'type': 'web_search_result',
-                            'url': 'https://www.nbcbayarea.com/weather/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
+                            'encrypted_content': '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',
+                            'page_age': '9 days ago',
                             'title': 'San Francisco, CA Current Weather - The Weather Network',
                             'type': 'web_search_result',
-                            'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
+                            'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': '6 days ago',
-                            'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                            'type': 'web_search_result',
-                            'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
+                            'encrypted_content': 'Eq0GCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDNKLGC9Hu0ukgoq6yRoMxp4TN4UFMOgkyE0xIjDqw4pCf98bYHPV/zKSwNbnCU/7MxEVK40TXYM3GoeBSoF5HjEtHxGS3fkmis9NmCQqsAXGJdmf42X3cel27Q37A3D7dNzc75qMI+yajgRZgCn/bFptSnaikzwUvzkqDUdxnSiOVjOTTCPdnvWQh/z8OAceI3t9QH5kVqtHZ3T+Cvm2GRjiGdHj9QF4BiYNyvk2T2oJSoLSCifbuYLgKZWe81AYmybWXVS3KPA6C1zbrFkFvgf9i0J75zHj4qnH50/pRp0JOV+Gb2R+HcJuMLkHU8otZLa3C/GIG0RUSG2XSTB+Fp5ImDlBRfYavXjmXMR5+Xs2PyFjBIoVYcjoE5WvDqJER7uzHltrH02Twin9Ne8DIiRjsJ39vOtj1GJIriyrrwJHzJhoWyiizV7cY0i3J5VcIMp3IxSfqb++Jtu7UAIb+UbnWVxZV+Q3SDEX2W+PGyiR9hX8elcNJfhkMp7VemeIz998LAqosnh7lkLESRSgehNLc5sTwi6J+0x0k8ve1PzlWMpILwr8i30UWF8/QC1klaRVqwbZnK+AtKOwbWB39hpG4hKaH3e3SwKJSSTbwcUztbc0QLDnv34m2zGalTJMQyZ4ZKW6RAVCMNcbW5zic+OCRpT24KeNKDfmf3+CYf/WXznc/8FEn9AbQPA12IAYHso8aYm2r0f1E242jrWGJaW1DtFJNI4TDQWOI4pbZqZ8HDmnic3b/w6TkDgtKhXRmNGJpku8FWTWgOZtW1qyWkqdVvpa0XTdk5J8f2tRMrSnPV3HX4kaiSvV/v+Q2QCTvoXhoqYLxknuGo7fpAmqIAZ5+YQyJ1Q24OlWbwYpFC5+KtVkQc2+vrwDfDUuoMBpC6bLkKuYMiQzYhCQec+6V4yKmMHlwm/6G0+YAhbhUs/TYqsBxzJ4nCZBcmvVF24seE7zPjkiRx5bzFgL33D5NZceUhY/V5skjRE7NCWSLvqD69jlJnNL4Dai6fY05IXtGAM=',
+                            'page_age': '304 days ago',
+                            'title': 'San Francisco, CA Hourly Weather Forecast',
                             'type': 'web_search_result',
                             'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 week ago',
-                            'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
+                            'encrypted_content': 'Eu4FCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDOiw1GXc1Poqjsp70BoMS5rmH48qqZget+XkIjCa0KtcGYeCvtX3AZl/Oj10kGIDsljAV5VjbLhoTSJNriVC+wts0DmLpQaTl9S9NL4q8QQuWh+2fkpGBtNprYxSBfzC4Bnaz09PqffV4PwU6PI5ssOiEa+7rVp/rFb+d05tvlsw8zznxJEvtMjdgnl7k3avUGwkyo/ZU2B9hFk8x75z4cECsFDAUtm4OZcDlCd/K042nXwKJbydF0QQ3L9fhfUUpOb7ccQJh6WSwk4wjw98JVjjYNTjyYlfSuPMx9UUrrU7rw5Etf+v4HQWtMTxtNoHRAYxcyJIF9LRCsHlI1R00HKU4gCUIZIkBPEoOJU/dSw3QYthOQxA2h0JdJnHs2J8CS3DSpVq5kp3sqWZhi4lh8idjEin3qDpanGeLrUNmmAdSclnK2laeFaMnapv0UKFs9lWzP4lokCEDyUZbwzMF/6kP8dGedROVRjavJaG1jtp+FkiYBMW2v+0XNFKZ36rby0oBQrvSDW1ZP6V2D29lEalgO4jLTm0V99ettosKG7pxXkIS1I+nD9jChU+ON8G6QOecmXuKux1ExcPX60o4Ik/hrgHV+4c9x0oZ9q2oT3Rh94E3qSIBm6AdJYDsQ1wahAGdQ/IWRG7fOFLAsdHU+Zsze5dbkm8s+Y1inHYkLqyAeCPqYAJ7YpidiMKZt6SDS/u+gT7QzwLALsnNplwhfOWkQq4N4DGsU84xDEaJpT1H9+42Iqp5xSBXOp8UjTLyBiHQ3TA5aZAV5E4aTA2eCWA5hZiaUfAfula/mF7EybQK+iQh3PABtNfjRFx+waZdtPNuyHyyURFG4ins+1e2+iADIE54vgyhc/jQsgpruMCUPXI4dAdbB1oKesKY5ICCh0PShlxLcka/yOYLj9KMulWAjzkC4mvfyR8MU5/p1HeGAM=',
+                            'page_age': None,
+                            'title': 'San Francisco, California, United States Weather Forecast',
                             'type': 'web_search_result',
-                            'url': 'https://abc7news.com/weather/',
+                            'url': 'https://www.msn.com/en-xl/weather/forecast/in-San-Francisco,%20California',
+                        },
+                        {
+                            'encrypted_content': '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',
+                            'page_age': None,
+                            'title': 'Five Day Forecast San Francisco',
+                            'type': 'web_search_result',
+                            'url': 'https://stripe.jhu.edu/news/five-day-forecast-san-francisco',
+                        },
+                        {
+                            'encrypted_content': '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',
+                            'page_age': None,
+                            'title': 'San Francisco Weather Forecast California, United States of America',
+                            'type': 'web_search_result',
+                            'url': 'https://www.weatherapi.com/weather/q/san-francisco-2550230',
                         },
                     ],
-                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    tool_call_id='srvtoolu_01Uz9RVTqKcsiR6t8YDsSmP8',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=3, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d on the search results, I can see')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' that the information is a bit date')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d (most results are from about 6')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' days to a week ago), but I can provide')),
-            PartDeltaEvent(
+            PartStartEvent(
                 index=3,
-                delta=TextPartDelta(content_delta=' you with the available weather information for San Francisco.'),
-            ),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Let me search for more current')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' information.')),
-            PartEndEvent(
-                index=3,
-                part=TextPart(
-                    content='Based on the search results, I can see that the information is a bit dated (most results are from about 6 days to a week ago), but I can provide you with the available weather information for San Francisco. Let me search for more current information.'
+                part=NativeToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'encrypted_stdout': 'Eo4BCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDF1rucVxednaODlaoRoMwvoLkREiqI8TwfttIjAzj0lP4rRPmP39MvRoRJFWXv++rCt1GXJDU7b4j4KhS5m3KkweGZpEv93qgGbYOIMqEudQT77u00wyTgLUXsgW4xpg/xgD',
+                        'return_code': 1,
+                        'stderr': """\
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/asyncio/runners.py", line 190, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/asyncio/base_events.py", line 654, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/tmp/srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7/cell.py", line 10, in <module>
+    print(i, x.get("title"), x.get("url"), x.get("page_age"))
+             ^^^^^
+AttributeError: 'str' object has no attribute 'get'
+""",
+                        'type': 'encrypted_code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_01ANLw8uxvsWQ7ysmTaGE5h7',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
                 ),
-                next_part_kind='builtin-tool-call',
+                previous_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=4,
                 part=NativeToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx', provider_name='anthropic'
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01KZCsUJvJhExkMJeX2fP1CE',
+                    provider_name='anthropic',
                 ),
-                previous_part_kind='text',
+                previous_part_kind='builtin-tool-return',
             ),
             PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='quer', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='y": ', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='"San', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta=' Fra', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='nci', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='sco w', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+                index=4, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01KZCsUJvJhExkMJeX2fP1CE')
             ),
             PartDeltaEvent(
                 index=4,
-                delta=ToolCallPartDelta(args_delta='eather S', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
+                delta=ToolCallPartDelta(
+                    args_delta='{"code": "print(type(', tool_call_id='srvtoolu_01KZCsUJvJhExkMJeX2fP1CE'
+                ),
             ),
             PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='ep', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+                index=4, delta=ToolCallPartDelta(args_delta='r), str', tool_call_id='srvtoolu_01KZCsUJvJhExkMJeX2fP1CE')
             ),
             PartDeltaEvent(
-                index=4,
-                delta=ToolCallPartDelta(args_delta='tember 16 2', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
+                index=4, delta=ToolCallPartDelta(args_delta='(r)[:1', tool_call_id='srvtoolu_01KZCsUJvJhExkMJeX2fP1CE')
             ),
             PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='025"}', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+                index=4, delta=ToolCallPartDelta(args_delta='500])', tool_call_id='srvtoolu_01KZCsUJvJhExkMJeX2fP1CE')
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01KZCsUJvJhExkMJeX2fP1CE')
             ),
             PartEndEvent(
                 index=4,
                 part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": "San Francisco weather September 16 2025"}',
-                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    tool_name='code_execution',
+                    args='{"code": "print(type(r), str(r)[:1500])"}',
+                    tool_call_id='srvtoolu_01KZCsUJvJhExkMJeX2fP1CE',
                     provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -8262,323 +8289,211 @@ I should search for current weather in San Francisco. I'll include "today" in th
             PartStartEvent(
                 index=5,
                 part=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco weather in September 2025 | Weather25.com',
-                            'type': 'web_search_result',
-                            'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Weather in San Francisco in September 2025 (California) - detailed Weather Forecast for a month',
-                            'type': 'web_search_result',
-                            'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, CA Monthly Weather | AccuWeather',
-                            'type': 'web_search_result',
-                            'url': 'https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Weather San Francisco in September 2025: Temperature & Climate',
-                            'type': 'web_search_result',
-                            'url': 'https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco weather in September 2025 | California',
-                            'type': 'web_search_result',
-                            'url': 'https://www.weather2travel.com/california/san-francisco/september/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, Weather for September, USA',
-                            'type': 'web_search_result',
-                            'url': 'https://www.holiday-weather.com/san_francisco/averages/september/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Monthly Weather Forecast for San Francisco, CA - weather.com',
-                            'type': 'web_search_result',
-                            'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '3 weeks ago',
-                            'title': 'September 2025 Weather - San Francisco',
-                            'type': 'web_search_result',
-                            'url': 'https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco Weather in September | Thomas Cook',
-                            'type': 'web_search_result',
-                            'url': 'https://www.thomascook.com/holidays/weather/usa/california/san-francisco/september/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 days ago',
-                            'title': IsStr(),
-                            'type': 'web_search_result',
-                            'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
-                        },
-                    ],
-                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': '<class \'str\'> [{"type": "web_search_result", "title": "San Francisco, CA Weather Forecast, Conditions, and Maps", "url": "https://weather.yahoo.com/us/ca/san-francisco/", "content": "San Francisco. Mostly Sunny today with a high of 69\\u00b0F and a low of 52\\u00b0F. \\u2026 Stay ahead with real-time alerts on the Yahoo Weather app.\\n\\n# San Francisco\\n67\\u00b0\\n\\nRealFeel\\u00ae 68\\u00b0\\n\\nMostly Sunny today with a high of 69\\u00b0F and a low of 52\\u00b0F.\\n\\nH\\n\\n69\\u00b0\\n\\nL\\n\\n52\\u00b0\\n\\n7:27 AM\\n\\n6:21 PM\\n\\n## Next 8 days\\n1 in+/hr\\n\\n50%\\n\\n0.5 in/hr\\n\\nPrecipitation\\n\\nChance\\n\\nRate\\n\\nWind\\n\\nMPH\\n\\nNow\\n\\n67\\u00b0\\n\\n8 NW\\n\\n5 PM\\n\\n65\\u00b0\\n\\n9 W\\n\\n6 PM\\n\\n64\\u00b0\\n\\n8 W\\n\\n6:21 PM\\n\\nSunset\\n\\n8 W\\n\\n7 PM\\n\\n62\\u00b0\\n\\n7 W\\n\\n8 PM\\n\\n61\\u00b0\\n\\n6 W\\n\\n9 PM\\n\\n59\\u00b0\\n\\n6 W\\n\\n10 PM\\n\\n56\\u00b0\\n\\n6 W\\n\\n11 PM\\n\\n55\\u00b0\\n\\n5 W\\n\\nMidnight\\n\\n54\\u00b0\\n\\n4 SW\\n\\n1 AM\\n\\n54\\u00b0\\n\\n4 SW\\n\\n2 AM\\n\\n54\\u00b0\\n\\n4 SW\\n\\n3 AM\\n\\n54\\u00b0\\n\\n4 SW\\n\\n4 AM\\n\\n53\\u00b0\\n\\n4 SW\\n\\n5 AM\\n\\n52\\u00b0\\n\\n4 SW\\n\\n6 AM\\n\\n51\\u00b0\\n\\n4 SW\\n\\n7 AM\\n\\n52\\u00b0\\n\\n4 W\\n\\n7:28 AM\\n\\nSunrise\\n\\n4 W\\n\\n8 AM\\n\\n52\\u00b0\\n\\n4 NW\\n\\n9 AM\\n\\n54\\u00b0\\n\\n4 N\\n\\n10 AM\\n\\n56\\u00b0\\n\\n4 E\\n\\n11 AM\\n\\n59\\u00b0\\n\\n5 E\\n\\nNoon\\n\\n61\\u00b0\\n\\n6 NW\\n\\n1 PM\\n\\n63\\u00b0\\n\\n6 W\\n\\n2 PM\\n\\n65\\u00b0\\n\\n7 W\\n\\n3 PM\\n\\n64\\u00b0\\n\\n7 W\\n\\n4 PM\\n\\n64\\u00b0\\n\\n9 W\\n\\n5 PM\\n\\n61\\u00b0\\n\\n9 W\\n\\n6 PM\\n\\n59\\u00b0\\n\\n8 W\\n\\n6:19 PM\\n\\nSunset\\n\\n8 W\\n\\n7 PM\\n\\n58\\u00b0\\n\\n7 W\\n\\n8 PM\\n\\n57\\u00b0\\n\\n7 W\\n\\n9 PM\\n\\n57\\u0\n',
+                        'type': 'code_execution_result',
+                        'abort_reason': None,
+                    },
+                    tool_call_id='srvtoolu_01KZCsUJvJhExkMJeX2fP1CE',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=6, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(
+                index=6,
+                part=ThinkingPart(content='', signature='', provider_name='anthropic'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartDeltaEvent(index=6, delta=ThinkingPartDelta(content_delta='')),
             PartDeltaEvent(
                 index=6,
-                delta=TextPartDelta(
-                    content_delta="d on the search results, I can provide you with information about San Francisco's weather"
+                delta=ThinkingPartDelta(
+                    signature_delta='CAQSqgYKEAgTGAI4AUIIdGhpbmtpbmcSDJW8dg3tJ6+CXcndPhoMyY+BmCMYTZBJj4jXIjBBR8qsPriR/ntTyc2dmdnCTvUzow9FcMNvUXHBN278UVz10i6HZTmkYls0D9ZAdUkqxwU1O6LeiH3pFoOl6SYwDxKMrZMjPkZlD/yB2g5XU9YoyzuIK/02TiRAXyVC3kbPeRbSeOCMtYaRnZQG2YbRCndROC5EW5NeZkANilKKjYV2mBbZpnJa1p8lyOkI4q46L+6MEueq+U1d2jAJL8uYXioOIsZ6i9IHnC0k7yTWOq4kCK1fKTEiKc233OSlerQRQb+YWffvOMuRJXaR2fTnujkwghyZabno3KEJYx21Y6Kq8PT4ofkTbDcdbDCLOGK9vduMChR6f1UIw6PWBHuLwLjNn0MpNRBl3Yfpm+XU/fm7NIXEa1KoXh9MHXQlrUjBnXbITJgt5KXd4qXc1NMLvSkpBjyk8F2XVXAfuOaJPkX8e0hMke6Ol/DLIyzb1xFuh0dNGh3jaSt6g5xzZD1yMm9N6qHesh0W3oGY6KV/6mHQqBxZLZpkbeecqa4VG9d90lzM5xBVoA/+LnSqDJRmUdPjNF2K52tUM9WPX2I2GDHGQhZvsi5lsQKNHvns06gXvCdnmwG9JM13OVRmVRD5oPWK7iOqAMLIr1VqU+CDHr7+Lx+2+NNiNU747b+ZKVASNjNGrLOh5qucA7mAq7Coh9PpcO4isxuSGfEM4zchHNPlzySDtm0473ASkJAtCg4JuB10Sf0T/zdJx5bpizgU0fAHVlEGEi7iH0Lm8QtIPRoc+Qn9JmzbRLw/Aev046gDMOa2yZUsHbjR/krITBscP5+3mlZOAEOyr/9NXyjfa/mPE32mKQkAk7PLrjRrLqgyIHckcjxi5Vtpr8hZnK1gwfcx7IX75wMS3hP6Gew8cStRlS5ay9K2PLg3G1lzpCsRgpGpSwG1qz7eWHLxVVuAko9WyCdOabwSE06QegcuJ+fVEfRWAx22BzwEGqHCSX6aKnIo10qmzJd274VQtPF8dv7mjsvnVq5k01QyetBLdEabVtT0lx5jqAMYAQ=='
                 ),
             ),
-            PartDeltaEvent(
-                index=6,
-                delta=TextPartDelta(
-                    content_delta="""\
- today (September 16, 2025):
-
-According\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=" to AccuWeather's forecast, ")),
             PartEndEvent(
                 index=6,
-                part=TextPart(
-                    content="""\
-Based on the search results, I can provide you with information about San Francisco's weather today (September 16, 2025):
-
-According to AccuWeather's forecast, \
-"""
+                part=ThinkingPart(
+                    content='',
+                    signature='CAQSqgYKEAgTGAI4AUIIdGhpbmtpbmcSDJW8dg3tJ6+CXcndPhoMyY+BmCMYTZBJj4jXIjBBR8qsPriR/ntTyc2dmdnCTvUzow9FcMNvUXHBN278UVz10i6HZTmkYls0D9ZAdUkqxwU1O6LeiH3pFoOl6SYwDxKMrZMjPkZlD/yB2g5XU9YoyzuIK/02TiRAXyVC3kbPeRbSeOCMtYaRnZQG2YbRCndROC5EW5NeZkANilKKjYV2mBbZpnJa1p8lyOkI4q46L+6MEueq+U1d2jAJL8uYXioOIsZ6i9IHnC0k7yTWOq4kCK1fKTEiKc233OSlerQRQb+YWffvOMuRJXaR2fTnujkwghyZabno3KEJYx21Y6Kq8PT4ofkTbDcdbDCLOGK9vduMChR6f1UIw6PWBHuLwLjNn0MpNRBl3Yfpm+XU/fm7NIXEa1KoXh9MHXQlrUjBnXbITJgt5KXd4qXc1NMLvSkpBjyk8F2XVXAfuOaJPkX8e0hMke6Ol/DLIyzb1xFuh0dNGh3jaSt6g5xzZD1yMm9N6qHesh0W3oGY6KV/6mHQqBxZLZpkbeecqa4VG9d90lzM5xBVoA/+LnSqDJRmUdPjNF2K52tUM9WPX2I2GDHGQhZvsi5lsQKNHvns06gXvCdnmwG9JM13OVRmVRD5oPWK7iOqAMLIr1VqU+CDHr7+Lx+2+NNiNU747b+ZKVASNjNGrLOh5qucA7mAq7Coh9PpcO4isxuSGfEM4zchHNPlzySDtm0473ASkJAtCg4JuB10Sf0T/zdJx5bpizgU0fAHVlEGEi7iH0Lm8QtIPRoc+Qn9JmzbRLw/Aev046gDMOa2yZUsHbjR/krITBscP5+3mlZOAEOyr/9NXyjfa/mPE32mKQkAk7PLrjRrLqgyIHckcjxi5Vtpr8hZnK1gwfcx7IX75wMS3hP6Gew8cStRlS5ay9K2PLg3G1lzpCsRgpGpSwG1qz7eWHLxVVuAko9WyCdOabwSE06QegcuJ+fVEfRWAx22BzwEGqHCSX6aKnIo10qmzJd274VQtPF8dv7mjsvnVq5k01QyetBLdEabVtT0lx5jqAMYAQ==',
+                    provider_name='anthropic',
                 ),
                 next_part_kind='text',
             ),
-            PartStartEvent(
+            PartStartEvent(index=7, part=TextPart(content='San'), previous_part_kind='thinking'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' Francisco is mostly')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' sunny today, according to')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' Yahoo Weather.')),
+            PartDeltaEvent(
                 index=7,
-                part=TextPart(content='today (September 16) shows a high of 76°F and low of 59°F'),
-                previous_part_kind='text',
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+- **Now\
+"""
+                ),
             ),
-            _citation_delta_event(7),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta=':** about'),
+            ),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' 67°F, and')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' it feels like ')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='68°F.')),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- **High and\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' low:** 69°F and')),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(
+                    content_delta="""\
+ 52°F.
+- **\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='Wind:** light')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=', about 8–')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='9 mph from the west or')),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(
+                    content_delta="""\
+ northwest.
+- **\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='Evening:** tem')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='peratures drop through')),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta=' the '),
+            ),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='60s after')),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta=' sunset at'),
+            ),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' about 6:21 PM')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=', and fall to the')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' mid-50s by mid')),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(
+                    content_delta="""\
+night.
+- **Over\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='night:** l'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='ows are'),
+            ),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' in the low')),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(
+                    content_delta="""\
+ 50s.
+- **\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='Sunrise:** about ')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='7:27')),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(
+                    content_delta="""\
+ AM.
+
+The page\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' show')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='ed a 50% prec')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='ipitation chance in')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' its ch')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='art.')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' I cou')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta="ldn't t")),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='ell which hours'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta=' that'),
+            ),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' applied to, and')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' the "')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='m')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='ostly sunny" summ')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='ary su')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='ggests r')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='ain is unlikely.')),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+The page doesn't state\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' the time')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' it was retrieved, so')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' "')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='now" re')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='ading may be')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' little')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' out of date. For live con')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='ditions, check [Yah')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='oo Weather](https://')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='weather.yahoo.')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='com/us/ca/san')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='-francisco/) or we')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='ather.gov.')),
             PartEndEvent(
                 index=7,
                 part=TextPart(
-                    content='today (September 16) shows a high of 76°F and low of 59°F',
-                    provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=8,
-                part=TextPart(
                     content="""\
- for San Francisco.
+San Francisco is mostly sunny today, according to Yahoo Weather.
 
-From the recent San\
-"""
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' Francisco Chronicle weather report, ')),
-            PartEndEvent(
-                index=8,
-                part=TextPart(
-                    content="""\
- for San Francisco.
+- **Now:** about 67°F, and it feels like 68°F.
+- **High and low:** 69°F and 52°F.
+- **Wind:** light, about 8–9 mph from the west or northwest.
+- **Evening:** temperatures drop through the 60s after sunset at about 6:21 PM, and fall to the mid-50s by midnight.
+- **Overnight:** lows are in the low 50s.
+- **Sunrise:** about 7:27 AM.
 
-From the recent San Francisco Chronicle weather report, \
-"""
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=9,
-                part=TextPart(content='average mid-September highs in San Francisco are around 70 degrees'),
-                previous_part_kind='text',
-            ),
-            _citation_delta_event(9),
-            PartEndEvent(
-                index=9,
-                part=TextPart(
-                    content='average mid-September highs in San Francisco are around 70 degrees',
-                    provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=10, part=TextPart(content=", so today's forecast of 76°F is"), previous_part_kind='text'
-            ),
-            PartDeltaEvent(
-                index=10,
-                delta=TextPartDelta(
-                    content_delta="""\
- slightly above the typical temperature for this time of year.
+The page showed a 50% precipitation chance in its chart. I couldn't tell which hours that applied to, and the "mostly sunny" summary suggests rain is unlikely.
 
-The\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=10,
-                delta=TextPartDelta(
-                    content_delta="""\
- general weather pattern for San Francisco in September includes:
-- \
-"""
-                ),
-            ),
-            PartEndEvent(
-                index=10,
-                part=TextPart(
-                    content="""\
-, so today's forecast of 76°F is slightly above the typical temperature for this time of year.
-
-The general weather pattern for San Francisco in September includes:
-- \
-"""
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=11,
-                part=TextPart(
-                    content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C'
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta=' (55°F) at night')),
-            _citation_delta_event(11),
-            PartEndEvent(
-                index=11,
-                part=TextPart(
-                    content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night',
-                    provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=12,
-                part=TextPart(
-                    content="""\
-
-- \
-"""
-                ),
-                previous_part_kind='text',
-            ),
-            PartEndEvent(
-                index=12,
-                part=TextPart(
-                    content="""\
-
-- \
-"""
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=13,
-                part=TextPart(content='There are normally 9 hours of bright sunshine each day in San Francisco in'),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' September')),
-            _citation_delta_event(13),
-            PartEndEvent(
-                index=13,
-                part=TextPart(
-                    content='There are normally 9 hours of bright sunshine each day in San Francisco in September',
-                    provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=14,
-                part=TextPart(
-                    content="""\
-
-- \
-"""
-                ),
-                previous_part_kind='text',
-            ),
-            PartEndEvent(
-                index=14,
-                part=TextPart(
-                    content="""\
-
-- \
-"""
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=15,
-                part=TextPart(
-                    content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm.'
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' Typically, there are no rainy days')),
-            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' during this month')),
-            _citation_delta_event(15),
-            PartEndEvent(
-                index=15,
-                part=TextPart(
-                    content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month',
-                    provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=16,
-                part=TextPart(
-                    content="""\
-
-
-So for today, you can expect partly sunny to sunny skies with a\
-"""
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=' high around 76°F (24°C)')),
-            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=' and a low around 59°F (15°C),')),
-            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=" with very little chance of rain. It's sh")),
-            PartDeltaEvent(
-                index=16, delta=TextPartDelta(content_delta='aping up to be a pleasant day in San Francisco!')
-            ),
-            PartEndEvent(
-                index=16,
-                part=TextPart(
-                    content="""\
-
-
-So for today, you can expect partly sunny to sunny skies with a high around 76°F (24°C) and a low around 59°F (15°C), with very little chance of rain. It's shaping up to be a pleasant day in San Francisco!\
+The page doesn't state the time it was retrieved, so the "now" reading may be a little out of date. For live conditions, check [Yahoo Weather](https://weather.yahoo.com/us/ca/san-francisco/) or weather.gov.\
 """
                 ),
             ),
@@ -8590,24 +8505,22 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 async def test_anthropic_web_fetch_tool(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-sonnet-4-0', capture=True)
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'})
     agent = Agent(m, capabilities=[NativeTool(WebFetchTool())], model_settings=settings)
 
     result = await agent.run(
         'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
     )
 
-    assert result.output == snapshot(
-        'Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
-    )
+    assert result.output == snapshot('Agents, realtime voice, image generation, embeddings.')
 
     assert (request_capture.body()['tools'], request_capture.body().get('tool_choice')) == snapshot(
         (
             [
                 {
                     'name': 'web_fetch',
-                    'type': 'web_fetch_20250910',
+                    'type': 'web_fetch_20260209',
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -8633,20 +8546,23 @@ async def test_anthropic_web_fetch_tool(
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content="""\
-The user is asking me to fetch the content from https://ai.pydantic.dev and return only the first sentence on that page. I need to use the web_fetch tool to get the content from this URL, then identify the first sentence and return only that sentence.
-
-Let me fetch the page first.\
-""",
-                        signature='EsIDCkYICRgCKkAKi/j4a8lGN12CjyS27ZXcPkXHGyTbn1vJENJz+AjinyTnsrynMEhidWT5IMNAs0TDgwSwPLNmgq4MsPkVekB8EgxetaK+Nhg8wUdhTEAaDMukODgr3JaYHZwVEiIwgKBckFLJ/C7wCD9oGCIECbqpaeEuWQ8BH3Hev6wpuc+66Wu7AJM1jGH60BpsUovnKqkCrHNq6b1SDT41cm2w7cyxZggrX6crzYh0fAkZ+VC6FBjy6mJikZtX6reKD+064KZ4F1oe4Qd40EBp/wHvD7oPV/fhGut1fzwl48ZgB8uzJb3tHr9MBjs4PVTsvKstpHKpOo6NLvCknQJ/0730OTENp/JOR6h6RUl6kMl5OrHTvsDEYpselUBPtLikm9p4t+d8CxqGm/B1kg1wN3FGJK31PD3veYIOO4hBirFPXWd+AiB1rZP++2QjToZ9lD2xqP/Q3vWEU+/Ryp6uzaRFWPVQkIr+mzpIaJsYuKDiyduxF4LD/hdMTV7IVDtconeQIPQJRhuO6nICBEuqb0uIotPDnCU6iI2l9OyEeKJM0RS6/NTNG8DZnvyVJ8gGKbtZKSHK6KKsdH0f7d+DGAE=',
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args='{"code": "r = await web_fetch({\\"url\\": \\"https://ai.pydantic.dev\\"})\\nprint(r[0][\'content\'][:1500] if isinstance(r, list) else r)"}',
+                        tool_call_id='srvtoolu_01T2DaeovUwJAh3bcNv1YTwb',
                         provider_name='anthropic',
                     ),
                     NativeToolCallPart(
                         tool_name='web_fetch',
                         args={'url': 'https://ai.pydantic.dev'},
-                        tool_call_id=IsStr(),
+                        tool_call_id='srvtoolu_014THVysdZB4D3UV65UtP6kW',
                         provider_name='anthropic',
+                        provider_details={
+                            'anthropic_caller': {
+                                'tool_id': 'srvtoolu_01T2DaeovUwJAh3bcNv1YTwb',
+                                'type': 'code_execution_20260120',
+                            }
+                        },
                     ),
                     NativeToolReturnPart(
                         tool_name='web_fetch',
@@ -8665,30 +8581,56 @@ Let me fetch the page first.\
                             'type': 'web_fetch_result',
                             'url': 'https://ai.pydantic.dev',
                         },
-                        tool_call_id=IsStr(),
+                        tool_call_id='srvtoolu_014THVysdZB4D3UV65UtP6kW',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={
+                            'anthropic_caller': {
+                                'tool_id': 'srvtoolu_01T2DaeovUwJAh3bcNv1YTwb',
+                                'type': 'code_execution_20260120',
+                            }
+                        },
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': IsStr(),
+                            'type': 'code_execution_result',
+                            'abort_reason': None,
+                        },
+                        tool_call_id='srvtoolu_01T2DaeovUwJAh3bcNv1YTwb',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
-                    TextPart(
-                        content='Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+                    ThinkingPart(
+                        content='',
+                        signature='CAQS9AoKEAgTGAI4AUIIdGhpbmtpbmcSDMh+H3VxplCUCkrqCxoMUy3lytajArndey06IjA/V9FihmWtcWY6Ts9wZPWeeOmdwtR2mmACaP5oGg3ETHiXR29CpzIYujyArPsJ8nIqkQqs0qKTVcy/6HdFJ7tLJvston+epmrK9i5Yeb0821N4G1Y/PZKo0dD8MmjWo14isHmf1BOJGtwIXBGFTAAIWk4520/nf6l/wJ/o2k2qfRaxxNtymHyAcOjqslXcWvf0PzfSBD11ZjJGAVyf1aHenZyTC1uxn9AU1roE7VK2hQyUIqQhCrSjGw2GCmxjo499C8pYZBsp2XdLEsQ3JCZhLt64bOzii1kvdUfu153xkbZ+E9I1cu+ZmpHvqT2o1ThBMiA6RIT3VxtxlWeUqhZlOIhP9vrYWhuABUjlQH8ygKMUVsti0dp0mplw/OL0qdajqzkL+81oPvrIkGYzVEip0iTrlOWT7wDX10CkYMo067qnbMwHMcJgbq7OC+09jUsHmcy2tYAPhn+pzNjgkQ8sGp6EaWHTA7dySPwZX2bhrTtTAVmhubjCNB8UoYsFM+l0LJl2V0J+SN7rKcoxHjCbAXaFshjYDbJMw60FUUgq/wNkpMkKWM2VYwZ/Brr80GVagoEmelPp5SfapMSIOrA4XFdUtleakglFK0W0gtxC8RmtUIV4cgyF7jFPyG7TdTV1iKJZAHvXJu35Wh9ODqWDSmJA2Asw8QmzLhL2NYuLJxQML3bl2BgzIdLRO8u1AH1lHG/tKazXaRAGulQsVSMAznFjWxaENSEGWBtBer5dyz3M2IG9/Ri9mxkUht9Kk5Ul941W1WR8S/4ZTPl/Zix1SAFPqTIOdOYIfQYtQF7Aw+hNdCxe/cuj4rPwhLN/NwvxILWnXqj80AeGik33w+ViKDP6dGLLJ59rYTDALrrFh3U0vqnOoCKDSyhB8djzoclNZ8/FrUpajCqw2tuHPOiSaVqDMSyAhujC9zi+er9qIU4pz0IGRkkOVf8Y9DmYNdK12Mkopl3DG43TEMQNI2iaftpIMZM+f/YbWh/QkQzcFiweiZKRwEDTGM/jCNBQ2NMa+l1m8nH0ffTS3DQsknCCguNVSyXpyXjevLMjlZ5Vxs8SX7JpZYwbB+KK1ZacdmJGNpN9oc1LXFGxkw6f9EV7/L6DSQ8k6GmV25gX2B44/vJUlKSLMxD0umga7e+iTok4jjzNGE2zuEDDjHepHS5M+nbJ5S7UsKQarZiJgMDG8OOiY0BGF/3KBWqbask9nek1MVqaq1rW2egnFy2A7/5DVDj5ienTOU6ajIEgntRzu9Try6iZzjjtyHbUf5mU382Jme+sD2Yi4w/WXVInkmxfKL9Iy0ij91O78kW418qYevzU5aRlxVdVESQsSJp0EZjQjG4sQnnN8xJWbsFPwec65geVK3mVQL9djlfJlS3+ArRcLrMO1KxM82LBcgehONKdRsI2iRtj9FQ5waLvDZxPR5iIM0NVNCoZdv/cu8lLTKBycIKPX9h7t2dklbz4YqacgrIhOcxn7fb4Cncjmm6Y4zyVcy1wrZoUkE3VFBGIgUc4lhOdCQyjv11gu0y6H43p7OIs1Y1xJ+cFpx+hd/b0hhaFC5nyRjQmCQTeOChLXe4o6I4uR9jtJ7d5tfvdDe8HOfd7UaVjSdOjoId94XpNdLfHd/bj4aNz+PcJZ0MQclbAdZAhPcy49Ouho3vK1K/BJzjYv1ElIto8dQN68NyoIvyNqE4tPxkQA+hHIPBnCcW0bHMISYslw5DwHrPPOyZlKG//hGjw6sRltKwKb1Zuhxl38plDeY50kmBps6LFEs3U1rGxIILVQVaFd5O3tRT5cD6/GAE=',
+                        provider_name='anthropic',
                     ),
+                    TextPart(content='Agents, realtime voice, image generation, embeddings.'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=7262,
-                    output_tokens=171,
+                    input_tokens=39961,
+                    output_tokens=411,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 7262,
-                        'output_tokens': 171,
+                        'input_tokens': 39961,
+                        'output_tokens': 411,
+                        'thinking_tokens': 288,
                     },
-                    cost=Decimal('0.024351'),
+                    output_reasoning_tokens=288,
+                    cost=Decimal('0.084032'),
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01TBpxmxmvDKvykmS5SiaNDo'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -8719,20 +8661,23 @@ Let me fetch the page first.\
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content="""\
-The user is asking me to fetch the content from https://ai.pydantic.dev and return only the first sentence on that page. I need to use the web_fetch tool to get the content from this URL, then identify the first sentence and return only that sentence.
-
-Let me fetch the page first.\
-""",
-                        signature='EsIDCkYICRgCKkAKi/j4a8lGN12CjyS27ZXcPkXHGyTbn1vJENJz+AjinyTnsrynMEhidWT5IMNAs0TDgwSwPLNmgq4MsPkVekB8EgxetaK+Nhg8wUdhTEAaDMukODgr3JaYHZwVEiIwgKBckFLJ/C7wCD9oGCIECbqpaeEuWQ8BH3Hev6wpuc+66Wu7AJM1jGH60BpsUovnKqkCrHNq6b1SDT41cm2w7cyxZggrX6crzYh0fAkZ+VC6FBjy6mJikZtX6reKD+064KZ4F1oe4Qd40EBp/wHvD7oPV/fhGut1fzwl48ZgB8uzJb3tHr9MBjs4PVTsvKstpHKpOo6NLvCknQJ/0730OTENp/JOR6h6RUl6kMl5OrHTvsDEYpselUBPtLikm9p4t+d8CxqGm/B1kg1wN3FGJK31PD3veYIOO4hBirFPXWd+AiB1rZP++2QjToZ9lD2xqP/Q3vWEU+/Ryp6uzaRFWPVQkIr+mzpIaJsYuKDiyduxF4LD/hdMTV7IVDtconeQIPQJRhuO6nICBEuqb0uIotPDnCU6iI2l9OyEeKJM0RS6/NTNG8DZnvyVJ8gGKbtZKSHK6KKsdH0f7d+DGAE=',
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args='{"code": "r = await web_fetch({\\"url\\": \\"https://ai.pydantic.dev\\"})\\nprint(r[0][\'content\'][:1500] if isinstance(r, list) else r)"}',
+                        tool_call_id='srvtoolu_01T2DaeovUwJAh3bcNv1YTwb',
                         provider_name='anthropic',
                     ),
                     NativeToolCallPart(
                         tool_name='web_fetch',
                         args={'url': 'https://ai.pydantic.dev'},
-                        tool_call_id=IsStr(),
+                        tool_call_id='srvtoolu_014THVysdZB4D3UV65UtP6kW',
                         provider_name='anthropic',
+                        provider_details={
+                            'anthropic_caller': {
+                                'tool_id': 'srvtoolu_01T2DaeovUwJAh3bcNv1YTwb',
+                                'type': 'code_execution_20260120',
+                            }
+                        },
                     ),
                     NativeToolReturnPart(
                         tool_name='web_fetch',
@@ -8751,30 +8696,56 @@ Let me fetch the page first.\
                             'type': 'web_fetch_result',
                             'url': 'https://ai.pydantic.dev',
                         },
-                        tool_call_id=IsStr(),
+                        tool_call_id='srvtoolu_014THVysdZB4D3UV65UtP6kW',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={
+                            'anthropic_caller': {
+                                'tool_id': 'srvtoolu_01T2DaeovUwJAh3bcNv1YTwb',
+                                'type': 'code_execution_20260120',
+                            }
+                        },
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': IsStr(),
+                            'type': 'code_execution_result',
+                            'abort_reason': None,
+                        },
+                        tool_call_id='srvtoolu_01T2DaeovUwJAh3bcNv1YTwb',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
-                    TextPart(
-                        content='Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+                    ThinkingPart(
+                        content='',
+                        signature='CAQS9AoKEAgTGAI4AUIIdGhpbmtpbmcSDMh+H3VxplCUCkrqCxoMUy3lytajArndey06IjA/V9FihmWtcWY6Ts9wZPWeeOmdwtR2mmACaP5oGg3ETHiXR29CpzIYujyArPsJ8nIqkQqs0qKTVcy/6HdFJ7tLJvston+epmrK9i5Yeb0821N4G1Y/PZKo0dD8MmjWo14isHmf1BOJGtwIXBGFTAAIWk4520/nf6l/wJ/o2k2qfRaxxNtymHyAcOjqslXcWvf0PzfSBD11ZjJGAVyf1aHenZyTC1uxn9AU1roE7VK2hQyUIqQhCrSjGw2GCmxjo499C8pYZBsp2XdLEsQ3JCZhLt64bOzii1kvdUfu153xkbZ+E9I1cu+ZmpHvqT2o1ThBMiA6RIT3VxtxlWeUqhZlOIhP9vrYWhuABUjlQH8ygKMUVsti0dp0mplw/OL0qdajqzkL+81oPvrIkGYzVEip0iTrlOWT7wDX10CkYMo067qnbMwHMcJgbq7OC+09jUsHmcy2tYAPhn+pzNjgkQ8sGp6EaWHTA7dySPwZX2bhrTtTAVmhubjCNB8UoYsFM+l0LJl2V0J+SN7rKcoxHjCbAXaFshjYDbJMw60FUUgq/wNkpMkKWM2VYwZ/Brr80GVagoEmelPp5SfapMSIOrA4XFdUtleakglFK0W0gtxC8RmtUIV4cgyF7jFPyG7TdTV1iKJZAHvXJu35Wh9ODqWDSmJA2Asw8QmzLhL2NYuLJxQML3bl2BgzIdLRO8u1AH1lHG/tKazXaRAGulQsVSMAznFjWxaENSEGWBtBer5dyz3M2IG9/Ri9mxkUht9Kk5Ul941W1WR8S/4ZTPl/Zix1SAFPqTIOdOYIfQYtQF7Aw+hNdCxe/cuj4rPwhLN/NwvxILWnXqj80AeGik33w+ViKDP6dGLLJ59rYTDALrrFh3U0vqnOoCKDSyhB8djzoclNZ8/FrUpajCqw2tuHPOiSaVqDMSyAhujC9zi+er9qIU4pz0IGRkkOVf8Y9DmYNdK12Mkopl3DG43TEMQNI2iaftpIMZM+f/YbWh/QkQzcFiweiZKRwEDTGM/jCNBQ2NMa+l1m8nH0ffTS3DQsknCCguNVSyXpyXjevLMjlZ5Vxs8SX7JpZYwbB+KK1ZacdmJGNpN9oc1LXFGxkw6f9EV7/L6DSQ8k6GmV25gX2B44/vJUlKSLMxD0umga7e+iTok4jjzNGE2zuEDDjHepHS5M+nbJ5S7UsKQarZiJgMDG8OOiY0BGF/3KBWqbask9nek1MVqaq1rW2egnFy2A7/5DVDj5ienTOU6ajIEgntRzu9Try6iZzjjtyHbUf5mU382Jme+sD2Yi4w/WXVInkmxfKL9Iy0ij91O78kW418qYevzU5aRlxVdVESQsSJp0EZjQjG4sQnnN8xJWbsFPwec65geVK3mVQL9djlfJlS3+ArRcLrMO1KxM82LBcgehONKdRsI2iRtj9FQ5waLvDZxPR5iIM0NVNCoZdv/cu8lLTKBycIKPX9h7t2dklbz4YqacgrIhOcxn7fb4Cncjmm6Y4zyVcy1wrZoUkE3VFBGIgUc4lhOdCQyjv11gu0y6H43p7OIs1Y1xJ+cFpx+hd/b0hhaFC5nyRjQmCQTeOChLXe4o6I4uR9jtJ7d5tfvdDe8HOfd7UaVjSdOjoId94XpNdLfHd/bj4aNz+PcJZ0MQclbAdZAhPcy49Ouho3vK1K/BJzjYv1ElIto8dQN68NyoIvyNqE4tPxkQA+hHIPBnCcW0bHMISYslw5DwHrPPOyZlKG//hGjw6sRltKwKb1Zuhxl38plDeY50kmBps6LFEs3U1rGxIILVQVaFd5O3tRT5cD6/GAE=',
+                        provider_name='anthropic',
                     ),
+                    TextPart(content='Agents, realtime voice, image generation, embeddings.'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=7262,
-                    output_tokens=171,
+                    input_tokens=39961,
+                    output_tokens=411,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 7262,
-                        'output_tokens': 171,
+                        'input_tokens': 39961,
+                        'output_tokens': 411,
+                        'thinking_tokens': 288,
                     },
-                    cost=Decimal('0.024351'),
+                    output_reasoning_tokens=288,
+                    cost=Decimal('0.084032'),
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01TBpxmxmvDKvykmS5SiaNDo'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -8794,48 +8765,35 @@ Let me fetch the page first.\
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="""\
-The user is asking about what framework is mentioned on the Pydantic AI page that I just fetched. Looking at the content, I can see several frameworks mentioned:
-
-1. Pydantic AI itself - described as "a Python agent framework"
-2. FastAPI - mentioned as having "revolutionized web development by offering an innovative and ergonomic design"
-3. Various other frameworks/libraries mentioned like LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor
-4. Pydantic Validation is mentioned as being used by many frameworks
-5. OpenTelemetry is mentioned in relation to observability
-
-But the most prominently featured framework that seems to be the main comparison point is FastAPI, as the page talks about bringing "that FastAPI feeling to GenAI app and agent development."\
-""",
-                        signature='ErIHCkYICRgCKkDZrwipmaxoEat4WffzPSjVzIuSQWM2sHE6FLC2wt5S2qiJN2MQh//EImuLE9I2ssZjTMxGXZV+esnf5ipnzbvnEgxfcXs2ax8vnLdroxMaDCpqvdPKpCP3Qi0txCIw55NdOjY30P3/yRL9RF8sPGioyitlzkhSpf+PuC3YXwz4N0hoy8zVY1MHecwc60vcKpkGxtZsfqmAuJwjeGRr/Ugxcxd69+0X/Y9pojMiklNHq9otW+ehDX0rR0EzfdN/2jNOs3bOrzfy9jmvYE5FU2c5e0JpMP3LH0LrFvZYkSh7RkbhYuHvrOqohlE3BhpflrszowmiozUk+aG4wSqx5Dtxo9W7jfeU4wduy6OyEFdIqdYdTMR8VVf9Qnd5bLX4rY09xcGQc4JcX2mFjdSR2WgEJM7p5lytlN5unH3selWBVPbCj7ogU8DbT9zhY3zkDW1dMt2vNbWNaY4gVrLwi42qBJvjC5eJTADckvXAt+MCT9AAe1kmH9NlsgBnRy13O4lhXv9SPNDfk2tU5Tdco4h/I/fXh+WuPe6/MKk+tJuoBQTGVQ5ryFmomsNiwhwtLbQ44fLVHhyqEKSEdo/107xvbzhjmY/MAzn1Pmc9rd+OhFsjUCvgqI8cWNc/E694eJqg3J2S+I6YRzG3d2tR7laUivf+J38c2XmwSyXfdRoJpyZ9TixubpPk04WSchdFlEkxPBGEWLDkWOVL1PG5ztY48di7EzM1tvAwiT1BOxl4WRZ78Ewc+C5BVHwT658rIrcKJXXI/zBMsoReQT9xsRhpozbb576wNXggJdZsd2ysQY0O6Pihz54emwigm+zPbO5n8HvlrGKf6dSsrwusUJ1BIY4wI6qjz7gweRryReDEvEzMT8Ul4mIrigRy4yL2w+03qAclz8oGwxinMvcu8vJzXg+uRm/WbOgyco4gTPQiN4NcXbzwhVtJlNWZYXCiiMb/i6IXuOzZmSjI7LqxLubD9RgOy/2890RLvVJQBBVnOowW8q+iE93CoVBr1l5D54opLS9fHYcM7ezV0Ul34qMu6K0uoBG0+aLVlZHKEecN2/VE4fh0zYEDaeqRZfNH2gnAGmokdmPtEHlp33pvJ0IFDAbxKq2CVFFdB+lCGlaLQuZ5v6Mhq4b6H8DjaGZqo/vcB/MK4pr/F1SRjLzSHyh7Ey4ogBYSOXWfaeXQiZZFoEfxIUG9PzofIA1CCFk+eZSG7bGY4wXe2Whhh5bs+cJ3duYI9SL+49WBABgB',
+                        content='',
+                        signature='CAQSwgYKEAgTGAI4AUIIdGhpbmtpbmcSDCaUPbgh0FQEj1tvFBoMsHeD8cQLKsYu7287IjC2v3miotzdOC0AFcOC3T1pZVFU1yedfrHCIeoOeacccUsp5ete2GekhlBOqnNoq7Iq3wVS03PxqpyeQIpn3NaW538GCAfYLFoHeHCu4v5z7NyfaN7/BetXpEoGKbqtwEJ64x+m4WFv1GdAaEpbiaf8ayY1gmFOB3dgMrniaPDlq86wW/eyYkwqLW9DWhjSypAb0rQLMepdRCEm1JU3REIFww+q9cW/mEWtvoX7AQ4yP06FmKORkphHmxpBl+6zV0eLvXPPQRUP/pLRnh7+rHS46AQaJ9OZtjDiJh3rCNKz46YV/5JcioLyhHKjD0J2ElvmR4V4BR7v7UsuZgkR9RZFLB0vCLwrhJqOkGdPHQnu3K/UKHhfF7ZhMz7lqzV8ekKnKWeNQ2Z/WWB+DRd/DKFeltJ97n3kkCVg1sGpJIiCb/EDLHKT4cdXCKPsbFPoXJPkJbBVwakaOfgdyE5NsXulo6SFrPeA9HK09XTNY2ao+iIVe53K01H9AwaupRv4yiTZG87DQyTiVBk3QwTuJNFAdV4cGRIqou+OlFptDF9uIOYCRCPBTo2QsouSVZfkfQLJUJMHhyj5blLHMinBRA+tRdsTWYyuDkR62bJFFcrhw/7sNm+wcLLnil6z+UFx9Fml5H+HrwKO6XZCr7fhQs5iM/wH83w9Mh9rUQB0RASihQia5h3Do6jVuTHypVJ4LX1/VTPhcQ+JAc7QdR6HhEwspIAvfD8PRIGSfLvf5IXVpdWAdcjUHO0lFTNSXUrD1VRIPVJZGzFqf722v4Nx3VfbkCqZ3VQxMcmStjYyKJveu7YDzeXAiqbCUMpMBd7zCWnvLKUhtWgU9iJhEi2nApabf5U/8lK+bQ9Pm+oMjULHGOdNsyIkJ6zk2twddY3Ig8QNYogRNOwAhW9MZo7+727B1AGT7gPnxtQCW5imuUQg1c+DX2Sk3ZlisqCE6TOvHHRZlwuvmN4NSERN9+y9NtMwiEUiSF2nyWnVC8M/TJZk9YM0gxXg/uHQkMYAWWTM/RqUpkYfUh0m/jyumLQ3uz0+/YAYAQ==',
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
-Based on the page I fetched, the main framework it mentions and compares itself to is **FastAPI**. The page states that "FastAPI revolutionized web development by offering an innovative and ergonomic design" and that Pydantic AI was built with the aim "to bring that FastAPI feeling to GenAI app and agent development."
+The page is about **Pydantic AI**, an agent framework for Python. It mentions several other frameworks and tools too:
 
-The page also mentions several other frameworks and libraries including:
-- LangChain
-- LlamaIndex  \n\
-- AutoGPT
-- Transformers
-- CrewAI
-- Instructor
-
-It notes that "virtually every Python agent framework and LLM library" uses Pydantic Validation, which is the foundation that Pydantic AI builds upon.\
+- **Comparisons:** LangChain and LangGraph, Google ADK, the Claude Agent SDK, the OpenAI Agents SDK, the Vercel AI SDK, Mastra, LiveKit Agents, Pipecat, Pi, Agno and CrewAI. The page names only LangChain, Google ADK and the Claude Agent SDK in its text. The rest appear in the navigation links.
+- **Foundations and integrations:** FastAPI, which was built on Pydantic Validation, plus Temporal, DBOS, Prefect, Restate and Airflow for durable execution, and AG-UI and Vercel AI for UI event streams.
+- **Related Pydantic projects:** Pydantic Evals, Pydantic Graph, Pydantic Logfire and Pydantic AI Harness.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=6346,
-                    output_tokens=354,
+                    input_tokens=35709,
+                    output_tokens=378,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 6346,
-                        'output_tokens': 354,
+                        'input_tokens': 35709,
+                        'output_tokens': 378,
+                        'thinking_tokens': 65,
                     },
-                    cost=Decimal('0.024348'),
+                    output_reasoning_tokens=65,
+                    cost=Decimal('0.075198'),
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8855,8 +8813,8 @@ async def test_anthropic_web_fetch_tool_stream(
 ):  # pragma: lax no cover
     from pydantic_ai.messages import PartDeltaEvent, PartStartEvent
 
-    m = anthropic_model('claude-sonnet-4-0', capture=True)
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'})
     agent = Agent(m, capabilities=[NativeTool(WebFetchTool())], model_settings=settings)
 
     # Iterate through the stream to ensure streaming code paths are covered
@@ -8875,16 +8833,14 @@ async def test_anthropic_web_fetch_tool_stream(
                             event_parts.append(event)
 
     assert agent_run.result is not None
-    assert agent_run.result.output == snapshot(
-        'Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
-    )
+    assert agent_run.result.output == snapshot('Agents, realtime voice, image generation, embeddings.')
 
     assert (request_capture.body()['tools'], request_capture.body().get('tool_choice')) == snapshot(
         (
             [
                 {
                     'name': 'web_fetch',
-                    'type': 'web_fetch_20250910',
+                    'type': 'web_fetch_20260209',
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -8910,16 +8866,23 @@ async def test_anthropic_web_fetch_tool_stream(
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content='The user wants me to fetch the content from the URL https://ai.pydantic.dev and provide only the first sentence from that page. I need to use the web_fetch tool to get the content from this URL.',
-                        signature='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE=',
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args='{"code": "r = await web_fetch({\\"url\\": \\"https://ai.pydantic.dev\\"})\\nprint(r[0][\'content\'][:1500] if isinstance(r, list) else r)"}',
+                        tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk',
                         provider_name='anthropic',
                     ),
                     NativeToolCallPart(
                         tool_name='web_fetch',
-                        args='{"url": "https://ai.pydantic.dev"}',
-                        tool_call_id=IsStr(),
+                        args={'url': 'https://ai.pydantic.dev'},
+                        tool_call_id='srvtoolu_01A4ZnKofTc2jHr5jwroMeRf',
                         provider_name='anthropic',
+                        provider_details={
+                            'anthropic_caller': {
+                                'tool_id': 'srvtoolu_01YRojJAFb8tCfwJsE9SP2xk',
+                                'type': 'code_execution_20260120',
+                            }
+                        },
                     ),
                     NativeToolReturnPart(
                         tool_name='web_fetch',
@@ -8938,30 +8901,56 @@ async def test_anthropic_web_fetch_tool_stream(
                             'type': 'web_fetch_result',
                             'url': 'https://ai.pydantic.dev',
                         },
-                        tool_call_id=IsStr(),
+                        tool_call_id='srvtoolu_01A4ZnKofTc2jHr5jwroMeRf',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={
+                            'anthropic_caller': {
+                                'tool_id': 'srvtoolu_01YRojJAFb8tCfwJsE9SP2xk',
+                                'type': 'code_execution_20260120',
+                            }
+                        },
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': IsStr(),
+                            'type': 'code_execution_result',
+                            'abort_reason': None,
+                        },
+                        tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
-                    TextPart(
-                        content='Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+                    ThinkingPart(
+                        content='',
+                        signature='CAQSnAkKEAgTGAI4AUIIdGhpbmtpbmcSDKQCjqSkGa9kz9npMxoM9srcv2cAqsIAAqXNIjAn28dvXS1LMZEmhBPaAlbWbxSYd7RGvQzF8MJvupCEAAeD07FPtqtSt0fCraAQso4quQhGfJ5dT6z21KctVoCIzDj2tWDo7amlOBbmrJ/TLpDAmGVIXyy4SI3eO9IAzVoBve3FTh9AAIqZL2XxIiGOzpU3njtdzG5YqitE2xbbb7pcaigaYcWsr1SiyzYV4JGVdy0b3xgUhbEECMvTQnPGtPfg4JLW1RwFDQsDPsHTyZabYqzUMoqRXlLWEqDI6883lrij3vv4dT3spAO/XT8yB7DMy+yHo8YikeIzyujl801Fm9Cse1o8yG+go8PJqI9oTyWA+CF5I9Ix+tMFwgPblu/dmABsqmuAT3c4cctl+tHAu3Z5O0+BscoAO2F/tuL19fkgWoP+4Zapafc4VLTDZJ4NJu7ySGcR3iHuuKUpHS7KovonCpa8a/sr3dIEgFGmhICdX7y7ZNMJQPd30uQF9PyFbOCDgyE7tAyjN8VotCiNTcb3IJVaUFep4iaSh+jYCThI5SV8730qGV26aoaCm0Ej7tQB3U8UmljjNaaD8z5jCn06e8jpWAmoy6NaIEA4Dqt06kZYdht7UcwXQwqJcUxlwlLrQbFq8m2rwSTzIw/gJWOK66dU7IX821fxoxXP0KYx05ZUyOH6MwMTdDa7wblOV0seMk+E03kLOKrcSPuQrdXTn+d1i30rrdsUvaw8XenrAKhMl70Q2OIPr+mMdHiQG9HNTQ6cZWTwHSxYkCzEPwNxyQqkwhDDIUrlXVBthinfPzalCrVkUDP7aqT/P3Fvfy1nm2NUBNrk8vCafKc76aULiwMuesAxcg1ssTrgaeZLUXxI7rs8dh9JxL8DeyU93HsfLyB4MZyLV8O+lGCQbyiA7OEC4qyMk+lpwougzu8uIoKt41c6QXpg58rfF6PjwvOUQuVFAtcPb/EPGq91KFL7veSzcAuvnUkI6OBSEB80pzMbtwQsguhPawz6o+iHatiwYDFlr1fqeYSiX2x6ARcRSyQ2af9ECyXU61iZWMQDu1PiuKIDtm0YthanZ3sZZIJSDZGNmpcXwW6NqUHNg+lHJ9U2pqi/KYywb56ZCi74tpmrfW/3i2HJxTlyzutuUHVZRDLC87j3vdQ/GNMBnk5ma3BIXviF3zeLw8xANuEse5EHd0BnDBgVjw7yD30rwwaLMlDd75qDzHJIJFZPW1Pfg6G+imi5S3BATr7/JhzyS0ipQkGG6Enb07t9b3z8+WWZh2Rgu0UaEz9KQUMXBg05Rri7qJMjGPkXYqk3vRS6VLX8SE+9JyOftRV3S1EiG9jr9Yx/c9HOy3trVEdxdffDnGJmljSKcoTdbeBNQSSTSf/TtrkR0Wyw3sWXUQgXn1Qw1fE9lDzRy0g0v/eKzjkV7elTagDlu6Gh2IMyBR+MdTLtCOjWi0kado1v6JHrdkoleU/X7XrPSn7Nj7Qs7qixozRQgVAS1TIL6LcgPm2gxXZ+RwpRlM4RVFc0OFaR71fBAnzGxKRuGAE=',
+                        provider_name='anthropic',
                     ),
+                    TextPart(content='Agents, realtime voice, image generation, embeddings.'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=7244,
-                    output_tokens=153,
+                    input_tokens=39961,
+                    output_tokens=332,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 7244,
-                        'output_tokens': 153,
+                        'input_tokens': 39961,
+                        'output_tokens': 332,
+                        'thinking_tokens': 209,
                     },
-                    cost=Decimal('0.024027'),
+                    output_reasoning_tokens=209,
+                    cost=Decimal('0.083242'),
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_018ZhJXWueotiHZcV8EZ4zaM'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -8971,53 +8960,77 @@ async def test_anthropic_web_fetch_tool_stream(
     )
     assert event_parts == snapshot(
         [
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='The user wants')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me to fetch')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the content')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' from the URL https')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='://ai.pydantic.dev')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and provide')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' only')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the first sentence from')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that page.')),
-            PartDeltaEvent(
+            PartStartEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' I need to use the web_fetch'),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' tool to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' get the content from')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this URL.')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE='
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk',
+                    provider_name='anthropic',
                 ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta='{"code": "r =', tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta=' await web_fetch({', tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='\\"url\\": \\"https://ai', tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta='.pydantic.dev', tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='\\"})\\nprint(r[0', tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta="]['content'][:1", tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='500] if isinstance(', tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='r, list) else r)', tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk')
             ),
             PartStartEvent(
                 index=1,
-                part=NativeToolCallPart(tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'),
-                previous_part_kind='thinking',
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='{"url": "', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='https://ai', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='.p', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='yd', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='antic.dev"}', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+                part=NativeToolCallPart(
+                    tool_name='web_fetch',
+                    args={'url': 'https://ai.pydantic.dev'},
+                    tool_call_id='srvtoolu_01A4ZnKofTc2jHr5jwroMeRf',
+                    provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01YRojJAFb8tCfwJsE9SP2xk',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
+                ),
+                previous_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=2,
@@ -9027,288 +9040,7 @@ async def test_anthropic_web_fetch_tool_stream(
                         'content': {
                             'citations': None,
                             'source': {
-                                'data': '''\
-Pydantic AI
-GenAI Agent Framework, the Pydantic way
-Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
-FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
-Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
-We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
-Why use Pydantic AI
--
-Built by the Pydantic Team:
-[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
-Model-agnostic: Supports virtually every
-[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
-Seamless Observability: Tightly
-[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
-Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
-[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
-Powerful Evals: Enables you to systematically test and
-[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
-MCP, A2A, and UI: Integrates the
-[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
-Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
-[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
-Durable Execution: Enables you to build
-[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
-Streamed Outputs: Provides the ability to
-[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
-Graph Support: Provides a powerful way to define
-[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
-Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
-Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
-Hello World Example
-Here's a minimal example of Pydantic AI:
-[Learn about Gateway](gateway)hello_world.py
-from pydantic_ai import Agent
-agent = Agent( # (1)!
-'gateway/anthropic:claude-sonnet-4-0',
-instructions='Be concise, reply with one sentence.', # (2)!
-)
-result = agent.run_sync('Where does "hello world" come from?') # (3)!
-print(result.output)
-"""
-The first known use of "hello, world" was in a 1974 textbook about the C programming language.
-"""
-- We configure the agent to use
-[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
-[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
-from pydantic_ai import Agent
-agent = Agent( # (1)!
-'anthropic:claude-sonnet-4-0',
-instructions='Be concise, reply with one sentence.', # (2)!
-)
-result = agent.run_sync('Where does "hello world" come from?') # (3)!
-print(result.output)
-"""
-The first known use of "hello, world" was in a 1974 textbook about the C programming language.
-"""
-- We configure the agent to use
-[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
-[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
-(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
-The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
-Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
-Tools & Dependency Injection Example
-Here is a concise example using Pydantic AI to build a support agent for a bank:
-[Learn about Gateway](gateway)bank_support.py
-from dataclasses import dataclass
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent, RunContext
-from bank_database import DatabaseConn
-@dataclass
-class SupportDependencies: # (3)!
-customer_id: int
-db: DatabaseConn # (12)!
-class SupportOutput(BaseModel): # (13)!
-support_advice: str = Field(description='Advice returned to the customer')
-block_card: bool = Field(description="Whether to block the customer's card")
-risk: int = Field(description='Risk level of query', ge=0, le=10)
-support_agent = Agent( # (1)!
-'gateway/openai:gpt-5', # (2)!
-deps_type=SupportDependencies,
-output_type=SupportOutput, # (9)!
-instructions=( # (4)!
-'You are a support agent in our bank, give the '
-'customer support and judge the risk level of their query.'
-),
-)
-@support_agent.instructions # (5)!
-async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
-customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
-return f"The customer's name is {customer_name!r}"
-@support_agent.tool # (6)!
-async def customer_balance(
-ctx: RunContext[SupportDependencies], include_pending: bool
-) -> float:
-"""Returns the customer's current account balance.""" # (7)!
-return await ctx.deps.db.customer_balance(
-id=ctx.deps.customer_id,
-include_pending=include_pending,
-)
-... # (11)!
-async def main():
-deps = SupportDependencies(customer_id=123, db=DatabaseConn())
-result = await support_agent.run('What is my balance?', deps=deps) # (8)!
-print(result.output) # (10)!
-"""
-support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
-"""
-result = await support_agent.run('I just lost my card!', deps=deps)
-print(result.output)
-"""
-support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
-"""
-- This
-[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
-. - Here we configure the agent to use
-[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
-SupportDependencies
-dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
-[instructions](agents/#instructions)can be registered with theto the agent.instructions
-keyword argument - Dynamic
-[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
-argument, which is parameterized with theRunContext
-deps_type
-from above. If the type annotation here is wrong, static type checkers will catch it. - The
-decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
-, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
-- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
-[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
-SupportOutput
-. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
-SupportOutput
-, since the agent is generic, it'll also be typed as aSupportOutput
-to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
-- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
-- This
-[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
-from dataclasses import dataclass
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent, RunContext
-from bank_database import DatabaseConn
-@dataclass
-class SupportDependencies: # (3)!
-customer_id: int
-db: DatabaseConn # (12)!
-class SupportOutput(BaseModel): # (13)!
-support_advice: str = Field(description='Advice returned to the customer')
-block_card: bool = Field(description="Whether to block the customer's card")
-risk: int = Field(description='Risk level of query', ge=0, le=10)
-support_agent = Agent( # (1)!
-'openai:gpt-5', # (2)!
-deps_type=SupportDependencies,
-output_type=SupportOutput, # (9)!
-instructions=( # (4)!
-'You are a support agent in our bank, give the '
-'customer support and judge the risk level of their query.'
-),
-)
-@support_agent.instructions # (5)!
-async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
-customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
-return f"The customer's name is {customer_name!r}"
-@support_agent.tool # (6)!
-async def customer_balance(
-ctx: RunContext[SupportDependencies], include_pending: bool
-) -> float:
-"""Returns the customer's current account balance.""" # (7)!
-return await ctx.deps.db.customer_balance(
-id=ctx.deps.customer_id,
-include_pending=include_pending,
-)
-... # (11)!
-async def main():
-deps = SupportDependencies(customer_id=123, db=DatabaseConn())
-result = await support_agent.run('What is my balance?', deps=deps) # (8)!
-print(result.output) # (10)!
-"""
-support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
-"""
-result = await support_agent.run('I just lost my card!', deps=deps)
-print(result.output)
-"""
-support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
-"""
-- This
-[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
-. - Here we configure the agent to use
-[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
-SupportDependencies
-dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
-[instructions](agents/#instructions)can be registered with theto the agent.instructions
-keyword argument - Dynamic
-[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
-argument, which is parameterized with theRunContext
-deps_type
-from above. If the type annotation here is wrong, static type checkers will catch it. - The
-decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
-, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
-- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
-[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
-SupportOutput
-. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
-SupportOutput
-, since the agent is generic, it'll also be typed as aSupportOutput
-to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
-- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
-- This
-[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
-Complete bank_support.py
-example
-The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
-is missing); you can find the complete bank_support.py
-example [here](examples/bank-support/).
-Instrumentation with Pydantic Logfire
-Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
-To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
-[Learn about Gateway](gateway)bank_support_with_logfire.py
-...
-from pydantic_ai import Agent, RunContext
-from bank_database import DatabaseConn
-import logfire
-logfire.configure() # (1)!
-logfire.instrument_pydantic_ai() # (2)!
-logfire.instrument_asyncpg() # (3)!
-...
-support_agent = Agent(
-'gateway/openai:gpt-5',
-deps_type=SupportDependencies,
-output_type=SupportOutput,
-system_prompt=(
-'You are a support agent in our bank, give the '
-'customer support and judge the risk level of their query.'
-),
-)
-- Configure the Logfire SDK, this will fail if project is not set up.
-- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
-to the agent.instrument=True
-keyword argument - In our demo,
-DatabaseConn
-usesto connect to a PostgreSQL database, soasyncpg
-is used to log the database queries.logfire.instrument_asyncpg()
-...
-from pydantic_ai import Agent, RunContext
-from bank_database import DatabaseConn
-import logfire
-logfire.configure() # (1)!
-logfire.instrument_pydantic_ai() # (2)!
-logfire.instrument_asyncpg() # (3)!
-...
-support_agent = Agent(
-'openai:gpt-5',
-deps_type=SupportDependencies,
-output_type=SupportOutput,
-system_prompt=(
-'You are a support agent in our bank, give the '
-'customer support and judge the risk level of their query.'
-),
-)
-- Configure the Logfire SDK, this will fail if project is not set up.
-- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
-to the agent.instrument=True
-keyword argument - In our demo,
-DatabaseConn
-usesto connect to a PostgreSQL database, soasyncpg
-is used to log the database queries.logfire.instrument_asyncpg()
-That's enough to get the following view of your agent in action:
-See [Monitoring and Performance](logfire/) to learn more.
-llms.txt
-The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
-This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
-Two formats are available:
-: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
-[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
-llms.txt
-file, but every link content is included. Note that this file may be too large for some LLMs.
-As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
-Next Steps
-To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
-Read the [docs](agents/) to learn more about building applications with Pydantic AI.
-Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
-Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
-''',
+                                'data': IsStr(),
                                 'media_type': 'text/plain',
                                 'type': 'text',
                             },
@@ -9319,31 +9051,45 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
                         'type': 'web_fetch_result',
                         'url': 'https://ai.pydantic.dev',
                     },
-                    tool_call_id=IsStr(),
+                    tool_call_id='srvtoolu_01A4ZnKofTc2jHr5jwroMeRf',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01YRojJAFb8tCfwJsE9SP2xk',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ydantic AI is a')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Python')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' agent')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' framework')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' designe')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d to help')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' you quickly')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' confi')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='dently,')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and pain')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='lessly build production')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' grade')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' applications')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' an')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d workflows')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Gener')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ative AI.')),
+            PartStartEvent(
+                index=3,
+                part=NativeToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': IsStr(),
+                        'type': 'code_execution_result',
+                        'abort_reason': None,
+                    },
+                    tool_call_id='srvtoolu_01YRojJAFb8tCfwJsE9SP2xk',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartDeltaEvent(index=4, delta=ThinkingPartDelta(content_delta='')),
+            PartDeltaEvent(
+                index=4,
+                delta=ThinkingPartDelta(
+                    signature_delta='CAQSnAkKEAgTGAI4AUIIdGhpbmtpbmcSDKQCjqSkGa9kz9npMxoM9srcv2cAqsIAAqXNIjAn28dvXS1LMZEmhBPaAlbWbxSYd7RGvQzF8MJvupCEAAeD07FPtqtSt0fCraAQso4quQhGfJ5dT6z21KctVoCIzDj2tWDo7amlOBbmrJ/TLpDAmGVIXyy4SI3eO9IAzVoBve3FTh9AAIqZL2XxIiGOzpU3njtdzG5YqitE2xbbb7pcaigaYcWsr1SiyzYV4JGVdy0b3xgUhbEECMvTQnPGtPfg4JLW1RwFDQsDPsHTyZabYqzUMoqRXlLWEqDI6883lrij3vv4dT3spAO/XT8yB7DMy+yHo8YikeIzyujl801Fm9Cse1o8yG+go8PJqI9oTyWA+CF5I9Ix+tMFwgPblu/dmABsqmuAT3c4cctl+tHAu3Z5O0+BscoAO2F/tuL19fkgWoP+4Zapafc4VLTDZJ4NJu7ySGcR3iHuuKUpHS7KovonCpa8a/sr3dIEgFGmhICdX7y7ZNMJQPd30uQF9PyFbOCDgyE7tAyjN8VotCiNTcb3IJVaUFep4iaSh+jYCThI5SV8730qGV26aoaCm0Ej7tQB3U8UmljjNaaD8z5jCn06e8jpWAmoy6NaIEA4Dqt06kZYdht7UcwXQwqJcUxlwlLrQbFq8m2rwSTzIw/gJWOK66dU7IX821fxoxXP0KYx05ZUyOH6MwMTdDa7wblOV0seMk+E03kLOKrcSPuQrdXTn+d1i30rrdsUvaw8XenrAKhMl70Q2OIPr+mMdHiQG9HNTQ6cZWTwHSxYkCzEPwNxyQqkwhDDIUrlXVBthinfPzalCrVkUDP7aqT/P3Fvfy1nm2NUBNrk8vCafKc76aULiwMuesAxcg1ssTrgaeZLUXxI7rs8dh9JxL8DeyU93HsfLyB4MZyLV8O+lGCQbyiA7OEC4qyMk+lpwougzu8uIoKt41c6QXpg58rfF6PjwvOUQuVFAtcPb/EPGq91KFL7veSzcAuvnUkI6OBSEB80pzMbtwQsguhPawz6o+iHatiwYDFlr1fqeYSiX2x6ARcRSyQ2af9ECyXU61iZWMQDu1PiuKIDtm0YthanZ3sZZIJSDZGNmpcXwW6NqUHNg+lHJ9U2pqi/KYywb56ZCi74tpmrfW/3i2HJxTlyzutuUHVZRDLC87j3vdQ/GNMBnk5ma3BIXviF3zeLw8xANuEse5EHd0BnDBgVjw7yD30rwwaLMlDd75qDzHJIJFZPW1Pfg6G+imi5S3BATr7/JhzyS0ipQkGG6Enb07t9b3z8+WWZh2Rgu0UaEz9KQUMXBg05Rri7qJMjGPkXYqk3vRS6VLX8SE+9JyOftRV3S1EiG9jr9Yx/c9HOy3trVEdxdffDnGJmljSKcoTdbeBNQSSTSf/TtrkR0Wyw3sWXUQgXn1Qw1fE9lDzRy0g0v/eKzjkV7elTagDlu6Gh2IMyBR+MdTLtCOjWi0kado1v6JHrdkoleU/X7XrPSn7Nj7Qs7qixozRQgVAS1TIL6LcgPm2gxXZ+RwpRlM4RVFc0OFaR71fBAnzGxKRuGAE='
+                ),
+            ),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' voice, image generation, emb')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='eddings.')),
         ]
     )
 
@@ -9550,7 +9296,7 @@ def test_anthropic_advisor_tool_profile_gating():
         'supported_native_tools', frozenset[Any]()
     )
 
-    # Client gating: available on the direct API and Mantle, not on Bedrock/Vertex/Foundry.
+    # Client gating: available on the direct API, not on either Bedrock API, Vertex or Foundry.
     pytest.importorskip('botocore')
     from anthropic import (
         AsyncAnthropicBedrock,
@@ -9570,7 +9316,38 @@ def test_anthropic_advisor_tool_profile_gating():
         provider = AnthropicProvider(api_key='x') if client is None else AnthropicProvider(anthropic_client=client)
         model = AnthropicModel('claude-opus-4-8', provider=provider)
         supported[name] = AdvisorTool in model.profile.get('supported_native_tools', frozenset[Any]())
-    assert supported == snapshot({'direct': True, 'bedrock': False, 'vertex': False, 'foundry': False, 'mantle': True})
+    assert supported == snapshot({'direct': True, 'bedrock': False, 'vertex': False, 'foundry': False, 'mantle': False})
+
+
+@pytest.mark.vcr()
+async def test_anthropic_advisor_tool_rejected_by_bedrock_messages_api(
+    allow_model_requests: None, request_capture: RequestCapture
+):
+    """The Bedrock Messages API rejects the advisor tool, which is why its client doesn't get it.
+
+    `AnthropicModel` no longer sends the tool there, so this sends the definition and beta it builds through the SDK.
+    That pins the provider behavior `test_anthropic_advisor_tool_profile_gating` rests on.
+    https://github.com/pydantic/pydantic-ai/issues/11481
+    """
+    from anthropic import AsyncAnthropicBedrockMantle, BadRequestError
+
+    direct = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='test-key'))
+    params = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-5-5')])
+    tools, _, betas = direct._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    client = AsyncAnthropicBedrockMantle(
+        api_key=os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token'),
+        aws_region=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
+        http_client=request_capture.client,
+    )
+
+    with pytest.raises(BadRequestError, match="tool type 'advisor_20260301' is not supported for this model"):
+        await client.beta.messages.create(
+            model='anthropic.claude-opus-5-5',
+            max_tokens=256,
+            messages=[{'role': 'user', 'content': 'What is 2+2? Consult your advisor first.'}],
+            tools=tools,
+            betas=sorted(betas),
+        )
 
 
 def _advisor_response(
@@ -9674,7 +9451,7 @@ async def test_anthropic_advisor_usage_iterations():
             ),
         ],
     )
-    mapped = _map_usage(
+    mapped = map_usage(
         completion_message([BetaTextBlock(text='ok', type='text')], usage_with_advisor),
         'anthropic',
         'https://api.anthropic.com',
@@ -9758,30 +9535,49 @@ async def test_anthropic_advisor_history_dropped_when_absent():
     assert [b.get('type') for b in blocks] == snapshot(['text'])
 
 
-async def test_anthropic_advisor_history_dropped_for_count_tokens(allow_model_requests: None):
-    """`count_tokens` strips the advisor tool from the wire, so advisor history must be stripped too.
+@pytest.mark.parametrize(
+    'accepts_server_tools,betas,assistant_block_types',
+    [
+        pytest.param(
+            True,
+            ['advisor-tool-2026-03-01'],
+            ['server_tool_use', 'advisor_tool_result', 'text'],
+            id='flag-on',
+        ),
+        pytest.param(False, None, ['text'], id='flag-off'),
+    ],
+)
+async def test_anthropic_advisor_history_on_count_tokens(
+    allow_model_requests: None,
+    accepts_server_tools: bool,
+    betas: list[str] | None,
+    assistant_block_types: list[str],
+):
+    """`count_tokens` keeps the advisor tool and its history blocks together, or drops both.
 
-    The advisor tool is a server tool that `count_tokens` rejects, so `_messages_count_tokens`
-    drops it from the outgoing `tools`. Replaying advisor call/result history blocks without the
-    tool definition would 400, so mapping must run with advisor inactive even though the request
-    params still carry the `AdvisorTool` (which stays active on the real `/v1/messages` request).
+    Where `anthropic_count_tokens_accepts_server_tools` is on, the advisor tool and its call/result
+    blocks reach the count as they reach `/v1/messages`. Where it is off, the tool is dropped, and its
+    history blocks must be dropped with it: replaying them without the tool definition would 400.
+    A mock client, since the flag-off side belongs to clients that can't be recorded here;
+    `test_anthropic_count_tokens_with_advisor_history` records the flag-on side.
     """
     mock_client = cast(AsyncAnthropic, MockAnthropic())
-    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(
+        'claude-sonnet-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        profile=AnthropicModelProfile(anthropic_count_tokens_accepts_server_tools=accepts_server_tools),
+    )
     mrp = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-4-8')])
 
     await m.count_tokens(_advisor_history(m), None, mrp)
 
     count_tokens_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    # The advisor beta header is only added when the advisor tool reaches the wire; its absence
-    # (`betas` stays unset/`Omit`) confirms the tool was stripped from the count-tokens request...
-    assert count_tokens_kwargs.get('betas', OMIT) is OMIT
-    # ...so the advisor history blocks it would otherwise require must be stripped too.
+    assert count_tokens_kwargs.get('betas', OMIT) == (OMIT if betas is None else betas)
     assistant_content = cast(
         list[dict[str, Any]],
         next(msg['content'] for msg in count_tokens_kwargs['messages'] if msg['role'] == 'assistant'),
     )
-    assert [block.get('type') for block in assistant_content] == snapshot(['text'])
+    assert [block.get('type') for block in assistant_content] == assistant_block_types
 
 
 async def test_anthropic_advisor_dangling_call_replayed_when_active():
@@ -9905,7 +9701,7 @@ async def test_anthropic_advisor_tool_redacted(allow_model_requests: None, anthr
 async def test_anthropic_advisor_tool_message_replay(allow_model_requests: None, anthropic_api_key: str):
     """Live: advisor blocks round-trip verbatim across turns; a second run with the tool must not 400."""
     m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8', max_tokens=1024))])
+    agent = Agent(m, capabilities=[NativeTool(AdvisorTool(model='claude-opus-5-5', max_tokens=1024))])
 
     result = await agent.run("What's 2+2? Consult your advisor first.")
     assert '4' in result.output
@@ -9962,8 +9758,8 @@ async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: 
 
 @pytest.mark.vcr()
 async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'})
     agent = Agent(
         m,
         capabilities=[
@@ -9988,28 +9784,22 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=UTC),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content='The user is asking about the pydantic/pydantic-ai repository and wants me to keep the answer short. I should use the deepwiki tools to get information about this repository. Let me start by asking a general question about what this repository is about.',
-                        signature='EqUDCkYICBgCKkCTiLjx5Rzw9zXo4pFDhFAc9Ci1R+d2fpkiqw7IPt1PgxBankr7bhRfh2iQOFEUy7sYVtsBxvnHW8zfBRxH1j6lEgySvdOyObrcFdJX3qkaDMAMCdLHIevZ/mSx/SIwi917U34N5jLQH1yMoCx/k72klLG5v42vcwUTG4ngKDI69Ddaf0eeDpgg3tL5FHfvKowCnslWg3Pd3ITe+TLlzu+OVZhRKU9SEwDJbjV7ZF954Ls6XExAfjdXhrhvXDB+hz6fZFPGFEfXV7jwElFT5HcGPWy84xvlwzbklZ2zH3XViik0B5dMErMAKs6IVwqXo3s+0p9xtX5gCBuvLkalET2upNsmdKGJv7WQWoaLch5N07uvSgWkO8AkGuVtBgqZH+uRGlPfYlnAgifNHu00GSAVK3beeyZfpnSQ6LQKcH+wVmrOi/3UvzA5f1LvsXG32gQKUCxztATnlBaI+7GMs1IAloaRHBndyRoe8Lwv79zZe9u9gnF9WCgK3yQsAR5hGZXlBKiIWfnRrXQ7QmA2hVO+mhEOCnz7OQkMIEUlfxgB',
+                    NativeToolCallPart(
+                        tool_name='mcp_server:deepwiki',
+                        args='{"action":"call_tool","tool_name":"read_wiki_structure","tool_args":{"repoName": "pydantic/pydantic-ai"}}',
+                        tool_call_id='mcptoolu_01EgV5ALUAtQk3tVCBMbwgyj',
                         provider_name='anthropic',
                     ),
                     NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
-                        args={
-                            'action': 'call_tool',
-                            'tool_name': 'ask_question',
-                            'tool_args': {
-                                'repoName': 'pydantic/pydantic-ai',
-                                'question': 'What is pydantic-ai and what does this repository do?',
-                            },
-                        },
-                        tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
+                        args='{"action":"call_tool","tool_name":"ask_wiki_question","tool_args":{"repoName": "pydantic/pydantic-ai", "question": "What is pydantic-ai, what are its main features, and how is it structured? Keep it brief."}}',
+                        tool_call_id='mcptoolu_01W7eSwZweJwzaydqueHgMfH',
                         provider_name='anthropic',
                     ),
                     NativeToolReturnPart(
@@ -10024,41 +9814,67 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                             ],
                             'is_error': False,
                         },
-                        tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
+                        tool_call_id='mcptoolu_01EgV5ALUAtQk3tVCBMbwgyj',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='mcp_server:deepwiki',
+                        content={
+                            'content': [
+                                {
+                                    'citations': None,
+                                    'text': IsStr(),
+                                    'type': 'text',
+                                }
+                            ],
+                            'is_error': False,
+                        },
+                        tool_call_id='mcptoolu_01W7eSwZweJwzaydqueHgMfH',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
-**Pydantic AI** is a Python agent framework for building production-grade applications with Generative AI. It provides:
+**Pydantic AI** is a Python framework for building production-grade GenAI agents and LLM apps. The Pydantic team makes it.
 
-- **Type-safe agents** with compile-time validation using `Agent[Deps, Output]`
-- **Model-agnostic design** supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)
-- **Structured outputs** with automatic Pydantic validation and self-correction
-- **Built-in observability** via OpenTelemetry and Logfire integration
-- **Production tooling** including evaluation framework, durable execution, and tool system
+**Key features**
+- **Model-agnostic:** One interface covers OpenAI, Anthropic, Google/Gemini, Bedrock, local models and others.
+- **Type-safe:** It builds on Pydantic V2 for structured outputs, tools and dependency injection, with streamed output validated as it arrives.
+- **Observability:** It works with OpenTelemetry and Pydantic Logfire.
+- **Composable capabilities:** Reusable units bundle tools, hooks, instructions and settings.
+- **Durable execution:** Temporal, DBOS and Prefect integrations let agents survive restarts and run long workflows.
+- **Other support:** MCP, agent-to-agent (A2A) communication, and UI integrations (AG-UI, Vercel AI SDK).
 
-The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools). It emphasizes developer ergonomics and type safety, similar to Pydantic and FastAPI.\
+**Monorepo packages**
+- `pydantic-ai-slim`: the minimal core, including the `Agent` class.
+- `pydantic-ai`: a meta-package that bundles the core with common provider extras.
+- `pydantic-graph`: typed graphs and state machines.
+- `pydantic-evals`: evaluation and benchmarking.
+- `pydantic-ai-harness`: advanced capabilities such as filesystem, shell and memory.
+- `clai`: a command-line (terminal) AI tool.
+- `pydantic-ai-examples`: example applications.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2674,
-                    output_tokens=373,
+                    input_tokens=4694,
+                    output_tokens=687,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 2674,
-                        'output_tokens': 373,
+                        'input_tokens': 4694,
+                        'output_tokens': 687,
                     },
-                    cost=Decimal('0.013617'),
+                    cost=Decimal('0.016258'),
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01MYDjkvBDRaKsY6PDwQz3n6',
+                provider_response_id='msg_011CgPJ3guomNXfU1XsKGdnz',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -10079,28 +9895,16 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=UTC),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content='The user is asking about the pydantic repo in the same org, so that would be pydantic/pydantic. I should ask about what this repository does and provide a short answer.',
-                        signature='EtECCkYICBgCKkAkKy+K3Z/q4dGwZGr1MdsH8HLaULElUSaa/Y8A1L/Jp7y1AfJd1zrTL7Zfa2KoPr0HqO/AI/cJJreheuwcn/dWEgw0bPLie900a4h9wS0aDACnsdbr+adzpUyExiIwyuNjV82BVkK/kU+sMyrfbhgb6ob/DUgudJPaK5zR6cINAAGQnIy3iOXTwu3OUfPAKrgBzF9HD5HjiPSJdsxlkI0RA5Yjiol05/hR3fUB6WWrs0aouxIzlriJ6NzmzvqctkFJdRgAL9Mh06iK1A61PLyBWRdo1f5TBziFP1c6z7iQQzH9DdcaHvG8yLoaadbyTxMvTn2PtfEcSPjuZcLgv7QcF+HZXbDVjsHJW78OK2ta0M6/xuU1p4yG3qgoss3b0G6fAyvUVgVbb1wknkE/9W9gd2k/ZSh4P7F6AcvLTXQScTyMfWRtAWQqABgB',
-                        provider_name='anthropic',
-                    ),
                     NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
-                        args={
-                            'action': 'call_tool',
-                            'tool_name': 'ask_question',
-                            'tool_args': {
-                                'repoName': 'pydantic/pydantic',
-                                'question': 'What is Pydantic and what does this repository do?',
-                            },
-                        },
-                        tool_call_id='mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y',
+                        args='{"action":"call_tool","tool_name":"ask_wiki_question","tool_args":{"repoName": "pydantic/pydantic", "question": "What is pydantic, what are its main features, and how is it structured? Keep it brief."}}',
+                        tool_call_id='mcptoolu_01JxbFZBiryiWQLhzt2gwFxc',
                         provider_name='anthropic',
                     ),
                     NativeToolReturnPart(
@@ -10109,98 +9913,54 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                             'content': [
                                 {
                                     'citations': None,
-                                    'text': """\
-Pydantic is a Python library for data validation, parsing, and serialization using type hints  . This repository, `pydantic/pydantic`, contains the source code for the Pydantic library itself, including its core validation logic, documentation, and continuous integration/continuous deployment (CI/CD) pipelines  .
-
-## What is Pydantic
-
-Pydantic is designed to ensure that data conforms to specified types and constraints at runtime . It leverages Python type hints to define data schemas and provides mechanisms for data conversion and validation . The library's core validation logic is implemented in Rust within a separate package called `pydantic-core`, which contributes to its performance .
-
-Pydantic offers several user-facing APIs for validation:
-*   `BaseModel`: Used for defining class-based models with fields, suitable for domain models, API schemas, and configuration .
-*   `TypeAdapter`: Provides a flexible way to validate and serialize arbitrary Python types, including primitive types and dataclasses .
-*   `@dataclass`: Enhances Python's built-in dataclasses with Pydantic's validation capabilities .
-*   `@validate_call`: Used for validating function arguments and return values .
-
-## What this Repository Does
-
-The `pydantic/pydantic` repository serves as the development hub for the Pydantic library. Its primary functions include:
-
-### Core Library Development
-The repository contains the Python source code for the Pydantic library, including modules for `BaseModel` , `Field` definitions , configuration management , and type adapters . It also includes internal modules responsible for model construction and schema generation .
-
-### Documentation
-The repository hosts the documentation for Pydantic, which is built using MkDocs . The documentation covers installation instructions , core concepts like models , fields, and JSON Schema generation . It also includes information on contributing to the project .
-
-### Continuous Integration and Deployment (CI/CD)
-The repository utilizes GitHub Actions for its CI/CD pipeline . This pipeline includes:
-*   **Linting**: Checks code quality and style .
-*   **Testing**: Runs a comprehensive test suite across multiple operating systems and Python versions . This includes memory profiling tests, Mypy plugin tests, and type-checking integration tests   .
-*   **Coverage**: Aggregates test coverage data and posts comments to pull requests .
-*   **Release Process**: Automates publishing new versions to PyPI and sending release announcements .
-*   **Third-Party Integration Testing**: Tests Pydantic's compatibility with other popular libraries like FastAPI, SQLModel, and Beanie .
-*   **Dependency Management**: Uses `uv` for managing dependencies and includes workflows to check compatibility with various dependency versions  .
-*   **Performance Benchmarking**: Utilizes CodSpeed to track and analyze performance .
-
-## Versioning and Compatibility
-Pydantic maintains strict version compatibility between the pure Python package (`pydantic`) and its Rust-based validation core (`pydantic-core`)  . A `SystemError` is raised if there's a mismatch in `pydantic-core` versions, ensuring a stable environment . The `version_info()` function provides detailed version information for Pydantic and its dependencies .
-
-Notes:
-The `CITATION.cff` file also provides a concise description of Pydantic as "the most widely used data validation library for Python" . The `README.md` and `docs/index.md` files reiterate this, emphasizing its speed and extensibility  .
-
-Wiki pages you might want to explore:
-- [Overview (pydantic/pydantic)](/wiki/pydantic/pydantic#1)
-- [Development and Deployment (pydantic/pydantic)](/wiki/pydantic/pydantic#7)
-
-View this search on DeepWiki: https://deepwiki.com/search/what-is-pydantic-and-what-does_dab96efa-752a-4688-a630-3f4658084a88
-""",
+                                    'text': IsStr(),
                                     'type': 'text',
                                 }
                             ],
                             'is_error': False,
                         },
-                        tool_call_id='mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y',
+                        tool_call_id='mcptoolu_01JxbFZBiryiWQLhzt2gwFxc',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
-**Pydantic** is Python's most widely used data validation library for parsing, validation, and serialization using type hints. The repository contains:
+**Pydantic** is Python's most widely used data validation and serialization library. You define schemas with type hints, and it turns unvalidated input into validated Python objects.
 
-**Core Features:**
-- **Data validation** with automatic type conversion and constraint checking
-- **Multiple APIs**: `BaseModel` for class-based models, `TypeAdapter` for arbitrary types, `@dataclass` decorator, and `@validate_call` for functions
-- **High performance** via Rust-based validation core (`pydantic-core`)
-- **JSON Schema generation** and comprehensive serialization support
+**Key features**
+- **Type-hint driven:** Schemas use standard annotations, so IDEs and static analysis tools work with them.
+- **Fast:** The validation engine is written in Rust (`pydantic-core`).
+- **Strict and lax modes:** Strict mode does no type coercion, and lax mode coerces types.
+- **JSON Schema generation:** Models produce JSON Schema automatically.
+- **Broad type support:** It covers `BaseModel`, dataclasses, `TypedDict`, `TypeAdapter`, `@validate_call` and `RootModel`.
+- **Customization:** You can write custom validators and serializers.
 
-**Repository Contents:**
-- Python source code for the main Pydantic library
-- Comprehensive documentation built with MkDocs
-- Extensive CI/CD pipeline with testing across multiple Python versions and OS
-- Integration testing with popular libraries (FastAPI, SQLModel, etc.)
-- Performance benchmarking and dependency compatibility checks
+**Architecture**
+1. **`pydantic` (Python frontend):** Provides the public API and config. Its `GenerateSchema` class turns type annotations into a `CoreSchema`.
+2. **`pydantic-core` (Rust backend):** Compiles the `CoreSchema` into a `SchemaValidator` and `SchemaSerializer`, which validate and serialize data.
 
-Pydantic ensures runtime data integrity through type hints and is foundational to many Python frameworks, especially in web APIs and data processing applications.\
+Pydantic AI builds on Pydantic. It uses Pydantic for type-safe structured outputs and tool validation.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=5262,
-                    output_tokens=369,
+                    input_tokens=9973,
+                    output_tokens=554,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 5262,
-                        'output_tokens': 369,
+                        'input_tokens': 9973,
+                        'output_tokens': 554,
                     },
-                    cost=Decimal('0.021321'),
+                    cost=Decimal('0.025486'),
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01DSGib8F7nNoYprfYSGp1sd',
+                provider_response_id='msg_011CgPJ5JcRWxLQLWsWQx8SW',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -10210,8 +9970,8 @@ Pydantic ensures runtime data integrity through type hints and is foundational t
 
 
 async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'})
     agent = Agent(
         m,
         capabilities=[
@@ -10219,7 +9979,7 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                 MCPServerTool(
                     id='deepwiki',
                     url='https://mcp.deepwiki.com/mcp',
-                    allowed_tools=['ask_question'],
+                    allowed_tools=['ask_wiki_question'],
                 )
             )
         ],
@@ -10257,15 +10017,10 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content='The user is asking about the pydantic/pydantic-ai repository. They want a short answer about the repo. I should use the deepwiki_ask_question function to get information about this repository.',
-                        signature='EuoCCkYICBgCKkDPqznnPHupi9rVXvaQQqrMprXof9wtQsCqw7Yw687UIk/FvF65omU22QO+CmIcYqTwhBfifPEp9A3/lM9C8cIcEgzGsjorcyNe2H0ZFf8aDCA4iLG6qgUL6fLhzCIwVWcg65CrvSFusXtMH18p+XiF+BUxT+rvnCFsnLbFsxtjGyKh1j4UW6V0Tk0O7+3sKtEBEzvxztXkMkeXkXRsQFJ00jTNhkUHu74sqnh6QxgV8wK2vlJRnBnes/oh7QdED0h/pZaUbxplYJiPFisWx/zTJQvOv29I46sM2CdY5ggGO1KWrEF/pognyod+jdCdb481XUET9T7nl/VMz/Og2QkyGf+5MvSecKQhujlS0VFhCgaYv68sl0Fv3hj2AkeE4vcYu3YdDaNDLXerbIaLCMkkn08NID/wKZTwtLSL+N6+kOi+4peGqXDNps8oa3mqIn7NAWFlwEUrFZd5kjtDkQ5dw/IYAQ==',
-                        provider_name='anthropic',
-                    ),
                     NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
-                        args='{"action":"call_tool","tool_name":"ask_question","tool_args":{"repoName": "pydantic/pydantic-ai", "question": "What is this repository about? What are its main features and purpose?"}}',
-                        tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                        args='{"action":"call_tool","tool_name":"ask_wiki_question","tool_args":{"repoName": "pydantic/pydantic-ai", "question": "What is this repo, what are its main features and architecture? Give a brief overview."}}',
+                        tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz',
                         provider_name='anthropic',
                     ),
                     NativeToolReturnPart(
@@ -10274,49 +10029,110 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                             'content': [
                                 {
                                     'citations': None,
-                                    'text': IsStr(),
+                                    'text': """\
+This repository, `pydantic/pydantic-ai`, is a production-grade, provider-agnostic GenAI agent framework and LLM library for Python, built by the team behind Pydantic . It emphasizes type safety, structured outputs, and seamless observability for building robust AI agents   .
+
+## Main Features
+
+Pydantic AI offers several key features:
+*   **Model-Agnosticism**: It supports various LLM providers like OpenAI, Anthropic, and Gemini through a unified interface .
+*   **Type Safety**: Leveraging Pydantic V2, it ensures maximum IDE context and static type checking, shifting error detection to write-time .
+*   **Observability**: The framework integrates with Pydantic Logfire and OpenTelemetry for real-time debugging, tracing, and cost tracking .
+*   **Durable Execution**: Agents can preserve progress across restarts and handle long-running workflows using engines like Temporal, DBOS, or Prefect .
+*   **Structured Output**: It provides powerful streaming of structured data with immediate Pydantic validation .
+*   **Composable Capabilities**: Agents can be built from reusable units that bundle tools, hooks, instructions, and model settings . An example of this is the `Capability` class used in the bank support agent example, which bundles tools and instructions .
+
+## Architecture Overview
+
+The `pydantic/pydantic-ai` project is structured as a `uv` workspace monorepo, containing several distinct Python packages .
+
+### Monorepo Structure
+The monorepo includes:
+*   `pydantic-ai`: A metapackage that bundles other core packages <cite repo="pydantic/pydantic-ai" path="Overview" start="uv.lock" end="56" />.
+*   `pydantic-ai-slim`: The core framework containing components like `Agent` and `Model` <cite repo="pydantic/pydantic-ai" path="Overview" start="uv.lock" end="56" />.
+*   `pydantic-graph`: Provides a graph-based state machine for orchestrating agent execution <cite repo="pydantic/pydantic-ai" path="Overview" start="uv.lock" end="56" />.
+*   `pydantic-evals`: An evaluation framework <cite repo="pydantic/pydantic-ai" path="Overview" start="uv.lock" end="56" />.
+*   `clai`: A CLI tool <cite repo="pydantic/pydantic-ai" path="Overview" start="uv.lock" end="56" />.
+*   `examples`: Contains usage examples <cite repo="pydantic/pydantic-ai" path="Overview" start="uv.lock" end="56" />.
+
+### Core Architectural Components
+The architecture maps natural language intent to structured code execution using specialized abstractions <cite repo="pydantic/pydantic-ai" path="Overview" start="pydantic_ai_slim/pydantic_ai/models/__init__.py" end="105" />. Key code entities include:
+*   **Agent (`pydantic_ai.agent.Agent`)**: The central orchestrator for tools, instructions, and model interaction .
+*   **Model (`pydantic_ai.models.Model`)**: An abstract base class for communicating with LLM providers .
+*   **ModelMessage (`pydantic_ai.messages.ModelMessage`)**: Represents conversation history, including `ModelRequest` and `ModelResponse` .
+*   **RunContext (`pydantic_ai._run_context.RunContext`)**: Provides access to dependencies and state within tools and dynamic instructions .
+*   **ModelRequestParameters**: Configuration for model requests, covering tools, output modes, and instructions .
+
+### Execution Flow
+Agent execution involves a loop where history and instructions are compiled into `ModelRequestParameters` and sent to the LLM via the `Model` interface  . Tool calls trigger registered Python functions with dependency injection via `RunContext` . Final outputs are validated against Pydantic schemas .
+
+## Notes
+The `pydantic/pydantic-ai` repository also heavily utilizes AI-assisted development workflows, including the `@claude` workflow for interactive coding and reviews, and a "Guidelines as Code" philosophy where instructions for AI agents are embedded in markdown files like `AGENTS.md` and `agent_docs/`  . These guidelines ensure adherence to project standards and provide framework-aware assistance .
+
+Wiki pages you might want to explore:
+- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+- [Project Philosophy and Contribution Guidelines (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1.3)
+- [AI-Assisted Development (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#12.4)
+
+View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repo-what-are-its_56565a8b-57aa-4c68-ad5e-3a4874221c70
+""",
                                     'type': 'text',
                                 }
                             ],
                             'is_error': False,
                         },
-                        tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                        tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
-**Pydantic-AI** is a framework for building Generative AI applications with type safety. It provides:
+**pydantic/pydantic-ai** is a Python framework for building GenAI agents. The Pydantic team makes it. It's provider-agnostic and focuses on type safety and structured outputs.
 
-- **Unified LLM interface** - Works with OpenAI, Anthropic, Google, Groq, Cohere, Mistral, AWS Bedrock, and more
-- **Type-safe agents** - Uses Pydantic for validation and type checking throughout
-- **Tool integration** - Easily add custom functions/tools agents can call
-- **Graph-based execution** - Manages agent workflows as finite state machines
-- **Multiple output formats** - Text, structured data, and multimodal content
-- **Durable execution** - Integration with systems like DBOS and Temporal for fault tolerance
-- **Streaming support** - Stream responses in real-time
+**Key features**
+- **Model-agnostic:** It gives you one interface for OpenAI, Anthropic, Gemini and other providers.
+- **Type-safe:** It's built on Pydantic V2, so your IDE and static type checkers can catch errors early.
+- **Structured output:** It supports streaming, and Pydantic validates the output as it arrives.
+- **Observability:** It integrates with Pydantic Logfire and OpenTelemetry for tracing and cost tracking.
+- **Durable execution:** Agents can survive restarts and run long workflows using Temporal, DBOS or Prefect.
+- **Composable capabilities:** You can bundle tools, hooks, instructions and model settings into reusable units.
 
-It's designed to simplify building robust, production-ready AI agents while abstracting away provider-specific complexities.\
+**Structure**
+
+The repo is a `uv` workspace monorepo with these packages:
+- `pydantic-ai-slim`: the core framework, including `Agent` and `Model`.
+- `pydantic-ai`: a metapackage that bundles the other core packages.
+- `pydantic-graph`: a graph-based state machine.
+- `pydantic-evals`: an evaluation framework.
+- `clai`: a CLI tool.
+- `examples`: usage examples.
+
+**How it works**
+
+An `Agent` builds the message history and instructions into a request and sends it to an LLM through the `Model` interface. When the LLM calls a tool, the framework runs the registered Python function. `RunContext` injects dependencies into that function. The final output is then validated against a Pydantic schema.
+
+The project also uses AI-assisted development. It keeps agent guidelines in files like `AGENTS.md`.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=3042,
-                    output_tokens=354,
+                    input_tokens=2892,
+                    output_tokens=710,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 3042,
-                        'output_tokens': 354,
+                        'input_tokens': 2892,
+                        'output_tokens': 710,
                     },
-                    cost=Decimal('0.014436'),
+                    cost=Decimal('0.012884'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01Xf6SmUVY1mDrSwFc5RsY3n',
+                provider_response_id='msg_011CgPG9LoX7DgkQLqZdpQQb',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -10327,90 +10143,88 @@ It's designed to simplify building robust, production-ready AI agents while abst
     assert event_parts == snapshot(
         [
             PartStartEvent(
-                index=1,
+                index=0,
                 part=NativeToolCallPart(
                     tool_name='mcp_server:deepwiki',
-                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                    tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz',
                     provider_name='anthropic',
                 ),
-                previous_part_kind='thinking',
             ),
             PartDeltaEvent(
-                index=1,
+                index=0,
                 delta=ToolCallPartDelta(
-                    args_delta='{"action":"call_tool","tool_name":"ask_question","tool_args":',
-                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                    args_delta='{"action":"call_tool","tool_name":"ask_wiki_question","tool_args":',
+                    tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz',
                 ),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+                index=0, delta=ToolCallPartDelta(args_delta='', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='{"repoName"', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta='{"repoN', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta=': "', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+                index=0, delta=ToolCallPartDelta(args_delta='ame": "', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='pydantic', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta='pydanti', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='/pydantic-ai', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta='c/pydan', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='"', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+                index=0, delta=ToolCallPartDelta(args_delta='tic-ai"', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta=', "question', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta=', "ques', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='": "What', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta='tion": ', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta=' is ', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+                index=0, delta=ToolCallPartDelta(args_delta='"What i', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='this repo', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta='s this ', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='sitory about', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta='repo, w', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='? Wha', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+                index=0, delta=ToolCallPartDelta(args_delta='hat are', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='t are i', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta=' its ma', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='ts main feat', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta='in feat', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='ure', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta='ures an', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='s and purpo', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta='d archi', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='se?"}', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta='tecture', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='}', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                index=0, delta=ToolCallPartDelta(args_delta='? Give ', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='a brief', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' overvi', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='ew."}', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='}', tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz')
             ),
             PartStartEvent(
-                index=2,
+                index=1,
                 part=NativeToolReturnPart(
                     tool_name='mcp_server:deepwiki',
                     content={
@@ -10418,81 +10232,58 @@ It's designed to simplify building robust, production-ready AI agents while abst
                             {
                                 'citations': None,
                                 'text': """\
-This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications. Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services. \n\
+This repository, `pydantic/pydantic-ai`, is a production-grade, provider-agnostic GenAI agent framework and LLM library for Python, built by the team behind Pydantic . It emphasizes type safety, structured outputs, and seamless observability for building robust AI agents   .
 
-## Main Features and Purpose
+## Main Features
 
-The `pydantic-ai` repository offers several core features:
+Pydantic AI offers several key features:
+*   **Model-Agnosticism**: It supports various LLM providers like OpenAI, Anthropic, and Gemini through a unified interface .
+*   **Type Safety**: Leveraging Pydantic V2, it ensures maximum IDE context and static type checking, shifting error detection to write-time .
+*   **Observability**: The framework integrates with Pydantic Logfire and OpenTelemetry for real-time debugging, tracing, and cost tracking .
+*   **Durable Execution**: Agents can preserve progress across restarts and handle long-running workflows using engines like Temporal, DBOS, or Prefect .
+*   **Structured Output**: It provides powerful streaming of structured data with immediate Pydantic validation .
+*   **Composable Capabilities**: Agents can be built from reusable units that bundle tools, hooks, instructions, and model settings . An example of this is the `Capability` class used in the bank support agent example, which bundles tools and instructions .
 
-### 1. Agent System
-The `Agent` class serves as the main orchestrator for managing interactions with LLMs and executing tasks.  Agents can be configured with generic types for dependency injection (`Agent[AgentDepsT, OutputDataT]`) and output validation, ensuring type safety throughout the application. \n\
+## Architecture Overview
 
-Agents support various execution methods:
-*   `agent.run()`: An asynchronous function that returns a completed `RunResult`. \n\
-*   `agent.run_sync()`: A synchronous function that internally calls `run()` to return a completed `RunResult`. \n\
-*   `agent.run_stream()`: An asynchronous context manager for streaming text and structured output. \n\
-*   `agent.run_stream_events()`: Returns an asynchronous iterable of `AgentStreamEvent`s and a final `AgentRunResultEvent`. \n\
-*   `agent.iter()`: A context manager that provides an asynchronous iterable over the nodes of the agent's underlying `Graph`, allowing for deeper control and insight into the execution flow. \n\
+The `pydantic/pydantic-ai` project is structured as a `uv` workspace monorepo, containing several distinct Python packages .
 
-### 2. Model Integration
-The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace.  Each model integration follows a consistent settings pattern with provider-specific prefixes (e.g., `google_*`, `anthropic_*`). \n\
+### Monorepo Structure
+The monorepo includes:
+*   `pydantic-ai`: A metapackage that bundles other core packages <cite repo="pydantic/pydantic-ai" path="Overview" start="uv.lock" end="56" />.
+*   `pydantic-ai-slim`: The core framework containing components like `Agent` and `Model` <cite repo="pydantic/pydantic-ai" path="Overview" start="uv.lock" end="56" />.
+*   `pydantic-graph`: Provides a graph-based state machine for orchestrating agent execution <cite repo="pydantic/pydantic-ai" path="Overview" start="uv.lock" end="56" />.
+*   `pydantic-evals`: An evaluation framework <cite repo="pydantic/pydantic-ai" path="Overview" start="uv.lock" end="56" />.
+*   `clai`: A CLI tool <cite repo="pydantic/pydantic-ai" path="Overview" start="uv.lock" end="56" />.
+*   `examples`: Contains usage examples <cite repo="pydantic/pydantic-ai" path="Overview" start="uv.lock" end="56" />.
 
-Examples of supported models and their capabilities include:
-*   `GoogleModel`: Integrates with Google's Gemini API, supporting both Gemini API (`google-gla`) and Vertex AI (`google-vertex`) providers.  It supports token counting, streaming, built-in tools like `WebSearchTool`, `WebFetchTool`, `CodeExecutionTool`, and native JSON schema output. \n\
-*   `AnthropicModel`: Uses Anthropic's beta API for advanced features like "Thinking Blocks" and built-in tools. \n\
-*   `GroqModel`: Offers high-speed inference and specialized reasoning support with configurable reasoning formats. \n\
-*   `MistralModel`: Supports customizable JSON schema prompting and thinking support. \n\
-*   `BedrockConverseModel`: Utilizes AWS Bedrock's Converse API for unified access to various foundation models like Claude, Titan, Llama, and Mistral. \n\
-*   `CohereModel`: Integrates with Cohere's v2 API for chat completions, including thinking support and tool calling. \n\
+### Core Architectural Components
+The architecture maps natural language intent to structured code execution using specialized abstractions <cite repo="pydantic/pydantic-ai" path="Overview" start="pydantic_ai_slim/pydantic_ai/models/__init__.py" end="105" />. Key code entities include:
+*   **Agent (`pydantic_ai.agent.Agent`)**: The central orchestrator for tools, instructions, and model interaction .
+*   **Model (`pydantic_ai.models.Model`)**: An abstract base class for communicating with LLM providers .
+*   **ModelMessage (`pydantic_ai.messages.ModelMessage`)**: Represents conversation history, including `ModelRequest` and `ModelResponse` .
+*   **RunContext (`pydantic_ai._run_context.RunContext`)**: Provides access to dependencies and state within tools and dynamic instructions .
+*   **ModelRequestParameters**: Configuration for model requests, covering tools, output modes, and instructions .
 
-The framework also supports multimodal inputs such as `AudioUrl`, `DocumentUrl`, `ImageUrl`, and `VideoUrl`, allowing agents to process and respond to diverse content types. \n\
+### Execution Flow
+Agent execution involves a loop where history and instructions are compiled into `ModelRequestParameters` and sent to the LLM via the `Model` interface  . Tool calls trigger registered Python functions with dependency injection via `RunContext` . Final outputs are validated against Pydantic schemas .
 
-### 3. Graph-based Execution
-Pydantic AI uses `pydantic-graph` to manage the execution flow of agents, representing it as a finite state machine.  The execution typically flows through `UserPromptNode` → `ModelRequestNode` → `CallToolsNode`.  This allows for detailed tracking of message history and usage. \n\
-
-### 4. Tool System
-Function tools enable models to perform actions and retrieve additional information.  Tools can be registered using decorators like `@agent.tool` (for tools needing `RunContext` access) or `@agent.tool_plain` (for tools without `RunContext` access).  The framework also supports toolsets for managing collections of tools. \n\
-
-Tools can return various types of output, including anything Pydantic can serialize to JSON, as well as multimodal content like `AudioUrl`, `VideoUrl`, `ImageUrl`, or `DocumentUrl`.  The `ToolReturn` object allows for separating the `return_value` (for the model), `content` (for additional context), and `metadata` (for application-specific use). \n\
-
-Built-in tools like `WebFetchTool` allow agents to pull web content into their context. \n\
-
-### 5. Output Handling
-The framework supports various output types:
-*   `TextOutput`: Plain text responses. \n\
-*   `ToolOutput`: Structured data via tool calls. \n\
-*   `NativeOutput`: Provider-specific structured output. \n\
-*   `PromptedOutput`: Prompt-based structured extraction. \n\
-
-### 6. Durable Execution
-Pydantic AI integrates with durable execution systems like DBOS and Temporal.  This allows agents to maintain state and resume execution after failures or restarts, making them suitable for long-running or fault-tolerant applications. \n\
-
-### 7. Multi-Agent Patterns and Integrations
-The repository supports multi-agent applications and various integrations, including:
-*   Pydantic Evals: For evaluating agent performance. \n\
-*   Pydantic Graph: The underlying graph execution engine. \n\
-*   Logfire: For debugging and monitoring. \n\
-*   Agent-User Interaction (AG-UI) and Agent2Agent (A2A): For facilitating interactions between agents and users, and between agents themselves. \n\
-*   Clai: A CLI tool. \n\
-
-## Purpose
-
-The overarching purpose of `pydantic-ai` is to simplify the development of robust and reliable Generative AI applications by providing a structured, type-safe, and extensible framework. It aims to abstract away the complexities of interacting with different LLM providers and managing agent workflows, allowing developers to focus on application logic. \n\
-
-Notes:
-The `CLAUDE.md` file provides guidance for Claude Code when working with the repository, outlining development commands and project architecture.  The `mkdocs.yml` file defines the structure and content of the project's documentation, further detailing the features and organization of the repository. \n\
+## Notes
+The `pydantic/pydantic-ai` repository also heavily utilizes AI-assisted development workflows, including the `@claude` workflow for interactive coding and reviews, and a "Guidelines as Code" philosophy where instructions for AI agents are embedded in markdown files like `AGENTS.md` and `agent_docs/`  . These guidelines ensure adherence to project standards and provide framework-aware assistance .
 
 Wiki pages you might want to explore:
-- [Google, Anthropic and Other Providers (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.3)
+- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+- [Project Philosophy and Contribution Guidelines (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1.3)
+- [AI-Assisted Development (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#12.4)
 
-View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repository-about_5104a64d-2f5e-4461-80d8-eb0892242441
+View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repo-what-are-its_56565a8b-57aa-4c68-ad5e-3a4874221c70
 """,
                                 'type': 'text',
                             }
                         ],
                         'is_error': False,
                     },
-                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                    tool_call_id='mcptoolu_01SFU8NgoYH8NEB49a3RUfTz',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
@@ -10505,8 +10296,8 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
 async def test_anthropic_code_execution_tool(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, vcr: Any, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-sonnet-4-6', capture=True)
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'})
     agent = Agent(
         m,
         capabilities=[NativeTool(CodeExecutionTool())],
@@ -10532,16 +10323,10 @@ async def test_anthropic_code_execution_tool(
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content='The user wants to calculate 3 * 12390.',
-                        signature='EpsCCpIBCBIYAipAgXqcJIqNeAE4ZzTBCgLt60nzFX0WluoHgAreebWs+NnbiCWxV8TiX9LSPBI00QPUQCocKfsV0VEbsdhEBQX18jIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBwc7v1QYSDJw8y+EPbdeyPIKBdhoM/oWgODyBbII/bD2kIjAP+kR4J6P/upMjwj/4Z88mHnoA4gAbBh2f/jQNu9LQh7SXJgUPJ09yGCdPvm7yFakqNsE0/S6xyplsLIL+kGYQE8kpLiOMv/mMxUcFBsqlN9EZrepldK8ZAcDoyhtpBpN1wI5wlXRCxRgB',
-                        provider_name='anthropic',
-                    ),
-                    TextPart(content='Sure! Let me calculate that for you.'),
                     NativeToolCallPart(
                         tool_name='code_execution',
                         args='{"command": "echo $((3 * 12390))"}',
-                        tool_call_id='srvtoolu_01FBP24qnwQdUrAD7Zkmgo1z',
+                        tool_call_id='srvtoolu_01U8YzeM2UDRmLD95Qm4t1Yh',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
@@ -10554,32 +10339,31 @@ async def test_anthropic_code_execution_tool(
                             'stdout': '37170\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01FBP24qnwQdUrAD7Zkmgo1z',
+                        tool_call_id='srvtoolu_01U8YzeM2UDRmLD95Qm4t1Yh',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='**3 × 12,390 = 37,170**'),
+                    TextPart(content='3 × 12390 = **37,170**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4702,
-                    output_tokens=113,
+                    input_tokens=5857,
+                    output_tokens=76,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 4702,
-                        'output_tokens': 113,
-                        'thinking_tokens': 18,
+                        'input_tokens': 5857,
+                        'output_tokens': 76,
                     },
-                    output_reasoning_tokens=18,
-                    cost=Decimal('0.015801'),
+                    cost=Decimal('0.012474'),
                 ),
-                model_name='claude-sonnet-4-6',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01BhFKQcYGib9h2Rs3bfRcvH'},
-                provider_response_id='msg_011CfY3fcyW3mMptgWy58WsW',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01KtA7pShQVyYZBW1UwfcWNy'},
+                provider_response_id='msg_011CgPFcpH9NTPbHftyMfxJc',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -10603,15 +10387,10 @@ async def test_anthropic_code_execution_tool(
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content='The user wants to calculate 4 * 12390.',
-                        signature='EpsCCpIBCBIYAipAi9on3x6werRwTo8Ov7WbDRPZo55D55yH2nBieZO27MryQPp7PyKdlBXj3rI6U43o3OHLjFFMhOSbmwD/r1GHODIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBxs7v1QYSDL4z3NuojOG4GyTPXRoMgoyky9q0tPkhHz4FIjCATXMvTqiUTgqtn9NirccXHDg4NCc+hgOaqBWwoA8NMPVoynYEvFKj1XvTZm8P2HEqNsZkdoXZqYr84p4XZ+hsstv1Ad2dNqiCKxw4FmmTyfe+nH7wbPsrRicRswamC8Y+B6SmT5iyoRgB',
-                        provider_name='anthropic',
-                    ),
                     NativeToolCallPart(
                         tool_name='code_execution',
                         args='{"command": "echo $((4 * 12390))"}',
-                        tool_call_id='srvtoolu_0145eEZDa6jUXCMf2mXiWvrn',
+                        tool_call_id='srvtoolu_01TGMyZnY1kxo3R5REZAHeXe',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
@@ -10624,32 +10403,31 @@ async def test_anthropic_code_execution_tool(
                             'stdout': '49560\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_0145eEZDa6jUXCMf2mXiWvrn',
+                        tool_call_id='srvtoolu_01TGMyZnY1kxo3R5REZAHeXe',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='**4 * 12,390 = 49,560**'),
+                    TextPart(content='4 × 12390 = **49,560**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4690,
-                    output_tokens=103,
+                    input_tokens=5855,
+                    output_tokens=76,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 4690,
-                        'output_tokens': 103,
-                        'thinking_tokens': 18,
+                        'input_tokens': 5855,
+                        'output_tokens': 76,
                     },
-                    output_reasoning_tokens=18,
-                    cost=Decimal('0.015615'),
+                    cost=Decimal('0.01247'),
                 ),
-                model_name='claude-sonnet-4-6',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01K2nhLiQ43xNyk73ijeEm7K'},
-                provider_response_id='msg_011CfY3g2LRZt5LqCR4pdTcV',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01QQ6hpe1RELLijTsFcQQZL2'},
+                provider_response_id='msg_011CgPFd11ZGSoMSVmAPqwCz',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -10667,9 +10445,14 @@ async def test_anthropic_code_execution_tool(
 async def test_anthropic_code_execution_tool_stream(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-sonnet-4-6', capture=True)
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())], model_settings=settings)
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'})
+    agent = Agent(
+        m,
+        capabilities=[NativeTool(CodeExecutionTool())],
+        model_settings=settings,
+        instructions='Always use the code execution tool for math.',
+    )
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='what is 65465-6544 * 65464-6+1.02255') as agent_run:
@@ -10693,21 +10476,16 @@ async def test_anthropic_code_execution_tool_stream(
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
+                instructions='Always use the code execution tool for math.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content='Let me calculate this mathematical expression.',
-                        signature='EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB',
-                        provider_name='anthropic',
-                    ),
-                    TextPart(content="I'll calculate that expression for you right away!"),
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
-                        tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
+                        args='{"command": "python3 -c \\"print(65465-6544 * 65464-6+1.02255)\\""}',
+                        tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
@@ -10720,46 +10498,37 @@ async def test_anthropic_code_execution_tool_stream(
                             'stdout': '-428330955.97745\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
+                        tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     TextPart(
                         content="""\
-Following the standard **order of operations (PEMDAS/BODMAS)** — multiplication is performed before addition and subtraction — here's the breakdown:
+65465 − 6544 × 65464 − 6 + 1.02255 = **−428,330,955.97745**
 
-| Step | Operation | Result |
-|------|-----------|--------|
-| 1️⃣ | `6544 × 65464` | `428,394,416` |
-| 2️⃣ | `65465 - 428,394,416` | `-428,328,951` |
-| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |
-| 4️⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |
-
-### ✅ Final Answer: **-428,330,955.97745**\
+我按标准运算顺序先算乘法:6544 × 65464 = 428,396,416。然后 65465 − 428,396,416 − 6 + 1.02255 就得到上面的结果。\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4714,
-                    output_tokens=304,
+                    input_tokens=5896,
+                    output_tokens=181,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 4714,
-                        'output_tokens': 304,
+                        'input_tokens': 5896,
+                        'output_tokens': 181,
                     },
-                    cost=Decimal('0.018702'),
+                    cost=Decimal('0.013602'),
                 ),
-                model_name='claude-sonnet-4-6',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={
-                    'finish_reason': 'end_turn',
-                    'container_id': 'container_011CaNRFAbjdPf4rmBarZzqQ',
-                },
-                provider_response_id='msg_01Js8aWE7YbmiaUPneGiCskE',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01YbSnHv2naDgKScwJaShDP6'},
+                provider_response_id='msg_011CgPFo7WGHS7DegLFXtSmc',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -10769,99 +10538,63 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta='Let'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' me calculate this mathematical expression.'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB'
-                ),
-            ),
-            PartEndEvent(
-                index=0,
-                part=ThinkingPart(
-                    content='Let me calculate this mathematical expression.',
-                    signature='EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB',
-                    provider_name='anthropic',
-                ),
-                next_part_kind='text',
-            ),
             PartStartEvent(
-                index=1,
-                part=TextPart(content="I'll calculate that expression for you right away!"),
-                previous_part_kind='thinking',
-            ),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartEndEvent(
-                index=1,
-                part=TextPart(content="I'll calculate that expression for you right away!"),
-                next_part_kind='builtin-tool-call',
-            ),
-            PartStartEvent(
-                index=2,
+                index=0,
                 part=NativeToolCallPart(
                     tool_name='code_execution',
-                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
+                    tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q',
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
-                previous_part_kind='text',
             ),
             PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q')
+                index=0, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q')
             ),
             PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='{"com', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
+                index=0, delta=ToolCallPartDelta(args_delta='{"comma', tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q')
             ),
             PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='mand": "ec', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
+                index=0, delta=ToolCallPartDelta(args_delta='nd": "p', tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q')
             ),
             PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='ho \\"65465-', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
+                index=0, delta=ToolCallPartDelta(args_delta='ython3 ', tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q')
             ),
             PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='6544 * 6', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
+                index=0,
+                delta=ToolCallPartDelta(args_delta='-c \\"pr', tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q'),
             ),
             PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='54', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
+                index=0, delta=ToolCallPartDelta(args_delta='int(654', tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q')
             ),
             PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='64-6+1.02', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
+                index=0, delta=ToolCallPartDelta(args_delta='65-6544', tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q')
             ),
             PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='255\\" | ', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
+                index=0, delta=ToolCallPartDelta(args_delta=' * 6546', tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q')
             ),
             PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='bc -l"}', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
+                index=0, delta=ToolCallPartDelta(args_delta='4-6+1.0', tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta='2255)\\"', tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q'),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q')
             ),
             PartEndEvent(
-                index=2,
+                index=0,
                 part=NativeToolCallPart(
                     tool_name='code_execution',
-                    args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
-                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
+                    args='{"command": "python3 -c \\"print(65465-6544 * 65464-6+1.02255)\\""}',
+                    tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q',
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
-                index=3,
+                index=1,
                 part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={
@@ -10871,80 +10604,49 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
                         'stdout': '-428330955.97745\n',
                         'type': 'bash_code_execution_result',
                     },
-                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
+                    tool_call_id='srvtoolu_01TN5NMF3ec5LqxEyUn8zB8Q',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='Following'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=2, part=TextPart(content='65'), previous_part_kind='builtin-tool-return'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='465 − 6544 ×')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' 65464 − 6 ')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='+ 1.02255 =')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' **−428,330,955.')),
             PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta=' the standard **order of operations (PEMDAS/BODMAS)** — multiplication is'
-                ),
-            ),
-            PartDeltaEvent(
-                index=4,
+                index=2,
                 delta=TextPartDelta(
                     content_delta="""\
- performed before addition and subtraction — here's the breakdown:
+97745**
 
-| Step | Operation | Result |
-|------|-----------|--------|
-| 1️\
+我\
 """
                 ),
             ),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(content_delta='⃣ | `6544 × 65464` | `428,394,416'),
-            ),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-` |
-| 2️⃣ | `65465 - 428,394,416` | `-428,328,951\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-` |
-| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |
-| 4️\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |
-
-### \
-"""
-                ),
-            ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='✅ Final Answer: **-428,330,955.97745**')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='按标')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='准运算')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='顺序先算')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='乘法:')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='6544 × 65464 ')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='= 428,396')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=',416')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='。然后 ')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='65465 − 428,396')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=',416 − 6 +')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' 1.02255 就')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='得到上')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='面的结果。')),
             PartEndEvent(
-                index=4,
+                index=2,
                 part=TextPart(
                     content="""\
-Following the standard **order of operations (PEMDAS/BODMAS)** — multiplication is performed before addition and subtraction — here's the breakdown:
+65465 − 6544 × 65464 − 6 + 1.02255 = **−428,330,955.97745**
 
-| Step | Operation | Result |
-|------|-----------|--------|
-| 1️⃣ | `6544 × 65464` | `428,394,416` |
-| 2️⃣ | `65465 - 428,394,416` | `-428,328,951` |
-| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |
-| 4️⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |
-
-### ✅ Final Answer: **-428,330,955.97745**\
+我按标准运算顺序先算乘法:6544 × 65464 = 428,396,416。然后 65465 − 428,396,416 − 6 + 1.02255 就得到上面的结果。\
 """
                 ),
             ),
@@ -11047,7 +10749,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
     from pydantic_ai.providers.openai import OpenAIProvider
 
     openai_model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
-    model = anthropic_model('claude-sonnet-4-5', capture=True)
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
     agent = Agent(model, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What day is today?')
@@ -11056,7 +10758,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
             [
                 {
                     'name': 'web_search',
-                    'type': 'web_search_20250305',
+                    'type': 'web_search_20260209',
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -11066,7 +10768,9 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
             None,
         )
     )
-    assert result.output == snapshot('Today is September 29, 2026.')
+    assert result.output == snapshot(
+        "Today is Sunday, October 25, 2026. That comes from the sandbox's system clock, which uses UTC. Your local date might be different, depending on your time zone."
+    )
     result = await agent.run('What day is tomorrow?', model=openai_model, message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
@@ -11079,28 +10783,30 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Tomorrow will be September 30, 2026.',
-                        id='msg_0e0e591ccbb9a83b006abbed09350487d1a8216dcff0cebc51',
+                        content='Tomorrow will be Monday, October 26, 2026.',
+                        id='msg_021aceae8b68c0d7006ade287c010c87d2ad56d9f79813564a',
                         provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=329,
-                    output_tokens=13,
+                    input_tokens=357,
+                    output_tokens=15,
                     output_reasoning_tokens=0,
                     details={'reasoning_tokens': 0},
-                    cost=Decimal('0.000762'),
+                    cost=Decimal('0.000834'),
                 ),
                 model_name='gpt-4.1-2025-04-14',
+                model_id='openai:gpt-4.1',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': IsDatetime(),
                     'service_tier': 'default',
                 },
-                provider_response_id='resp_0e0e591ccbb9a83b006abbed08a2c087d181de454e7af3081e',
+                provider_response_id='resp_021aceae8b68c0d7006ade287b6d4087d2a13d478b8530fab4',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -11119,7 +10825,7 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
     from pydantic_ai.providers.google import GoogleProvider
 
     google_model = GoogleModel('gemini-3.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
-    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
     agent = Agent(capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run('How much is 3 * 12390?', model=google_model)
@@ -11139,7 +10845,7 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
             [UserPromptPart],
             [NativeToolCallPart, NativeToolReturnPart, TextPart],
             [UserPromptPart],
-            [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart],
+            [ThinkingPart, TextPart],
         ]
     )
 
@@ -11190,7 +10896,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
 async def test_anthropic_tool_output(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-sonnet-4-5', capture=True)
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
 
     class CityLocation(BaseModel):
         city: str
@@ -11221,25 +10927,26 @@ async def test_anthropic_tool_output(
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args='', tool_call_id='toolu_017UNCdavs1wnorx882Leniq')
+                    ToolCallPart(tool_name='get_user_country', args='', tool_call_id='toolu_01A7xshoU5ApGb3Gahp1iwxG')
                 ],
                 usage=RequestUsage(
-                    input_tokens=711,
-                    output_tokens=23,
+                    input_tokens=440,
+                    output_tokens=28,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 711,
-                        'output_tokens': 23,
+                        'input_tokens': 440,
+                        'output_tokens': 28,
                     },
-                    cost=Decimal('0.002478'),
+                    cost=Decimal('0.00116'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_011CfY3xfABGCBczzZYaZP54',
+                provider_response_id='msg_011CgNQXefbNsh41MxrmQbjM',
                 finish_reason='tool_call',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -11249,7 +10956,7 @@ async def test_anthropic_tool_output(
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_017UNCdavs1wnorx882Leniq',
+                        tool_call_id='toolu_01A7xshoU5ApGb3Gahp1iwxG',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -11262,26 +10969,27 @@ async def test_anthropic_tool_output(
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"city": "Mexico City", "country": "Mexico"}',
-                        tool_call_id='toolu_01XLX8Tn3mJAQWVLKZzdkJXr',
+                        tool_call_id='toolu_01XUpRzXubYr7mWL7NhA1Hvr',
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=762,
-                    output_tokens=56,
+                    input_tokens=477,
+                    output_tokens=75,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 762,
-                        'output_tokens': 56,
+                        'input_tokens': 477,
+                        'output_tokens': 75,
                     },
-                    cost=Decimal('0.003126'),
+                    cost=Decimal('0.001704'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_011CfY3xjoVQd7HWbQKtKxgH',
+                provider_response_id='msg_011CgNQXhu4QmDKia5gEBKaN',
                 finish_reason='tool_call',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -11291,7 +10999,7 @@ async def test_anthropic_tool_output(
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='toolu_01XLX8Tn3mJAQWVLKZzdkJXr',
+                        tool_call_id='toolu_01XUpRzXubYr7mWL7NhA1Hvr',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -11306,7 +11014,7 @@ async def test_anthropic_tool_output(
 async def test_anthropic_text_output_function(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-sonnet-4-5', capture=True)
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
 
     def upcase(text: str) -> str:
         return text.upper()
@@ -11322,11 +11030,7 @@ async def test_anthropic_text_output_function(
     )
     assert content_blocks(request_capture.body(), 'tool_result') == snapshot([])
     assert result.output == snapshot(
-        """\
-BASED ON THE TOOL RESULT, YOU'RE IN MEXICO. THE LARGEST CITY IN MEXICO IS **MEXICO CITY (CIUDAD DE MÉXICO)**, WHICH IS ALSO THE CAPITAL OF THE COUNTRY.
-
-MEXICO CITY IS NOT ONLY THE LARGEST CITY IN MEXICO BUT ALSO ONE OF THE LARGEST METROPOLITAN AREAS IN THE WORLD, WITH A METROPOLITAN POPULATION OF OVER 21 MILLION PEOPLE. THE CITY PROPER HAS A POPULATION OF APPROXIMATELY 9 MILLION PEOPLE. IT SERVES AS THE POLITICAL, ECONOMIC, AND CULTURAL CENTER OF MEXICO.\
-"""
+        'THE TOOL SAYS YOUR COUNTRY IS MEXICO, AND ITS LARGEST CITY IS **MEXICO CITY** (CIUDAD DE MÉXICO). THE CITY PROPER HAS ABOUT 9 MILLION RESIDENTS. THE GREATER METROPOLITAN AREA HAS MORE THAN 21 MILLION, WHICH MAKES IT ONE OF THE LARGEST URBAN AREAS IN THE WESTERN HEMISPHERE.'
     )
 
     assert result.all_messages() == snapshot(
@@ -11344,28 +11048,26 @@ MEXICO CITY IS NOT ONLY THE LARGEST CITY IN MEXICO BUT ALSO ONE OF THE LARGEST M
             ),
             ModelResponse(
                 parts=[
-                    TextPart(
-                        content="I'll help you find the largest city in your country. Let me first determine which country you're in."
-                    ),
-                    ToolCallPart(tool_name='get_user_country', args='', tool_call_id='toolu_01A6nVcvkJZ34xjbVWD68U9W'),
+                    ToolCallPart(tool_name='get_user_country', args='', tool_call_id='toolu_01RF9txTNLJ9bnS7gbdJviZo')
                 ],
                 usage=RequestUsage(
-                    input_tokens=566,
-                    output_tokens=61,
+                    input_tokens=374,
+                    output_tokens=28,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 566,
-                        'output_tokens': 61,
+                        'input_tokens': 374,
+                        'output_tokens': 28,
                     },
-                    cost=Decimal('0.002613'),
+                    cost=Decimal('0.001028'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_011CfY3wx3ex3fuPktYXmnv8',
+                provider_response_id='msg_011CgNQXnE28zf714XDqBfU7',
                 finish_reason='tool_call',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -11375,7 +11077,7 @@ MEXICO CITY IS NOT ONLY THE LARGEST CITY IN MEXICO BUT ALSO ONE OF THE LARGEST M
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_01A6nVcvkJZ34xjbVWD68U9W',
+                        tool_call_id='toolu_01RF9txTNLJ9bnS7gbdJviZo',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -11386,30 +11088,27 @@ MEXICO CITY IS NOT ONLY THE LARGEST CITY IN MEXICO BUT ALSO ONE OF THE LARGEST M
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="""\
-Based on the tool result, you're in Mexico. The largest city in Mexico is **Mexico City (Ciudad de México)**, which is also the capital of the country.
-
-Mexico City is not only the largest city in Mexico but also one of the largest metropolitan areas in the world, with a metropolitan population of over 21 million people. The city proper has a population of approximately 9 million people. It serves as the political, economic, and cultural center of Mexico.\
-"""
+                        content='The tool says your country is Mexico, and its largest city is **Mexico City** (Ciudad de México). The city proper has about 9 million residents. The greater metropolitan area has more than 21 million, which makes it one of the largest urban areas in the Western Hemisphere.'
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=640,
-                    output_tokens=101,
+                    input_tokens=411,
+                    output_tokens=90,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 640,
-                        'output_tokens': 101,
+                        'input_tokens': 411,
+                        'output_tokens': 90,
                     },
-                    cost=Decimal('0.003435'),
+                    cost=Decimal('0.001722'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011CfY3x4W79KgsD9VqZQY5W',
+                provider_response_id='msg_011CgNQXrawkLT2TP6bNEvQv',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -11422,7 +11121,7 @@ Mexico City is not only the largest city in Mexico but also one of the largest m
 async def test_anthropic_prompted_output(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-sonnet-4-5', capture=True)
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
 
     class CityLocation(BaseModel):
         city: str
@@ -11469,28 +11168,26 @@ Don't include any text or Markdown fencing before or after.
             ),
             ModelResponse(
                 parts=[
-                    TextPart(
-                        content="I'll help you find the largest city in your country. Let me first determine which country you're in."
-                    ),
-                    ToolCallPart(tool_name='get_user_country', args='', tool_call_id='toolu_01EFHXeuSi8dBkTkYCKLarCu'),
+                    ToolCallPart(tool_name='get_user_country', args='', tool_call_id='toolu_014qLGZFLqSq9Q6fSE1m1eUn')
                 ],
                 usage=RequestUsage(
-                    input_tokens=642,
-                    output_tokens=61,
+                    input_tokens=474,
+                    output_tokens=28,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 642,
-                        'output_tokens': 61,
+                        'input_tokens': 474,
+                        'output_tokens': 28,
                     },
-                    cost=Decimal('0.002841'),
+                    cost=Decimal('0.001228'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_011CfY3vdyS5QodUqcT3ogu4',
+                provider_response_id='msg_011CgNQXz7P3mB6EEHda9eeR',
                 finish_reason='tool_call',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -11500,7 +11197,7 @@ Don't include any text or Markdown fencing before or after.
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_01EFHXeuSi8dBkTkYCKLarCu',
+                        tool_call_id='toolu_014qLGZFLqSq9Q6fSE1m1eUn',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -11509,37 +11206,25 @@ Don't include any text or Markdown fencing before or after.
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-Based on the result, you're in Mexico. The largest city in Mexico is **Mexico City** (Ciudad de México), which is both the capital and the most populous city in the country, with a metropolitan area population of over 21 million people.
-
-```json
-{
-  "city": "Mexico City",
-  "country": "Mexico"
-}
-```\
-"""
-                    )
-                ],
+                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
                 usage=RequestUsage(
-                    input_tokens=716,
-                    output_tokens=81,
+                    input_tokens=511,
+                    output_tokens=23,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 716,
-                        'output_tokens': 81,
+                        'input_tokens': 511,
+                        'output_tokens': 23,
                     },
-                    cost=Decimal('0.003363'),
+                    cost=Decimal('0.001252'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011CfY3vjSbpE3Fr3PSmTxXH',
+                provider_response_id='msg_011CgNQY4b2MahPGqbkRUC9z',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -11551,7 +11236,7 @@ Based on the result, you're in Mexico. The largest city in Mexico is **Mexico Ci
 async def test_anthropic_prompted_output_multiple(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-sonnet-4-5', capture=True)
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
 
     class CityLocation(BaseModel):
         city: str
@@ -11597,38 +11282,27 @@ Don't include any text or Markdown fencing before or after.
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="""\
-```json
-{
-  "result": {
-    "kind": "CityLocation",
-    "data": {
-      "city": "Mexico City",
-      "country": "Mexico"
-    }
-  }
-}
-```\
-"""
+                        content='{"result": {"kind": "CityLocation", "data": {"city": "Mexico City", "country": "Mexico"}}}'
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=248,
-                    output_tokens=56,
+                    input_tokens=331,
+                    output_tokens=44,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 248,
-                        'output_tokens': 56,
+                        'input_tokens': 331,
+                        'output_tokens': 44,
                     },
-                    cost=Decimal('0.001584'),
+                    cost=Decimal('0.001102'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011CfY3vuCUuF3JVgYPaiAeH',
+                provider_response_id='msg_011CgNQY8PiiFw1neiNyC5vt',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -11721,8 +11395,10 @@ async def test_anthropic_tool_with_thinking(
 
     This tests the issue raised in https://github.com/pydantic/pydantic-ai/issues/2040.
     """
-    m = anthropic_model('claude-sonnet-4-0', capture=True)
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}, anthropic_effort='max'
+    )
     agent = Agent(m, model_settings=settings)
 
     @agent.tool_plain
@@ -11731,13 +11407,16 @@ async def test_anthropic_tool_with_thinking(
 
     result = await agent.run('What is the largest city in the user country?')
     assert content_blocks(request_capture.body(), 'tool_result') == snapshot([])
-    assert result.output == snapshot("""\
-Based on the information that you're from Mexico, the largest city in your country is **Mexico City** (Ciudad de México). \n\
+    assert result.output == snapshot(
+        """\
+The largest city in Mexico is **Mexico City** (Ciudad de México), which is also the capital.
 
-Mexico City is not only the largest city in Mexico but also one of the largest metropolitan areas in the world. The city proper has a population of approximately 9.2 million people, while the greater Mexico City metropolitan area (which includes surrounding municipalities) has over 21 million inhabitants, making it one of the most populous urban agglomerations globally.
+- **City proper:** about 9.2 million people (2020 census).
+- **Metropolitan area:** about 21–22 million people. This makes it one of the largest urban areas in the Western Hemisphere.
 
-Mexico City serves as the country's capital and is the political, economic, and cultural center of Mexico.\
-""")
+It sits in the Valley of Mexico at an elevation of about 2,240 meters (7,350 feet). It was built on the site of the Aztec capital, Tenochtitlan.\
+"""
+    )
 
 
 async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_model_requests: None):
@@ -11864,7 +11543,7 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
 async def test_anthropic_text_editor_code_execution_tool(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-sonnet-4-6', capture=True)
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
     agent = Agent(
         m,
         capabilities=[NativeTool(CodeExecutionTool())],
@@ -11897,28 +11576,30 @@ async def test_anthropic_text_editor_code_execution_tool(
             ),
             ModelResponse(
                 parts=[
-                    TextPart(
-                        content="Sure! I'll do both steps simultaneously — creating the file and viewing it at the same time, then report back."
+                    ThinkingPart(
+                        content='',
+                        signature='CAQSigUKEAgTGAI4AUIIdGhpbmtpbmcSDC39EfeQOr82Hyf2JBoMHkkCAdgPwK3Z/lC5IjBVl/rndhKNkfesx3/toTi3Vu4KDBIxoa80EbIeudd99tdvyKS3fOtfkXMN0jDA8PIqpwQ8QSX5jpuKSpW5hqNiHIrwtpxtz5ffmJxb1AZOJS6rXC/PtUjpNKbBZVYNij7hh+NU4TmnGH6/aCjHCyBKAucmhx2UK/lZnagXikKm9HYLUey1nksrET+nFbLHqQoQqKXTDs/aTsOyKv+TD/krOP4HYzv3bi8HFH0r4GR75lIF7psNQrNzdE9lsn7ryeX7otn1HOlwDFrCghWsBBfCoPoCP7KickYuuqGs+BdpHEm1A0z08BvvU13z/67VBbwoJS/FgT8mUYl1yvOq5c9e2PdUVABL7WbCq8A1mhOzuGaMacEX5amO/ryidkjS+tM1TKIyuFE8vv/xzVEOhgK5eoSxN/eaRP/QF2rCo0y12RCYC1SWfRmo9rfDbTbrivSX6zklFIrLwE9jM0qYs1ABD0qF9KXRA/n39hgEIsiPGP7VoMaTSXU3n5M2UW1bTSht05gKTPwTq2xSVHzQOfPiShLLa13wlg/v6VOVpktSbv0k5OxL76x5SGvIXyc+LhkDhx1Cc9QBTfS0lJDZSGf1kQwy/f56Sv6LMUBMbQAJb814jj10cemNWCOLkATV1M/ynaVJHu20xIc46DMx6/4fhdy0bv2uQFv8uoYYDIzc9SFxcELO1TeWjG44UVAau8uUk4zf5ze6CRUteN79bA+W+PTP9o+FByvhCGhYzChmYRFGG9dQphmTHOoDFz276dh5Xp+g/dt6Tq+S0mDSrOFIfD+ONsM8QBwatRgB',
+                        provider_name='anthropic',
                     ),
                     NativeToolCallPart(
                         tool_name='code_execution',
                         args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
-                        tool_call_id='srvtoolu_01WFgbd6mVbXEn1svFKtFQCE',
-                        provider_name='anthropic',
-                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                    ),
-                    NativeToolCallPart(
-                        tool_name='code_execution',
-                        args='{"command": "view", "path": "/tmp/hello.txt"}',
-                        tool_call_id='srvtoolu_015rV12wivwdNWXL4hMvXwSk',
+                        tool_call_id='srvtoolu_015hwWbMnw9shFSbg6tV3Z7N',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
-                        tool_call_id='srvtoolu_01WFgbd6mVbXEn1svFKtFQCE',
                         timestamp=IsDatetime(),
+                        tool_call_id='srvtoolu_015hwWbMnw9shFSbg6tV3Z7N',
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args='{"command": "view", "path": "/tmp/hello.txt"}',
+                        tool_call_id='srvtoolu_01H6DJLAs1a3DEozzhzYNmrh',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
@@ -11932,41 +11613,35 @@ async def test_anthropic_text_editor_code_execution_tool(
                             'total_lines': 1,
                             'type': 'text_editor_code_execution_view_result',
                         },
-                        tool_call_id='srvtoolu_015rV12wivwdNWXL4hMvXwSk',
+                        tool_call_id='srvtoolu_01H6DJLAs1a3DEozzhzYNmrh',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     TextPart(
-                        content="""\
-Here's a summary of what happened:
-
-1. **Created** `/tmp/hello.txt` — The file was created successfully with the specified content.
-2. **Viewed** `/tmp/hello.txt` — The file contains exactly:
-
-   > `Hello, world!`
-
-Everything looks perfect! Both operations were run in parallel since creating and viewing are independent of each other in this case.\
-"""
+                        content='`/tmp/hello.txt` now exists, and when I viewed it, it contained one line: `Hello, world!`'
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4878,
-                    output_tokens=275,
+                    input_tokens=9226,
+                    output_tokens=254,
                     details={
-                        'input_tokens': 4878,
-                        'output_tokens': 275,
+                        'input_tokens': 9226,
+                        'output_tokens': 254,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
+                        'thinking_tokens': 19,
                     },
-                    cost=Decimal('0.018759'),
+                    output_reasoning_tokens=19,
+                    cost=Decimal('0.020992'),
                 ),
-                model_name='claude-sonnet-4-6',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_012BTgpuS8r9M6HkZbRkbHK9'},
-                provider_response_id='msg_011CfY3wQZKC36naa9enPGZs',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_012Uyq8KKWk53DV5aHakAsnX'},
+                provider_response_id='msg_011CgPFdWAkBqL7Jk9azjJcu',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -11978,7 +11653,7 @@ Everything looks perfect! Both operations were run in parallel since creating an
 async def test_anthropic_text_editor_code_execution_tool_stream(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-sonnet-4-6', capture=True)
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
     agent = Agent(
         m,
         capabilities=[NativeTool(CodeExecutionTool())],
@@ -12006,18 +11681,20 @@ async def test_anthropic_text_editor_code_execution_tool_stream(
     )
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=TextPart(content='Sure')),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='')),
             PartDeltaEvent(
                 index=0,
-                delta=TextPartDelta(
-                    content_delta="! I'll do both steps simultaneously — creating the file and viewing it at the same time!"
+                delta=ThinkingPartDelta(
+                    signature_delta='CAQSwgUKEAgTGAI4AUIIdGhpbmtpbmcSDFMrGIGKx6yhNKD7cBoMYfEIqMYuMBqHyscxIjD3SzdF9FOh9bfcXWtvXY9RV7nNdwvSHb+VhXa5RH073cSa+/q2BQ1osL2OMWTlwzgq3wSoej4W5kTpkgeWeCM2BpcxzuDpuTWYw+jyGz7XHXHaMOiiGCCcivGojALf5StCl0qKX150coGH6Yw/hMkHbnKX0BCN6HEhPo4qzL2NbWxEOIiI7aL822X4QZ0ZqbPoMl8Zg1n2JQm5EZLht0kG+OUN76Fwd0D+3KBoMDRCec3gDTCNv1d60awPpPSR3mgw9vMmK3uB4r+Yimv39KvjMa6AmahZTPUHBfQgBjraakAHZefbuRbB5P/oeprK0vN15s2ZuVCr5G2/Ys+5jqkJKIuoVwW/e/WrqX1QrAwe47eJCN0rJpuDry+oaQm6oyCi6wli1lGcfm15KVl8qMkeQ2fW9zZINfime+K5v4G92vEqcBu0WyT7AN2LsJ9t4XwVokmY2XN8arAj2bbzZAWU+0yJNuDgKSFcY03cjI7X99QJb3I/OFqts3Y8ThV8w/+YDlOXj8LJV9/Xo4EemxDtn5KaUnSicXg0qoUaCga21GiK2myFdjDtzcXchvElQcVSlliTrU09MFSiBvaPSthwuL6/E8erVy3BX74c0DmQ/Fk5cAUuGIHIvUt03kZv15HEhG2LJR0H7n36VNFVA8yT4ElgVtl6S84PTcTH/4iCg2JnJOjqHiP/QJxcAazSSloXhTSrcIMaepn/wRqRCUESdUlg8gdrRg5UMNvVUBvLP76PEpXOywTeh86D0x8dNJnCxGTbLG1nY0e2UVHhzt5uGtiEDwatL79mUPspyPdtMYpwXQHm5qjNZGgqcd2tG2BGFqGB35kYDCJYWfW2PLTg6rTLtmdzCLSuOJ0z4c7QnW+SGAE='
                 ),
             ),
             PartEndEvent(
                 index=0,
-                part=TextPart(
-                    content="Sure! I'll do both steps simultaneously — creating the file and viewing it at the same time!"
+                part=ThinkingPart(
+                    content='',
+                    signature='CAQSwgUKEAgTGAI4AUIIdGhpbmtpbmcSDFMrGIGKx6yhNKD7cBoMYfEIqMYuMBqHyscxIjD3SzdF9FOh9bfcXWtvXY9RV7nNdwvSHb+VhXa5RH073cSa+/q2BQ1osL2OMWTlwzgq3wSoej4W5kTpkgeWeCM2BpcxzuDpuTWYw+jyGz7XHXHaMOiiGCCcivGojALf5StCl0qKX150coGH6Yw/hMkHbnKX0BCN6HEhPo4qzL2NbWxEOIiI7aL822X4QZ0ZqbPoMl8Zg1n2JQm5EZLht0kG+OUN76Fwd0D+3KBoMDRCec3gDTCNv1d60awPpPSR3mgw9vMmK3uB4r+Yimv39KvjMa6AmahZTPUHBfQgBjraakAHZefbuRbB5P/oeprK0vN15s2ZuVCr5G2/Ys+5jqkJKIuoVwW/e/WrqX1QrAwe47eJCN0rJpuDry+oaQm6oyCi6wli1lGcfm15KVl8qMkeQ2fW9zZINfime+K5v4G92vEqcBu0WyT7AN2LsJ9t4XwVokmY2XN8arAj2bbzZAWU+0yJNuDgKSFcY03cjI7X99QJb3I/OFqts3Y8ThV8w/+YDlOXj8LJV9/Xo4EemxDtn5KaUnSicXg0qoUaCga21GiK2myFdjDtzcXchvElQcVSlliTrU09MFSiBvaPSthwuL6/E8erVy3BX74c0DmQ/Fk5cAUuGIHIvUt03kZv15HEhG2LJR0H7n36VNFVA8yT4ElgVtl6S84PTcTH/4iCg2JnJOjqHiP/QJxcAazSSloXhTSrcIMaepn/wRqRCUESdUlg8gdrRg5UMNvVUBvLP76PEpXOywTeh86D0x8dNJnCxGTbLG1nY0e2UVHhzt5uGtiEDwatL79mUPspyPdtMYpwXQHm5qjNZGgqcd2tG2BGFqGB35kYDCJYWfW2PLTg6rTLtmdzCLSuOJ0z4c7QnW+SGAE=',
+                    provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-call',
             ),
@@ -12025,229 +11702,121 @@ async def test_anthropic_text_editor_code_execution_tool_stream(
                 index=1,
                 part=NativeToolCallPart(
                     tool_name='code_execution',
-                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
+                    tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo',
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
-                previous_part_kind='text',
+                previous_part_kind='thinking',
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi')
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='{"command":', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+                index=1, delta=ToolCallPartDelta(args_delta='{"comma', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta=' "creat', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+                index=1, delta=ToolCallPartDelta(args_delta='nd": "c', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='e"', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+                index=1, delta=ToolCallPartDelta(args_delta='reate"', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta=', "p', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi')
+                index=1, delta=ToolCallPartDelta(args_delta=', "path', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='ath": "/', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+                index=1, delta=ToolCallPartDelta(args_delta='": "/tm', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='tmp/he', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi')
+                index=1, delta=ToolCallPartDelta(args_delta='p/hello', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='llo.t', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+                index=1, delta=ToolCallPartDelta(args_delta='.txt"', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='xt"', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+                index=1, delta=ToolCallPartDelta(args_delta=', "file', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta=', "file_t', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+                index=1, delta=ToolCallPartDelta(args_delta='_text":', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='ext', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+                index=1, delta=ToolCallPartDelta(args_delta=' "Hello', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='": "Hello', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+                index=1, delta=ToolCallPartDelta(args_delta=', world', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta=', world!"}', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+                index=1, delta=ToolCallPartDelta(args_delta='!"}', tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo')
             ),
             PartEndEvent(
                 index=1,
                 part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
-                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
-                    provider_name='anthropic',
-                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                ),
-                next_part_kind='builtin-tool-call',
-            ),
-            PartStartEvent(
-                index=2,
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
-                    provider_name='anthropic',
-                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                ),
-                previous_part_kind='builtin-tool-call',
-            ),
-            PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs')
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='{"comman', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='d": "view', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
-            ),
-            PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='"', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs')
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta=', "pa', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='th": "/', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='tmp/hello.', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
-            ),
-            PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='txt"}', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs')
-            ),
-            PartEndEvent(
-                index=2,
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"command": "view", "path": "/tmp/hello.txt"}',
-                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
+                    tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo',
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
-                index=3,
+                index=2,
                 part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
+                    tool_call_id='srvtoolu_01TAtTR7x4UcAvGyFmq6mAzo',
                     timestamp=IsDatetime(),
-                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
-                index=4,
-                part=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={
-                        'error_code': 'unavailable',
-                        'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
-                        'type': 'text_editor_code_execution_tool_result_error',
-                    },
-                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                ),
-                previous_part_kind='builtin-tool-return',
-            ),
-            PartStartEvent(
-                index=5,
-                part=TextPart(content='No'),
-                previous_part_kind='builtin-tool-return',
-            ),
-            PartDeltaEvent(
-                index=5, delta=TextPartDelta(content_delta=" worries — the `view` couldn't run in parallel with")
-            ),
-            PartDeltaEvent(
-                index=5,
-                delta=TextPartDelta(
-                    content_delta=" the `create` since the file didn't exist yet at the time both calls"
-                ),
-            ),
-            PartDeltaEvent(
-                index=5,
-                delta=TextPartDelta(
-                    content_delta=' were dispatched. Now that the file has been created, let me view it!'
-                ),
-            ),
-            PartEndEvent(
-                index=5,
-                part=TextPart(
-                    content="No worries — the `view` couldn't run in parallel with the `create` since the file didn't exist yet at the time both calls were dispatched. Now that the file has been created, let me view it!"
-                ),
-                next_part_kind='builtin-tool-call',
-            ),
-            PartStartEvent(
-                index=6,
+                index=3,
                 part=NativeToolCallPart(
                     tool_name='code_execution',
-                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    tool_call_id='srvtoolu_01M6ayQoBLSNBoQvTQMjVVy8',
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
-                previous_part_kind='text',
+                previous_part_kind='builtin-tool-return',
             ),
             PartDeltaEvent(
-                index=6, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+                index=3, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01M6ayQoBLSNBoQvTQMjVVy8')
             ),
             PartDeltaEvent(
-                index=6,
-                delta=ToolCallPartDelta(args_delta='{"command":', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU'),
+                index=3, delta=ToolCallPartDelta(args_delta='{"comma', tool_call_id='srvtoolu_01M6ayQoBLSNBoQvTQMjVVy8')
             ),
             PartDeltaEvent(
-                index=6, delta=ToolCallPartDelta(args_delta=' "view"', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+                index=3, delta=ToolCallPartDelta(args_delta='nd": "v', tool_call_id='srvtoolu_01M6ayQoBLSNBoQvTQMjVVy8')
             ),
             PartDeltaEvent(
-                index=6, delta=ToolCallPartDelta(args_delta=', ', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+                index=3, delta=ToolCallPartDelta(args_delta='iew"', tool_call_id='srvtoolu_01M6ayQoBLSNBoQvTQMjVVy8')
             ),
             PartDeltaEvent(
-                index=6, delta=ToolCallPartDelta(args_delta='"p', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+                index=3, delta=ToolCallPartDelta(args_delta=', "path', tool_call_id='srvtoolu_01M6ayQoBLSNBoQvTQMjVVy8')
             ),
             PartDeltaEvent(
-                index=6, delta=ToolCallPartDelta(args_delta='ath": ', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+                index=3, delta=ToolCallPartDelta(args_delta='": "/tm', tool_call_id='srvtoolu_01M6ayQoBLSNBoQvTQMjVVy8')
             ),
             PartDeltaEvent(
-                index=6, delta=ToolCallPartDelta(args_delta='"/', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+                index=3, delta=ToolCallPartDelta(args_delta='p/hello', tool_call_id='srvtoolu_01M6ayQoBLSNBoQvTQMjVVy8')
             ),
             PartDeltaEvent(
-                index=6, delta=ToolCallPartDelta(args_delta='tmp/he', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
-            ),
-            PartDeltaEvent(
-                index=6,
-                delta=ToolCallPartDelta(args_delta='llo.txt"}', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU'),
+                index=3, delta=ToolCallPartDelta(args_delta='.txt"}', tool_call_id='srvtoolu_01M6ayQoBLSNBoQvTQMjVVy8')
             ),
             PartEndEvent(
-                index=6,
+                index=3,
                 part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"command": "view", "path": "/tmp/hello.txt"}',
-                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    tool_call_id='srvtoolu_01M6ayQoBLSNBoQvTQMjVVy8',
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
-                index=7,
+                index=4,
                 part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={
@@ -12258,58 +11827,26 @@ async def test_anthropic_text_editor_code_execution_tool_stream(
                         'total_lines': 1,
                         'type': 'text_editor_code_execution_view_result',
                     },
-                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    tool_call_id='srvtoolu_01M6ayQoBLSNBoQvTQMjVVy8',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                     provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=8, part=TextPart(content="Here's a"), previous_part_kind='builtin-tool-return'),
-            PartDeltaEvent(
-                index=8,
-                delta=TextPartDelta(
-                    content_delta="""\
- summary of what happened:
-
-1. **Created** `/tmp/hello.txt` — the file was successfully written to\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=8,
-                delta=TextPartDelta(
-                    content_delta="""\
- disk.
-2. **Viewed** `/tmp/hello.txt` — the file contains exactly:\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=8,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-
-> `Hello, world!`
-
-Everything looks perfect! The file contains the text you specified.\
-"""
-                ),
-            ),
+            PartStartEvent(index=5, part=TextPart(content='`'), previous_part_kind='builtin-tool-return'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='/tmp/hello.')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='txt` now')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' ex')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='ists.')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' When I viewed it, it')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' contained one line:')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' `Hello, world!`')),
             PartEndEvent(
-                index=8,
+                index=5,
                 part=TextPart(
-                    content="""\
-Here's a summary of what happened:
-
-1. **Created** `/tmp/hello.txt` — the file was successfully written to disk.
-2. **Viewed** `/tmp/hello.txt` — the file contains exactly:
-
-> `Hello, world!`
-
-Everything looks perfect! The file contains the text you specified.\
-"""
+                    content='`/tmp/hello.txt` now exists. When I viewed it, it contained one line: `Hello, world!`'
                 ),
             ),
         ]
@@ -12737,7 +12274,7 @@ async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_too
 async def test_anthropic_web_search_tool_stream(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = anthropic_model('claude-sonnet-4-0', capture=True)
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
     agent = Agent(m, instructions='You are a helpful assistant.', capabilities=[NativeTool(WebSearchTool())])
 
     event_parts: list[Any] = []
@@ -12753,7 +12290,7 @@ async def test_anthropic_web_search_tool_stream(
             [
                 {
                     'name': 'web_search',
-                    'type': 'web_search_20250305',
+                    'type': 'web_search_20260209',
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -12768,577 +12305,1125 @@ async def test_anthropic_web_search_tool_stream(
             PartStartEvent(
                 index=0,
                 part=NativeToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY', provider_name='anthropic'
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA',
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{"q', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
+                index=0, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA')
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ToolCallPartDelta(args_delta='uery": "top', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' w', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='orld n', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='ew', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
+                delta=ToolCallPartDelta(args_delta='{"code": "r', tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ToolCallPartDelta(args_delta='s today"}', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
+                delta=ToolCallPartDelta(
+                    args_delta=' = await web_search({', tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='\\"query\\": \\"top world news today', tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='\\"})\\nfor x in r[', tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta=':8]:\\n    print(', tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta="x['title", tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta="'], x['url'], x", tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA'),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='.', tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta="get('page_age'))", tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta="\\n    print(x['content'][", tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta=':500].replace(\\"', tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='\\\\n\\",\\" \\"))\\n    ', tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta="print('---')", tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA'),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA')
             ),
             PartEndEvent(
                 index=0,
                 part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": "top world news today"}',
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    tool_name='code_execution',
+                    args='{"code": "r = await web_search({\\"query\\": \\"top world news today\\"})\\nfor x in r[:8]:\\n    print(x[\'title\'], x[\'url\'], x.get(\'page_age\'))\\n    print(x[\'content\'][:500].replace(\\"\\\\n\\",\\" \\"))\\n    print(\'---\')"}',
+                    tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA',
                     provider_name='anthropic',
-                ),
-                next_part_kind='builtin-tool-return',
-            ),
-            PartStartEvent(
-                index=1,
-                part=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'World news - breaking news, video, headlines and opinion | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/world',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Breaking News, World News and Video from Al Jazeera',
-                            'type': 'web_search_result',
-                            'url': 'https://www.aljazeera.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'News: U.S. and World News Headlines : NPR',
-                            'type': 'web_search_result',
-                            'url': 'https://www.npr.org/sections/news/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '7 hours ago',
-                            'title': 'NBC News - Breaking News & Top Stories - Latest World, US & Local News | NBC News',
-                            'type': 'web_search_result',
-                            'url': 'https://www.nbcnews.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '3 hours ago',
-                            'title': 'Breaking News, Latest News and Videos | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '14 hours ago',
-                            'title': "World news: Latest news, breaking news, today's news stories from around the world, updated daily from CBS News",
-                            'type': 'web_search_result',
-                            'url': 'https://www.cbsnews.com/world/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'International News | Latest World News, Videos & Photos -ABC News - ABC News',
-                            'type': 'web_search_result',
-                            'url': 'https://abcnews.go.com/International',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Google News',
-                            'type': 'web_search_result',
-                            'url': 'https://news.google.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '2 days ago',
-                            'title': 'World News Headlines - US News and World Report',
-                            'type': 'web_search_result',
-                            'url': 'https://www.usnews.com/news/world',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '2 hours ago',
-                            'title': 'Fox News - Breaking News Updates | Latest News Headlines | Photos & News Videos',
-                            'type': 'web_search_result',
-                            'url': 'https://www.foxnews.com/',
-                        },
-                    ],
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                ),
-                previous_part_kind='builtin-tool-call',
-            ),
-            PartStartEvent(
-                index=2,
-                part=TextPart(content='Let me search for more specific breaking'),
-                previous_part_kind='builtin-tool-return',
-            ),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' news stories to get clearer headlines.')),
-            PartEndEvent(
-                index=2,
-                part=TextPart(
-                    content='Let me search for more specific breaking news stories to get clearer headlines.'
                 ),
                 next_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
-                index=3,
-                part=NativeToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T', provider_name='anthropic'
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
-            ),
-            PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='{"query', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
-            ),
-            PartDeltaEvent(
-                index=3,
-                delta=ToolCallPartDelta(args_delta='": "breaki', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
-            ),
-            PartDeltaEvent(
-                index=3,
-                delta=ToolCallPartDelta(args_delta='ng news ', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
-            ),
-            PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='headl', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
-            ),
-            PartDeltaEvent(
-                index=3,
-                delta=ToolCallPartDelta(args_delta='ines August ', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
-            ),
-            PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='14 2025', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
-            ),
-            PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
-            ),
-            PartEndEvent(
-                index=3,
+                index=1,
                 part=NativeToolCallPart(
                     tool_name='web_search',
-                    args='{"query": "breaking news headlines August 14 2025"}',
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    args={'query': 'top world news today'},
+                    tool_call_id='srvtoolu_01DN5oZKvB6HXvr37ZGpHsMt',
                     provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01KWoZRPWgXReWjYUQkSW3iA',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartEndEvent(
+                index=1,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'top world news today'},
+                    tool_call_id='srvtoolu_01DN5oZKvB6HXvr37ZGpHsMt',
+                    provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01KWoZRPWgXReWjYUQkSW3iA',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
                 ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
-                index=4,
+                index=2,
                 part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
                             'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Breaking News, Latest News and Videos | CNN',
+                            'page_age': '0 days ago',
+                            'title': 'World News: International Headlines, Breaking Reports and Video',
                             'type': 'web_search_result',
-                            'url': 'https://edition.cnn.com/',
+                            'url': 'https://www.nbcnews.com/world',
                         },
                         {
                             'encrypted_content': IsStr(),
                             'page_age': None,
-                            'title': 'News: U.S. and World News Headlines : NPR',
+                            'title': 'world news',
                             'type': 'web_search_result',
-                            'url': 'https://www.npr.org/sections/news/',
+                            'url': 'https://www.euronews.com/tag/world-news?p=226',
                         },
                         {
                             'encrypted_content': IsStr(),
                             'page_age': None,
-                            'title': 'ABC News – Breaking News, Latest News and Videos',
+                            'title': 'world news',
                             'type': 'web_search_result',
-                            'url': 'https://abcnews.go.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'Newspaper headlines: Thursday, August 14, 2025 - Adomonline.com',
-                            'type': 'web_search_result',
-                            'url': 'https://www.adomonline.com/newspaper-headlines-thursday-august-14-2025/',
+                            'url': 'https://www.euronews.com/index.php/tag/world-news?p=210',
                         },
                         {
                             'encrypted_content': IsStr(),
                             'page_age': None,
-                            'title': 'Global News - Breaking International News And Headlines | Inquirer.net',
+                            'title': 'world news',
                             'type': 'web_search_result',
-                            'url': 'https://globalnation.inquirer.net',
+                            'url': 'https://www.euronews.com/tag/world-news?p=217',
                         },
                         {
                             'encrypted_content': IsStr(),
                             'page_age': None,
-                            'title': 'News – The White House',
+                            'title': 'world news',
                             'type': 'web_search_result',
-                            'url': 'https://www.whitehouse.gov/news/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Latest News: Top News, Breaking News, LIVE News Headlines from India & World | Business Standard',
-                            'type': 'web_search_result',
-                            'url': 'https://www.business-standard.com/latest-news',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '10 hours ago',
-                            'title': 'Ukraine News Today: Breaking Updates & Live Coverage - August 14, 2025 from Kyiv Post',
-                            'type': 'web_search_result',
-                            'url': 'https://www.kyivpost.com/thread/58085',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': 'July 14, 2025',
-                            'title': '5 things to know for July 14: Immigration, Gaza, Epstein files, Kentucky shooting, Texas flooding | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/2025/07/14/us/5-things-to-know-for-july-14-immigration-gaza-epstein-files-kentucky-shooting-texas-flooding',
+                            'url': 'https://www.euronews.com/index.php/tag/world-news?p=200',
                         },
                         {
                             'encrypted_content': IsStr(),
                             'page_age': None,
-                            'title': 'Daily Show for July 14, 2025 | Democracy Now!',
+                            'title': 'world news',
                             'type': 'web_search_result',
-                            'url': 'https://www.democracynow.org/shows/2025/7/14',
+                            'url': 'https://www.euronews.com/index.php/tag/world-news?p=201',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'world news',
+                            'type': 'web_search_result',
+                            'url': 'https://www.euronews.com/index.php/tag/world-news?p=202',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'world news',
+                            'type': 'web_search_result',
+                            'url': 'https://www.euronews.com/tag/world-news?p=221',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'world news',
+                            'type': 'web_search_result',
+                            'url': 'https://www.euronews.com/tag/world-news?p=224',
                         },
                     ],
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    tool_call_id='srvtoolu_01DN5oZKvB6HXvr37ZGpHsMt',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01KWoZRPWgXReWjYUQkSW3iA',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=3,
+                part=NativeToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'encrypted_stdout': IsStr(),
+                        'return_code': 1,
+                        'stderr': IsStr(),
+                        'type': 'encrypted_code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_01KWoZRPWgXReWjYUQkSW3iA',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=4,
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01K3EADgXdwkLt5WiKerbFvy',
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01K3EADgXdwkLt5WiKerbFvy')
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=ToolCallPartDelta(
+                    args_delta='{"code": "print(type(', tool_call_id='srvtoolu_01K3EADgXdwkLt5WiKerbFvy'
+                ),
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='r),', tool_call_id='srvtoolu_01K3EADgXdwkLt5WiKerbFvy')
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta=' str', tool_call_id='srvtoolu_01K3EADgXdwkLt5WiKerbFvy')
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='(r)[:1', tool_call_id='srvtoolu_01K3EADgXdwkLt5WiKerbFvy')
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='500])', tool_call_id='srvtoolu_01K3EADgXdwkLt5WiKerbFvy')
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01K3EADgXdwkLt5WiKerbFvy')
+            ),
+            PartEndEvent(
+                index=4,
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    args='{"code": "print(type(r), str(r)[:1500])"}',
+                    tool_call_id='srvtoolu_01K3EADgXdwkLt5WiKerbFvy',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=5,
+                part=NativeToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': IsStr(),
+                        'type': 'code_execution_result',
+                        'abort_reason': None,
+                    },
+                    tool_call_id='srvtoolu_01K3EADgXdwkLt5WiKerbFvy',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=5, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
-            PartDeltaEvent(
-                index=5, delta=TextPartDelta(content_delta='d on the search results, I can identify the top')
-            ),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' 3 major news stories from aroun')),
-            PartDeltaEvent(
-                index=5,
-                delta=TextPartDelta(
-                    content_delta="""\
-d the world today (August 14, 2025):
-
-## Top\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=5,
-                delta=TextPartDelta(
-                    content_delta="""\
- 3 World News Stories Today
-
-**\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='1. Trump-Putin Summit and Ukraine Crisis')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='**\n')),
-            PartEndEvent(
-                index=5,
-                part=TextPart(
-                    content="""\
-Based on the search results, I can identify the top 3 major news stories from around the world today (August 14, 2025):
-
-## Top 3 World News Stories Today
-
-**1. Trump-Putin Summit and Ukraine Crisis**
-"""
-                ),
-                next_part_kind='text',
-            ),
             PartStartEvent(
                 index=6,
-                part=TextPart(
-                    content='European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine'
-                ),
-                previous_part_kind='text',
+                part=ThinkingPart(content='', signature='', provider_name='anthropic'),
+                previous_part_kind='builtin-tool-return',
             ),
-            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="'s Volodymyr Zel")),
-            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="enskyy and NATO's chief ahea")),
-            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="d of Friday's U.S.-")),
-            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta='Russia summit')),
-            _citation_delta_event(6),
+            PartDeltaEvent(index=6, delta=ThinkingPartDelta(content_delta='')),
+            PartDeltaEvent(
+                index=6,
+                delta=ThinkingPartDelta(
+                    signature_delta='CAQSxwUKEAgTGAI4AUIIdGhpbmtpbmcSDIMZG0jCVC4fYqstLBoMzbl+jfXhP6sggEqqIjBQX1gJ+mkKkL2YB/ZUUKqx0bhe+K0rMjRFgFAYbAiEqCvD4VfFR8GFvs5D9JMx5mkq5AQz4z3zJ/ivX9YAxxrD61aNSPi+hv/Xk3le4VylZ6n+4Tw5M/msTlJOzJPjL+X48M7qO7EPvD+xomF5MA15/m1+hy03wcNuxb3lXnC5GqgfwtoCbvVLPFekLbuyu1eY10KIDadyDztF71C3V5jbdC4d0OGI3z+lFyoly1ZEswpfzu03h44r5e8Q1vEIrMygDHktp6IHLFTurLGWrQPwEBZNnPhAzRd7rdIq88LaG9NXXEQ0zWaQxNxWHTjR2bxUfPRacK4rPLxmIFvv6N72SSWgcG6gsKFG/UVFG+jU/itZMY1prNbHTPDVLBzkrQe1uXt0gauaK7v54y5lq8XmfwjCdPEy6Ybb7cMiwsdzV8XfO3Vto78V7gFtsXk/sR7Rt5NNQ+49bVJ7POkDzAbEjGuGRG3s+H719gZetONyu6jHxXn3wNOiub2iTaw+T/VgGLgrzekkM/xeYFijGBts9CwyZcT6Ef86Kod1KGRjX4eJoaYqhP9gpZYqIiMPnKSMbjXJkftqgAqvY8X9ZlpWRJOAsXro/hRPNk9ghLZAGCqhbgiVTQnuhgiiVtlA78aQv1W0rX/vp9JjLCZ6L3TYdPg3SP+jisYxAlOCBf6bxkOescyvox5rMaaU0HjIajhFeO3J5NzzAIw3xpADBrXYVdaXTjeT+Ryl+0/ns4FqxYhF7NSjuIZR5xOfIbvJHtLaFtPmPz6UN1i2gGCIPX+i8JsFUmWXwDCXGX45SUgIPPVxr8fmMf8c70BNz7yP7zwceE8CjYTwsVmQR2CFBdW4yRxHii1c+A3mWCCT2qiKZcfEjVGcSQgYAQ=='
+                ),
+            ),
             PartEndEvent(
                 index=6,
-                part=TextPart(
-                    content="European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine's Volodymyr Zelenskyy and NATO's chief ahead of Friday's U.S.-Russia summit",
+                part=ThinkingPart(
+                    content='',
+                    signature='CAQSxwUKEAgTGAI4AUIIdGhpbmtpbmcSDIMZG0jCVC4fYqstLBoMzbl+jfXhP6sggEqqIjBQX1gJ+mkKkL2YB/ZUUKqx0bhe+K0rMjRFgFAYbAiEqCvD4VfFR8GFvs5D9JMx5mkq5AQz4z3zJ/ivX9YAxxrD61aNSPi+hv/Xk3le4VylZ6n+4Tw5M/msTlJOzJPjL+X48M7qO7EPvD+xomF5MA15/m1+hy03wcNuxb3lXnC5GqgfwtoCbvVLPFekLbuyu1eY10KIDadyDztF71C3V5jbdC4d0OGI3z+lFyoly1ZEswpfzu03h44r5e8Q1vEIrMygDHktp6IHLFTurLGWrQPwEBZNnPhAzRd7rdIq88LaG9NXXEQ0zWaQxNxWHTjR2bxUfPRacK4rPLxmIFvv6N72SSWgcG6gsKFG/UVFG+jU/itZMY1prNbHTPDVLBzkrQe1uXt0gauaK7v54y5lq8XmfwjCdPEy6Ybb7cMiwsdzV8XfO3Vto78V7gFtsXk/sR7Rt5NNQ+49bVJ7POkDzAbEjGuGRG3s+H719gZetONyu6jHxXn3wNOiub2iTaw+T/VgGLgrzekkM/xeYFijGBts9CwyZcT6Ef86Kod1KGRjX4eJoaYqhP9gpZYqIiMPnKSMbjXJkftqgAqvY8X9ZlpWRJOAsXro/hRPNk9ghLZAGCqhbgiVTQnuhgiiVtlA78aQv1W0rX/vp9JjLCZ6L3TYdPg3SP+jisYxAlOCBf6bxkOescyvox5rMaaU0HjIajhFeO3J5NzzAIw3xpADBrXYVdaXTjeT+Ryl+0/ns4FqxYhF7NSjuIZR5xOfIbvJHtLaFtPmPz6UN1i2gGCIPX+i8JsFUmWXwDCXGX45SUgIPPVxr8fmMf8c70BNz7yP7zwceE8CjYTwsVmQR2CFBdW4yRxHii1c+A3mWCCT2qiKZcfEjVGcSQgYAQ==',
                     provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
                 ),
-                next_part_kind='text',
+                next_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=7, part=TextPart(content='. '), previous_part_kind='text'),
-            PartEndEvent(index=7, part=TextPart(content='. '), next_part_kind='text'),
+            PartStartEvent(
+                index=7,
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU',
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='thinking',
+            ),
+            PartDeltaEvent(
+                index=7, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU')
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=ToolCallPartDelta(
+                    args_delta='{"code": "import', tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=ToolCallPartDelta(args_delta=' json\\nr', tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU'),
+            ),
+            PartDeltaEvent(
+                index=7, delta=ToolCallPartDelta(args_delta='2', tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU')
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=ToolCallPartDelta(args_delta='=json.loads(r)', tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=ToolCallPartDelta(
+                    args_delta='\\nfor x in r2[:', tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=ToolCallPartDelta(
+                    args_delta='8]:\\n    print(x', tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=ToolCallPartDelta(
+                    args_delta="['title'], x['url'", tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=ToolCallPartDelta(
+                    args_delta="], x.get('page_age", tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=ToolCallPartDelta(
+                    args_delta="'))\\n    print(x['", tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=ToolCallPartDelta(
+                    args_delta="content'][:700].replace", tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=ToolCallPartDelta(
+                    args_delta='(\\"\\\\n\\",\\" \\"))', tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=ToolCallPartDelta(
+                    args_delta="\\n    print('---')", tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=7, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU')
+            ),
+            PartEndEvent(
+                index=7,
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    args="{\"code\": \"import json\\nr2=json.loads(r)\\nfor x in r2[:8]:\\n    print(x['title'], x['url'], x.get('page_age'))\\n    print(x['content'][:700].replace(\\\"\\\\n\\\",\\\" \\\"))\\n    print('---')\"}",
+                    tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
             PartStartEvent(
                 index=8,
-                part=TextPart(content='The White House lowered its expectations surrounding'),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' the Trump-Putin summit on Friday')),
-            _citation_delta_event(8),
-            PartEndEvent(
-                index=8,
-                part=TextPart(
-                    content='The White House lowered its expectations surrounding the Trump-Putin summit on Friday',
+                part=NativeToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': IsStr(),
+                        'type': 'code_execution_result',
+                        'abort_reason': None,
+                    },
+                    tool_call_id='srvtoolu_016oDYD7qGTBkS1Ebx5DAhWU',
+                    timestamp=IsDatetime(),
                     provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
                 ),
-                next_part_kind='text',
+                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=9, part=TextPart(content='. '), previous_part_kind='text'),
-            PartEndEvent(index=9, part=TextPart(content='. '), next_part_kind='text'),
+            PartStartEvent(
+                index=9,
+                part=ThinkingPart(content='', signature='', provider_name='anthropic'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartDeltaEvent(index=9, delta=ThinkingPartDelta(content_delta='')),
+            PartDeltaEvent(
+                index=9,
+                delta=ThinkingPartDelta(
+                    signature_delta='CAQSiQYKEAgTGAI4AUIIdGhpbmtpbmcSDNoEUaVGDGQddAKgSxoM6dRghR3Qad3DTHqlIjCOdUQu6dDWg/WjG5/fvhcNvz1eBax22Z73jUttL+S24v+ZcjKwZ7haPL3Ac5eHX8EqpgVZ22+KaK4NwFV6zdeJt33+2GozGrpoPWq4TgjnAsrRt4FY3Et+Kx/hi0aAtXzgtuqirj6aglQN0cfR9N0bIqHBSdmiRpab4gz/MPiR+iIDshvd0/yek9RgF1MvyAoQeJU5awptdMchB8oM5aEKiWoc3h/0snaoE0Pc3hDbmLGxkqK8PG2GRLsDdrBbml9EFgpr7AAHlESTMxpL9f3TJf+yQQjuwpMWzCvS1iJY4DIpcC/qBLgX97RK/WkhUuETXe2RY8o4srgaWodefv67Pmjr33oco0qa/Q71eb2BWJ9KcHQghfH0XtPxeO957iBawGDRiRUQ4FCDTb+zhGiE08GpIoi6VUjOPqdkpQrMFsXZ0x6vI40AbQba5+hH2b+HzgwwnMVvhZuSq1pSCluIoyEI3rsTxsqXsJ6DQVPipSxN+/DdhS6/Dp2t966++iMV+oTShY39DCwAjxlWY6kkNZnfvkqce7MDfXoeEXuqfS4JhhdWY0Q16zWLZfhQGk3WM9Co6jFLf+azAiox2KF7h2socqutqLNXrQ6aQSNqAlic/Z90NUosaochjpVMvYRfDtGASlnpO4CcNZpGIYS9MXN54Wr4XklkRXVvV+VBcNfL5Z4mFJaEbW1t1xzN1SOuff6geqx7JMYWliHearYK2TS3VmFbnk8cGDZLpsUhgOlI0TsRYA0uH8DD7pcvfNrc6D5fgidZwuUggfYL5E6F7DYfafl3Ea+wiwGVO94ZB63kThHS7+dQ39kl4DwVvGHI5OahRH7jc48j09Gzp54PXcOJ6J7zU4pNDlNGwBrMaLyA36kBjZgyRRz7BBXGAsarjbtXsz+b/zimxvN+fTf6wsUJ5U0jVJkdl8jLhB/W2sl7DWCObG0DSfc61+KHWQmvycg82O6vOoAYAQ=='
+                ),
+            ),
+            PartEndEvent(
+                index=9,
+                part=ThinkingPart(
+                    content='',
+                    signature='CAQSiQYKEAgTGAI4AUIIdGhpbmtpbmcSDNoEUaVGDGQddAKgSxoM6dRghR3Qad3DTHqlIjCOdUQu6dDWg/WjG5/fvhcNvz1eBax22Z73jUttL+S24v+ZcjKwZ7haPL3Ac5eHX8EqpgVZ22+KaK4NwFV6zdeJt33+2GozGrpoPWq4TgjnAsrRt4FY3Et+Kx/hi0aAtXzgtuqirj6aglQN0cfR9N0bIqHBSdmiRpab4gz/MPiR+iIDshvd0/yek9RgF1MvyAoQeJU5awptdMchB8oM5aEKiWoc3h/0snaoE0Pc3hDbmLGxkqK8PG2GRLsDdrBbml9EFgpr7AAHlESTMxpL9f3TJf+yQQjuwpMWzCvS1iJY4DIpcC/qBLgX97RK/WkhUuETXe2RY8o4srgaWodefv67Pmjr33oco0qa/Q71eb2BWJ9KcHQghfH0XtPxeO957iBawGDRiRUQ4FCDTb+zhGiE08GpIoi6VUjOPqdkpQrMFsXZ0x6vI40AbQba5+hH2b+HzgwwnMVvhZuSq1pSCluIoyEI3rsTxsqXsJ6DQVPipSxN+/DdhS6/Dp2t966++iMV+oTShY39DCwAjxlWY6kkNZnfvkqce7MDfXoeEXuqfS4JhhdWY0Q16zWLZfhQGk3WM9Co6jFLf+azAiox2KF7h2socqutqLNXrQ6aQSNqAlic/Z90NUosaochjpVMvYRfDtGASlnpO4CcNZpGIYS9MXN54Wr4XklkRXVvV+VBcNfL5Z4mFJaEbW1t1xzN1SOuff6geqx7JMYWliHearYK2TS3VmFbnk8cGDZLpsUhgOlI0TsRYA0uH8DD7pcvfNrc6D5fgidZwuUggfYL5E6F7DYfafl3Ea+wiwGVO94ZB63kThHS7+dQ39kl4DwVvGHI5OahRH7jc48j09Gzp54PXcOJ6J7zU4pNDlNGwBrMaLyA36kBjZgyRRz7BBXGAsarjbtXsz+b/zimxvN+fTf6wsUJ5U0jVJkdl8jLhB/W2sl7DWCObG0DSfc61+KHWQmvycg82O6vOoAYAQ==',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
             PartStartEvent(
                 index=10,
-                part=TextPart(content='In a surprise move just days before the Trump-Putin summit'),
-                previous_part_kind='text',
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU',
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='thinking',
             ),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=', the White House swapped out pro')),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta="-EU PM Tusk for Poland's new president –")),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=" a political ally who once opposed Ukraine's")),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' NATO and EU bids')),
-            _citation_delta_event(10),
+            PartDeltaEvent(
+                index=10, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU')
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(args_delta='{"code": "for', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(args_delta=' q in [\\"Iran', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta=' Strait of Hormuz', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta=' tankers attacked\\",', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta=' \\"Israel election', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta=' Netanyahu vote\\",', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(args_delta=' \\"Pope Leo l', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(args_delta='ung surgery no', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta=' further cancer treatment\\"', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(args_delta=']:\\n    try', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta=':\\n        rr=json.', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta='loads(await web_search({', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(args_delta='\\"query\\":', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta=' q}))\\n        for x in', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10, delta=ToolCallPartDelta(args_delta=' rr[:3', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU')
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta=']:\\n            print(x', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta="['title'], x['url'", tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta="], x.get('page_age", tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta="'))\\n            print(x['", tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta="content'][:400].replace", tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta='(\\"\\\\n\\",\\" \\"))', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta="\\n            print('---", tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta="')\\n    except Exception as", tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta=' e: print(e)\\n    ', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=ToolCallPartDelta(
+                    args_delta='print(\\"=========', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU'
+                ),
+            ),
+            PartDeltaEvent(
+                index=10, delta=ToolCallPartDelta(args_delta='\\")', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU')
+            ),
+            PartDeltaEvent(
+                index=10, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU')
+            ),
             PartEndEvent(
                 index=10,
-                part=TextPart(
-                    content="In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids",
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    args='{"code": "for q in [\\"Iran Strait of Hormuz tankers attacked\\", \\"Israel election Netanyahu vote\\", \\"Pope Leo lung surgery no further cancer treatment\\"]:\\n    try:\\n        rr=json.loads(await web_search({\\"query\\": q}))\\n        for x in rr[:3]:\\n            print(x[\'title\'], x[\'url\'], x.get(\'page_age\'))\\n            print(x[\'content\'][:400].replace(\\"\\\\n\\",\\" \\"))\\n            print(\'---\')\\n    except Exception as e: print(e)\\n    print(\\"=========\\")"}',
+                    tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU',
                     provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
                 ),
-                next_part_kind='text',
+                next_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=11,
-                part=TextPart(
-                    content="""\
-.
-
-**2. Trump's Federal Takeover of Washington D\
-"""
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'Iran Strait of Hormuz tankers attacked'},
+                    tool_call_id='srvtoolu_01Sjj5T94ATSeNLmjkNCsCYW',
+                    provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01RDKaTJ9A15nNSsjRThtKuU',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
                 ),
-                previous_part_kind='text',
+                previous_part_kind='builtin-tool-call',
             ),
-            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta='.C.**')),
-            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta='\n')),
             PartEndEvent(
                 index=11,
-                part=TextPart(
-                    content="""\
-.
-
-**2. Trump's Federal Takeover of Washington D.C.**
-"""
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'Iran Strait of Hormuz tankers attacked'},
+                    tool_call_id='srvtoolu_01Sjj5T94ATSeNLmjkNCsCYW',
+                    provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01RDKaTJ9A15nNSsjRThtKuU',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
                 ),
-                next_part_kind='text',
+                next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=12,
-                part=TextPart(
-                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's tak"
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta="eover of the city's police entered its thir")),
-            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta='d night')),
-            _citation_delta_event(12),
-            PartEndEvent(
-                index=12,
-                part=TextPart(
-                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's takeover of the city's police entered its third night",
+                part=NativeToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '2 days ago',
+                            'title': 'Iran says 7 oil tankers attacked in the Strait of Hormuz as fears of a return to war grow',
+                            'type': 'web_search_result',
+                            'url': 'https://www.nbcnews.com/world/iran/iran-says-7-oil-tankers-attacked-strait-hormuz-fears-grow-return-war-rcna605108',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '2 days ago',
+                            'title': 'Iran Says 7 Oil Tankers Attacked In The Strait Of Hormuz As Fears Grow Of A Return To War',
+                            'type': 'web_search_result',
+                            'url': 'https://www.etvbharat.com/en/international/iran-says-seven-oil-tankers-attacked-in-the-strait-of-hormuz-as-fears-grow-of-a-return-to-war-enn26102300430',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '3 days ago',
+                            'title': 'Iran says 7 oil tankers attacked in the Strait of Hormuz as fears grow of a return to war - The Washington Post',
+                            'type': 'web_search_result',
+                            'url': 'https://www.washingtonpost.com/national/2026/10/22/iran-united-states-war-hormuz-trump-israel/ef8892d4-cdf5-11f1-ac04-9f58578a68b4_story.html',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '2 days ago',
+                            'title': 'Iran says 7 oil tankers attacked in the Strait of Hormuz as fears grow of a return to war',
+                            'type': 'web_search_result',
+                            'url': 'https://www.journalgazette.net/news/world/iran-says-7-oil-tankers-attacked-in-the-strait-of-hormuz-as-fears-grow-of/article_8eb1fd49-503c-552a-ba39-f13d42204316.html',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '2 days ago',
+                            'title': 'Iran claims 7 oil tankers struck in the Strait of Hormuz',
+                            'type': 'web_search_result',
+                            'url': 'https://thehill.com/policy/defense/6164731-iran-navy-hits-oil-tankers/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '3 days ago',
+                            'title': 'Iran says 7 tankers damaged in Strait of Hormuz, and other Mideast news - The Washington Post',
+                            'type': 'web_search_result',
+                            'url': 'https://www.washingtonpost.com/business/2026/10/22/mideast-yemen-saudi-israel-october-22-2026/853222cc-cde3-11f1-ac04-9f58578a68b4_story.html',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'US says Iran attacked tankers',
+                            'type': 'web_search_result',
+                            'url': 'https://www.pressreader.com/usa/the-morning-call/20190614/281500752764519',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Six vessels attacked in Gulf, Strait of Hormuz as war puts merchant ships on front lines',
+                            'type': 'web_search_result',
+                            'url': 'https://www.yahoo.com/news/articles/cargo-ship-hit-projectile-strait-055851133.html',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Six vessels attacked in Gulf, Strait of Hormuz as war puts merchant ships on front lines',
+                            'type': 'web_search_result',
+                            'url': 'https://www.yahoo.com/news/articles/five-vessels-attacked-gulf-strait-042329368.html',
+                        },
+                    ],
+                    tool_call_id='srvtoolu_01Sjj5T94ATSeNLmjkNCsCYW',
+                    timestamp=IsDatetime(),
                     provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01RDKaTJ9A15nNSsjRThtKuU',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
                 ),
-                next_part_kind='text',
+                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=13, part=TextPart(content='. '), previous_part_kind='text'),
-            PartEndEvent(index=13, part=TextPart(content='. '), next_part_kind='text'),
+            PartStartEvent(
+                index=13,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'Israel election Netanyahu vote'},
+                    tool_call_id='srvtoolu_01JikkZFpxM8tLm9aUHBEZ9A',
+                    provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01RDKaTJ9A15nNSsjRThtKuU',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
+                ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartEndEvent(
+                index=13,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'Israel election Netanyahu vote'},
+                    tool_call_id='srvtoolu_01JikkZFpxM8tLm9aUHBEZ9A',
+                    provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01RDKaTJ9A15nNSsjRThtKuU',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
             PartStartEvent(
                 index=14,
-                part=TextPart(
-                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment an"
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(
-                index=14, delta=TextPartDelta(content_delta='d federalization of local police to crack down on crime')
-            ),
-            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=" in the nation's capital")),
-            _citation_delta_event(14),
-            PartEndEvent(
-                index=14,
-                part=TextPart(
-                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crime in the nation's capital",
+                part=NativeToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '5 days ago',
+                            'title': 'Israel election decides political future of Netanyahu : State of the World from NPR : NPR',
+                            'type': 'web_search_result',
+                            'url': 'https://www.npr.org/2026/10/19/nx-s1-6008128/israel-prepares-for-a-high-stakes-election',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '0 days ago',
+                            'title': 'Israel Election 2026: Gadi Eisenkot leads Benjamin Netanyahu but Knesset deadlock looms',
+                            'type': 'web_search_result',
+                            'url': 'https://www.jpost.com/israel-election-2026/article-912743',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'israel election netanyahu',
+                            'type': 'web_search_result',
+                            'url': 'https://www.npr.org/2022/11/01/1133083117/israel-election-netanyahu',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Israel election: Netanyahu and Gantz neck-and-neck in final hours of voting',
+                            'type': 'web_search_result',
+                            'url': 'https://news.yahoo.com/israel-election-polling-opens-across-080500164.html',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'benjamin netanyahu',
+                            'type': 'web_search_result',
+                            'url': 'https://www.euronews.com/index.php/tag/benjamin-netanyahu?p=31',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Netanyahu leads but without a clear majority in Israeli election',
+                            'type': 'web_search_result',
+                            'url': 'https://www.nbcnews.com/news/world/israelis-head-polls-fourth-election-two-years-n1261792',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Israel elections: PM Benjamin Netanyahu claims victory of his life',
+                            'type': 'web_search_result',
+                            'url': 'https://www.pressreader.com/india/the-asian-age/20200304/283265984857522',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Netanyahu secures election victory: Israeli TV',
+                            'type': 'web_search_result',
+                            'url': 'https://gulfnews.com/amp/story/world%2Fmena%2Fnetanyahu-secures-election-victory-israeli-tv-1.1554870326957',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Israel elections: Netanyahu likely winner in tight race',
+                            'type': 'web_search_result',
+                            'url': 'https://www.aljazeera.com/news/2019/4/10/israel-elections-netanyahu-likely-winner-in-tight-race',
+                        },
+                    ],
+                    tool_call_id='srvtoolu_01JikkZFpxM8tLm9aUHBEZ9A',
+                    timestamp=IsDatetime(),
                     provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01RDKaTJ9A15nNSsjRThtKuU',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
                 ),
-                next_part_kind='text',
+                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=15, part=TextPart(content='. '), previous_part_kind='text'),
-            PartEndEvent(index=15, part=TextPart(content='. '), next_part_kind='text'),
+            PartStartEvent(
+                index=15,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'Pope Leo lung surgery no further cancer treatment'},
+                    tool_call_id='srvtoolu_014vcjeKpFr6SQmgTTekNLMq',
+                    provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01RDKaTJ9A15nNSsjRThtKuU',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
+                ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartEndEvent(
+                index=15,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'Pope Leo lung surgery no further cancer treatment'},
+                    tool_call_id='srvtoolu_014vcjeKpFr6SQmgTTekNLMq',
+                    provider_name='anthropic',
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01RDKaTJ9A15nNSsjRThtKuU',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
             PartStartEvent(
                 index=16,
-                part=TextPart(content='Over 100 arrests made as National Guard rolls into DC under'),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=" Trump's federal takeover")),
-            _citation_delta_event(16),
-            PartEndEvent(
-                index=16,
-                part=TextPart(
-                    content="Over 100 arrests made as National Guard rolls into DC under Trump's federal takeover",
+                part=NativeToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '3 days ago',
+                            'title': 'Pope Leo needs no further treatment after lung cancer surgery',
+                            'type': 'web_search_result',
+                            'url': 'https://www.foxnews.com/world/pope-leo-xiv-needs-no-further-cancer-treatment-after-lung-tumor-removed-doctors-say',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '3 days ago',
+                            'title': "Pope Leo's doctors say no further treatment is necessary after lung cancer surgery - ABC News",
+                            'type': 'web_search_result',
+                            'url': 'https://abcnews.com/International/pope-leos-doctors-treatment-after-lung-cancer-surgery/story?id=137456116',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '3 days ago',
+                            'title': 'Pope Leo won\u2019t require further treatment after lung surgery, doctors say',
+                            'type': 'web_search_result',
+                            'url': 'https://www.nbcnews.com/world/pope-leo-xiv/pope-treatment-lung-cancer-rcna604869',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '2 days ago',
+                            'title': 'Pope Leo Will Not Need More Cancer Treatment After Successful Lung Surgery',
+                            'type': 'web_search_result',
+                            'url': 'https://www.yahoo.com/news/world/articles/pope-leo-not-more-cancer-144428884.html',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '3 days ago',
+                            'title': 'Pope Leo Health Update: No Further Treatment Planned After Cancer Confirmed - Newsweek',
+                            'type': 'web_search_result',
+                            'url': 'https://www.newsweek.com/pope-leo-health-update-no-further-treatment-planned-after-cancer-confirmed-12602206',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '3 days ago',
+                            'title': "Pope Leo's tests show he needs no further treatment for lung cancer, his doctors say",
+                            'type': 'web_search_result',
+                            'url': 'https://www.pbs.org/newshour/politics/pope-leos-tests-show-he-needs-no-further-treatment-for-lung-cancer-his-doctors-say',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '3 days ago',
+                            'title': "Vatican says tests show Pope Leo XIV won't need further treatment for lung cancer - The Washington Post",
+                            'type': 'web_search_result',
+                            'url': 'https://www.washingtonpost.com/world/2026/10/21/pope-leo-lung-cancer-operation/e4c8ae36-cd84-11f1-ac04-9f58578a68b4_story.html',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'pope francis returns to vatican 10 days after surgery',
+                            'type': 'web_search_result',
+                            'url': 'https://www.pbs.org/newshour/world/pope-francis-returns-to-vatican-10-days-after-surgery',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Watch CBS News',
+                            'type': 'web_search_result',
+                            'url': 'https://cbsnews.com/news/pope-francis-hospitalized-surgery-rome',
+                        },
+                    ],
+                    tool_call_id='srvtoolu_014vcjeKpFr6SQmgTTekNLMq',
+                    timestamp=IsDatetime(),
                     provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
+                    provider_details={
+                        'anthropic_caller': {
+                            'tool_id': 'srvtoolu_01RDKaTJ9A15nNSsjRThtKuU',
+                            'type': 'code_execution_20260120',
+                        }
+                    },
                 ),
-                next_part_kind='text',
+                previous_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=17,
-                part=TextPart(
-                    content="""\
-.
-
-**3. Air\
-"""
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=17, delta=TextPartDelta(content_delta=' Canada Flight Disruption')),
-            PartDeltaEvent(index=17, delta=TextPartDelta(content_delta='**\n')),
-            PartEndEvent(
-                index=17,
-                part=TextPart(
-                    content="""\
-.
-
-**3. Air Canada Flight Disruption**
-"""
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=18,
-                part=TextPart(
-                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend'
-                ),
-                previous_part_kind='text',
-            ),
-            _citation_delta_event(18),
-            PartEndEvent(
-                index=18,
-                part=TextPart(
-                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend',
+                part=NativeToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'encrypted_stdout': IsStr(),
+                        'return_code': 0,
+                        'stderr': '',
+                        'type': 'encrypted_code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_01RDKaTJ9A15nNSsjRThtKuU',
+                    timestamp=IsDatetime(),
                     provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
+                ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=18,
+                part=ThinkingPart(content='', signature='', provider_name='anthropic'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartDeltaEvent(index=18, delta=ThinkingPartDelta(content_delta='')),
+            PartDeltaEvent(
+                index=18,
+                delta=ThinkingPartDelta(
+                    signature_delta='CAQS7AcKEAgTGAI4AUIIdGhpbmtpbmcSDAHk1It7lvszC/Wt6xoMdKbYDqnfrthLvvHHIjChYVkCQYo+0Re/rm+VNGO3XfveWnQzISYXsgJgBTU3fxo2YP5A6QhfVzi4c4O7NAwqiQdeCIGlaq1WssLN5Qjqvo/WUHfvdib7D4g7a2gNursdxiCuAK4sOTY+XE9hERSkDmvzc2IV4aeLw2NgYGqK16zyqMw6y/3eqQFcTVx7SP59ztmcqaUpqJKwEqTil+IcxYtoNd+qy07/by3yrfdKz4Y3c+qmt+tkPFcx8lVdc7WhDXwc77tG4qGIR29W2Ez+BcuZehAPc1YYgQJATSiL/0YfO7gD41T0j4mDRA2cone2iP3aqBIAOGRit16CwIs8MgSIFoW0+/P5sIlE+am6aGfohkQ0PwvfseZcRttDjubOzpKUANeJSLOCEFm6i5vbYuB1+PKNThOoLh7Z5bkxsYVokJ+A/wY13NgoQFDU19ds8Zgh2OyBFcB7G1xFN/Es5tRdc2HV8GyN/4lNo6opKV7z+QTKA6QwpWw85Fp8DTDO4EEprHfnDdlWjh+JeDXG8q6SZ0UPVqKtjoOaz/yoXR+kGkqym/2noYbXaNzXjVBTF979VSGnQ65PN4s4PDpbE7QXSKL+wyJqFlJQoiMZNvzFsfjHYiriwOIfB6tKpUQEHpx8IHV73ANhq6TuOa2gJVYkdPDL8hwVouA01H//642D3PhiNihIwS2+kcyQ1bvyydSabKlLtGndyHxRv1mqvNIIvD0WSEglLak9G30hh4TQxJZxO5DsKogu2NwaWg+qiJykYY3d95itUtC9j7pQQiaocaZyNbg1FMGi/7g/L11YIkPeCB8XgZF0bsoiom9ksnAUdIyPOYIQe7N2/VLiCzWGiKbGO+eOMSfHLGIhkWnmGqxFvpcOBOcEyraKqatRMmJh3qzitTtWubRfWgMZPvgBM9CheAc+ItF6/VxEJf1CB2dEkS9cwFgByZ1Q9eVOdSNeEGWoCUCAbnh8td88cvqIpnkW6RikJXxzz/yZWrlPY3VaCY13H5EJaXTDhn6lBvyk78qafTiD2P/oPJwhkoXfQ7z4XgYy7CtnUEHXKT6cr43335O4MwkdgKUSRDBkoVS3TnQUuLW3dRglVkqH+wGE6SODO62mjORrtY6nBwC1tngb/8q4ooj3zzYGwnOSHRHoGMdzysoRmhs1gj5Kzh7A6XEhHpCIj04LiVKOkjKprSEWjADY2xg2JhQHkqLR/WhWQFqOrONn3D+/I/LrQWt/6vubv0TD35wkKme9YSml/JJeYoTc3pjSPw+8Shgfo+p7ByI5MWcX9BgB'
+                ),
+            ),
+            PartEndEvent(
+                index=18,
+                part=ThinkingPart(
+                    content='',
+                    signature='CAQS7AcKEAgTGAI4AUIIdGhpbmtpbmcSDAHk1It7lvszC/Wt6xoMdKbYDqnfrthLvvHHIjChYVkCQYo+0Re/rm+VNGO3XfveWnQzISYXsgJgBTU3fxo2YP5A6QhfVzi4c4O7NAwqiQdeCIGlaq1WssLN5Qjqvo/WUHfvdib7D4g7a2gNursdxiCuAK4sOTY+XE9hERSkDmvzc2IV4aeLw2NgYGqK16zyqMw6y/3eqQFcTVx7SP59ztmcqaUpqJKwEqTil+IcxYtoNd+qy07/by3yrfdKz4Y3c+qmt+tkPFcx8lVdc7WhDXwc77tG4qGIR29W2Ez+BcuZehAPc1YYgQJATSiL/0YfO7gD41T0j4mDRA2cone2iP3aqBIAOGRit16CwIs8MgSIFoW0+/P5sIlE+am6aGfohkQ0PwvfseZcRttDjubOzpKUANeJSLOCEFm6i5vbYuB1+PKNThOoLh7Z5bkxsYVokJ+A/wY13NgoQFDU19ds8Zgh2OyBFcB7G1xFN/Es5tRdc2HV8GyN/4lNo6opKV7z+QTKA6QwpWw85Fp8DTDO4EEprHfnDdlWjh+JeDXG8q6SZ0UPVqKtjoOaz/yoXR+kGkqym/2noYbXaNzXjVBTF979VSGnQ65PN4s4PDpbE7QXSKL+wyJqFlJQoiMZNvzFsfjHYiriwOIfB6tKpUQEHpx8IHV73ANhq6TuOa2gJVYkdPDL8hwVouA01H//642D3PhiNihIwS2+kcyQ1bvyydSabKlLtGndyHxRv1mqvNIIvD0WSEglLak9G30hh4TQxJZxO5DsKogu2NwaWg+qiJykYY3d95itUtC9j7pQQiaocaZyNbg1FMGi/7g/L11YIkPeCB8XgZF0bsoiom9ksnAUdIyPOYIQe7N2/VLiCzWGiKbGO+eOMSfHLGIhkWnmGqxFvpcOBOcEyraKqatRMmJh3qzitTtWubRfWgMZPvgBM9CheAc+ItF6/VxEJf1CB2dEkS9cwFgByZ1Q9eVOdSNeEGWoCUCAbnh8td88cvqIpnkW6RikJXxzz/yZWrlPY3VaCY13H5EJaXTDhn6lBvyk78qafTiD2P/oPJwhkoXfQ7z4XgYy7CtnUEHXKT6cr43335O4MwkdgKUSRDBkoVS3TnQUuLW3dRglVkqH+wGE6SODO62mjORrtY6nBwC1tngb/8q4ooj3zzYGwnOSHRHoGMdzysoRmhs1gj5Kzh7A6XEhHpCIj04LiVKOkjKprSEWjADY2xg2JhQHkqLR/WhWQFqOrONn3D+/I/LrQWt/6vubv0TD35wkKme9YSml/JJeYoTc3pjSPw+8Shgfo+p7ByI5MWcX9BgB',
+                    provider_name='anthropic',
                 ),
                 next_part_kind='text',
             ),
-            PartStartEvent(index=19, part=TextPart(content='. '), previous_part_kind='text'),
-            PartEndEvent(index=19, part=TextPart(content='. '), next_part_kind='text'),
-            PartStartEvent(
-                index=20,
-                part=TextPart(
-                    content='Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations'
-                ),
-                previous_part_kind='text',
-            ),
+            PartStartEvent(index=19, part=TextPart(content='These'), previous_part_kind='thinking'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' are the top three')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' world')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' stories from')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' my')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' search')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='. I cou')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta="ldn't confirm today")),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta="'s ex")),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='act date, so the details')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' may be')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' a day')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' or two old')),
             PartDeltaEvent(
-                index=20,
+                index=19,
                 delta=TextPartDelta(
-                    content_delta=" with a complete cessation of flights for the country's largest airline by"
+                    content_delta="""\
+.
+
+1\
+"""
                 ),
             ),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='. **Iran and the')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' Strait of Hormuz')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='** I')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ran says seven oil tank')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ers ca')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ught fire or were damaged')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' over')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='night in')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' the str')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ait, either')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' h')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='it by Iran or stri')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='king naval mines. F')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ears are')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' growing that')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' the war could resume. T')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ankers are still moving oil')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' through the strait under U.S')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='. military protection, and markets')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' have f')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='allen on the')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' t')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ension')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='. (Sources: NB')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='C News,')),
             PartDeltaEvent(
-                index=20, delta=TextPartDelta(content_delta=' Saturday as it faces a potential work stoppage by')
-            ),
-            PartDeltaEvent(index=20, delta=TextPartDelta(content_delta=' its flight attendants')),
-            _citation_delta_event(20),
-            PartEndEvent(
-                index=20,
-                part=TextPart(
-                    content="Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations with a complete cessation of flights for the country's largest airline by Saturday as it faces a potential work stoppage by its flight attendants",
-                    provider_name='anthropic',
-                    provider_details={'citations': IsList(length=(1, ...))},
-                    citations=IsCitationList(),
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=21,
-                part=TextPart(
-                    content="""\
-.
+                index=19,
+                delta=TextPartDelta(
+                    content_delta="""\
+ Washington Post)
 
-These stories represent major international diplomatic developments, significant domestic policy\
-"""
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=21, delta=TextPartDelta(content_delta=' changes in the US, and major transportation')),
-            PartDeltaEvent(index=21, delta=TextPartDelta(content_delta=' disruptions affecting North America.')),
-            PartEndEvent(
-                index=21,
-                part=TextPart(
-                    content="""\
-.
-
-These stories represent major international diplomatic developments, significant domestic policy changes in the US, and major transportation disruptions affecting North America.\
+2.\
 """
                 ),
             ),
-        ]
-    )
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=" **Israel's election.**")),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' Israel')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='is vote on October')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' 27 ')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='for')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' a new')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' Knesset, and Net')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta="anyahu's political future is")),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' at stake. Polls show')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' Gadi Eisen')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta="kot's")),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' b')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='loc sl')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ightly ahead,')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' by')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' an')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' average of about')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' 4.5 seats.')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' Neither bloc rea')),  # codespell:ignore bloc
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ches the 61-seat maj')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ority, so a deadlock')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' loo')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ks likely. (Sources')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=': Jerusalem')),
+            PartDeltaEvent(
+                index=19,
+                delta=TextPartDelta(
+                    content_delta="""\
+ Post, NPR)
 
-    # Anthropic cites the ABC News result with an empty `cited_text`, which is not an excerpt.
-    cited_part = next(
-        event.part
-        for event in event_parts
-        if isinstance(event, PartEndEvent)
-        and isinstance(event.part, TextPart)
-        and event.part.content.startswith('European leaders held')
-    )
-    assert cited_part.citations == snapshot(
-        [
-            Citation(
-                sources=[
-                    WebCitationSource(
-                        url='https://www.npr.org/sections/news/',
-                        title='News: U.S. and World News Headlines : NPR',
-                        excerpts=[
-                            'Filip Singer/Getty Images Europe hide caption toggle caption Filip Singer/Getty Images Europe · August 13, 2025 \x95 President Trump will join European l...'
-                        ],
-                    ),
-                    WebCitationSource(
-                        url='https://abcnews.go.com/', title='ABC News – Breaking News, Latest News and Videos'
-                    ),
-                ],
-                anchor=ContentCitationAnchor(start=0, end=181),
-            )
+3\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='. **Pope Leo')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=" XIV's health.** The")),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' P')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta="ope's doctors say the l")),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ung tumor removed in')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' sur')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='gery on October 13 was')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' a localized ad')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='enocarcinoma.')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' They')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' say he')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' needs no further c')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ancer treatment. (')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='Sources: ')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ABC News, N')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='BC News, Fox News')),
+            PartDeltaEvent(
+                index=19,
+                delta=TextPartDelta(
+                    content_delta="""\
+)
+
+Other st\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ories in')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' the headlines include a')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ceasefire for a ')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='Ukrainian city that')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' Melania Trump report')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='edly helped secure, and')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' Ukr')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta='ainian strikes on Russ')),
+            PartDeltaEvent(
+                index=19,
+                delta=TextPartDelta(
+                    content_delta="""\
+ian data centers.
+
+I can\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' look')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' further')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' into any of these,')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' or pull')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' top')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' stories for a specific region or')),
+            PartDeltaEvent(index=19, delta=TextPartDelta(content_delta=' topic.')),
+            PartEndEvent(
+                index=19,
+                part=TextPart(content=IsStr()),
+            ),
         ]
     )
 
@@ -13348,8 +13433,12 @@ async def test_anthropic_text_parts_ahead_of_built_in_tool_call(
 ):
     # Verify that text parts ahead of the built-in tool call are not included in the output
 
-    model = anthropic_model('claude-sonnet-4-5', capture=True)
-    agent = Agent(model, capabilities=[NativeTool(WebSearchTool())], instructions='Be very concise.')
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(WebSearchTool())],
+        instructions='Be very concise. Before using any tool, write one short sentence saying what you will look up.',
+    )
 
     result = await agent.run('Briefly mention 1 event that happened today in history?')
     assert (request_capture.body()['tools'], request_capture.body().get('tool_choice')) == snapshot(
@@ -13357,7 +13446,7 @@ async def test_anthropic_text_parts_ahead_of_built_in_tool_call(
             [
                 {
                     'name': 'web_search',
-                    'type': 'web_search_20250305',
+                    'type': 'web_search_20260209',
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -13368,344 +13457,184 @@ async def test_anthropic_text_parts_ahead_of_built_in_tool_call(
         )
     )
     assert result.output == snapshot(
-        'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by 12 European governments.'
+        'On October 25, 1854, the Battle of Balaclava, part of the Crimean War, was fought between British and Russian forces. It is best known for the Charge of the Light Brigade.'
     )
 
     async with agent.run_stream('Briefly mention 1 event that happened tomorrow in history?') as result:
         chunks = [c async for c in result.stream_output(debounce_by=None)]
         assert chunks == snapshot(
             [
-                'I need',
-                'I need to clar',
-                'I need to clarify what',
-                "I need to clarify what you're asking.",
-                "I need to clarify what you're asking. Today",
-                "I need to clarify what you're asking. Today is September 29, 2026",
-                "I need to clarify what you're asking. Today is September 29, 2026, so",
-                'I need to clarify what you\'re asking. Today is September 29, 2026, so "',
-                'I need to clarify what you\'re asking. Today is September 29, 2026, so "tomorrow" would be September 30,',
-                'I need to clarify what you\'re asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026,',
-                'I need to clarify what you\'re asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in',
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938**: The Munich\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938**: The Munich Agreement was signed, allowing\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Su\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to app\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler and\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler and avoid war.\
-""",
-                """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler and avoid war.\
-""",
+                'I',
+                "I'll check the current",
+                "I'll check the current date in",
+                "I'll check the current date in the sandbox so",
+                "I'll check the current date in the sandbox so I can work",
+                "I'll check the current date in the sandbox so I can work out what",
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'I\'ll check the current date in the sandbox so I can work out what "tomorrow" is.',
+                'Tomorrow is',
+                'Tomorrow is October 26 by',
+                'Tomorrow is October 26 by the sandbox cl',
+                'Tomorrow is October 26 by the sandbox clock. On October 26, ',
+                'Tomorrow is October 26 by the sandbox clock. On October 26, 1881, the Gunf',
+                'Tomorrow is October 26 by the sandbox clock. On October 26, 1881, the Gunfight at the O.K.',
+                'Tomorrow is October 26 by the sandbox clock. On October 26, 1881, the Gunfight at the O.K. Corral took place in Tomb',
+                'Tomorrow is October 26 by the sandbox clock. On October 26, 1881, the Gunfight at the O.K. Corral took place in Tombstone, Arizona.',
+                'Tomorrow is October 26 by the sandbox clock. On October 26, 1881, the Gunfight at the O.K. Corral took place in Tombstone, Arizona.',
             ]
         )
 
     assert await result.get_output() == snapshot(
-        """\
-I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
-
-Did you mean:
-1. An event that happened on September 30th in history (past years)?
-2. Or something else?
-
-If you meant historical events that occurred on September 30th, here's one notable example:
-
-**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler and avoid war.\
-"""
+        'Tomorrow is October 26 by the sandbox clock. On October 26, 1881, the Gunfight at the O.K. Corral took place in Tombstone, Arizona.'
     )
 
     async with agent.run_stream('Briefly mention 1 event that happened yesterday in history?') as result:
         chunks = [c async for c in result.stream_text(debounce_by=None)]
         assert chunks == snapshot(
             [
-                'On',
-                'On September 28, 1928',
-                'On September 28, 1928, ',
-                'On September 28, 1928, Alexander Fleming discovered penic',
-                'On September 28, 1928, Alexander Fleming discovered penicillin when he noticed a bacteria-',
-                'On September 28, 1928, Alexander Fleming discovered penicillin when he noticed a bacteria-killing mold growing in his laboratory',
-                'On September 28, 1928, Alexander Fleming discovered penicillin when he noticed a bacteria-killing mold growing in his laboratory.',
+                "I'll check",
+                "I'll check the",
+                "I'll check the current date first.",
+                """\
+I'll check the current date first.
+
+""",
+                """\
+I'll check the current date first.
+
+On\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945,\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after en\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated as United Nations Day.\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated as United Nations Day.
+
+This\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated as United Nations Day.
+
+This is from\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated as United Nations Day.
+
+This is from memory, not\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated as United Nations Day.
+
+This is from memory, not a search. The date com\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated as United Nations Day.
+
+This is from memory, not a search. The date comes from the sandbox cl\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated as United Nations Day.
+
+This is from memory, not a search. The date comes from the sandbox clock, so\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated as United Nations Day.
+
+This is from memory, not a search. The date comes from the sandbox clock, so it\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated as United Nations Day.
+
+This is from memory, not a search. The date comes from the sandbox clock, so it may not\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated as United Nations Day.
+
+This is from memory, not a search. The date comes from the sandbox clock, so it may not match your local\
+""",
+                """\
+I'll check the current date first.
+
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated as United Nations Day.
+
+This is from memory, not a search. The date comes from the sandbox clock, so it may not match your local date.\
+""",
             ]
         )
 
     assert await result.get_output() == snapshot(
-        'On September 28, 1928, Alexander Fleming discovered penicillin when he noticed a bacteria-killing mold growing in his laboratory.'
+        """\
+On October 24, 1945, the United Nations Charter came into force after enough member states ratified it. That is why October 24 is celebrated as United Nations Day.
+
+This is from memory, not a search. The date comes from the sandbox clock, so it may not match your local date.\
+"""
     )
 
     async with agent.run_stream(
@@ -13714,34 +13643,31 @@ If you meant historical events that occurred on September 30th, here's one notab
         chunks = [c async for c in result.stream_text(debounce_by=None, delta=True)]  # pragma: lax no cover
         assert chunks == snapshot(
             [
-                'I',
-                ' need',
-                ' to search for historical',
-                ' events that occurred on',
-                ' October',
-                ' 1st (',
-                'the day after tomorrow from',
-                ' today,',
-                ' September',
-                ' 29',
-                ',',
-                ' 2026',
-                ').',
+                "I'",
+                'll check today',
+                "'s date in",
+                ' the sandbox first.',
                 """\
 
 
 """,
-                'On',
-                ' October 1, 1949',
-                ', the People',
-                "'s Republic of China was founded with",
-                ' Mao Zedong as Chairman',
-                '.',
+                'The day after t',
+                'omorrow is October 27',
+                '. On that',
+                ' date in',
+                ' 1904, the New York City',
+                ' subway opened, with',
+                ' service',
+                ' running',
+                ' from City',
+                ' Hall to ',
+                '145',
+                'th Street.',
             ]
         )
 
     assert await result.get_output() == snapshot(
-        "On October 1, 1949, the People's Republic of China was founded with Mao Zedong as Chairman."
+        'The day after tomorrow is October 27. On that date in 1904, the New York City subway opened, with service running from City Hall to 145th Street.'
     )
 
 
@@ -13749,7 +13675,7 @@ async def test_anthropic_memory_tool(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ):
     anthropic_model = AnthropicModel(
-        'claude-sonnet-4-5',
+        'claude-sonnet-5-5',
         provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
         settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'context-1m-2025-08-07'}),
     )
@@ -13788,7 +13714,7 @@ async def test_anthropic_memory_tool(
 
     result = await agent.run('Where do I live?')
     assert content_blocks(request_capture.body(), 'tool_result') == snapshot([])
-    assert result.output == snapshot('According to my memory, you live in **Mexico City**.')
+    assert result.output == snapshot('Según mis notas, vives en la Ciudad de México.')  # codespell:ignore mis
 
 
 def test_hidden_memory_function_tool_is_not_restored_as_native() -> None:
@@ -13806,16 +13732,16 @@ async def test_anthropic_model_usage_limit_exceeded(
     allow_model_requests: None,
     anthropic_api_key: str,
 ):
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(model=model)
 
     with pytest.raises(
         UsageLimitExceeded,
-        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=19\\)',
+        match='The next request would exceed the input_tokens_limit of 24 \\(input_tokens=25\\)',
     ):
         await agent.run(
             'The quick brown fox jumps over the lazydog.',
-            usage_limits=UsageLimits(input_tokens_limit=18, count_tokens_before_request=True),
+            usage_limits=UsageLimits(input_tokens_limit=24, count_tokens_before_request=True),
         )
 
 
@@ -13823,7 +13749,7 @@ async def test_anthropic_model_usage_limit_not_exceeded(
     allow_model_requests: None,
     anthropic_api_key: str,
 ):
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(model=model)
 
     result = await agent.run(
@@ -13832,23 +13758,15 @@ async def test_anthropic_model_usage_limit_not_exceeded(
     )
     assert result.output == snapshot(
         """\
-# Quick Brown Fox 🦊
+That's the classic pangram, a sentence containing every letter of the alphabet. Your version has a small typo: "lazydog" should be two words, "lazy dog." It still contains all 26 letters either way.
 
-You've shared the famous **pangram** (a sentence containing every letter of the alphabet)!
+Corrected: **The quick brown fox jumps over the lazy dog.**
 
-However, there's a small typo in your version. The traditional phrase is:
-
-> "The quick brown fox jumps over the **lazy dog**."
-
-(Note: "lazy dog" should be two words)
-
-This sentence includes all 26 letters of the English alphabet and is commonly used for:
-- Testing fonts and typefaces
-- Keyboard testing
-- Display samples
-- Typography demonstrations
-
-Did you want to discuss something specific about this phrase, or were you testing something? 😊\
+Is there something specific you'd like to do with it? I could:
+- Check or proofread other text
+- Suggest other pangrams
+- Use it for font or typing tests
+- Something else entirely\
 """
     )
 
@@ -13913,7 +13831,12 @@ async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: Non
     assert result.input_tokens == 10
 
 
-async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: None):
+async def test_anthropic_count_tokens_keeps_server_tools_but_not_mcp_servers(allow_model_requests: None):
+    """The direct API's `count_tokens` takes the same `tools` as the real request, server tools included.
+
+    The `mcp_servers` param is the one thing left off: the endpoint rejects it with a 400 ("The mcp_servers
+    parameter is not supported on the count_tokens endpoint"), so the count leaves out the MCP server's tools.
+    """
     c = completion_message(
         [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
     )
@@ -13921,7 +13844,12 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(
         m,
-        capabilities=[NativeTool(CodeExecutionTool()), NativeTool(WebFetchTool()), NativeTool(MemoryTool())],
+        capabilities=[
+            NativeTool(CodeExecutionTool()),
+            NativeTool(WebFetchTool()),
+            NativeTool(MemoryTool()),
+            NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')),
+        ],
     )
 
     @agent.tool_plain
@@ -13936,37 +13864,28 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
 
     assert result.output == 'hello world'
     count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
-    # Server-side tools (`code_execution`, `web_fetch`) are dropped from the `count_tokens` payload, but the
-    # client-side `MemoryTool` is kept so the count includes its definition (and beta).
-    assert count_tokens_kwargs['tools'] == [
-        {
-            'name': 'lookup',
-            'description': '',
-            'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-        },
-        {'name': 'memory', 'type': 'memory_20250818'},
-    ]
-    assert count_tokens_kwargs['mcp_servers'] is OMIT
-    assert count_tokens_kwargs['betas'] == ['context-management-2025-06-27']
-    assert {tool['name'] for tool in create_kwargs['tools']} == {'lookup', 'code_execution', 'web_fetch', 'memory'}
-    assert {tool['name']: tool['type'] for tool in create_kwargs['tools'] if 'type' in tool} == {
+    assert count_tokens_kwargs['tools'] == create_kwargs['tools']
+    assert {tool['name']: tool['type'] for tool in count_tokens_kwargs['tools'] if 'type' in tool} == {
         'code_execution': 'code_execution_20260120',
         'web_fetch': 'web_fetch_20260209',
         'memory': 'memory_20250818',
     }
-    assert create_kwargs['betas'] == ['context-management-2025-06-27']
+    assert count_tokens_kwargs['mcp_servers'] is OMIT
+    assert create_kwargs['mcp_servers'] == [{'type': 'url', 'name': 'deepwiki', 'url': 'https://mcp.deepwiki.com/mcp'}]
+    assert count_tokens_kwargs['betas'] == ['context-management-2025-06-27']
+    assert create_kwargs['betas'] == ['context-management-2025-06-27', 'mcp-client-2025-04-04']
 
 
 async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_requests: None):
     """`count_tokens` renders a tool-search replay turn with the same `tool_reference` wire shape
-    as the real `/v1/messages` request, while still omitting the server-side `tool_search_tool_*`
-    entry that the endpoint rejects.
+    and the same `tools` as the real `/v1/messages` request.
 
-    The count path strips server tools from the params it maps messages with, and both paths read
-    the deferred function tools to decide whether a `tool_reference` reveal is legal. Dropping a
-    deferred tool from either would silently re-serialize the history turn as plain text and diverge
-    from the real request. A VCR test wouldn't catch this — the cassette matcher isn't sensitive to
-    the `messages` body.
+    The count path strips other server tools from the params it builds the wire `tools` list with,
+    and both paths read the deferred function tools to decide whether a `tool_reference` reveal is
+    legal. Dropping a deferred tool from either would silently re-serialize the history turn as plain
+    text and diverge from the real request. `test_anthropic_count_tokens_with_tool_search_replay` pins
+    the count payload on the wire; this pins that both payloads come out identical from one history,
+    which a single recorded request can't show.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
     """
@@ -14018,58 +13937,7 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
             'is_error': False,
         }
     )
-
-    # The server-side `tool_search_tool_*` entry is rejected by `count_tokens`, so it's omitted there
-    # but present on the real request.
-    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
-    assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
-
-
-async def test_anthropic_count_tokens_keeps_defer_loading(allow_model_requests: None):
-    """`count_tokens` marks a deferred tool `defer_loading` exactly as the real request does.
-
-    The count path strips server tools from the params it builds the wire `tools` list from, and
-    `defer_loading` is gated on `ToolSearchTool` being present — so counting used to describe a
-    request we never send, with every deferred tool's full schema exposed. That isn't cosmetic: the
-    endpoint honors the flag rather than ignoring it, and a deferred tool whose schema stays hidden
-    counts as its name and description alone. Measured live on `claude-opus-4-8` with one 30-field
-    tool: 440 tokens with the flag, 1761 without.
-
-    The server-side `tool_search_tool_*` entry, the one thing `count_tokens` really does reject,
-    still has to be absent — so this pins both halves against each other.
-    """
-    c = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    params = ModelRequestParameters(
-        function_tools=[
-            ToolDefinition(
-                name='get_exchange_rate',
-                description='Look up an exchange rate.',
-                parameters_json_schema={'type': 'object'},
-                defer_loading=True,
-                with_native=ToolSearchTool.kind,
-            )
-        ],
-        native_tools=[ToolSearchTool()],
-    )
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='What is the USD to EUR rate?')])]
-
-    await m.count_tokens(messages, None, params)
-    await m.request(messages, None, params)
-
-    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
-
-    def deferred_tool(kwargs: dict[str, Any]) -> dict[str, Any]:
-        [tool] = [tool for tool in kwargs['tools'] if tool.get('name') == 'get_exchange_rate']
-        return tool
-
-    assert deferred_tool(count_tokens_kwargs) == deferred_tool(create_kwargs)
-    assert deferred_tool(count_tokens_kwargs)['defer_loading'] is True
-
-    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
-    assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
+    assert count_tokens_kwargs['tools'] == create_kwargs['tools']
 
 
 @pytest.mark.parametrize('capabilities', [None, [ToolSearch()]])
@@ -14306,7 +14174,7 @@ async def test_anthropic_lazy_advertisement_live(
     The cassette serializer strips `anthropic-*` headers, so the request hook pins beta gating
     against the actual generated wire while the recorded bodies pin tools and `tool_addition`.
     """
-    model = anthropic_model('claude-opus-4-8', capture=True)
+    model = anthropic_model('claude-opus-5-5', capture=True)
     refunds = Capability[None](
         id='refunds',
         description='Refund policy tools. Load this capability before looking up refund policy.',
@@ -14549,12 +14417,12 @@ async def test_anthropic_tool_return_reveal_parallel_batch_live(
     request_capture: RequestCapture,
 ) -> None:
     agent = Agent(
-        anthropic_model('claude-haiku-4-5', capture=True),
+        anthropic_model('claude-sonnet-5', capture=True),
         instructions=(
             'On your first response, call reveal_cleanup and list_maps together in one parallel tool-use response. '
             'Do not write any text before those calls. After both results, reply exactly DONE. Do not call delete_map.'
         ),
-        model_settings=AnthropicModelSettings(parallel_tool_calls=True, temperature=0),
+        model_settings=AnthropicModelSettings(parallel_tool_calls=True),
     )
 
     @agent.tool_plain
@@ -14696,7 +14564,7 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, vcr: Any, request_capture: RequestCapture
 ):
     """A mixed corpus retains explicit keyword search and can discover a standalone deferred tool."""
-    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
     refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
 
     @refunds.tool_plain
@@ -14770,7 +14638,7 @@ async def test_anthropic_always_on_capability_toolset_is_visible(
 
     toolset = FunctionToolset([lookup_shipping])
     shipping = Capability[None](id='shipping', toolsets=[toolset])
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[shipping])
     result = await agent.run('Reply with exactly: ready')
 
@@ -14789,7 +14657,7 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, vcr: Any, request_capture: RequestCapture
 ):
     """Anthropic accepts a capability-revealed tool that stays deferred without a tool-search surface."""
-    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
     refunds = Capability[None](
         id='refunds',
         description='Refund policy tools. Load this capability before looking up refund policy.',
@@ -14898,7 +14766,10 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
             ('lookup_refund_policy', True, ''),
         ]
     )
+    # Models without mid-conversation system messages also get the `<system>` tag announcement first.
+    announcement = [] if model.profile.get('supports_inline_system_prompts') else [SYSTEM_VOICE_ANNOUNCEMENT]
     assert request_capture.body()['system'] == [
+        *({'type': 'text', 'text': text} for text in announcement),
         {
             'type': 'text',
             'text': """\
@@ -14908,7 +14779,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 </context>
 A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
-        }
+        },
     ]
 
     request_bodies = [json.loads(request.body) for request in vcr.requests]
@@ -14928,46 +14799,269 @@ A later <context> element with the same id replaces the earlier one and stays in
     assert called_revealed_tool
 
 
-@pytest.mark.vcr()
-async def test_anthropic_count_tokens_with_native_tools(allow_model_requests: None, anthropic_api_key: str):
-    """`count_tokens` succeeds against the live API when a native/server tool is configured.
-
-    Anthropic rejects server tools (e.g. `code_execution`) on the `count_tokens` endpoint with a 400, so
-    the model strips native tools from the `count_tokens` payload. A successful token count proves the
-    native tools were omitted. The recorded request is itself the regression guard: it must NOT contain
-    the `code_execution` entry, so a revert of the fix would send it and break playback.
-
-    Regression test for https://github.com/pydantic/pydantic-ai/issues/5702
-    """
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-
-    usage = await m.count_tokens(
-        [ModelRequest.user_text_prompt('What is 2 + 2?')],
-        None,
-        ModelRequestParameters(native_tools=[CodeExecutionTool()]),
+def _refunds_loaded_from_code(model: AnthropicModel, *, keep_load_capability_tool: bool) -> Agent[None, str]:
+    """An agent whose `open_ticket` tool loads the deferred `refunds` capability with `ctx.load_capability`."""
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund tools.',
+        instructions='Always give the refund date in the format DD/MM/YYYY.',
+        defer_loading=True,
     )
 
-    assert usage.input_tokens > 0
+    @refunds.tool_plain
+    def refund_status(order_id: str) -> str:
+        """Look up the refund status for an order."""
+        return f'Order {order_id}: refund issued on 2026-05-01.'
+
+    capabilities: list[AbstractCapability[None]] = [refunds]
+    if not keep_load_capability_tool:
+        # Every on-demand capability here is loaded from code, so the model is never offered `load_capability`.
+        hooks = Hooks[None]()
+
+        @hooks.on.before_model_request
+        async def drop_load_capability(
+            ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            params = request_context.model_request_parameters
+            request_context.model_request_parameters = replace(
+                params, function_tools=[tool for tool in params.function_tools if tool.name != 'load_capability']
+            )
+            return request_context
+
+        capabilities.append(hooks)
+    agent = Agent(
+        model,
+        deps_type=type(None),
+        model_settings={'thinking': True},
+        capabilities=capabilities,
+        instructions=(
+            'First call open_ticket on its own. Once it returns, call refund_status for the order. '
+            'Never call load_capability.'
+        ),
+    )
+
+    @agent.tool
+    async def open_ticket(ctx: RunContext[None]) -> str:
+        """Open the customer's support ticket for order ABC-123."""
+        ctx.load_capability('refunds')
+        return 'Ticket for order ABC-123 opened.'
+
+    return agent
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize('keep_load_capability_tool', [True, False], ids=['with-load-tool', 'without-load-tool'])
+async def test_anthropic_load_capability_from_code(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    keep_load_capability_tool: bool,
+):
+    """Anthropic accepts a load from code, which records no `load_capability` call, with thinking enabled.
+
+    It's accepted whether or not the request has a `load_capability` tool: the request after the load carries the
+    capability's instructions as a system message and its tool, and the model calls the tool and follows them.
+    """
+    agent = _refunds_loaded_from_code(
+        anthropic_model('claude-haiku-4-5', capture=True), keep_load_capability_tool=keep_load_capability_tool
+    )
+
+    result = await agent.run('Where is my refund for order ABC-123?')
+
+    body = request_capture.body('/v1/messages', index=1)
+    tools = cast(list[dict[str, Any]], body['tools'])
+    tool_names = [tool['name'] for tool in tools]
+    assert ('load_capability' in tool_names, 'refund_status' in tool_names) == (keep_load_capability_tool, True)
+    # After the model's first turn: the load is the reveal of `refund_status` this adapter renders as a
+    # `search_tools` exchange, and the capability's instructions as system text; no `load_capability` call.
+    assert message_shape(body)[2:] == snapshot(
+        [('user', ['tool_result']), ('assistant', ['tool_use']), ('user', ['tool_result', 'text'])]
+    )
+    messages = cast(list[dict[str, Any]], body['messages'])
+    assert [block['name'] for message in messages for block in message['content'] if block['type'] == 'tool_use'] == [
+        'open_ticket',
+        'search_tools',
+    ]
+    assert [
+        part.tool_name
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ] == ['open_ticket', 'refund_status']
+    assert '01/05/2026' in result.output
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'native_tool,wire_tool,input_tokens',
+    [
+        pytest.param(
+            WebSearchTool(),
+            {
+                'name': 'web_search',
+                'type': 'web_search_20260209',
+                'max_uses': None,
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'user_location': None,
+            },
+            6070,
+            id='web_search',
+        ),
+        pytest.param(
+            WebFetchTool(),
+            {
+                'name': 'web_fetch',
+                'type': 'web_fetch_20260209',
+                'max_uses': None,
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'citations': None,
+                'max_content_tokens': None,
+            },
+            4656,
+            id='web_fetch',
+        ),
+        pytest.param(
+            CodeExecutionTool(),
+            {'name': 'code_execution', 'type': 'code_execution_20260120'},
+            2970,
+            id='code_execution',
+        ),
+    ],
+)
+async def test_anthropic_count_tokens_with_native_tools(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    native_tool: AbstractNativeTool,
+    wire_tool: dict[str, str | None],
+    input_tokens: int,
+):
+    """`count_tokens` sends a server tool as the real request does, and matches its `input_tokens`.
+
+    The only function tool is deferred, so the server tool is what keeps the `tools` list legal: the
+    endpoint rejects a list in which every tool is deferred. `max_tokens=1` stops the real request
+    after its first sampling pass, before the model can call the server tool and be sampled again.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/11363
+    """
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='Look up the exchange rate between two currencies.',
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                    'required': ['base', 'quote'],
+                },
+                defer_loading=True,
+            )
+        ],
+        native_tools=[native_tool],
+    )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is the USD to EUR rate?')]
+    settings: AnthropicModelSettings = {'max_tokens': 1}
+
+    usage = await m.count_tokens(messages, settings, params)
+    response = await m.request(messages, settings, params)
+
+    assert usage.input_tokens == response.usage.input_tokens == input_tokens
+    count_tools = request_capture.body('/v1/messages/count_tokens')['tools']
+    assert count_tools == request_capture.body('/v1/messages')['tools']
+    assert count_tools == [
+        {
+            'name': 'get_exchange_rate',
+            'description': 'Look up the exchange rate between two currencies.',
+            'input_schema': {
+                'type': 'object',
+                'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                'required': ['base', 'quote'],
+            },
+            'defer_loading': True,
+        },
+        wire_tool,
+    ]
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'executor,advisor_model,result_type,input_tokens',
+    [
+        pytest.param('claude-sonnet-5-5', 'claude-opus-5-5', 'advisor_redacted_result', 1278, id='redacted'),
+        pytest.param('claude-haiku-5-5', 'claude-opus-4-8', 'advisor_result', 1237, id='plaintext'),
+    ],
+)
+async def test_anthropic_count_tokens_with_advisor_history(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    executor: str,
+    advisor_model: str,
+    result_type: str,
+    input_tokens: int,
+):
+    """`count_tokens` replays two advisor turns as the real request does, and matches its `input_tokens`.
+
+    The history comes from two runs that each consult the advisor, so it carries two advisor call and
+    result pairs. The count sends the advisor tool and those blocks, with the advisor's own result shape
+    (encrypted for a 5.5 advisor, plaintext for Opus 4.8). `max_tokens=1` stops the real request before
+    the executor can consult the advisor again.
+    """
+    m = anthropic_model(executor, capture=True)
+    advisor = AdvisorTool(model=advisor_model, max_tokens=1024)
+    agent = Agent(m, capabilities=[NativeTool(advisor)])
+    first = await agent.run("What's 2+2? Consult your advisor first.")
+    second = await agent.run(
+        'And what is that plus one? Consult your advisor again.', message_history=first.all_messages()
+    )
+
+    messages = [*second.all_messages(), ModelRequest.user_text_prompt('And that times two?')]
+    params = ModelRequestParameters(native_tools=[advisor])
+    settings: AnthropicModelSettings = {'max_tokens': 1}
+    usage = await m.count_tokens(messages, settings, params)
+    response = await m.request(messages, settings, params)
+
+    assert usage.input_tokens == response.usage.input_tokens == input_tokens
+    count_body = request_capture.body('/v1/messages/count_tokens')
+    request_body = request_capture.bodies('/v1/messages')[-1]
+    assert count_body['tools'] == request_body['tools']
+    assert count_body['messages'] == request_body['messages']
+    result_types = [
+        content.get('type')
+        for block in content_blocks(count_body, 'advisor_tool_result')
+        if isinstance(content := block['content'], dict)
+    ]
+    assert result_types == [result_type, result_type]
 
 
 @pytest.mark.vcr()
 async def test_anthropic_count_tokens_with_tool_search_replay(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """`count_tokens` succeeds against the live API with a `ToolSearchTool` and a tool-search replay history.
 
-    The endpoint rejects the server-side `tool_search_tool_*` entry, so it's omitted from the wire `tools`
-    list, but the replay turn must still serialize as a `tool_reference` block (pointing at a `function_tools`
-    entry, which is not stripped) — exactly as the real `/v1/messages` request does. A successful token count
-    proves the endpoint accepts that payload; the recorded request is the regression guard.
+    The replay turn serializes as a `tool_reference` block pointing at the deferred corpus tool, and the
+    `tool_search_tool_*` entry stays in `tools`, exactly as the real `/v1/messages` request sends them. The
+    payload is read off the wire, so a change to what the code sends fails here instead of replaying.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
     """
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
 
     params = ModelRequestParameters(
         function_tools=[
-            ToolDefinition(name='get_exchange_rate', description='', parameters_json_schema={'type': 'object'})
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='',
+                parameters_json_schema={'type': 'object'},
+                defer_loading=True,
+                with_native=ToolSearchTool.kind,
+            )
         ],
         native_tools=[ToolSearchTool()],
     )
@@ -14990,10 +15084,116 @@ async def test_anthropic_count_tokens_with_tool_search_replay(
     usage = await m.count_tokens(messages, None, params)
 
     assert usage.input_tokens > 0
-    request_body = json.loads(vcr.requests[0].body)
-    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in request_body['tools'])
-    tool_result = request_body['messages'][-1]['content'][0]
-    assert tool_result['content'] == [{'tool_name': 'get_exchange_rate', 'type': 'tool_reference'}]
+    body = request_capture.body('/v1/messages/count_tokens')
+    assert (body['tools'], content_blocks(body, 'tool_result')) == snapshot(
+        (
+            [
+                {
+                    'name': 'get_exchange_rate',
+                    'description': '',
+                    'input_schema': {'type': 'object'},
+                    'defer_loading': True,
+                },
+                {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'},
+            ],
+            [
+                {
+                    'tool_use_id': 'search-1',
+                    'type': 'tool_result',
+                    'content': [{'tool_name': 'get_exchange_rate', 'type': 'tool_reference'}],
+                    'is_error': False,
+                }
+            ],
+        )
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_with_every_tool_deferred(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """`count_tokens` counts a request whose function tools are all deferred, and matches the real request.
+
+    The endpoint rejects a `tools` list in which every tool has `defer_loading`, so the `tool_search_tool_*`
+    entry stays on the count payload, as it does on `/v1/messages`. With it, the count equals the
+    `input_tokens` the real request reports. A run doesn't expose the counted value, so this calls the
+    model directly. `max_tokens=1` stops the real request after its first sampling pass: once the model
+    calls the server-side tool search, Anthropic samples again in the same request and reports the
+    input of both passes.
+
+    The deferred tool keeps `defer_loading` on the count, as on the real request. The endpoint honors the
+    flag, so a count that dropped it would also count the hidden schema.
+    """
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='Look up the exchange rate between two currencies.',
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                    'required': ['base', 'quote'],
+                },
+                defer_loading=True,
+                with_native=ToolSearchTool.kind,
+            )
+        ],
+        native_tools=[ToolSearchTool()],
+    )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is the USD to EUR rate?')]
+    settings: AnthropicModelSettings = {'max_tokens': 1}
+
+    usage = await m.count_tokens(messages, settings, params)
+    response = await m.request(messages, settings, params)
+
+    assert (usage.input_tokens, response.usage.input_tokens) == snapshot((663, 663))
+    count_tools = request_capture.body('/v1/messages/count_tokens')['tools']
+    assert count_tools == request_capture.body('/v1/messages')['tools']
+    assert count_tools == snapshot(
+        [
+            {
+                'name': 'get_exchange_rate',
+                'description': 'Look up the exchange rate between two currencies.',
+                'input_schema': {
+                    'type': 'object',
+                    'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                    'required': ['base', 'quote'],
+                },
+                'defer_loading': True,
+            },
+            {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'},
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_before_request_with_every_tool_deferred(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A run whose tools are all deferred succeeds with `count_tokens_before_request=True`.
+
+    Each count sends the same `tools` as the request it precedes, search entry included, so the endpoint
+    doesn't reject it as a `tools` list in which every tool is deferred.
+    """
+    agent = Agent(anthropic_model('claude-sonnet-5-5', capture=True))
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(base: str, quote: str) -> float:
+        """Look up the exchange rate between two currencies."""
+        return 0.92
+
+    result = await agent.run(
+        'What is the USD to EUR rate? Use your tools.', usage_limits=UsageLimits(count_tokens_before_request=True)
+    )
+
+    assert result.output == snapshot(
+        'The USD to EUR exchange rate is **0.92**. That means 1 US dollar buys about 0.92 euros.'
+    )
+    count_bodies = request_capture.bodies('/v1/messages/count_tokens')
+    create_bodies = request_capture.bodies('/v1/messages')
+    assert [body['tools'] for body in count_bodies] == [body['tools'] for body in create_bodies]
 
 
 @pytest.mark.vcr()
@@ -15006,7 +15206,7 @@ async def test_anthropic_count_tokens_keeps_memory_tool(allow_model_requests: No
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/5702
     """
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     usage = await m.count_tokens(
         [ModelRequest.user_text_prompt('What is 2 + 2?')],
@@ -15034,7 +15234,7 @@ async def test_anthropic_count_tokens_with_adaptive_thinking_and_output_tools(
     The pair is read off an httpx event hook rather than the cassette, so a regression that changes it
     fails here instead of replaying a recording that still holds the old payload.
     """
-    m = anthropic_model('claude-opus-4-6', capture=True)
+    m = anthropic_model('claude-opus-5', capture=True)
 
     class CityLocation(BaseModel):
         city: str
@@ -15079,7 +15279,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
     1. The first call with a long context creates a cache (cache_write_tokens > 0)
     2. Follow-up messages in the same conversation read from that cache (cache_read_tokens > 0)
     """
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
         system_prompt='You are a helpful assistant.',
@@ -15091,35 +15291,35 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
     result1 = await agent.run('Please explain what Python is and its main use cases. ' * 100)
     assert result1.usage == snapshot(
         RunUsage(
-            input_tokens=1114,
-            output_tokens=408,
-            cache_write_tokens=1111,
+            input_tokens=1519,
+            output_tokens=956,
+            cache_write_tokens=1515,
             details={
-                'cache_creation_input_tokens': 1111,
+                'cache_creation_input_tokens': 1515,
                 'cache_read_input_tokens': 0,
-                'input_tokens': 3,
-                'output_tokens': 408,
+                'input_tokens': 4,
+                'output_tokens': 956,
             },
             requests=1,
-            cost=Decimal('0.01029525'),
+            cost=Decimal('0.0133555'),
         )
     )
 
     result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
     assert result2.usage == snapshot(
         RunUsage(
-            input_tokens=1534,
-            cache_read_tokens=1111,
-            output_tokens=33,
-            cache_write_tokens=420,
+            input_tokens=2490,
+            cache_read_tokens=1515,
+            output_tokens=59,
+            cache_write_tokens=971,
             details={
-                'cache_creation_input_tokens': 420,
-                'cache_read_input_tokens': 1111,
-                'input_tokens': 3,
-                'output_tokens': 33,
+                'cache_creation_input_tokens': 971,
+                'cache_read_input_tokens': 1515,
+                'input_tokens': 4,
+                'output_tokens': 59,
             },
             requests=1,
-            cost=Decimal('0.0024123'),
+            cost=Decimal('0.0031770'),
         )
     )
 
@@ -15228,9 +15428,10 @@ async def test_unified_cache_writes_then_reads_real_api(
     first = await agent.run(prompt)
     second = await agent.run(prompt)
 
-    # A top-level `cache_control`, with which the API breakpoints the conversation itself, plus one on the instructions.
+    # A top-level `cache_control`, with which the API breakpoints the conversation itself, plus one on the instructions,
+    # after the `<system>` tag announcement this model gets as it takes no mid-conversation system messages.
     assert [cache_breakpoints(body) for body in request_capture.bodies('/v1/messages')] == [
-        ({'type': 'ephemeral', 'ttl': expected_ttl}, ['system[0]'])
+        ({'type': 'ephemeral', 'ttl': expected_ttl}, ['system[1]'])
     ] * 2
     assert (first.usage, second.usage) == expected_usage
 
@@ -15302,17 +15503,17 @@ async def test_unified_cache_shares_prefix_across_conversations_real_api(
             snapshot(
                 RequestUsage(
                     details={
-                        'input_tokens': 3,
-                        'output_tokens': 196,
-                        'cache_creation_input_tokens': 2966,
+                        'input_tokens': 4,
+                        'output_tokens': 426,
+                        'cache_creation_input_tokens': 4370,
                         'cache_read_input_tokens': 0,
-                        'ephemeral_1h_input_tokens': 2412,
+                        'ephemeral_1h_input_tokens': 3618,
                     },
-                    input_tokens=2969,
-                    cache_write_tokens=2966,
-                    cache_write_1h_tokens=2412,
-                    output_tokens=196,
-                    cost=Decimal('0.0194985'),
+                    input_tokens=4374,
+                    cache_write_tokens=4370,
+                    cache_write_1h_tokens=3618,
+                    output_tokens=426,
+                    cost=Decimal('0.020620'),
                 )
             ),
             id='request',
@@ -15322,17 +15523,17 @@ async def test_unified_cache_shares_prefix_across_conversations_real_api(
             snapshot(
                 RequestUsage(
                     details={
-                        'input_tokens': 3,
-                        'output_tokens': 160,
-                        'cache_creation_input_tokens': 2965,
+                        'input_tokens': 4,
+                        'output_tokens': 347,
+                        'cache_creation_input_tokens': 4369,
                         'cache_read_input_tokens': 0,
-                        'ephemeral_1h_input_tokens': 2411,
+                        'ephemeral_1h_input_tokens': 3617,
                     },
-                    input_tokens=2968,
-                    cache_write_tokens=2965,
-                    cache_write_1h_tokens=2411,
-                    output_tokens=160,
-                    cost=Decimal('0.0189525'),
+                    input_tokens=4373,
+                    cache_write_tokens=4369,
+                    cache_write_1h_tokens=3617,
+                    output_tokens=347,
+                    cost=Decimal('0.019826'),
                 )
             ),
             id='stream',
@@ -15351,11 +15552,11 @@ async def test_anthropic_cache_write_ttl_pricing(
     both kinds of write. In streaming, only `message_start` carries the split, so it has to survive the merge with
     the later `message_delta` usage.
 
-    For the non-streamed case, the cost is 3 uncached input tokens at $3/MTok, 554 five-minute cache writes at
-    $3.75/MTok, 2412 one-hour cache writes at $6/MTok, and 196 output tokens at $15/MTok. Pricing all 2966 writes at
-    the five-minute rate would report $0.0141 instead.
+    For the non-streamed case, the cost is 4 uncached input tokens at $2/MTok, 752 five-minute cache writes at
+    $2.50/MTok, 3618 one-hour cache writes at $4/MTok, and 426 output tokens at $10/MTok. Pricing all 4370 writes at
+    the five-minute rate would report $0.0152 instead.
     """
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
         # Distinct per case, so that recording one case doesn't read the cache the other wrote.
@@ -15386,7 +15587,7 @@ async def test_anthropic_cache_earlier_breakpoint_raised_to_later_longer_ttl(
     with longer TTL must appear before shorter TTLs"
     (https://platform.claude.com/docs/en/build-with-claude/prompt-caching) and rejects the request otherwise.
     """
-    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
     agent = Agent(
         model,
         instructions='You are a concise Python assistant. ' + 'Answer questions about Python concisely. ' * 300,
@@ -15407,17 +15608,17 @@ async def test_anthropic_cache_earlier_breakpoint_raised_to_later_longer_ttl(
     assert result.usage == snapshot(
         RunUsage(
             details={
-                'input_tokens': 13,
+                'input_tokens': 17,
                 'output_tokens': 4,
-                'cache_creation_input_tokens': 3913,
+                'cache_creation_input_tokens': 5716,
                 'cache_read_input_tokens': 0,
-                'ephemeral_1h_input_tokens': 3913,
+                'ephemeral_1h_input_tokens': 5716,
             },
-            cache_write_1h_tokens=3913,
-            cache_write_tokens=3913,
-            input_tokens=3926,
+            cache_write_1h_tokens=5716,
+            cache_write_tokens=5716,
+            input_tokens=5733,
             output_tokens=4,
-            cost=Decimal('0.023577'),
+            cost=Decimal('0.022938'),
             requests=1,
         )
     )
@@ -15430,7 +15631,7 @@ async def test_anthropic_cache_count_tokens(allow_model_requests: None, anthropi
     The Anthropic count_tokens API supports cache_control:
     https://docs.anthropic.com/en/api/messages-count-tokens
     """
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
         system_prompt='You are a helpful assistant.',
@@ -15445,17 +15646,17 @@ async def test_anthropic_cache_count_tokens(allow_model_requests: None, anthropi
     )
     assert result.usage == snapshot(
         RunUsage(
-            input_tokens=1114,
-            output_tokens=395,
-            cache_write_tokens=1111,
+            input_tokens=1519,
+            output_tokens=1276,
+            cache_read_tokens=1515,
             details={
-                'cache_creation_input_tokens': 1111,
-                'cache_read_input_tokens': 0,
-                'input_tokens': 3,
-                'output_tokens': 395,
+                'cache_creation_input_tokens': 0,
+                'cache_read_input_tokens': 1515,
+                'input_tokens': 4,
+                'output_tokens': 1276,
             },
             requests=1,
-            cost=Decimal('0.01010025'),
+            cost=Decimal('0.0129195'),
         )
     )
 
@@ -15606,6 +15807,33 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
     assert completion_kwargs['container'] == 'container_from_history'
 
 
+@pytest.mark.parametrize(
+    'base_url', ['https://gateway-a.example', 'https://gateway-b.example'], ids=['same-endpoint', 'other-endpoint']
+)
+async def test_anthropic_container_from_history_scoped_by_endpoint(allow_model_requests: None, base_url: str):
+    """A code execution container from another endpoint with the same `provider_name` isn't reused.
+
+    https://github.com/pydantic/pydantic-ai/issues/11508
+    """
+    producer_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+        ).model_copy(update={'container': BetaContainer(id='container_a', expires_at=datetime(2025, 1, 1))})
+    )
+    cast(MockAnthropic, producer_client).base_url = 'https://gateway-a.example'
+    producer = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=producer_client)))
+    history = (await producer.run('hello')).all_messages()
+
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    cast(MockAnthropic, mock_client).base_url = base_url
+    agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
+    await agent.run('follow up', message_history=history)
+
+    container = get_mock_chat_completion_kwargs(mock_client)[0].get('container')
+    assert container == ('container_a' if base_url == 'https://gateway-a.example' else OMIT)
+
+
 async def test_anthropic_container_setting_false_ignores_history(allow_model_requests: None):
     """Test that anthropic_container=False ignores container_id from history."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
@@ -15705,7 +15933,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
     actually sent, not what the VCR cassette happens to hold.
     """
     agent = Agent(
-        anthropic_model('claude-sonnet-4-5', capture=True),
+        anthropic_model('claude-sonnet-5-5', capture=True),
         capabilities=[NativeTool(CodeExecutionTool())],
         instructions='Always use the code execution tool for math.',
     )
@@ -15737,7 +15965,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                     NativeToolCallPart(
                         tool_name='code_execution',
                         args='{"command": "echo $((3 * 12390))"}',
-                        tool_call_id='srvtoolu_01F4x4GeMm6sCtxZgH4X7zgW',
+                        tool_call_id='srvtoolu_01JGQpNanU3etSb7Dswtf4wm',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
@@ -15750,30 +15978,31 @@ async def test_anthropic_code_execution_tool_container_reuse(
                             'stdout': '37170\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01F4x4GeMm6sCtxZgH4X7zgW',
+                        tool_call_id='srvtoolu_01JGQpNanU3etSb7Dswtf4wm',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='3 * 12390 = **37,170**'),
+                    TextPart(content='3 × 12390 = **37,170**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4612,
-                    output_tokens=80,
+                    input_tokens=5857,
+                    output_tokens=76,
                     details={
-                        'input_tokens': 4612,
-                        'output_tokens': 80,
+                        'input_tokens': 5857,
+                        'output_tokens': 76,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
-                    cost=Decimal('0.015036'),
+                    cost=Decimal('0.012474'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01GP9761Kf5ewfT26pG9Aunt'},
-                provider_response_id='msg_011CfY3guUTe37w8j7394rk5',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01WEa8g2pk6taVWBeVESyzBp'},
+                provider_response_id='msg_011CgPFfJCigYkFoWTp8baSW',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -15790,7 +16019,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                     NativeToolCallPart(
                         tool_name='code_execution',
                         args='{"command": "echo $((4 * 12390))"}',
-                        tool_call_id='srvtoolu_017vcQzhihPQeto4H19pZ5uW',
+                        tool_call_id='srvtoolu_012wGHCKq4Ruv1CCGP2XorLD',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
@@ -15803,30 +16032,31 @@ async def test_anthropic_code_execution_tool_container_reuse(
                             'stdout': '49560\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_017vcQzhihPQeto4H19pZ5uW',
+                        tool_call_id='srvtoolu_012wGHCKq4Ruv1CCGP2XorLD',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='4 * 12390 = **49,560**'),
+                    TextPart(content='4 × 12390 = **49,560**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4840,
-                    output_tokens=80,
+                    input_tokens=6075,
+                    output_tokens=76,
                     details={
-                        'input_tokens': 4840,
-                        'output_tokens': 80,
+                        'input_tokens': 6075,
+                        'output_tokens': 76,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
-                    cost=Decimal('0.01572'),
+                    cost=Decimal('0.01291'),
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01GP9761Kf5ewfT26pG9Aunt'},
-                provider_response_id='msg_011CfY3hECLM4hewT1txYQaG',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01WEa8g2pk6taVWBeVESyzBp'},
+                provider_response_id='msg_011CgPFfWnkaiganxqLkpQBk',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -15965,6 +16195,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                     cost=Decimal('0.000028'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-sonnet-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -16075,6 +16306,7 @@ async def test_stream_cancel(allow_model_requests: None):
                     input_tokens=5, details={'input_tokens': 5, 'output_tokens': 0}, cost=Decimal('0.000005')
                 ),
                 model_name='claude-haiku-4-5-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -16150,7 +16382,7 @@ async def test_anthropic_compaction_round_trip(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """Test that CompactionPart is correctly round-tripped in Anthropic message mapping."""
-    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
 
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello!')]),
@@ -16331,15 +16563,16 @@ async def test_anthropic_foreign_compaction_does_not_trim(allow_model_requests: 
     )
 
 
-async def test_anthropic_contentless_compaction_does_not_trim(allow_model_requests: None):
-    """A failed content-less compaction is a wire no-op and cannot hide preceding history."""
+@pytest.mark.parametrize('content', [None, ''])
+async def test_anthropic_contentless_compaction_does_not_trim(allow_model_requests: None, content: str | None):
+    """A failed compaction, with no summary or an empty one, cannot hide preceding history."""
     response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
     mock_client = MockAnthropic.create_mock(response)
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
     messages: list[ModelMessage] = [
         ModelRequest.user_text_prompt('keep before failed boundary'),
         ModelResponse(
-            parts=[CompactionPart(content=None, provider_name='anthropic'), TextPart(content='keep text')],
+            parts=[CompactionPart(content=content, provider_name='anthropic'), TextPart(content='keep text')],
             provider_name='anthropic',
         ),
         ModelRequest.user_text_prompt('keep tail'),
@@ -16348,16 +16581,14 @@ async def test_anthropic_contentless_compaction_does_not_trim(allow_model_reques
     await model.request(messages, None, ModelRequestParameters())
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['messages'] == snapshot(
-        [
-            {'role': 'user', 'content': [{'text': 'keep before failed boundary', 'type': 'text'}]},
-            {
-                'role': 'assistant',
-                'content': [{'content': None, 'type': 'compaction'}, {'text': 'keep text', 'type': 'text'}],
-            },
-            {'role': 'user', 'content': [{'text': 'keep tail', 'type': 'text'}]},
-        ]
-    )
+    assert kwargs['messages'] == [
+        {'role': 'user', 'content': [{'text': 'keep before failed boundary', 'type': 'text'}]},
+        {
+            'role': 'assistant',
+            'content': [{'content': content, 'type': 'compaction'}, {'text': 'keep text', 'type': 'text'}],
+        },
+        {'role': 'user', 'content': [{'text': 'keep tail', 'type': 'text'}]},
+    ]
 
 
 async def test_anthropic_without_compaction_maps_unchanged(allow_model_requests: None):
@@ -16541,9 +16772,9 @@ async def test_anthropic_compaction_end_to_end(
     """End-to-end test: Anthropic returns a compaction block when context exceeds threshold."""
     from pydantic_ai.messages import CompactionPart
 
-    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
 
-    padding = 'The quick brown fox jumps over the lazy dog. ' * 5000  # ~230k chars ≈ ~55k tokens
+    padding = 'The quick brown fox jumps over the lazy dog. ' * 5000  # ~230k chars ≈ ~90k tokens
     agent = Agent(
         model=model,
         instructions='You are a helpful assistant. Be very brief.',
@@ -16552,8 +16783,7 @@ async def test_anthropic_compaction_end_to_end(
 
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
 
-    # The history shape the second turn actually replays. The cassette records a different message
-    # count, from before the compaction rendering changed; unrelated to this PR.
+    # The history shape the second turn actually replays.
     assert message_shape(request_capture.body()) == snapshot([('user', ['text'])])
 
     all_msgs = result.all_messages()
@@ -16582,22 +16812,22 @@ async def test_anthropic_compaction_end_to_end(
             '5m',
             snapshot(
                 RunUsage(
-                    input_tokens=55403,
-                    cache_write_tokens=55100,
-                    output_tokens=112,
+                    input_tokens=90358,
+                    cache_write_tokens=90082,
+                    output_tokens=145,
                     details={
-                        'input_tokens': 203,
-                        'output_tokens': 8,
+                        'input_tokens': 228,
+                        'output_tokens': 6,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'message_iterations': 1,
                         'compaction_iterations': 1,
-                        'compaction_input_tokens': 100,
-                        'compaction_output_tokens': 104,
-                        'compaction_cache_creation_input_tokens': 55100,
+                        'compaction_input_tokens': 48,
+                        'compaction_output_tokens': 139,
+                        'compaction_cache_creation_input_tokens': 90082,
                     },
                     requests=1,
-                    cost=Decimal('0.209214'),
+                    cost=Decimal('0.227207'),
                 )
             ),
             id='5m',
@@ -16607,23 +16837,23 @@ async def test_anthropic_compaction_end_to_end(
             snapshot(
                 RunUsage(
                     details={
-                        'input_tokens': 187,
-                        'output_tokens': 8,
+                        'input_tokens': 252,
+                        'output_tokens': 6,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'message_iterations': 1,
                         'compaction_iterations': 1,
-                        'compaction_input_tokens': 100,
-                        'compaction_output_tokens': 85,
-                        'compaction_cache_creation_input_tokens': 55100,
-                        'compaction_ephemeral_1h_input_tokens': 55100,
+                        'compaction_input_tokens': 48,
+                        'compaction_output_tokens': 163,
+                        'compaction_cache_creation_input_tokens': 90082,
+                        'compaction_ephemeral_1h_input_tokens': 90082,
                     },
                     requests=1,
-                    cache_write_tokens=55100,
-                    output_tokens=93,
-                    cache_write_1h_tokens=55100,
-                    input_tokens=55387,
-                    cost=Decimal('0.332856'),
+                    cache_write_tokens=90082,
+                    output_tokens=169,
+                    cache_write_1h_tokens=90082,
+                    input_tokens=90382,
+                    cost=Decimal('0.362618'),
                 )
             ),
             id='1h',
@@ -16642,15 +16872,15 @@ async def test_anthropic_compaction_usage_with_cache(
     The Anthropic compaction docs only say top-level `input_tokens`/`output_tokens` exclude
     compaction iteration usage — they're silent on cache tokens. This cassette pins the real
     shape: top-level `cache_creation_input_tokens` is `0` even though the compaction iteration
-    wrote ~55k tokens to cache, so `_map_usage` must sum the compaction cache back in to avoid
+    wrote ~90k tokens to cache, so `map_usage` must sum the compaction cache back in to avoid
     understating the real cost. The compaction iteration writes with the request's TTL, so with a
     one-hour TTL its writes are also one-hour writes, priced at the one-hour rate.
 
     Where the cache breakpoints sit is asserted off the wire rather than the cassette, because a
     breakpoint that moves still replays against a recording that pins the old position.
     """
-    model = anthropic_model('claude-sonnet-4-6', capture=True)
-    padding = 'The quick brown fox jumps over the lazy dog. ' * 5000  # ~55k tokens
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
+    padding = 'The quick brown fox jumps over the lazy dog. ' * 5000  # ~90k tokens
     agent = Agent(
         model=model,
         # Distinct per case, so that recording one case doesn't read the cache the other wrote.
@@ -16687,26 +16917,26 @@ def test_anthropic_compaction_1h_cache_write_survives_the_streamed_merge() -> No
             parsed = BetaRawMessageDeltaEvent.model_validate(event)
         else:
             continue
-        request_usage = _map_usage(parsed, 'anthropic', 'https://api.anthropic.com', 'claude-sonnet-4-6', request_usage)
+        request_usage = map_usage(parsed, 'anthropic', 'https://api.anthropic.com', 'claude-sonnet-5-5', request_usage)
 
     assert request_usage == snapshot(
         RequestUsage(
             details={
-                'input_tokens': 187,
-                'output_tokens': 8,
+                'input_tokens': 252,
+                'output_tokens': 6,
                 'cache_creation_input_tokens': 0,
                 'cache_read_input_tokens': 0,
                 'message_iterations': 1,
                 'compaction_iterations': 1,
-                'compaction_input_tokens': 100,
-                'compaction_output_tokens': 85,
-                'compaction_cache_creation_input_tokens': 55100,
-                'compaction_ephemeral_1h_input_tokens': 55100,
+                'compaction_input_tokens': 48,
+                'compaction_output_tokens': 163,
+                'compaction_cache_creation_input_tokens': 90082,
+                'compaction_ephemeral_1h_input_tokens': 90082,
             },
-            input_tokens=55387,
-            cache_write_tokens=55100,
-            cache_write_1h_tokens=55100,
-            output_tokens=93,
+            input_tokens=90382,
+            cache_write_tokens=90082,
+            cache_write_1h_tokens=90082,
+            output_tokens=169,
         )
     )
 
@@ -16716,14 +16946,14 @@ async def test_anthropic_compaction_usage_with_cache_streaming(
 ):
     """Same as the non-streaming variant, but via `agent.run_stream`. The real API sends the
     `iterations` array on the `message_delta` event (not `message_start`), so this pins the
-    merge-across-events path — specifically that the compaction cache (55k tokens) survives
+    merge-across-events path — specifically that the compaction cache (90k tokens) survives
     the delta overwriting the top-level cache fields back to 0.
 
     This one records a cache *read* where the non-streaming variant records a write: the padding
     is identical, so whichever test records second finds the prefix already cached. That makes the
     pair cover both compaction cache directions, `_read_` here and `_creation_` there.
     """
-    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
     padding = 'The quick brown fox jumps over the lazy dog. ' * 5000
     agent = Agent(
         model=model,
@@ -16739,22 +16969,22 @@ async def test_anthropic_compaction_usage_with_cache_streaming(
     assert cache_breakpoints(request_capture.body()) == snapshot(({'type': 'ephemeral', 'ttl': '5m'}, []))
     assert usage == snapshot(
         RunUsage(
-            input_tokens=55377,
-            cache_read_tokens=55096,
-            output_tokens=91,
+            input_tokens=90346,
+            cache_read_tokens=90077,
+            output_tokens=181,
             details={
-                'input_tokens': 181,
-                'output_tokens': 8,
+                'input_tokens': 221,
+                'output_tokens': 44,
                 'cache_creation_input_tokens': 0,
                 'cache_read_input_tokens': 0,
                 'compaction_iterations': 1,
                 'message_iterations': 1,
-                'compaction_input_tokens': 100,
-                'compaction_output_tokens': 83,
-                'compaction_cache_read_input_tokens': 55096,
+                'compaction_input_tokens': 48,
+                'compaction_output_tokens': 137,
+                'compaction_cache_read_input_tokens': 90077,
             },
             requests=1,
-            cost=Decimal('0.0187368'),
+            cost=Decimal('0.0113557'),
         )
     )
 
@@ -16831,6 +17061,7 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
                     cost=Decimal('0.0000456'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -16867,6 +17098,7 @@ async def test_pause_turn_exceeds_max_generation_continuations(allow_model_reque
 async def test_pause_turn_web_search_vcr(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
+    # Claude 5 models run the `20260209` web search loop to `end_turn` without pausing, so this stays on Sonnet 4.5.
     model = anthropic_model('claude-sonnet-4-5', capture=True)
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 4096}, max_tokens=15000)
     agent = Agent(model, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
@@ -16928,6 +17160,7 @@ async def test_pause_turn_web_search_streaming_vcr(allow_model_requests: None, a
     response must be a single coherent turn. This validates the accumulate reindex rule against real
     provider part-indexing.
     """
+    # Claude 5 models run the `20260209` web search loop to `end_turn` without pausing, so this stays on Sonnet 4.5.
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 4096}, max_tokens=15000)
     agent = Agent(model, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
@@ -17127,15 +17360,11 @@ async def test_anthropic_model_retrying_after_empty_response(allow_model_request
         ModelResponse(parts=[]),
     ]
 
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(model=model)
 
     result = await agent.run(message_history=message_history)
-    assert result.output == snapshot("""\
-# Hello! 👋
-
-I'm here to help! How can I assist you today?\
-""")
+    assert result.output == snapshot('Hello! How can I help you today?')
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -17151,32 +17380,25 @@ I'm here to help! How can I assist you today?\
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-# Hello! 👋
-
-I'm here to help! How can I assist you today?\
-"""
-                    )
-                ],
+                parts=[TextPart(content='Hello! How can I help you today?')],
                 usage=RequestUsage(
-                    input_tokens=26,
-                    output_tokens=23,
+                    input_tokens=17,
+                    output_tokens=13,
                     details={
-                        'input_tokens': 26,
-                        'output_tokens': 23,
+                        'input_tokens': 17,
+                        'output_tokens': 13,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
-                    cost=Decimal('0.000141'),
+                    cost=Decimal('0.0000082'),
                 ),
-                model_name='claude-haiku-4-5-20251001',
+                model_name='claude-haiku-5-5',
+                model_id='anthropic:claude-haiku-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011CfY3r8SaB2hLR3MSyYyGs',
+                provider_response_id='msg_011CgNPy6iLgL2TSAET3uvs9',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -17202,7 +17424,7 @@ async def test_anthropic_enum_member_docstrings_reach_the_wire(
 ):
     """A documented enum goes to Anthropic as `anyOf` of `const`s with descriptions, and the model calls with one."""
 
-    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True), instructions='Set the priority of the ticket.')
+    agent = Agent(anthropic_model('claude-haiku-5-5', capture=True), instructions='Set the priority of the ticket.')
 
     @agent.tool_plain
     def set_priority(priority: TicketPriority) -> str:

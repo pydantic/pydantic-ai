@@ -1,0 +1,87 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "147"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-sonnet-5.5
+        stream: false
+        messages:
+        - role: user
+          content: "Reply with exactly: OK"
+        reasoning:
+          effort: low
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792979448-FQn0J8oRjynjfq6d7JYg
+        object: chat.completion
+        created: 1792979448
+        model: anthropic/claude-sonnet-5.5
+        provider: Claude Platform on AWS
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: OK
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 18
+          completion_tokens: 4
+          total_tokens: 22
+          cost: 0.000076
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.000076
+            upstream_inference_prompt_cost: 0.000036
+            upstream_inference_completions_cost: 0.00004
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-26T01:50:49.468032+00:00

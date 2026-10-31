@@ -474,7 +474,13 @@ class ToolManager(Generic[AgentDepsT]):
         # the one the step's instructions are rendered with, and `ctx` is a copy from the second step on.
         ctx.tool_manager = new_tm
         caller_ctx.tool_manager = new_tm
+        self._release_context()
         return new_tm
+
+    def _release_context(self) -> None:
+        if self.ctx is not None and self.ctx.tool_manager is self:
+            # Keep contexts retained by tools or hooks intact while breaking the manager's cycle.
+            self.ctx = replace(self.ctx, tool_manager=None)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
@@ -584,6 +590,7 @@ class ToolManager(Generic[AgentDepsT]):
             # `RunContext.emit` resolves a tool's owning capability through `tool_manager.tools`.
             tool_manager=self,
             tool_name=call.tool_name,
+            _dispatched_tool_name=call.tool_name,
             tool_call_id=call.tool_call_id,
             retry=self.ctx.retries.get(call.tool_name, 0),
             max_retries=tool.max_retries,

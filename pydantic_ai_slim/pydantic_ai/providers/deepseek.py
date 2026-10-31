@@ -19,14 +19,16 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-DeepSeekModelName = Literal['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro']
+DeepSeekModelName = Literal[
+    'deepseek-chat', 'deepseek-flash', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro'
+]
 
 
-class DeepSeekProvider(_OpenAICompatibleProvider):
+class DeepSeekProvider(_OpenAISDKProvider):
     """Provider for DeepSeek API."""
 
     @property
@@ -44,8 +46,8 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = deepseek_model_profile(model_name)
-        is_v4 = model_name.startswith('deepseek-v4-')
-        thinks_by_default = is_v4 or model_name == 'deepseek-reasoner'
+        is_flash_or_v4 = model_name == 'deepseek-flash' or model_name.startswith('deepseek-v4-')
+        thinks_by_default = is_flash_or_v4 or model_name == 'deepseek-reasoner'
 
         # As DeepSeekProvider is most often used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
@@ -54,6 +56,8 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
+            # Scope this API alias's thinking support to DeepSeek's endpoint.
+            ModelProfile(supports_thinking=True) if model_name == 'deepseek-flash' else None,
             OpenAIModelProfile(
                 supports_json_object_output=True,
                 openai_chat_thinking_field='reasoning_content',
@@ -69,20 +73,20 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_interleaved_function_calls=False,
                 # DeepSeek rejects a forced tool choice only while thinking is on, answering
                 # `Thinking mode does not support this tool_choice`. `deepseek-reasoner` cannot turn
-                # thinking off, so for it the restriction is unconditional; the v4 models can, so
+                # thinking off, so for it the restriction is unconditional; Flash and V4 models can, so
                 # theirs is evaluated per request. `startswith` covers future deepseek-v4-* SKUs
                 # without listing each one.
                 supports_forced_tool_choice=model_name != 'deepseek-reasoner',
-                supports_forced_tool_choice_with_thinking=not is_v4,
-                # Thinking is on by default on DeepSeek V4 models and `deepseek-reasoner`; every other
+                supports_forced_tool_choice_with_thinking=not is_flash_or_v4,
+                # Thinking is on by default on Flash, V4 models and `deepseek-reasoner`; every other
                 # model name (including `deepseek-chat`) is treated as thinking-off by default.
                 thinking_enabled_by_default=thinks_by_default,
                 # DeepSeek's Responses endpoint honors `text.format` of type `json_schema`, while its
                 # Chat Completions endpoint rejects it with `This response_format type is unavailable now`.
                 openai_responses_supports_json_schema_output=True,
-                # DeepSeek V4's native efforts are `low`, `high` and `max`, and it maps `xhigh` to `high`, so
-                # `max` is the only way to reach its deepest reasoning. See https://api-docs.deepseek.com/guides/thinking_mode.
-                openai_chat_supports_max_reasoning_effort=is_v4,
+                # Flash and V4's native efforts are `low`, `high` and `max`, and they map `xhigh` to `high`, so
+                # `max` is the only way to reach their deepest reasoning. See https://api-docs.deepseek.com/guides/thinking_mode.
+                openai_chat_supports_max_reasoning_effort=is_flash_or_v4,
                 # `openai_supports_phase` is deliberately left at its `False` default even though
                 # DeepSeek labels its Responses API output with `phase`: the field is absent from
                 # DeepSeek's documented input items, and its API silently ignores what it doesn't

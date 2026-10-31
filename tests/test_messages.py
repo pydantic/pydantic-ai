@@ -50,6 +50,8 @@ from pydantic_ai import (
     RunUsage,
     SpeechPart,
     SpeechPartDelta,
+    SpeechTimestamp,
+    StructuredContent,
     TextContent,
     TextPart,
     TextPartDelta,
@@ -75,6 +77,7 @@ from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
     CachePoint,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     FileUrl,
     LoadCapabilityCallPart,
@@ -187,6 +190,169 @@ def test_text_content():
     text_content = TextContent(content='Pydantic AI!', metadata={'foo': 'bar'})
     assert text_content.content == 'Pydantic AI!'
     assert text_content.metadata == {'foo': 'bar'}
+
+
+class _UIState(BaseModel):
+    url: str
+    cart_total: float
+
+
+@pytest.mark.parametrize(
+    'item, expected',
+    [
+        pytest.param(StructuredContent({'url': '/p/42', 'n': [1, None]}), '{"url":"/p/42","n":[1,null]}', id='json'),
+        pytest.param(
+            StructuredContent({'note': '</ui_state> & more'}, tag='ui_state'),
+            r'<ui_state>{"note":"\u003c/ui_state\u003e \u0026 more"}</ui_state>',
+            id='json-tag-escaped',
+        ),
+        pytest.param(
+            StructuredContent(_UIState(url='/p/42', cart_total=949.0), format='xml', tag='ui_state'),
+            '<ui_state>\n  <url>/p/42</url>\n  <cart_total>949.0</cart_total>\n</ui_state>',
+            id='xml',
+        ),
+        pytest.param(
+            StructuredContent([1, 2], tag='ids', description='The ids the user selected.'),
+            'The ids the user selected.\n<ids>[1,2]</ids>',
+            id='description',
+        ),
+        pytest.param(
+            StructuredContent([1, 2], format=lambda value: f'{len(value)} ids', tag='ids', description='Unused.'),
+            '2 ids',
+            id='function',
+        ),
+        pytest.param(StructuredContent({'a': 1}, content='given'), 'given', id='given-content'),
+    ],
+)
+def test_structured_content_renders_once(item: StructuredContent, expected: str):
+    """The text sent to text models is rendered when the item is created, and kept as given when it is passed in."""
+    assert item.content == expected
+
+
+def test_structured_content_subclass_renders_its_own_way():
+    """A subclass carries its rendering, so it doesn't have to be passed each time the item is created."""
+
+    class UIStateContent(StructuredContent):
+        value: _UIState
+
+        def render(self) -> str:
+            return f'<ui_state url="{self.value.url}" />'
+
+    assert UIStateContent(_UIState(url='/p/42', cart_total=1)).content == '<ui_state url="/p/42" />'
+
+
+@pytest.mark.parametrize(
+    'item',
+    [
+        pytest.param(lambda: StructuredContent({}, format='xml'), id='xml-without-tag'),
+        pytest.param(lambda: StructuredContent([1], format=lambda value: ''), id='function'),
+    ],
+)
+def test_structured_content_rejects_empty_text(item: Callable[[], StructuredContent]):
+    """An empty `content` is re-rendered on load, so storing one would change the text a reloaded history sends."""
+    with pytest.raises(ValueError, match='`StructuredContent` rendered to empty text'):
+        item()
+
+
+def test_structured_content_renders_again_when_replaced_without_content():
+    """Changing the value keeps the stored text, so replacing it renders again only when `content` is cleared."""
+    item = StructuredContent({'a': 1}, tag='t')
+    assert replace(item, value={'a': 2}).content == '<t>{"a":1}</t>'
+    assert replace(item, value={'a': 2}, content='').content == '<t>{"a":2}</t>'
+    # `format` isn't stored, so a non-default one has to be passed again.
+    xml = StructuredContent({'a': 1}, tag='t', format='xml')
+    assert replace(xml, value={'a': 2}, content='', format='xml').content == '<t>\n  <a>2</a>\n</t>'
+
+
+@pytest.mark.parametrize('tag', ['ui state', 'ui-state', 'UIState', 'System', '1st', 'x></ui_state><system'])
+def test_structured_content_rejects_a_tag_outside_the_vocabulary(tag: str):
+    """Tags are lowercase snake_case, so no casing of a framework tag (`<SYSTEM>`) gets through either."""
+    with pytest.raises(ValueError, match=r'`StructuredContent\.tag` must be lowercase letters, digits and `_`'):
+        StructuredContent({}, tag=tag)
+
+
+@pytest.mark.parametrize('tag', ['system', 'tool_result', 'context', 'retry_feedback'])
+def test_structured_content_rejects_a_framing_tag(tag: str):
+    """User content can't wear a tag the framework frames its own text in, such as its `<system>` voice."""
+    with pytest.raises(ValueError, match=rf"`StructuredContent\.tag` cannot be '{tag}', a tag the framework frames"):
+        StructuredContent({}, tag=tag)
+
+
+def test_structured_content_with_its_text_skips_the_tag_check():
+    """An item whose text is already fixed, as a stored one is, loads whatever its tag.
+
+    Otherwise a history stored with `tag='memory'` would stop loading once a later release frames its own text in
+    `<memory>`. The tag only matters when the text is rendered.
+    """
+    stored = {'kind': 'structured-content', 'value': {'a': 1}, 'content': '<system>{"a":1}</system>', 'tag': 'system'}
+    loaded = TypeAdapter[UserContent](UserContent).validate_python(stored)
+    assert isinstance(loaded, StructuredContent)
+    assert (loaded.tag, loaded.content) == ('system', '<system>{"a":1}</system>')
+
+
+def test_structured_content_round_trips_through_json():
+    """The stored text comes back byte-for-byte, so a reloaded history is sent exactly as before, and the value as JSON data.
+
+    The subclass and its `render` don't survive the round-trip; the text they produced does.
+    """
+
+    class UIStateContent(StructuredContent):
+        def render(self) -> str:
+            return 'custom'
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        StructuredContent(_UIState(url='/p/42', cart_total=949.0), tag='ui_state'),
+                        UIStateContent({'a': 1}, metadata={'source': 'app'}),
+                        TextContent('plain'),
+                        'Why did the total jump?',
+                    ]
+                )
+            ]
+        )
+    ]
+    dumped = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    assert dumped[0]['parts'][0]['content'] == snapshot(
+        [
+            {
+                'content': '<ui_state>{"url":"/p/42","cart_total":949.0}</ui_state>',
+                'metadata': None,
+                'kind': 'structured-content',
+                'value': {'url': '/p/42', 'cart_total': 949.0},
+                'tag': 'ui_state',
+                'description': None,
+            },
+            {
+                'content': 'custom',
+                'metadata': {'source': 'app'},
+                'kind': 'structured-content',
+                'value': {'a': 1},
+                'tag': None,
+                'description': None,
+            },
+            {'content': 'plain', 'metadata': None, 'kind': 'text-content'},
+            'Why did the total jump?',
+        ]
+    )
+    [request] = ModelMessagesTypeAdapter.validate_python(dumped)
+    assert isinstance(request, ModelRequest)
+    [part] = request.parts
+    assert isinstance(part, UserPromptPart)
+    assert part.content == snapshot(
+        [
+            StructuredContent(
+                content='<ui_state>{"url":"/p/42","cart_total":949.0}</ui_state>',
+                value={'url': '/p/42', 'cart_total': 949.0},
+                tag='ui_state',
+            ),
+            StructuredContent(content='custom', value={'a': 1}, metadata={'source': 'app'}),
+            TextContent(content='plain'),
+            'Why did the total jump?',
+        ]
+    )
 
 
 @pytest.mark.parametrize(
@@ -1007,10 +1173,12 @@ def test_file_part_serialization_roundtrip():
                     'cost': None,
                 },
                 'model_name': None,
+                'model_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': None,
                 'provider_url': None,
+                'canonical_system': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
@@ -3235,6 +3403,7 @@ def test_speech_part_serialization_roundtrip():
                             'identifier': '0ca623',
                         },
                         'interrupted_at_ms': None,
+                        'timestamps': None,
                         'id': 'item-1',
                         'provider_name': 'openai',
                         'provider_details': None,
@@ -3256,6 +3425,7 @@ def test_speech_part_serialization_roundtrip():
                         'transcript': 'Hi!',
                         'audio': None,
                         'interrupted_at_ms': 420,
+                        'timestamps': None,
                         'id': None,
                         'provider_name': None,
                         'provider_details': None,
@@ -3277,10 +3447,12 @@ def test_speech_part_serialization_roundtrip():
                     'cost': None,
                 },
                 'model_name': None,
+                'model_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': None,
                 'provider_url': None,
+                'canonical_system': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
@@ -3333,6 +3505,26 @@ def test_speech_part_delta_apply_not_retaining_audio():
     """A part with `audio=None` is not retaining audio, so an `audio_chunk` delta doesn't create it."""
     applied = SpeechPartDelta(audio_chunk=b'\x01').apply(SpeechPart(speaker='assistant', transcript='Hi'))
     assert applied == SpeechPart(speaker='assistant', transcript='Hi')
+
+
+def test_speech_part_timestamps_accumulate_round_trip_and_stay_out_of_model_requests():
+    """Timestamps add up on the part, survive serialization, and never reach a standard model."""
+    part = SpeechPartDelta(timestamps=[SpeechTimestamp(text='Hi', start_ms=50, duration_ms=200)]).apply(
+        SpeechPart(speaker='assistant', transcript='Hi there.')
+    )
+    part = SpeechPartDelta(
+        timestamps=[SpeechTimestamp(text='there.', start_ms=300, duration_ms=400, granularity='segment')]
+    ).apply(part)
+    part = SpeechPartDelta(transcript_delta='').apply(part)
+    assert part.timestamps == snapshot(
+        [
+            SpeechTimestamp(text='Hi', start_ms=50, duration_ms=200),
+            SpeechTimestamp(text='there.', start_ms=300, duration_ms=400, granularity='segment'),
+        ]
+    )
+    history: list[ModelMessage] = [ModelResponse(parts=[part])]
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history)) == history
+    assert TestModel().prepare_messages(history)[0].parts == [TextPart(content='Hi there.')]
 
 
 def test_speech_part_delta_apply_wrong_part_type():
@@ -3584,6 +3776,36 @@ def test_tool_availability_delta_otel_message_uses_system_role():
     )
 
 
+def test_capability_load_delta_otel_message_names_the_capability():
+    """A capability loaded from code is named in traces, in the system role like a tool reveal."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open')])
+    ]
+
+    assert InstrumentationSettings().messages_to_otel_messages(messages) == snapshot(
+        [{'role': 'system', 'parts': [{'type': 'text', 'content': 'Loaded capabilities changed: +refunds'}]}]
+    )
+
+
+def test_capability_load_delta_round_trips_and_leaves_tool_deltas_unchanged():
+    """The part survives serialization under its own `part_kind`, and a tool reveal serializes as before."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open'),
+                ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
+            ]
+        )
+    ]
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
+    assert ModelMessagesTypeAdapter.dump_python(messages, mode='json')[0]['parts'] == snapshot(
+        [
+            {'loaded': ['refunds'], 'tool_call_id': 'open', 'part_kind': 'capability-load-delta'},
+            {'tools_added': ['refund_status'], 'tool_call_id': 'open', 'part_kind': 'tool-availability-delta'},
+        ]
+    )
+
+
 def test_post_compaction_window_returns_history_unchanged_without_compaction():
     """No boundary: the whole history comes back (as a new list, input untouched)."""
     messages: list[ModelMessage] = [
@@ -3623,6 +3845,20 @@ def test_post_compaction_window_slices_at_the_latest_compaction_part():
         TextPart(content='after the block'),
     ]
     assert window[1] is messages[-1]
+
+
+def test_post_compaction_window_opens_at_the_turn_of_a_request_side_summary():
+    """A summary in a request opens the window at the start of its run of consecutive requests, which history
+    normalization merges into one and reorders, so the window is the same before and after."""
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('old context'),
+        ModelResponse(parts=[TextPart(content='old answer')]),
+        ModelRequest.user_text_prompt('kept context'),
+        ModelRequest(parts=[CompactionPart(content='summary')]),
+        ModelRequest.user_text_prompt('tail'),
+    ]
+
+    assert post_compaction_window(messages) == messages[2:]
 
 
 def test_post_compaction_window_accepts_a_minimal_sequence():
@@ -3732,7 +3968,9 @@ def test_user_prompt_part_content_items_must_be_user_content():
     assert UserPromptPart([image]).content == [image]
 
     # Every member of the union is accepted, so adding one cannot be forgotten here.
-    assert UserPromptPart(['hello', TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()])
+    assert UserPromptPart(
+        ['hello', StructuredContent({}), TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()]
+    )
 
 
 def test_user_content_types_matches_union():

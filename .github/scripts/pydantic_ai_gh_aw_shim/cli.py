@@ -43,7 +43,7 @@ import pathlib
 import sys
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -80,12 +80,14 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    CapabilityLoadDeltaPart,
     InstructionBaselinePart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolSearchCallPart,
     ToolAvailabilityDeltaPart,
@@ -228,10 +230,15 @@ REQUEST_LIMIT = 400
 ATTENTION_REQUEST_LIMIT = 50
 SUBAGENT_REQUEST_LIMIT = 150
 ATTENTION_WORKFLOW = 'Pydantic AI Attention Triage'
+REVIEW_WORKFLOWS = frozenset({'CI Review', 'Pydantic AI UI Security Review'})
 
 
 def _is_attention_run() -> bool:
     return os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW
+
+
+def _is_review_run() -> bool:
+    return os.environ.get('GITHUB_WORKFLOW') in REVIEW_WORKFLOWS
 
 
 def run_request_limit() -> int:
@@ -268,18 +275,35 @@ def request_budget_notice(ctx: RunContext[object]) -> str | None:
 # output to `GH_AW_SAFE_OUTPUTS`, so an absent or empty file means the task is
 # not done. The retry budget is cumulative over the run.
 NO_SAFE_OUTPUT_RETRIES = 3
+SAFE_OUTPUT_ENTRY_ADAPTER = TypeAdapter(dict[str, object])
+
+
+def _safe_output_entries(contents: str) -> Iterator[dict[str, object]]:
+    for line in contents.splitlines():
+        try:
+            yield SAFE_OUTPUT_ENTRY_ADAPTER.validate_json(line)
+        except ValidationError:
+            continue
 
 
 def _safe_output_status() -> tuple[bool, list[int] | None]:
     """Return whether output is pending and any Attention candidate IDs still missing decisions."""
     is_attention = _is_attention_run()
+    is_review = _is_review_run()
     path = os.environ.get('GH_AW_SAFE_OUTPUTS')
     if not path:
-        if is_attention:
-            raise ValueError('Attention safe-output sink is not configured')
+        if is_attention or is_review:
+            workflow_kind = 'Attention' if is_attention else 'Review'
+            raise ValueError(f'{workflow_kind} safe-output sink is not configured')
         return False, None
     sink = pathlib.Path(path)
-    sink_empty = not (sink.is_file() and sink.read_text(encoding='utf-8').strip())
+    contents = sink.read_text(encoding='utf-8') if sink.is_file() else ''
+    sink_empty = not contents.strip()
+    if is_review:
+        review_submitted = any(
+            entry.get('type') == 'submit_pull_request_review' for entry in _safe_output_entries(contents)
+        )
+        return not review_submitted, None
     if not is_attention or sink_empty:
         return sink_empty, None
 
@@ -300,12 +324,7 @@ def _safe_output_status() -> tuple[bool, list[int] | None]:
         return sink_empty, []
 
     recorded: set[int] = set()
-    entry_adapter = TypeAdapter(dict[str, object])
-    for line in sink.read_text(encoding='utf-8').splitlines():
-        try:
-            entry = entry_adapter.validate_json(line)
-        except ValidationError:
-            continue
+    for entry in _safe_output_entries(contents):
         item_number = entry.get('item_number')
         if entry.get('type') == 'record_attention_decision' and isinstance(item_number, str):
             try:
@@ -323,7 +342,7 @@ def safe_output_pending() -> bool:
     try:
         output_pending, _ = _safe_output_status()
     except (KeyError, OSError, ValueError):
-        if _is_attention_run():
+        if _is_attention_run() or _is_review_run():
             return True
         raise
     return output_pending
@@ -342,6 +361,12 @@ def require_safe_output(output: str) -> str:
         )
     if not output_pending:
         return output
+    if _is_review_run():
+        raise ModelRetry(
+            'Submit the formal pull-request review with `submit_pull_request_review`. '
+            'A noop, inline comment, or missing-data/incomplete signal does not finish a review. '
+            'If coverage is incomplete, submit a COMMENT review explaining the missing coverage; do not approve.'
+        )
     logger.warning('run ended with no safe output emitted; sending the model back')
     raise ModelRetry(
         'You ended your turn without emitting a safe output, so nothing has been posted. '
@@ -574,8 +599,9 @@ INSTRUCTIONS = (
     'run `gh issue list`, `gh pr list`, `gh search`, or a paginated/list `gh api` '
     'request from inside the agent. Narrow per-item reads may still be used '
     'after the local corpus identifies a specific item. If required prefetched '
-    'context is missing or unreadable, call `mcp__safeoutputs__noop` and report '
-    'the missing data instead of attempting a list request through gh-proxy.'
+    'context is missing or unreadable, report the missing data instead of attempting '
+    'a list request through gh-proxy. CI Review and UI Security must submit a COMMENT '
+    'review explaining incomplete coverage; other workflows may use `mcp__safeoutputs__noop`.'
 )
 
 # The real task spec rides in `instructions=`; the user message is a trigger.
@@ -642,6 +668,10 @@ def _part_text(part: MessagePart) -> str:
     if isinstance(part, InstructionBaselinePart):
         # Records what the request's instructions were made of; the transcript leaves instructions out.
         return ''
+    if isinstance(part, ModelSettingsDeltaPart):
+        return f'model settings changed: {part.settings!r}'
+    if isinstance(part, CapabilityLoadDeltaPart):
+        return f'loaded capabilities changed: loaded={part.loaded!r}'
     return str(part.content)
 
 

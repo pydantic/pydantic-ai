@@ -276,7 +276,7 @@ class SnowflakeModel(OpenAIChatModel):
 
         @override
         def _map_response_thinking_part(self, item: ThinkingPart) -> None:
-            if item.provider_name == self._model.system and (reasoning_detail := into_reasoning_detail(item)):
+            if self.accepts_stateless_artifacts(item) and (reasoning_detail := into_reasoning_detail(item)):
                 self.reasoning_details.append(reasoning_detail.model_dump())
             else:
                 super()._map_response_thinking_part(item)

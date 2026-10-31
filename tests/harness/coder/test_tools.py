@@ -18,6 +18,7 @@ from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
+from pydantic_ai_harness.subagents import TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
@@ -123,6 +124,17 @@ class TestCoder:
         tools = [tool.name for tool in model.last_model_request_parameters.function_tools]
         assert tools == ['read_file', 'write_file', 'edit_file', 'list_files', 'grep', 'shell']
 
+    async def test_task_control_adds_the_task_tools(self, tmp_path: Path) -> None:
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[LocalWorkspace(tmp_path), Coder(task_control=TaskControl())]).run(
+            'Inspect tools'
+        )
+        assert model.last_model_request_parameters is not None
+        tools = [tool.name for tool in model.last_model_request_parameters.function_tools]
+        assert tools[-5:] == ['delegate_task', 'list_tasks', 'message_task', 'answer_task', 'cancel_task']
+        with pytest.raises(ValueError, match='`task_control` requires `sub_agents=True`'):
+            Coder(sub_agents=False, task_control=TaskControl())
+
     async def test_the_delegate_carries_capabilities_bound_next_to_coder(self, tmp_path: Path) -> None:
         """The delegate is the agent `Coder` is bound to, so a host hook sees the commands it runs."""
         log = _ToolLog()
@@ -186,16 +198,20 @@ class TestCoder:
     @pytest.mark.parametrize('extra_instructions', [None, '', 'Keep new files under 400 lines.'])
     async def test_instructions(self, tmp_path: Path, extra_instructions: str | None) -> None:
         model = TestModel(call_tools=[])
-        await Agent(model, capabilities=[Coder(instructions=extra_instructions, repo_context=False)]).run(
-            'Inspect instructions', workspace=LocalWorkspaceBackend(tmp_path)
-        )
+        coder = Coder(instructions=extra_instructions, repo_context=False, sub_agents=False)
+        await Agent(model, capabilities=[coder]).run('Inspect instructions', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
         parts = model.last_model_request_parameters.instruction_parts or []
         guidance = next(part.content for part in parts if 'Zen of Python' in part.content)
         default = guidance.removesuffix('\n' + extra_instructions) if extra_instructions else guidance
-        assert len(default.split()) < 180
+        assert len(default.split()) < 500
         assert all(principle in default for principle in ('DRY', 'YAGNI', 'SOLID'))
         assert 'delete any scratch files you created' in default
+        assert 'in full with `read_file` rather than batched `cat` in the shell' in default
+        assert 'batch independent searches into one\nshell call' in default
+        assert 'once the relevant tests pass, broaden or\nrepeat testing only when new changes' in default
+        assert 'measure the result against that target before finishing' in default
+        assert 'first\nassume your model of the problem is wrong' in default
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
 
@@ -209,6 +225,25 @@ class TestCoder:
         assert all('the file tools only work inside it' in result for result in results)
         with pytest.raises(UnexpectedModelBehavior, match=f'exceeded max retries count of {MAX_FILE_TOOL_RETRIES}'):
             await call_tools([coder], [denied] * (MAX_FILE_TOOL_RETRIES + 1), workspace=workspace)
+
+    @pytest.mark.parametrize('repo_context', [False, True])
+    @pytest.mark.parametrize('sub_agents', [False, True])
+    async def test_instructions_follow_the_composition(
+        self, tmp_path: Path, repo_context: bool, sub_agents: bool
+    ) -> None:
+        """The repo-file note comes with `RepoContext`, which loads them; the delegation rule with `delegate_task`."""
+        model = TestModel(call_tools=[])
+        coder = Coder(repo_context=repo_context, sub_agents=sub_agents)
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
+        assert ('instruction files (AGENTS.md, CLAUDE.md) in the project directory are' in text) is repo_context
+        rule = (
+            'spawn sub-agents with `delegate_task` unless the user or applicable AGENTS.md\ninstructions explicitly ask'
+        )
+        assert (rule in text) is sub_agents
+        assert ('delegate_task' in tools) is sub_agents
 
     @pytest.mark.parametrize(
         ('unrestricted', 'files'),
