@@ -2990,7 +2990,9 @@ class TestUsedAsAToolset:
             capabilities=[LocalWorkspace(tmp_path)],
             toolsets=[toolset if prefix is None else toolset.prefixed(prefix)],
         )
-        with pytest.raises(UserError, match=r'Pass `capabilities=\[FileSystem\(\)\]` rather than its toolset'):
+        with pytest.raises(
+            UserError, match=rf"The '{name}' tool .* Pass `capabilities=\[FileSystem\(\)\]` rather than its toolset"
+        ):
             await agent.run('go')
 
 
