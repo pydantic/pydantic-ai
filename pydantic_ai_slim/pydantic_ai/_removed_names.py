@@ -13,28 +13,21 @@ from typing import NoReturn
 MIGRATION_URL = 'https://pydantic.dev/docs/ai/overview/migration/'
 
 
-def removed_name_error(module: str, name: str, replacements: Mapping[str, str]) -> Exception:
-    """The error a module-level `__getattr__` raises for `name`.
-
-    An `ImportError` naming the replacement when V2 removed `name`, since that is what a `from ... import`
-    surfaces with its message intact. An `AttributeError` subclass would be swallowed into Python's generic
-    `cannot import name`, so `hasattr()` on a removed name raises rather than returning `False`. Any other name
-    gets the usual `AttributeError`.
-    """
-    if (replacement := replacements.get(name)) is None:
-        return AttributeError(f'module {module!r} has no attribute {name!r}')
-    return ImportError(
-        f'`{module}.{name}` was removed in Pydantic AI V2: {replacement} See {MIGRATION_URL}', name=module
-    )
-
-
 def removed_names_getattr(module: str, replacements: Mapping[str, str]) -> Callable[[str], NoReturn]:
-    """A module-level `__getattr__` for `module` that raises `removed_name_error()`.
+    """A module-level `__getattr__` for `module` that names the replacement of each name V2 removed from it.
+
+    A removed name raises an `ImportError`, since that is what a `from ... import` surfaces with its message intact:
+    an `AttributeError` subclass would be swallowed into Python's generic `cannot import name`. So `hasattr()` on a
+    removed name raises rather than returning `False`. Any other name gets the usual `AttributeError`.
 
     Assign it under `if not TYPE_CHECKING:`, so type checkers keep reporting names the module doesn't have.
     """
 
     def __getattr__(name: str) -> NoReturn:
-        raise removed_name_error(module, name, replacements)
+        if (replacement := replacements.get(name)) is None:
+            raise AttributeError(f'module {module!r} has no attribute {name!r}')
+        raise ImportError(
+            f'`{module}.{name}` was removed in Pydantic AI V2: {replacement} See {MIGRATION_URL}', name=module
+        )
 
     return __getattr__

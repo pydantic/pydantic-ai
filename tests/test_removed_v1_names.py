@@ -25,30 +25,39 @@ def _import(module: str) -> object:
 
 
 @pytest.mark.parametrize(
-    'module, name, replacement',
+    'module, name, advice',
     [
-        ('pydantic_ai.models.openai', 'OpenAIModel', '`OpenAIChatModel`'),
-        ('pydantic_ai.models.openai', 'OpenAIModelSettings', '`OpenAIChatModelSettings`'),
-        ('pydantic_ai.mcp', 'MCPServerStdio', '`MCPToolset`'),
-        ('pydantic_ai.mcp', 'MCPServerSSE', '`MCPToolset`'),
-        ('pydantic_ai.mcp', 'MCPServerStreamableHTTP', '`MCPToolset`'),
-        ('pydantic_ai.mcp', 'MCPServerHTTP', '`MCPToolset`'),
-        ('pydantic_ai.mcp', 'load_mcp_servers', '`load_mcp_toolsets`'),
-        ('pydantic_ai.usage', 'Usage', '`RunUsage`'),
-        ('pydantic_ai.output', 'DeferredToolCalls', '`pydantic_ai.tools.DeferredToolRequests`'),
-        ('pydantic_ai.models', 'cached_async_http_client', '`create_async_http_client()`'),
+        (
+            'pydantic_ai.models.openai',
+            'OpenAIModel',
+            'use `OpenAIChatModel` (the same Chat Completions API), or `OpenAIResponsesModel`.',
+        ),
+        ('pydantic_ai.models.openai', 'OpenAIModelSettings', 'use `OpenAIChatModelSettings`.'),
+        *(
+            (
+                'pydantic_ai.mcp',
+                name,
+                'use `MCPToolset`, which picks the transport from its arguments; its timeout and retry defaults differ.',
+            )
+            for name in ('MCPServerStdio', 'MCPServerSSE', 'MCPServerStreamableHTTP', 'MCPServerHTTP')
+        ),
+        ('pydantic_ai.mcp', 'load_mcp_servers', 'use `load_mcp_toolsets`.'),
+        ('pydantic_ai.usage', 'Usage', "use `RunUsage` for a run's usage, or `RequestUsage` for a single request's."),
+        (
+            'pydantic_ai.output',
+            'DeferredToolCalls',
+            'use `pydantic_ai.tools.DeferredToolRequests`, whose `calls` replaces `tool_calls`.',
+        ),
+        ('pydantic_ai.models', 'cached_async_http_client', 'use `create_async_http_client()`.'),
     ],
 )
-def test_importing_a_removed_v1_name_names_its_replacement(module: str, name: str, replacement: str):
+def test_importing_a_removed_v1_name_names_its_replacement(module: str, name: str, advice: str):
     _import(module)
 
     with pytest.raises(ImportError) as exc_info:
         exec(f'from {module} import {name}', {})
 
-    message = str(exc_info.value)
-    assert message.startswith(f'`{module}.{name}` was removed in Pydantic AI V2: ')
-    assert replacement in message
-    assert message.endswith(f'See {MIGRATION_URL}')
+    assert str(exc_info.value) == f'`{module}.{name}` was removed in Pydantic AI V2: {advice} See {MIGRATION_URL}'
 
 
 @pytest.mark.parametrize('module', list(MODULES))
