@@ -160,7 +160,7 @@ seconds if it has none, to every phase of each request, so give it a read timeou
 models. A client created without a `timeout` has httpx's default of 5 seconds, which is too short for most model
 requests, so the providers warn about it.
 
-The providers also tell Google how long the whole request may take, with the `X-Server-Timeout` header: the client's
+`GoogleModel` also tells Google how long each whole request may take, with the `X-Server-Timeout` header: the client's
 read timeout, or 20 minutes if that's longer. A read timeout only bounds the wait between bytes, so a response that
 streams for longer than it isn't cut off by the server. A per-request [`timeout`][pydantic_ai.settings.ModelSettings.timeout]
 doesn't change the header. To set a different server deadline, send the header yourself in

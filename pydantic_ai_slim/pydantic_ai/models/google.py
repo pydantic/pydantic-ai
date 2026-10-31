@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import math
 import re
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Mapping, Sequence
@@ -147,6 +148,8 @@ try:
         UrlContextMetadata,
         VideoMetadataDict,
     )
+
+    from ..providers.google import LONG_DECODE_TIMEOUT
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google model, '
@@ -1144,6 +1147,16 @@ class GoogleModel(Model[Client]):
 
     def _build_http_options(self, model_settings: GoogleModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
         """The per-request HTTP options: headers, plus the `timeout` and `max_retries` settings."""
+        # The SDK sends the client's timeout, which the provider pins to the HTTP client's read timeout, as
+        # `X-Server-Timeout`: a deadline for the whole request. A read timeout only bounds the wait between bytes,
+        # so the server would cut off a response that streams for longer. The SDK leaves the header alone when
+        # it's already set (in this exact spelling), so ask for at least Google's long-decode figure instead,
+        # unless the caller sent their own in `extra_headers`.
+        if caller_name := next((name for name in headers if name.lower() == 'x-server-timeout'), None):
+            headers['X-Server-Timeout'] = headers.pop(caller_name)
+        elif client_timeout_ms := self.client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
+            server_timeout = max(client_timeout_ms / 1000, LONG_DECODE_TIMEOUT)
+            headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
         http_options: HttpOptionsDict = {'headers': headers}
         if (timeout := model_settings.get('timeout')) is not None:
             if isinstance(timeout, int | float):

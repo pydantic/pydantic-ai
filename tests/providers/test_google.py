@@ -208,10 +208,31 @@ async def test_google_provider_server_timeout_header(
     assert [request.headers['X-Server-Timeout'] for request in requests] == [server_timeout, server_timeout]
 
 
-def test_google_provider_owned_client_server_timeout_header(provider_factory: GoogleProviderFactory) -> None:
+async def test_google_server_timeout_header_respects_caller(allow_model_requests: None) -> None:
+    """An `X-Server-Timeout` in `extra_headers` wins, and a client without a timeout gets no server deadline."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        provider = GoogleProvider(api_key='test-key', http_client=http_client)
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
+        await agent.run('What is the capital of France?', model_settings={'extra_headers': {'x-server-timeout': '90'}})
+
+        client = Client(api_key='test-key', http_options=HttpOptions(httpx_async_client=http_client))
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=GoogleProvider(client=client)))
+        await agent.run('What is the capital of France?')
+
+    assert [request.headers.get_list('X-Server-Timeout') for request in requests] == [['90'], []]
+
+
+def test_google_provider_client_headers_have_no_server_timeout(provider_factory: GoogleProviderFactory) -> None:
+    """The server deadline is set per model request, not on the client, whose headers the Live API handshake sends."""
     http_options = provider_factory(None).client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
     assert http_options.headers is not None
-    assert http_options.headers['X-Server-Timeout'] == '1200'
+    assert 'X-Server-Timeout' not in http_options.headers
 
 
 async def test_google_provider_warns_on_default_httpx_timeout(provider_factory: GoogleProviderFactory) -> None:
