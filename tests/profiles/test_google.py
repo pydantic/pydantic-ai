@@ -361,6 +361,7 @@ def test_model_profile_thinking_levels(model_name: str, expected: frozenset[str]
 def test_gemma_4_is_hybrid_thinking() -> None:
     for model_name in ('gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemma4:31b'):
         profile = google_model_profile(model_name)
+        assert profile is not None, model_name
         assert profile.get('supports_thinking') is True, model_name
         assert profile.get('thinking_always_enabled', False) is False, model_name
         assert profile.get('google_supports_thinking_level', False) is False, model_name
@@ -369,5 +370,6 @@ def test_gemma_4_is_hybrid_thinking() -> None:
 def test_gemma_3_remains_non_thinking() -> None:
     for model_name in ('gemma-3-27b-it', 'gemma3:27b'):
         profile = google_model_profile(model_name)
+        assert profile is not None, model_name
         assert profile.get('supports_thinking') is False, model_name
         assert profile.get('thinking_always_enabled', False) is False, model_name

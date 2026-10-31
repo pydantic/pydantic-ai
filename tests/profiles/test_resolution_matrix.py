@@ -105,6 +105,7 @@ with try_import() as openai_imports:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
     from pydantic_ai.providers.openrouter import (
         OpenRouterProvider,
         # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
@@ -2976,17 +2977,12 @@ def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_na
     assert profile.get('supports_forced_tool_choice') is False
 
 
+@pytest.mark.skipif(
+    not (bedrock_imports() and huggingface_imports() and openai_imports()),
+    reason='bedrock, huggingface or openai extras not installed',
+)
 def test_gemma_4_thinking_declared_across_routes() -> None:
     """Gemma 4 resolves a hybrid-thinking profile on every route that serves it."""
-    from pydantic_ai.providers.bedrock import BedrockProvider
-    from pydantic_ai.providers.cerebras import CerebrasProvider
-    from pydantic_ai.providers.huggingface import HuggingFaceProvider
-    from pydantic_ai.providers.ollama import OllamaProvider
-    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
-    from pydantic_ai.providers.sambanova import SambaNovaProvider
-    from pydantic_ai.providers.vercel import VercelProvider
-    from pydantic_ai.providers.vllm import VLLMProvider
-
     routes: list[tuple[str, Any]] = [
         ('ollama', lambda: OllamaProvider.model_profile('gemma4:31b')),
         ('huggingface', lambda: HuggingFaceProvider.model_profile('google/gemma-4-26B-A4B-it')),
@@ -3010,11 +3006,9 @@ def test_gemma_4_thinking_declared_across_routes() -> None:
         assert not profile.get('thinking_always_enabled'), f'{route}: gemma 4 must stay default-off'
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai extra not installed')
 def test_gemma_3_routes_stay_non_thinking() -> None:
     """Negative control: gemma 3 stays non-thinking on the same dispatch paths."""
-    from pydantic_ai.providers.cerebras import CerebrasProvider
-    from pydantic_ai.providers.vercel import VercelProvider
-
     for route, profile in (
         ('cerebras', CerebrasProvider.model_profile('gemma-3-27b')),
         ('vercel', VercelProvider.model_profile('google/gemma-3-27b-it')),
