@@ -55,12 +55,18 @@ def directories_up_to(directory: Path, top: Path | None) -> list[Path]:
     return list(reversed(chain))
 
 
+_INSTRUCTION_NAMES = frozenset({'AGENTS.md', 'CLAUDE.md'})
+"""Names a symlinked instruction file may point to whatever `filenames` holds, so `CLAUDE.md -> AGENTS.md` keeps
+loading when only `CLAUDE.md` is configured."""
+
+
 async def _real_file(workspace: Workspace, path: Path, filenames: Sequence[str]) -> Path | None:
     """The file `path` names, after symlinks, when it is an instruction file in `path`'s own directory, else `None`.
 
     A link such as `CLAUDE.md -> AGENTS.md` returns `AGENTS.md` in the same directory, so the file is
-    labeled and deduplicated by the name it is kept under. The target must itself be named in `filenames`:
-    a repository's `AGENTS.md -> .env` would otherwise send a file the file tools may deny to the model.
+    labeled and deduplicated by the name it is kept under. The target must itself be an instruction file,
+    named in `filenames` or one of `AGENTS.md` and `CLAUDE.md`: a repository's `AGENTS.md -> .env` would
+    otherwise send a file the file tools may deny to the model.
     """
     text = str(path)
     try:
@@ -72,7 +78,9 @@ async def _real_file(workspace: Workspace, path: Path, filenames: Sequence[str])
     real = Path(await workspace.realpath(text))
     # Autoloaded instructions belong to the directory being scanned, not a
     # symlink target in another directory (even another ancestor in the walk).
-    if real.parent != Path(await workspace.realpath(str(path.parent))) or real.name not in filenames:
+    if real.parent != Path(await workspace.realpath(str(path.parent))) or (
+        real.name not in filenames and real.name not in _INSTRUCTION_NAMES
+    ):
         return None
     return path.parent / real.name
 

@@ -114,6 +114,15 @@ class TestDiscoverInstructionFiles:
         assert await discover_instruction_files(workspace, tmp_path, None, ('AGENTS.md', 'CLAUDE.md')) == []
         assert await find_dir_context_file(workspace, tmp_path, ('AGENTS.md', 'CLAUDE.md')) is None
 
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_loads_a_link_to_an_instruction_file_left_out_of_filenames(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'shared')
+        (tmp_path / 'CLAUDE.md').symlink_to('AGENTS.md')
+        files = await discover_instruction_files(workspace, tmp_path, None, ('CLAUDE.md',))
+        assert [(f.path.name, f.content) for f in files] == [('AGENTS.md', 'shared')]
+
     async def test_walk_up_ancestor_first(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'root')
         workspace_dir = tmp_path / 'a' / 'b'
