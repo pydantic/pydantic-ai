@@ -683,6 +683,7 @@ class TestNestedTraversal:
         assert _repo_notes(result.all_messages()) == []
         assert 'SECRET' not in str(result.all_messages())
 
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
     @pytest.mark.parametrize(
         'via',
         [
