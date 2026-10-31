@@ -17,7 +17,7 @@ does:
   [`elevenlabs_language`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings.elevenlabs_language]);
 - voices are ElevenLabs voices, set with
   [`elevenlabs_voice`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings.elevenlabs_voice];
-- `response.done` carries no usage, so sessions report no token counts;
+- `response.done` carries no usage, so sessions count these responses as unmeasured;
 - `conversation.item.delete` is not implemented, so `openai_prune_tool_items` is ignored;
 - images are dropped from user messages, and seeded history can only carry text;
 - text output (`output_modalities: ['text']`) ignores audio input altogether, so `output_modality='text'` is
@@ -256,6 +256,7 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
 
     _provider_name = 'elevenlabs'
     _provider_label = 'ElevenLabs Realtime'
+    _omits_response_usage: ClassVar[bool] = True
     # Images are dropped from conversation items, so there is nowhere for a tool result's images to go.
     _supports_tool_result_images = False
     _keep_alive_after: ClassVar[float | None] = 45.0

@@ -153,8 +153,11 @@ class AzureProvider(_OpenAISDKProvider):
             # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/prompt-caching
             base = openai_model_profile(model_name)
 
-        # Azure Chat Completions API doesn't support document input.
-        base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))
+        # Azure Chat Completions API doesn't support document input, and Responses WebSockets aren't verified on Azure.
+        base = merge_profile(
+            base,
+            OpenAIModelProfile(openai_chat_supports_document_input=False, openai_responses_supports_websocket=False),
+        )
 
         # Reported in #6593 (not verified against the live API here): Azure AI Foundry's
         # Mistral gateway rejects `max_completion_tokens` with a 422 and accepts the legacy

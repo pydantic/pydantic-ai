@@ -469,6 +469,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     # closed connection doesn't report the wrong vendor.
     _provider_label = 'OpenAI Realtime'
     _supports_tool_result_images = True
+    # Only codecs that omit measurements normalize absent payloads as unmeasured requests.
+    _omits_response_usage: ClassVar[bool] = False
     # `OSError` covers the socket-level failures (reset, broken pipe) that `websockets` lets through.
     transport_errors = (websockets.WebSocketException, OSError)
 
@@ -1367,6 +1369,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # frame (its `response.usage` is empty), so fall back to it.
         frame_usage = done.usage if isinstance(done, ProtocolResponseDoneEvent) else None
         usage = self._map_response_usage(response.usage) or self._map_response_usage(frame_usage)
+        if self._omits_response_usage and response.usage is None and frame_usage is None:
+            usage = RequestUsage(unmeasured_requests=1)
         # The response's `provider_details` ride along too: a response that called a tool is recorded
         # from this usage rather than from its `ResponseDone` (suppressed for a function-call-only
         # response, and arriving after the response is already recorded otherwise), so without them a

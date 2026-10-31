@@ -295,7 +295,8 @@ export function App() {
     setChanges(false)
     setSidePanel(null)
   }, [])
-  // The files may have changed when a turn ends, so the count and the panel ask again then; not while one runs.
+  // The files may have changed when a turn ends, so the count and the panel ask again then. While one runs, each asks
+  // only for a session or scope it has no answer for yet.
   const changesActive = connection === 'open' && !chat.running
   // The page hears a turn end before the session keeps its messages, so the count asks again once it saves them.
   const sessionChanges = useChanges(session, 'session', shown ?? '', changesActive, false, state.sessionsVersion).changes
