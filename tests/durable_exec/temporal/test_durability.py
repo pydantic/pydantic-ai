@@ -988,30 +988,46 @@ _retry_after_attempts: list[float] = []
 
 
 def _retry_after_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    prompt = messages[0].parts[0]
+    assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
     _retry_after_attempts.append(time.monotonic())
-    raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-model', retry_after=1.0)
+    raise ModelHTTPError.for_category(
+        ModelRateLimitError, status_code=429, model_name='test-model', retry_after=float(prompt.content)
+    )
 
 
-retry_after_agent = Agent(
-    FunctionModel(_retry_after_model_fn),
-    name='durability_retry_after',
-    capabilities=[
-        TemporalDurability(
-            activity_config=ActivityConfig(
-                start_to_close_timeout=timedelta(seconds=60),
-                retry_policy=RetryPolicy(maximum_attempts=2, initial_interval=timedelta(milliseconds=10)),
-            ),
-        )
-    ],
+def _retry_after_agent(name: str, retry_policy: RetryPolicy) -> Agent[None, str]:
+    return Agent(
+        FunctionModel(_retry_after_model_fn),
+        name=name,
+        capabilities=[
+            TemporalDurability(
+                activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60), retry_policy=retry_policy)
+            )
+        ],
+    )
+
+
+# The retry policy's own backoff would wait 30 seconds before the second attempt.
+retry_after_agent = _retry_after_agent(
+    'durability_retry_after', RetryPolicy(maximum_attempts=2, initial_interval=timedelta(seconds=30))
+)
+# `maximum_interval` caps the delay a provider asks for.
+capped_retry_after_agent = _retry_after_agent(
+    'durability_capped_retry_after',
+    RetryPolicy(
+        maximum_attempts=2, initial_interval=timedelta(milliseconds=10), maximum_interval=timedelta(milliseconds=100)
+    ),
 )
 
 
 @workflow.defn
 class RetryAfterWorkflow:
     @workflow.run
-    async def run(self) -> str:
+    async def run(self, capped: bool, retry_after: str) -> str:
+        agent = capped_retry_after_agent if capped else retry_after_agent
         try:
-            return (await retry_after_agent.run('hello')).output
+            return (await agent.run(retry_after)).output
         except ModelRateLimitError as error:
             activity_error = error.__cause__
             assert isinstance(activity_error, ActivityError)
@@ -1020,23 +1036,33 @@ class RetryAfterWorkflow:
             return f'{error.retry_after} {application_error.next_retry_delay}'
 
 
-async def test_durability_model_error_retry_after_delays_next_attempt(client: Client):
-    """Temporal waits a model error's `retry_after` before attempting the model request again, rather than the
-    retry policy's backoff, and the workflow still receives the error as its own class."""
+@pytest.mark.parametrize(
+    ('capped', 'retry_after', 'expected'),
+    [
+        pytest.param(False, '0.05', '0.05 0:00:00.050000', id='retry-after'),
+        # Too large for a `timedelta`, which the cap keeps from failing the conversion.
+        pytest.param(True, '1e15', '1000000000000000.0 0:00:00.100000', id='capped-at-maximum-interval'),
+    ],
+)
+async def test_durability_model_error_retry_after_delays_next_attempt(
+    client: Client, capped: bool, retry_after: str, expected: str
+):
+    """Temporal waits a model error's `retry_after`, up to the retry policy's `maximum_interval`, before attempting
+    the model request again, rather than the retry policy's backoff, and the workflow still receives the error as its
+    own class."""
     _retry_after_attempts.clear()
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[RetryAfterWorkflow],
-        plugins=[AgentPlugin(retry_after_agent)],
-    ):
+    agent = capped_retry_after_agent if capped else retry_after_agent
+    async with Worker(client, task_queue=TASK_QUEUE, workflows=[RetryAfterWorkflow], plugins=[AgentPlugin(agent)]):
         output = await client.execute_workflow(
-            RetryAfterWorkflow.run, id=RetryAfterWorkflow.__name__, task_queue=TASK_QUEUE
+            RetryAfterWorkflow.run,
+            args=[capped, retry_after],
+            id=f'{RetryAfterWorkflow.__name__}_{capped}',
+            task_queue=TASK_QUEUE,
         )
-    assert output == '1.0 0:00:01'
+    assert output == expected
     assert len(_retry_after_attempts) == 2
-    # The retry policy's own backoff would have retried after 10 milliseconds.
-    assert _retry_after_attempts[1] - _retry_after_attempts[0] >= 1.0
+    # Well before the 30-second backoff of the uncapped policy, and well before the requested delay of the capped one.
+    assert _retry_after_attempts[1] - _retry_after_attempts[0] < 10
 
 
 # --- `ModelSettings['request_timeout']` runs on the workflow's clock ---

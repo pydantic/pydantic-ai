@@ -22,6 +22,8 @@ from typing import Any, cast
 
 from pydantic import TypeAdapter
 from pydantic_core import to_jsonable_python
+from temporalio import activity
+from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 
 from ...exceptions import (
@@ -136,8 +138,8 @@ def model_errors_as_application_errors(
     `_retry_policy_type`. An error that is an instance of one of the `non_retryable` classes is raised as a
     non-retryable `ApplicationError`, so Temporal fails the activity without retrying it whatever the retry
     policy says. A retryable error's `retry_after`, which the provider asked for with a `Retry-After` header or
-    the like, is the `ApplicationError`'s `next_retry_delay`, so Temporal waits that long before the next attempt
-    rather than the retry policy's backoff.
+    the like, is the `ApplicationError`'s `next_retry_delay`, up to the retry policy's `maximum_interval`, so
+    Temporal waits that long before the next attempt rather than the retry policy's backoff; see `_next_retry_delay`.
     """
     try:
         yield
@@ -156,7 +158,7 @@ def model_errors_as_application_errors(
                 detail[_STREAMED_KEY] = _response_adapter.dump_python(streamed, mode='json')
             details = (detail,)
         retryable = not isinstance(error, non_retryable)
-        next_retry_delay = timedelta(seconds=error.retry_after) if retryable and error.retry_after is not None else None
+        next_retry_delay = _next_retry_delay(error.retry_after) if retryable and error.retry_after is not None else None
         if retryable and not details and next_retry_delay is None:
             raise
         raise ApplicationError(
@@ -166,6 +168,19 @@ def model_errors_as_application_errors(
             non_retryable=not retryable,
             next_retry_delay=next_retry_delay,
         ) from error
+
+
+def _next_retry_delay(retry_after: float) -> timedelta:
+    """The delay before the next attempt for a provider's `retry_after`, capped at the retry policy's `maximum_interval`.
+
+    Temporal waits a `next_retry_delay` instead of the interval its retry policy computes, so the policy's
+    `maximum_interval` would no longer bound the wait. Capping at it keeps a long `Retry-After`, or one too large for
+    a `timedelta`, from parking the activity longer than the policy ever would. Outside an activity, the cap is the
+    default policy's.
+    """
+    policy = (activity.info().retry_policy if activity.in_activity() else None) or RetryPolicy()
+    maximum_interval = policy.maximum_interval or policy.initial_interval * 100
+    return timedelta(seconds=min(retry_after, maximum_interval.total_seconds()))
 
 
 _ERROR_CATEGORIES = (
