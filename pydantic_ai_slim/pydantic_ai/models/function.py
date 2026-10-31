@@ -220,11 +220,11 @@ class FunctionModel(InMemoryBatchModel):
             AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns],
         ] = PeekableAsyncStream(self.stream_function(messages, agent_info))
 
-        first = await response_stream.peek()
-        if isinstance(first, _utils.Unset):
-            raise ValueError('Stream function must return at least one item')
-
         try:
+            first = await response_stream.peek()
+            if isinstance(first, _utils.Unset):
+                raise ValueError('Stream function must return at least one item')
+
             yield FunctionStreamedResponse(
                 model_request_parameters=model_request_parameters,
                 _model_name=self._model_name,
