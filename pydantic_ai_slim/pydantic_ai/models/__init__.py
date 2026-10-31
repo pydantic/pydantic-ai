@@ -60,11 +60,11 @@ from .._framing import (
     LookalikeSource,
     frame,
     in_second_model_prompt,
+    is_framework_note,
     lookalike_frame_note,
     lookalike_note_announcement,
     lookalike_tags,
     neutralize_tags,
-    resembles_frame as resembles_frame,
 )
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import (
@@ -99,7 +99,6 @@ from ..messages import (
     BaseToolReturnPart,
     BinaryContent,
     BinaryImage,
-    CachePoint as CachePoint,
     CapabilityLoadDeltaPart,
     CapabilityPart,
     CompactionPart,
@@ -1827,7 +1826,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
         messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
-        # Both passes above replace parts one for one, so `authored` still lines up with `messages`.
+        authored, messages = _tool_results_first(authored, messages)
+        # The passes above replace or reorder parts one for one, so `authored` still lines up with `messages`.
         messages = self._note_lookalike_frames(authored, messages)
 
         clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
@@ -2344,6 +2344,12 @@ def _instruction_parts_of(
             all(
                 # TODO(v3): remove `RetryPromptPart`
                 isinstance(p, ToolReturnPart | RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                # A lookalike note or the announcement `prepare_messages` added doesn't make it a real request.
+                or (
+                    isinstance(p, SystemPromptPart | UserPromptPart)
+                    and isinstance(p.content, str)
+                    and is_framework_note(p.content)
+                )
                 for p in most_recent.parts
             )
             and second.instructions is not None
@@ -4030,6 +4036,37 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
             new_messages.append(msg)
 
     return new_messages if changed else messages
+
+
+def _tool_results_first(
+    authored: list[ModelMessage], messages: list[ModelMessage]
+) -> tuple[list[ModelMessage], list[ModelMessage]]:
+    """Put each request's tool results ahead of its other parts, in both lists, keeping each group's order.
+
+    Anthropic, Bedrock and OpenAI Chat need the results right after the response that called the tools: a system
+    prompt or user text ahead of them, as a history can hold (a `SystemPromptPart` before the returns), is rejected
+    with a 400. No API needs anything ahead of them, so every adapter gets them first; lookalike notes that an API
+    takes ahead of the results are placed after this.
+
+    Only requests after a response move: before the first one, nothing has been called, and a leading
+    `SystemPromptPart` there is the standing prompt, which every adapter lifts out of the conversation.
+    """
+    new_authored: list[ModelMessage] = []
+    new_messages: list[ModelMessage] = []
+    changed = False
+    after_response = False
+    for original, message in zip(authored, messages):
+        if isinstance(message, ModelResponse):
+            after_response = True
+        elif after_response and isinstance(original, ModelRequest):
+            order = sorted(range(len(message.parts)), key=lambda i: not _is_tool_result_part(message.parts[i]))
+            if order != list(range(len(message.parts))):
+                message = replace(message, parts=[message.parts[i] for i in order])
+                original = replace(original, parts=[original.parts[i] for i in order])
+                changed = True
+        new_authored.append(original)
+        new_messages.append(message)
+    return (new_authored, new_messages) if changed else (authored, messages)
 
 
 def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, list[str]]]:

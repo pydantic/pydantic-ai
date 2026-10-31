@@ -9,8 +9,10 @@ renders with [`wrap`][pydantic_ai.framing.wrap], or with [`open_tag`][pydantic_a
 
 `<system>` is the one voice tag: it means the application is speaking. Only Pydantic AI renders it, so
 these functions take data tags only: Pydantic AI's own [`DataTag`][pydantic_ai.framing.DataTag]s and
-registered tags. A data tag's body can't open or close any framing tag, so a tool result can't close
-your frame and your frame's content can't forge a `<system>` block.
+registered tags. A body you frame with these can't open or close any framing tag, so it can't close your
+frame or forge a `<system>` block. The frames Pydantic AI renders itself send their content as written instead;
+text in them that resembles one of its voice tags gets a note
+([details](../message-history.md#framework-frames-and-content-fidelity)).
 
 See [Framing data in prompt text](../capabilities/custom.md#framing-data-in-prompt-text).
 """
