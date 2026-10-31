@@ -8,6 +8,7 @@ import sys
 import time
 import uuid
 import warnings
+from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
@@ -15,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
@@ -27,10 +28,14 @@ from pydantic_ai import (
     AgentStreamEvent,
     CancellationToken,
     CapabilityEvent,
+    CapabilityInstructionSource,
+    CapabilityLoadDeltaPart,
     CustomEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    InstructionBaselinePart,
+    InstructionId,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -44,6 +49,7 @@ from pydantic_ai import (
     RunUsage,
     TextPart,
     Tool,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -86,7 +92,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models._batch_model import BatchPool
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel, StreamFunctionDef
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -139,6 +145,8 @@ except ImportError:  # pragma: lax no cover
 try:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .responses_websocket import ScriptedSocket, responses_reply, text_events, websocket_model
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
@@ -149,7 +157,9 @@ from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from .._inline_snapshot import snapshot
+from ..append_only import drain_events
 from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
+from ..clock_utils import LONG_TIMEOUT, Clock
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
@@ -257,6 +267,89 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DB
 async def round_trip_workspace(ctx: RunContext[None]) -> str:
     await ctx.workspace.write_text('note.txt', 'workspace content')
     return await ctx.workspace.read_text('note.txt')
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_dbos_agent_model_steps_use_http_for_responses_websocket(
+    allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """A workflow run does not implicitly own a socket across its model steps."""
+    pytest.importorskip('websockets')
+    connect = AsyncMock()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        agent = Agent(websocket_model(client), name=f'responses_websocket_{"stream" if stream else "request"}')
+        dbos_agent = DBOSAgent(agent, event_stream_handler=drain_events if stream else None)  # pyright: ignore[reportDeprecated]
+        assert (await dbos_agent.run('hello')).output == 'from HTTP'
+    connect.assert_not_called()
+
+
+async def test_dbos_model_run_scope_outside_workflow_forwards_socket_ownership(
+    allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip('websockets')
+    socket = ScriptedSocket()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', AsyncMock(return_value=socket))
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        model = websocket_model(client)
+        wrapped = DBOSModel(
+            model,
+            step_name_prefix='outside_websocket_scope',
+            step_config={},
+            get_event_stream_handler=lambda: None,
+        )
+        async with wrapped._run_scope():  # pyright: ignore[reportPrivateUsage]
+            response = await model.request([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
+            assert response.text == 'ready'
+            assert socket.close_count == 0
+    assert len(socket.sent) == 1
+    assert socket.close_count == 1
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_dbos_workflow_agent_scope_owns_responses_websocket(
+    allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """A workflow-owned agent outlives its steps, which can borrow its loop-local socket."""
+    pytest.importorskip('websockets')
+    socket = ScriptedSocket(
+        responses=deque(
+            [
+                text_events('first', 'resp_dbos_first', store=False),
+                text_events('second', 'resp_dbos_second', store=False),
+            ]
+        )
+    )
+    connect = AsyncMock(return_value=socket)
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        model = websocket_model(client)
+        agent = Agent(model, name='dbos_websocket_owner', capabilities=[DBOSDurability()])
+
+        @DBOS.workflow()
+        async def run_agent() -> str:
+            async with agent:
+                first = await agent.run('first')
+                if stream:
+                    async with agent.run_stream('second', message_history=first.all_messages()) as result:
+                        output = await result.get_output()
+                else:
+                    output = (await agent.run('second', message_history=first.all_messages())).output
+                assert socket.close_count == 0
+                return output
+
+        assert await run_agent() == 'second'
+
+        @DBOS.workflow()
+        async def run_unowned() -> str:
+            return (await agent.run('no outer owner')).output
+
+        assert await run_unowned() == 'from HTTP'
+    assert connect.call_count == 1
+    assert len(socket.sent) == 2
+    assert socket.sent[1]['previous_response_id'] == 'resp_dbos_first'
+    assert socket.close_count == 1
+    assert model._websocket.states == {}  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_dbos_agent_rejects_a_workspace_in_its_workflow(dbos: DBOS, tmp_path: Path) -> None:
@@ -2534,6 +2627,239 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     assert output == ('Echo: Hello DBOS', _durability_fn_model.model_id)
 
 
+def _load_capability_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Opens a case, calls `invoice_status` once it's visible, then answers with its result."""
+    returns = {
+        part.tool_name: part.content
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    }
+    if 'invoice_status' in returns:
+        return ModelResponse(parts=[TextPart(str(returns['invoice_status']))])
+    if 'invoice_status' in {tool.name for tool in info.function_tools}:
+        return ModelResponse(parts=[ToolCallPart('invoice_status', {}, tool_call_id='invoice')])
+    return ModelResponse(parts=[ToolCallPart('open_case', {}, tool_call_id='open')])
+
+
+def _billing_capability() -> Capability[object]:
+    billing = Capability[object](id='billing', description='Billing.', defer_loading=True)
+
+    @billing.tool_plain
+    def invoice_status() -> str:
+        return 'Invoice paid.'
+
+    return billing
+
+
+@pytest.mark.parametrize('hook', ['before_run', 'before_model_request', 'after_model_request'])
+async def test_dbos_durability_load_capability_from_a_capability_hook(dbos: DBOS, hook: str) -> None:
+    """Capability hooks run in the workflow, so a load from one takes effect on the request that follows."""
+    hooks = Hooks[object]()
+    if hook == 'before_run':
+
+        @hooks.on.before_run
+        async def load_before_run(ctx: RunContext[object]) -> None:
+            ctx.load_capability('billing')
+
+    elif hook == 'before_model_request':
+
+        @hooks.on.before_model_request
+        async def load_before_request(
+            ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.load_capability('billing')
+            return request_context
+
+    else:
+
+        @hooks.on.after_model_request
+        async def load_after_request(
+            ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if response.tool_calls:
+                ctx.load_capability('billing')
+            return response
+
+    agent = Agent(
+        FunctionModel(_load_capability_model),
+        name=f'dbos_load_capability_{hook}',
+        capabilities=[_billing_capability(), hooks, DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('Was my invoice paid?')).output
+
+    # From `before_run` or `before_model_request`, the first request already has `invoice_status`. From
+    # `after_model_request`, the model first calls `open_case`, which this agent doesn't have: the run answers with a
+    # retry, so a request follows, and that one has `invoice_status`.
+    assert await run_workflow() == 'Invoice paid.'
+
+
+async def test_dbos_durability_load_capability_from_tool_hook(dbos: DBOS) -> None:
+    """A tool hook runs in the workflow even around a tool that runs as a step, so it can load a capability.
+
+    `open_case` comes from a dynamic toolset, which DBOS runs as a step; the `invoice_status` function tool then
+    runs in the workflow.
+    """
+    hooks = Hooks[object]()
+
+    @hooks.on.after_tool_execute
+    async def load_billing(
+        ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
+    ) -> Any:
+        if tool_def.name == 'open_case':
+            ctx.load_capability('billing')
+        return result
+
+    def open_case() -> str:
+        return 'Case opened.'
+
+    agent = Agent(
+        FunctionModel(_load_capability_model),
+        name='dbos_load_capability_hook',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([open_case]), id='cases')],
+        capabilities=[_billing_capability(), hooks, DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> list[ModelMessage]:
+        return (await agent.run('Was my invoice paid?')).all_messages()
+
+    assert await run_workflow() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Was my invoice paid?', timestamp=IsDatetime()),
+                    InstructionBaselinePart(
+                        instructions=[
+                            InstructionPart(
+                                content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- billing: Billing.\
+""",
+                                dynamic=True,
+                                on_change='append',
+                                id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                            )
+                        ]
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- billing: Billing.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='open_case', args={}, tool_call_id='open')],
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
+                model_name='function:_load_capability_model:',
+                model_id='function:function:_load_capability_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='open_case', content='Case opened.', tool_call_id='open', timestamp=IsDatetime()
+                    ),
+                    CapabilityLoadDeltaPart(loaded=['billing'], tool_call_id='open'),
+                    ToolAvailabilityDeltaPart(tools_added=['invoice_status'], tool_call_id='open'),
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- billing: Billing.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='invoice_status', args={}, tool_call_id='invoice')],
+                usage=RequestUsage(input_tokens=64, output_tokens=4),
+                model_name='function:_load_capability_model:',
+                model_id='function:function:_load_capability_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='invoice_status',
+                        content='Invoice paid.',
+                        tool_call_id='invoice',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- billing: Billing.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Invoice paid.')],
+                usage=RequestUsage(input_tokens=67, output_tokens=7),
+                model_name='function:_load_capability_model:',
+                model_id='function:function:_load_capability_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_dbos_durability_load_capability_from_function_tool(dbos: DBOS) -> None:
+    """DBOS runs a plain function tool in the workflow rather than as a step, so the tool itself can load a capability."""
+    agent = Agent(
+        FunctionModel(_load_capability_model),
+        name='dbos_load_capability_function_tool',
+        capabilities=[_billing_capability(), DBOSDurability()],
+    )
+
+    @agent.tool
+    async def open_case(ctx: RunContext[object]) -> str:
+        ctx.load_capability('billing')
+        return 'Case opened.'
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('Was my invoice paid?')).output
+
+    assert await run_workflow() == 'Invoice paid.'
+
+
+async def test_dbos_durability_load_capability_from_step_tool_raises(dbos: DBOS) -> None:
+    """A dynamic-toolset tool runs as a step, whose recorded output replays without re-running it, so it can't load."""
+
+    async def open_case(ctx: RunContext[object]) -> str:
+        ctx.load_capability('billing')
+        return 'Case opened.'  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(_load_capability_model),
+        name='dbos_load_capability_step_tool',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([open_case]), id='cases')],
+        capabilities=[_billing_capability(), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('Open a billing case.')).output
+
+    with pytest.raises(UserError, match=r'`ctx.load_capability\(\)` is not supported inside a durable execution'):
+        await run_workflow()
+
+
 async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: DBOS) -> None:
     """A model step's `ModelHTTPError` reaches workflow code as itself, so error hooks can match on it."""
 
@@ -2558,6 +2884,43 @@ async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: 
         return (await agent.run('Hello DBOS')).output
 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
+
+
+async def test_dbos_durability_sticky_fallback_goes_straight_to_the_candidate(dbos: DBOS) -> None:
+    """Under durable execution, sticky steps and runs skip the failing primary, though the step's model is wrapped."""
+    calls: list[str] = []
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('primary')
+        raise ModelAPIError(model_name='primary', message='boom')
+
+    def target(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('target')
+        if any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[ToolCallPart('noop')])
+        return ModelResponse(parts=[TextPart('from target')])
+
+    def noop() -> str:
+        return 'ok'
+
+    agent = Agent(
+        FunctionModel(primary, model_name='primary'),
+        name='durability_sticky_fallback',
+        tools=[noop],
+        capabilities=[
+            ModelFallback('sticky_target', sticky=True),
+            DBOSDurability(models={'sticky_target': FunctionModel(target, model_name='target')}),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> list[str | None]:
+        first = await agent.run('Hello DBOS')
+        second = await agent.run('Again', message_history=first.all_messages())
+        return [message.model_id for message in second.all_messages() if isinstance(message, ModelResponse)]
+
+    assert await run_durable_agent() == ['sticky_target'] * 4
+    assert calls == ['primary', 'target', 'target', 'target', 'target']
 
 
 async def test_dbos_durability_rejects_a_live_workspace_workflow_input(dbos: DBOS, tmp_path: Path) -> None:
@@ -6098,6 +6461,70 @@ async def test_dbos_timeout_outside_workflow(dbos: DBOS) -> None:
     """Outside a workflow the capability is transparent: the run's own clock starts the deadline."""
     with pytest.raises(RunTimedOut):
         await timed_out_agent.run('Hello', timeout=0)
+
+
+# --- `ModelSettings['first_event_timeout']` runs in the model step of the deprecated `DBOSAgent` ---
+
+
+# The step runs on the test's event loop, so the tests move its clock past the deadline rather than wait for it.
+first_event_clock = Clock()
+
+
+async def _stalls_before_first_event(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    yield {}  # opens the stream without producing an event
+    first_event_clock.advance()
+    await asyncio.sleep(3600)
+
+
+async def _pauses_after_first_event(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'partial '
+    first_event_clock.advance(2 * LONG_TIMEOUT)
+    # A deadline that has passed cancels this wait before it ends.
+    await asyncio.sleep(0.01)
+    yield 'answer'
+
+
+async def _drain_first_event_stream(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+def _first_event_timeout_dbos_agent(name: str, stream_function: StreamFunctionDef) -> DBOSAgent[None, str]:  # pyright: ignore[reportDeprecated]
+    agent = Agent(
+        FunctionModel(stream_function=stream_function, model_name='slow'),
+        name=name,
+        model_settings={'first_event_timeout': LONG_TIMEOUT},
+    )
+    return DBOSAgent(agent, event_stream_handler=_drain_first_event_stream)  # pyright: ignore[reportDeprecated]
+
+
+stalled_first_event_dbos_agent = _first_event_timeout_dbos_agent(
+    'stalled_first_event_agent', _stalls_before_first_event
+)
+paused_first_event_dbos_agent = _first_event_timeout_dbos_agent('paused_first_event_agent', _pauses_after_first_event)
+
+
+async def test_dbos_agent_first_event_timeout_stalled(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The step consumes the stream, so it enforces the deadline on a stream that stalls before its first event."""
+    first_event_clock.install(monkeypatch)
+
+    with pytest.raises(ModelRequestTimeout) as exc_info:
+        await stalled_first_event_dbos_agent.run('hello')
+
+    assert (exc_info.value.setting, exc_info.value.timeout) == ('first_event_timeout', LONG_TIMEOUT)
+
+
+async def test_dbos_agent_first_event_timeout_paused_after_first_event(
+    dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The workflow only gets the response once the step has consumed it, which isn't a late first event."""
+    first_event_clock.install(monkeypatch)
+
+    result = await paused_first_event_dbos_agent.run('hello')
+
+    assert result.output == 'partial answer'
 
 
 def _late_stream_failure_agent(name: str, *, fail_after_output: bool, answered: list[str]) -> Agent[object, str]:

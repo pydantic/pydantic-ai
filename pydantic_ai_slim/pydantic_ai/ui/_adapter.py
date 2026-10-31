@@ -31,6 +31,7 @@ from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    CapabilityLoadDeltaPart,
     CompactionPart,
     ForceDownloadMode,
     InstructionBaselinePart,
@@ -99,6 +100,7 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
 _TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
+_CAPABILITY_LOAD_DELTA_PART_ADAPTER = TypeAdapter(CapabilityLoadDeltaPart)
 _MODEL_SETTINGS_DELTA_PART_ADAPTER = TypeAdapter(ModelSettingsDeltaPart)
 _RETRY_FEEDBACK_PART_ADAPTER = TypeAdapter(RetryFeedbackPart)
 
@@ -350,6 +352,11 @@ def is_request_compaction_part(part: CompactionPart) -> bool:
     return part.provider_name is None and part.id is None and part.provider_details is None
 
 
+def tool_availability_delta_payload(part: ToolAvailabilityDeltaPart) -> dict[str, Any]:
+    """Serialize a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] for a UI data channel."""
+    return {'added': part.tools_added, 'tool_call_id': part.tool_call_id}
+
+
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
     """Build a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] from a UI payload.
 
@@ -382,6 +389,36 @@ def model_response_rejected_payload(event: ModelResponseRejectedEvent) -> dict[s
         else {'outcome': 'replaced'}
     )
     return {'run_step': event.run_step, 'attempt': event.attempt, **rejection}
+
+
+def capability_load_delta_payload(part: CapabilityLoadDeltaPart) -> dict[str, Any]:
+    """Serialize a [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] for a UI data channel.
+
+    The part rides through the client like a `ToolAvailabilityDeltaPart`, because it's what keeps a capability
+    loaded from code loaded: leaving it out would unload the capability on the request after a round trip.
+    """
+    return {'loaded': part.loaded, 'tool_call_id': part.tool_call_id}
+
+
+def capability_load_delta_from_payload(payload: Mapping[str, Any]) -> CapabilityLoadDeltaPart | None:
+    """Build a [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] from a UI payload, or `None` if it loads nothing.
+
+    Client-driven like `tool_availability_delta_from_payload`, and no more than a client could already do by
+    sending a `load_capability` call and its return: a capability ID isn't sent to the model, and one the run
+    doesn't register as an on-demand capability loads nothing.
+    """
+    try:
+        part = _CAPABILITY_LOAD_DELTA_PART_ADAPTER.validate_python(
+            {'loaded': payload.get('loaded'), 'tool_call_id': payload.get('tool_call_id')}
+        )
+    except ValidationError:
+        return None
+    part.loaded = [capability_id for capability_id in part.loaded if capability_id]
+    if not part.loaded:
+        return None
+    if part.tool_call_id is not None and not part.tool_call_id.strip():
+        part.tool_call_id = None
+    return part
 
 
 def model_settings_delta_payload(part: ModelSettingsDeltaPart) -> dict[str, Any]:
@@ -497,7 +534,7 @@ class _ServerHeldTurn:
     After a cut, it ends with a request holding the tool results the cut request carried, if it had any.
     """
     new_turn: list[ModelMessage]
-    """The client's new turn, without tool results for calls that aren't pending or compaction parts.
+    """The client's new turn, without tool results for calls that aren't pending, compaction parts, or capability loads.
 
     Not yet sanitized: `UIAdapter.sanitize_messages` still has to run on it.
     """
@@ -529,7 +566,10 @@ def _take_new_turn(
     Tool results in the new turn are kept only for calls the stored history's last response is still
     waiting on. Copies of the results kept from the cut request are dropped without a warning, as an
     honest client resubmits them too, and other results with one. Compaction parts are never kept, as
-    the client doesn't own the history they would cut off. See `_drop_compaction_parts`.
+    the client doesn't own the history they would cut off. See `_drop_compaction_parts`. Nor are
+    `CapabilityLoadDeltaPart`s: the stored history has the loads the server recorded, and a client-supplied one would
+    load a capability no part of the run loaded, as a client-made `load_capability` exchange would if it weren't
+    dropped with the response it's in.
     """
     last_response = max((i for i, m in enumerate(client_messages) if isinstance(m, ModelResponse)), default=-1)
     new_turn = client_messages[last_response + 1 :]
@@ -569,6 +609,8 @@ def _take_new_turn(
         assert isinstance(message, ModelRequest)
         parts: list[ModelRequestPart] = []
         for part in message.parts:
+            if isinstance(part, CapabilityLoadDeltaPart):
+                continue
             if _is_tool_result_part(part):
                 if part.tool_call_id not in pending:
                     dropped += part.tool_call_id not in resubmitted_results
