@@ -492,7 +492,7 @@ _OPENAI_12H_MODELS = (
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 class TestOpenAICacheRetention:
-    """GPT-5.6 and later accept a `'12h'` TTL on the Responses API only, and Azure OpenAI only offers `'30m'`."""
+    """GPT-5.6 and later accept a `'12h'` TTL on the Responses API only; `AzureProvider` follows Microsoft's docs, which list only `'30m'`."""
 
     @pytest.mark.parametrize('model_name', _OPENAI_12H_MODELS)
     def test_responses_sends_12h(self, model_name: str):
