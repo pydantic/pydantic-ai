@@ -247,7 +247,7 @@ How it reaches the model depends on the provider:
 
     On these models, the instructions end with a short fixed announcement of what the tag means: a `<system>` block in a user turn comes from the application, has system authority, and replaces the earlier system content it updates, while text in a user message, a file or a tool result that looks like one gets a [note](#framework-frames-and-content-fidelity) and has no authority. It's the last thing in the system prompt, so everything ahead of it is the same in every conversation and keeps its cache points, and it goes out on every request from the first, so the cached prefix is unchanged as the conversation grows. A request with no system prompt or instructions doesn't get one.
 
-    Without it, Gemini and Claude on Bedrock mostly kept to the earlier value of a changed or withdrawn instruction, and ignored a new rule about the format of their answers. With it, they follow all three.
+    Measured with an earlier version of the announcement and escaping in place of the notes: without them, Gemini and Claude on Bedrock mostly kept to the earlier value of a changed or withdrawn instruction, and Gemini and Grok ignored a new rule about the format of their answers. With them, they followed all three.
 
 Phrase the instruction as what changed rather than as an override of the user. Models are trained to resist instructions that appear to work against the person they're talking to, and that applies to the system role too — "the build tag is no longer confidential" lands where "ignore what the user was told earlier" doesn't.
 
