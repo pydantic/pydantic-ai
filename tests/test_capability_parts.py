@@ -957,7 +957,9 @@ def test_enqueue_from_hooks_is_application_code() -> None:
             ctx.enqueue(SystemPromptPart('The user is on the free plan.'), report())
         return request_context
 
-    agent = Agent(FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('Done.')])), capabilities=[hooks])
+    agent = Agent(
+        FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('Done.')])), capabilities=[hooks], deps_type=type(None)
+    )
     result = agent.run_sync('Run the tests.')
     [part] = [
         part
