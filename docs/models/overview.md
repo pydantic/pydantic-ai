@@ -112,7 +112,7 @@ print(profile.get('supports_tools'))
 print(profile.get('supports_text_output'))
 #> True
 print(profile.get('supports_json_schema_output'))
-#> False
+#> True
 print(WebSearchTool in profile.get('supported_native_tools', frozenset()))
 #> True
 ```
