@@ -1261,6 +1261,43 @@ def test_bedrock_zai_glm():
             'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
+            'bedrock_thinking_variant': 'zai',
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_zai_glm_5_3():
+    """Z.AI GLM-5.3 via Bedrock: always reasons, and Bedrock accepts every effort level from `low` to `max`."""
+    profile = BedrockProvider.model_profile('us.zai.glm-5.3')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'zai_supports_reasoning_effort': True,
+            'zai_reasoning_effort_mapping': {'minimal': 'low'},
+            'supported_native_tools': frozenset(),
+            'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_leading_assistant_message': True,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'bedrock_thinking_variant': 'zai',
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_deepseek_v3_2():
+    """DeepSeek V3.2 via Bedrock: Bedrock-specific thinking override on top of upstream `deepseek_model_profile`."""
+    profile = BedrockProvider.model_profile('deepseek.v3.2')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'bedrock_thinking_variant': 'deepseek',
+            'supported_native_tools': frozenset(),
             'supports_video_input': False,
         }
     )
