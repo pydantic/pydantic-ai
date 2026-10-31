@@ -20,7 +20,7 @@ from pydantic_ai import Agent, ModelRequestContext, RunContext, models
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2 import DEFAULT_PLUGINS, chat
 from pydantic_clai2.app import STOCK_PLUGINS
 from pydantic_clai2.config import PluginSettings
@@ -187,7 +187,7 @@ async def main(root: Path, mode: str) -> None:
             else DEFAULT_PLUGINS,
             project=ProjectSettings(plugins=(PluginSettings(id='unapproved', factory='unapproved', enabled=False),)),
         )
-    conversations = SqliteConversationStore(database=root / 'sessions.db')
+    conversations = SqliteSessionStore(database=root / 'sessions.db')
     summaries = await conversations.listing()
     assert len(summaries) == 1, summaries
     saved = await conversations.get(conversation_id=summaries[0].id)

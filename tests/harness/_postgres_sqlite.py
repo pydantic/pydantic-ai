@@ -39,7 +39,7 @@ def _to_sqlite(query: str) -> str:
     query = query.replace(_IDENTITY, 'INTEGER PRIMARY KEY AUTOINCREMENT')
     query = _ANY_ARRAY.sub(r'\1 IN (SELECT value FROM json_each(?\2))', query)
     query = _NOW.sub('pg_now()', _NOW_PLUS.sub(r'pg_now_plus($\1)', query))
-    query = query.replace(' FOR UPDATE SKIP LOCKED', '')
+    query = query.replace(' FOR UPDATE SKIP LOCKED', '').replace(' FOR UPDATE', '')
     query = query.replace('SET TRANSACTION ISOLATION LEVEL READ COMMITTED', 'SELECT 1')
     return _PARAMETER.sub(r'?\1', query)
 
@@ -48,6 +48,9 @@ def _to_sqlite_value(value: object) -> object:
     # The only lists the stores bind are arrays, which `_to_sqlite` reads with `json_each`.
     if isinstance(value, list):
         return json.dumps(value)
+    # Timestamps are bound in the same UTC ISO form `pg_now` returns, which orders like Postgres orders `TIMESTAMPTZ`.
+    if isinstance(value, datetime):
+        return _timestamp(value)
     # The only intervals are added to `now()`, which `pg_now_plus` takes in microseconds.
     if isinstance(value, timedelta):
         return value // timedelta(microseconds=1)
@@ -56,6 +59,15 @@ def _to_sqlite_value(value: object) -> object:
 
 def _timestamp(instant: datetime) -> str:
     return instant.astimezone(UTC).isoformat(timespec='microseconds')
+
+
+class ForeignKeyViolation(sqlite3.IntegrityError):
+    """A foreign key failure, with the SQLSTATE asyncpg's `ForeignKeyViolationError` carries.
+
+    SQLite checks foreign keys only after `PRAGMA foreign_keys = ON`, which a test turns on to see one.
+    """
+
+    sqlstate = '23503'
 
 
 def _hashtext(text: str) -> int:
@@ -102,7 +114,12 @@ class SqliteConnection:
         # Yield like a network round trip would, so concurrent callers interleave.
         await anyio.lowlevel.checkpoint()
         self._statements.append(query)
-        return self._db.execute(_to_sqlite(query), [_to_sqlite_value(arg) for arg in args]).fetchall()
+        try:
+            return self._db.execute(_to_sqlite(query), [_to_sqlite_value(arg) for arg in args]).fetchall()
+        except sqlite3.IntegrityError as error:
+            if 'FOREIGN KEY' in str(error):
+                raise ForeignKeyViolation(*error.args) from error
+            raise
 
 
 class SqlitePool:

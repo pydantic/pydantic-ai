@@ -16,10 +16,10 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness.step_persistence import StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
     ConversationSummary,
     SavedConversation,
-    SqliteConversationStore,
+    SessionConflict,
+    SqliteSessionStore,
     conversation_text,
     ensure_inactive,
 )
@@ -55,7 +55,7 @@ class Sessions(Generic[DepsT, OutputT]):
         self,
         *,
         session: Session[DepsT, OutputT],
-        store: SqliteConversationStore,
+        store: SqliteSessionStore,
         context: CommandContext,
         launched: str | None = None,
         namer: SessionNamer | None = None,
@@ -278,7 +278,7 @@ class Sessions(Generic[DepsT, OutputT]):
             source = (await self.store.get(conversation_id=conversation_id)).summary
             try:
                 await run_sync(ensure_inactive, source)
-            except ConversationConflict as busy:
+            except SessionConflict as busy:
                 raise ValueError(f'{busy} A running session cannot be archived.') from busy
             return await self.store.set_archived(conversation_id=conversation_id, archived=True)
 

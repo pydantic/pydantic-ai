@@ -36,6 +36,7 @@ from collections.abc import AsyncGenerator
 from datetime import datetime
 
 from pymongo import AsyncMongoClient, ReturnDocument
+from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 
@@ -78,6 +79,37 @@ _logger = logging.getLogger(__name__)
 _DUPLICATE_KEY = 11000
 # Message keys per `$in` lookup, keeping each query far below MongoDB's 16 MiB command limit.
 _KEYS_PER_LOOKUP = 10_000
+
+
+async def find_message_docs(
+    collection: AsyncCollection[_MongoDocument], keys: set[str], projection: _MongoDocument | None = None
+) -> AsyncGenerator[_MongoDocument]:
+    """The message documents with these keys, looked up in batches."""
+    ordered = sorted(keys)
+    for start in range(0, len(ordered), _KEYS_PER_LOOKUP):
+        batch = ordered[start : start + _KEYS_PER_LOOKUP]
+        async for doc in collection.find({'_id': {'$in': batch}}, projection):
+            yield doc
+
+
+async def insert_missing_messages(collection: AsyncCollection[_MongoDocument], messages: dict[str, str]) -> None:
+    """Insert the messages, keyed by SHA-256, that `collection` lacks.
+
+    A concurrent save storing the same message makes its insert a duplicate, which is fine.
+    """
+    stored = {doc['_id'] async for doc in find_message_docs(collection, set(messages), {'_id': 1})}
+    missing: list[_MongoDocument] = [
+        {'_id': sha256, 'message': message} for sha256, message in messages.items() if sha256 not in stored
+    ]
+    if not missing:
+        return
+    try:
+        await collection.insert_many(missing, ordered=False)
+    except BulkWriteError as exc:
+        if exc.details.get('writeConcernErrors') or any(
+            error['code'] != _DUPLICATE_KEY for error in exc.details['writeErrors']
+        ):
+            raise
 
 
 class MongoStepStore:
@@ -274,33 +306,16 @@ class MongoStepStore:
         """Insert the messages `snapshot_messages` lacks.
 
         Every snapshot repeats the history before it, so most are already
-        stored: look those up rather than send them again. A concurrent save
-        storing the same message makes its insert a duplicate, which is fine.
+        stored: `insert_missing_messages` looks those up rather than sending
+        them again.
         """
-        collection = self._db['snapshot_messages']
-        stored = {doc['_id'] async for doc in self._find_message_docs(set(messages), {'_id': 1})}
-        missing: list[_MongoDocument] = [
-            {'_id': sha256, 'message': message} for sha256, message in messages.items() if sha256 not in stored
-        ]
-        if not missing:
-            return
-        try:
-            await collection.insert_many(missing, ordered=False)
-        except BulkWriteError as exc:
-            if exc.details.get('writeConcernErrors') or any(
-                error['code'] != _DUPLICATE_KEY for error in exc.details['writeErrors']
-            ):
-                raise
+        await insert_missing_messages(self._db['snapshot_messages'], messages)
 
-    async def _find_message_docs(
+    def _find_message_docs(
         self, keys: set[str], projection: _MongoDocument | None = None
     ) -> AsyncGenerator[_MongoDocument]:
         """The `snapshot_messages` documents with these keys, looked up in batches."""
-        ordered = sorted(keys)
-        for start in range(0, len(ordered), _KEYS_PER_LOOKUP):
-            batch = ordered[start : start + _KEYS_PER_LOOKUP]
-            async for doc in self._db['snapshot_messages'].find({'_id': {'$in': batch}}, projection):
-                yield doc
+        return find_message_docs(self._db['snapshot_messages'], keys, projection)
 
     async def _load_messages(self, docs: list[_MongoDocument]) -> dict[str, str]:
         """The stored messages the snapshot documents reference, by key."""

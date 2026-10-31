@@ -21,7 +21,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
-from .conversations import ConversationSummary, SqliteConversationStore, conversation_text
+from .conversations import ConversationSummary, SqliteSessionStore, conversation_text
 
 warnings.warn(
     '`pydantic_ai_harness.step_persistence.naming` is deprecated: session naming is application policy, '
@@ -92,7 +92,7 @@ class SessionNamer:
     def __init__(
         self,
         *,
-        store: SqliteConversationStore,
+        store: SqliteSessionStore,
         generate: Callable[[str], Awaitable[NamingResult | None]],
         enabled: Callable[[], bool] = lambda: True,
         timeout: float = 60,

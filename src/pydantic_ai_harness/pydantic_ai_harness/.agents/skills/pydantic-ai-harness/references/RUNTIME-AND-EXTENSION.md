@@ -12,6 +12,7 @@ Agentic Workflow.
 | I want to ... | Use |
 |---|---|
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
+| Store a whole `Conversation` between runs, each message once, in SQLite, Postgres, or MongoDB | `SqliteConversationStore`, `PostgresConversationStore`, `MongoConversationStore` (see [StepPersistence](#steppersistence)) |
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
@@ -83,6 +84,22 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
 File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part of 64 KiB or more to a
 `MediaStore` (disk, same DB, same Mongo client, or same pool by default). Pass `media_store=None` to keep them
 inline, or `media_store=S3MediaStore(...)` from `pydantic_ai_harness.media`.
+
+Conversation stores:
+
+- `SqliteConversationStore`, `PostgresConversationStore`, and `MongoConversationStore`, in the same module
+  and with the same connection arguments as the matching step store, implement core's
+  `pydantic_ai.conversation_store.ConversationStore`. Use them to keep a conversation between runs:
+  `conversation = await store.load(id) or Conversation(conversation_id=id)`, run with
+  `conversation=conversation`, then `await store.save(result.conversation)`.
+- `save` raises `ConversationConflict` when the conversation was saved by someone else since it was loaded
+  (it checks `Conversation.revision`, which `load` sets and a run carries through), so reload and retry.
+  `save` advances that revision on the conversation it's given, so keep that object to save again.
+- `list_conversations(scope=..., limit=...)` lists the most recently saved first.
+- `fork(conversation_id, at=...)` starts a new conversation sharing the kept history. `delete` also removes
+  the entries no other conversation's history or branches use on SQLite and Postgres; MongoDB keeps them.
+- The browser-oriented store CLAI uses is `step_persistence.conversations.SqliteSessionStore`, formerly
+  `SqliteConversationStore` there.
 
 Reading back:
 

@@ -8,7 +8,7 @@ from anyio import CancelScope, create_task_group, get_cancelled_exc_class
 from rich.console import Console
 
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2.app import STOCK_PLUGINS, create_stock_agent
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.cli.self_update import WebHandoff
@@ -219,7 +219,7 @@ async def serve_again(loader: SessionPlugins[DepsT], handoff: WebHandoff) -> str
 
 async def _start_in(*, store: SettingsStore, conversation_id: str) -> tuple[Path, ProjectSettings] | None:
     """The directory a resumed session was saved in, with its project file; `None` when it is here."""
-    conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
+    conversations = SqliteSessionStore(database=store.path.with_name('sessions.db'))
     try:
         workspace = (await conversations.get(conversation_id=conversation_id)).summary.workspace
     except LookupError:

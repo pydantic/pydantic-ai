@@ -701,6 +701,13 @@ _(This example is complete, it can be run "as is")_
 [`UserError`][pydantic_ai.exceptions.UserError]. The run works on a copy of the conversation's `usage`, so the
 same `Conversation` can be continued more than once, as a point to branch from.
 
+A conversation loaded from a [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] also carries
+its [`revision`][pydantic_ai.conversation.Conversation.revision], which a run passes through to its result, so
+saving the result back can tell whether someone else saved the conversation in the meantime. It also carries its
+[`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index], which a run moves to where the
+messages it added start, so saving the result appends just those, even when a
+[history processor](#processing-message-history) trimmed the history the run was sent.
+
 [`agent.realtime()`][pydantic_ai.agent.AbstractAgent.realtime] takes `conversation=` too, and a
 [realtime session][pydantic_ai.realtime.RealtimeSession] exposes the same bundle as
 [`conversation`][pydantic_ai.realtime.RealtimeSession.conversation], so a conversation can move between text and

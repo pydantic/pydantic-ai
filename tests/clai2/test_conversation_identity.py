@@ -17,7 +17,7 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2 import chat
 from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.cli import headless
@@ -75,7 +75,7 @@ def test_transcript_identity() -> None:
 
 
 async def test_session_publishes_each_change_once(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
     events = recording(session)
     first = session.conversation_id
@@ -103,7 +103,7 @@ async def test_session_publishes_each_change_once(tmp_path: Path) -> None:
 async def test_naming_and_browser_renames_retitle_the_current_conversation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
     context = CommandContext(
         settings=Settings(model=None),
@@ -138,7 +138,7 @@ async def test_naming_and_browser_renames_retitle_the_current_conversation(
 
 async def test_a_title_another_session_queued_reaches_the_session_holding_the_conversation(tmp_path: Path) -> None:
     """A's browser queues the conversation B holds: A's model names it, and B tells its plugins."""
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(tmp_path / 'config.db'),
@@ -161,9 +161,7 @@ async def test_a_title_another_session_queued_reaches_the_session_holding_the_co
 
 async def test_startup_resume_precedes_plugins_and_commands_notify_them(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'settings.db')
-    saved = Session(
-        Agent(TestModel()), deps=None, conversations=SqliteConversationStore(database=tmp_path / 'sessions.db')
-    )
+    saved = Session(Agent(TestModel()), deps=None, conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'))
     await saved.prompt('earlier work')
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
         pipe.send_text(f'/new\n/resume {saved.conversation_id}\n/exit\n')
@@ -187,9 +185,7 @@ async def test_startup_resume_precedes_plugins_and_commands_notify_them(tmp_path
 
 
 async def test_startup_browser_opens_once_plugins_have_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    saved = Session(
-        Agent(TestModel()), deps=None, conversations=SqliteConversationStore(database=tmp_path / 'sessions.db')
-    )
+    saved = Session(Agent(TestModel()), deps=None, conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'))
     await saved.prompt('earlier work')
 
     def pick(browser: SessionBrowser) -> str:
@@ -292,9 +288,7 @@ async def test_a_name_a_save_already_adopted_still_reaches_plugins(tmp_path: Pat
 
 async def test_headless_resume_precedes_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    saved = Session(
-        Agent(TestModel()), deps=None, conversations=SqliteConversationStore(database=tmp_path / 'sessions.db')
-    )
+    saved = Session(Agent(TestModel()), deps=None, conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'))
     await saved.prompt('earlier work')
     monkeypatch.setattr(headless, 'create_agent', lambda: create_stock_agent(TestModel(call_tools=[])))
     store = SettingsStore(tmp_path / 'config.db')
@@ -322,7 +316,7 @@ class Resumer(Plugin):
 
 
 async def test_plugin_resumes_a_saved_conversation(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     saved = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
     await saved.prompt('earlier work')
     session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
@@ -384,7 +378,7 @@ async def test_a_plugin_command_switching_conversations_clears_the_footer(tmp_pa
 
 @pytest.mark.parametrize('failure', ['error', 'cancel'])
 async def test_a_failed_title_publication_still_finalizes_the_turn(tmp_path: Path, failure: str) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
 
     async def fail(event: ConversationChanged) -> None:

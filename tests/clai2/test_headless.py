@@ -10,7 +10,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.cli import cli, headless
 from pydantic_clai2.config import PluginSettings, Settings
@@ -58,7 +58,7 @@ async def test_answer_resume_and_no_ask_user(
         )
         == 0
     )
-    saved = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    saved = SqliteSessionStore(database=tmp_path / 'sessions.db')
     entries = await saved.listing()
     assert len(entries) == 1
     first = await saved.get(conversation_id=entries[0].id)
@@ -223,7 +223,7 @@ async def test_cancel_saves_history_and_closes_plugins(
                 await started.wait()
             tasks.cancel_scope.cancel()
     assert log.read_text() == 'cancelled:error'
-    saved = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    saved = SqliteSessionStore(database=tmp_path / 'sessions.db')
     entries = await saved.listing()
     assert entries[0].outcome == 'cancelled'
     assert capsys.readouterr().out == ''

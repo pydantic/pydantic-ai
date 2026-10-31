@@ -46,9 +46,9 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectRecord,
 )
 from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
     ConversationSummary,
-    SqliteConversationStore,
+    SessionConflict,
+    SqliteSessionStore,
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
@@ -119,7 +119,7 @@ async def _unless_locked(
         logging.getLogger(__name__).info('Skipped saving a %s: %s', kind, exc)
 
 
-def step_store(conversations: SqliteConversationStore) -> SessionStepStore:
+def step_store(conversations: SqliteSessionStore) -> SessionStepStore:
     """Where runs over `conversations`, delegated tasks' included, capture their steps."""
     return SessionStepStore(database=conversations.database, max_snapshots_per_run=8)
 
@@ -328,11 +328,11 @@ def fork_summary(source: ConversationSummary) -> ConversationSummary:
     )
 
 
-def busy_conflict(summary: ConversationSummary) -> ConversationConflict | None:
+def busy_conflict(summary: ConversationSummary) -> SessionConflict | None:
     """Why `summary` cannot be continued here, when a live process runs it; `None` when none does."""
     try:
         ensure_inactive(summary)
-    except ConversationConflict as conflict:
+    except SessionConflict as conflict:
         return conflict
     return None
 
@@ -357,11 +357,11 @@ class Continuation:
 
     conversation_id: str
     """The one asked for, or the existing fork of it that `busy` sends the resume to."""
-    busy: ConversationConflict | None = None
+    busy: SessionConflict | None = None
     """Why the one asked for cannot be continued here, when `conversation_id` is an existing fork of it."""
 
 
-async def continuing_fork(conversations: SqliteConversationStore, source: ConversationSummary) -> Continuation | None:
+async def continuing_fork(conversations: SqliteSessionStore, source: ConversationSummary) -> Continuation | None:
     """When a live process runs `source`, the newest copy CLAI made to continue it that no other process runs.
 
     Only those copies record `forked_from`; a fork the user asked for is theirs to open. `None` when nothing
@@ -452,7 +452,7 @@ class Session(Generic[DepsT, OutputT]):
         plugins: Sequence[AgentCapability[DepsT]] = (),
         message_history: Sequence[ModelMessage] = (),
         usage_limits: UsageLimits | None = None,
-        conversations: SqliteConversationStore | None = None,
+        conversations: SqliteSessionStore | None = None,
         workspace: Path | None = None,
         on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
         summary: ConversationSummary | None = None,
@@ -690,7 +690,7 @@ class Session(Generic[DepsT, OutputT]):
         allow_other_workspace: bool,
         record: bool,
         unarchive: bool,
-        busy: ConversationConflict | None = None,
+        busy: SessionConflict | None = None,
     ) -> str:
         """Restore `conversation_id`, or a new fork of it when a live process runs it.
 

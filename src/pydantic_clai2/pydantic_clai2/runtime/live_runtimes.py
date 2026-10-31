@@ -16,7 +16,7 @@ from typing import Protocol
 from anyio import CancelScope, Event, create_task_group, sleep
 from anyio.abc import TaskGroup, TaskStatus
 
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import LiveSession, SessionEndReason
 from pydantic_clai2.plugins.process_plugins import JoinedSessions, LiveRuntime, handling
@@ -78,7 +78,7 @@ class LiveRuntimes(JoinedSessions):
     def __init__(
         self,
         *,
-        conversations: SqliteConversationStore,
+        conversations: SqliteSessionStore,
         clock: Callable[[], float] = time.monotonic,
         idle_after: float = IDLE_AFTER,
         check_every: float = CHECK_EVERY,

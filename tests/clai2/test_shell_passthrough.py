@@ -21,7 +21,7 @@ from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2 import chat
 from pydantic_clai2.cli.shell_passthrough import (
     _ctrl_c_ignored,  # pyright: ignore[reportPrivateUsage]
@@ -324,7 +324,7 @@ async def test_shell_context_survives_exit_and_resume(tmp_path: Path, monkeypatc
         monkeypatch,
         ['!printf once >> marker; printf output', '!printf error >&2; exit 2', '/exit'],
     )
-    conversations = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    conversations = SqliteSessionStore(database=tmp_path / 'sessions.db')
     [summary] = await conversations.listing()
     saved = await conversations.get(conversation_id=summary.id)
     assert len(saved.messages) == 2

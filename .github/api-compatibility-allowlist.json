@@ -397,6 +397,18 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
     },
     {
+      "against": "v2.62.0",
+      "fingerprint": "dcb2431e1bbc812b56173506396ace190fe46904c4f5910fd353fe3861c75f7b",
+      "reason": "`pydantic_ai_harness.step_persistence.conversations.ConversationConflict` was renamed to `SessionConflict` (#10473), since core's `pydantic_ai.conversation_store` now uses the old name; the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10473"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "5086e5a6091c0cc551345ecb69342c5d4377191c4b9cd6a87dc317b29e08ff4f",
+      "reason": "`pydantic_ai_harness.step_persistence.conversations.SqliteConversationStore` was renamed to `SqliteSessionStore` (#10473), since core's `pydantic_ai.conversation_store` now uses the old name; the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10473"
+    },
+    {
       "against": "v2.63.0",
       "fingerprint": "0db3082753bca3bf3a60d72f9e3a16e0f3657081d2a83d3d268c4e890e9d609d",
       "reason": "Adds the new `output_speech_timestamps` setting's name to `RealtimeModelSettingName`, which lists every `RealtimeModelSettings` field; every existing name is unchanged.",

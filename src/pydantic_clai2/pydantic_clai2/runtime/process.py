@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Generic, Self
 
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import DepsT
@@ -28,7 +28,7 @@ class ClaiProcess(Generic[DepsT]):
     """
 
     store: SettingsStore
-    conversations: SqliteConversationStore
+    conversations: SqliteSessionStore
     """Saved conversations, in `sessions.db` beside the settings database."""
     tasks: TaskRouter
     """The one delegated-task owner; each session's `Tasks` is a view over it."""
@@ -45,7 +45,7 @@ class ClaiProcess(Generic[DepsT]):
     def open(cls, store: SettingsStore | None = None, *, builtin_plugins: Sequence[PluginSettings] = ()) -> Self:
         """The process over `store`, by default the user's settings database, with `builtin_plugins` shipped."""
         store = store or SettingsStore()
-        conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
+        conversations = SqliteSessionStore(database=store.path.with_name('sessions.db'))
         plugins = ProcessPlugins[DepsT](store=store, builtin=builtin_plugins)
         plugins.live = live = LiveRuntimes(conversations=conversations)
         return cls(

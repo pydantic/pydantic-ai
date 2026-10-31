@@ -15,7 +15,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationSummary,
-    SqliteConversationStore,
+    SqliteSessionStore,
     conversation_text,
 )
 from pydantic_clai2.runtime.imported_sessions import with_source_tags
@@ -93,7 +93,7 @@ class SessionNamer:
     Revision/version checks reject late results after content or manual edits.
     """
 
-    def __init__(self, *, store: SqliteConversationStore, timeout: float = 60) -> None:
+    def __init__(self, *, store: SqliteSessionStore, timeout: float = 60) -> None:
         """Bind dependencies without spawning a task."""
         self.store = store
         self.timeout = timeout

@@ -40,7 +40,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RequestUsage
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
 from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, is_task_report
 from pydantic_clai2 import chat
 from pydantic_clai2.app import create_stock_agent
@@ -560,7 +560,7 @@ async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
     assert (child.prompt, child.outcome, child.delivered, child.resumable) == ('Look deeper', 'cancelled', True, True)
     assert child.output.startswith('Stopped in Claude Code before it reported.')
     assert parts(child.messages) == [('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'UserPromptPart'])]
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     async with DelegationTasks(directory=tmp_path / 'tasks').opened() as owner:
         conversation_id = await save_import(store, find_import('claude', CLAUDE_ID), delegations=owner)
         assert owner.records[review.id].conversation_id == conversation_id
@@ -602,7 +602,7 @@ async def test_resume_by_id_saves_sub_agents_before_the_task_owner_opens(tmp_pat
 
 
 async def test_reimport_keeps_a_task_resumed_on_disk(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     path = claude_agent_session(tmp_path)
     await save_import(
         store, find_import('claude', CLAUDE_ID), delegations=DelegationTasks(directory=tmp_path / 'tasks')
@@ -1137,7 +1137,7 @@ async def test_catalog_lists_both_agents_newest_first(tmp_path: Path) -> None:
 
 
 async def test_import_refreshes_only_an_untouched_copy(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     path = codex_session(tmp_path)
     imported = find_import('codex', CODEX_ID)
     conversation_id = await save_import(store, imported)
@@ -1175,7 +1175,7 @@ async def test_import_rejects_a_session_without_a_conversation(tmp_path: Path) -
     prompt = {'type': 'user', 'uuid': 'u', 'cwd': '/w', 'message': {'content': 'Hello'}}
     path = write_jsonl(Path.home() / '.claude' / 'projects' / '-w' / 'synthetic.jsonl', [prompt])
     os.utime(path, (1_000, 1_000))
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     conversation_id = await save_import(store, find_import('claude', 'synthetic'))
     previous = await store.get(conversation_id=conversation_id)
     # Claude Code then ended on a notice of its own, leaving nothing to continue.
@@ -1187,8 +1187,8 @@ async def test_import_rejects_a_session_without_a_conversation(tmp_path: Path) -
     assert await store.get(conversation_id=conversation_id) == previous
 
 
-def sessions_service(tmp_path: Path) -> tuple[Sessions[None, str], SqliteConversationStore]:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+def sessions_service(tmp_path: Path) -> tuple[Sessions[None, str], SqliteSessionStore]:
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     agent = Agent(TestModel(call_tools=[], custom_output_text='continued'))
     session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
     context = CommandContext(
@@ -1369,7 +1369,7 @@ async def test_startup_flags_import_through_chat_and_headless(
     )
     assert code == 0
     assert capsys.readouterr().out == 'headless answer\n'
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     codex = next(entry for entry in await store.listing() if entry.tags == ('codex',))
     saved = await store.get(conversation_id=codex.id)
     assert 'Add a --verbose flag' in str(saved.messages[0].parts)

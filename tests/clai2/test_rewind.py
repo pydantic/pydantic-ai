@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
-from pydantic_ai_harness.step_persistence.conversations import ConversationConflict
+from pydantic_ai_harness.step_persistence.conversations import SessionConflict
 from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2 import chat
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -266,7 +266,7 @@ async def test_save_conflict_preserves_history_and_draft(tmp_path: Path) -> None
     script = Script(lists=[pick(point)], choices=[], texts=[])
     async with editor() as (live, _, _):
         live.buffer.replace('keep draft')
-        with pytest.raises(ConversationConflict):
+        with pytest.raises(SessionConflict):
             await rewind(session, live, runners=script.runners)
         assert live.buffer.text == 'keep draft'
     assert session.messages == before
