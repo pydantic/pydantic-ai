@@ -3929,7 +3929,7 @@ What changes for a process-scoped plugin:
 | `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. A conversation another process runs continues in a fork of it, reusing one saved before, so the session's `conversation.conversation_id` differs from the one passed. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
 | `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where CLAI opens no other sessions |
 | `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `clai2 --web` or `clai2 -p` started with. A host built outside CLAI's shell raises `RuntimeError` |
-| `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued (including an edit of its queue), or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
+| `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued (including an edit of its queue), waiting-for-user, or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
 
 Never await `open` or `new` from `on_session_start`: the new session waits for the
 plugins still loading.
@@ -3947,6 +3947,8 @@ A `LiveSession` is one live session:
 | `tasks` | its delegated tasks, or `None` |
 | `forks` | its background `/fork` runs, oldest first, each a `ForkInfo` as `/forks` lists it |
 | `running` | whether a turn runs in it now |
+| `waiting_for` | the most recent open user wait's reason, or `None` when none is open; CLAI tracks `ask_user` questions automatically |
+| `wait_for_user(reason)` | mark a user wait, such as an approval dialog, until you call the idempotent function it returns; pair the call with `finally` so cancellation cannot leave a stale wait |
 | `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
 | `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |
@@ -3958,6 +3960,29 @@ A `LiveSession` is one live session:
 | `send_input(text, images=())` | enter `text` at its prompt, with `images` attached, as its `host.send_input` does |
 | `interrupt()` | cancel its running turn or command; `False` when nothing was running |
 | `await complete(text)` | what Tab offers at its prompt for `text` |
+
+Process-scoped plugins can read `waiting_for` through `host.live.listing()`, `get(id)`, or
+`current()`. `host.live.subscribe()` notifies them when a wait starts or ends. CLAI reports
+`ask_user` waits automatically; a plugin can mark another user interaction without depending
+on a concrete runtime class:
+
+```python
+from collections.abc import Awaitable, Callable
+
+from pydantic_clai2.plugins import LiveSession
+
+
+async def confirm_with_status(session: LiveSession, *, confirm: Callable[[], Awaitable[bool]]) -> bool:
+    finished = session.wait_for_user('an approval')
+    try:
+        return await confirm()
+    finally:
+        finished()
+```
+
+The callback ends only its own wait, even if another interaction starts meanwhile. Call it
+in `finally`, including when the interaction is cancelled. `waiting_for` becomes `None` once
+all waits have ended.
 
 With one session, as in a terminal where the web UI opened no other, `host.live`
 lists just that one. `open` and `new` raise `RuntimeError` only where CLAI opens no

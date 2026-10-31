@@ -12,13 +12,13 @@ from collections.abc import Generator
 from contextlib import closing, contextmanager
 from functools import cache
 from pathlib import Path
-from uuid import uuid4
 
 import keyring
 from cryptography.fernet import Fernet, InvalidToken
 from keyring.errors import InitError, KeyringError, NoKeyringError, PasswordDeleteError
 
 from pydantic_ai.exceptions import UserError
+from pydantic_clai2.config.private_files import write_private as _write_private
 
 _SERVICE = 'pydantic-clai2'
 _ACCOUNT = 'openai-codex'
@@ -75,6 +75,13 @@ def profile_accounts() -> list[str]:
     return sorted(name.replace(_SLASH, '/') for name in names)
 
 
+def write_private(*, path: Path, value: str, replace: bool = True) -> None:
+    """Publish credential data privately, cleaning up abandoned staging files first."""
+    for stale in path.parent.glob(f'{path.name}.*.tmp'):
+        stale.unlink(missing_ok=True)
+    _write_private(path, value, replace=replace)
+
+
 @contextmanager
 def credential_lock(*, account: str, busy: str) -> Generator[None]:
     """Serialize one account's read-modify-write across processes; the SQLite lock file holds no secrets.
@@ -89,30 +96,6 @@ def credential_lock(*, account: str, busy: str) -> Generator[None]:
             yield
     except sqlite3.Error:
         raise UserError(busy) from None
-
-
-def write_private(*, path: Path, value: str, replace: bool = True) -> None:
-    """Publish the file atomically, without ever writing through something already there.
-
-    A unique staging name plus `O_EXCL` means a symlink planted where the staging file
-    would go is refused rather than followed, concurrent saves cannot collide, and the
-    `0600` mode applies to a file this call created rather than an attacker's choice.
-    `replace=False` raises `FileExistsError` instead of replacing a file another process wrote first.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    for stale in path.parent.glob(f'{path.name}.*.tmp'):
-        stale.unlink(missing_ok=True)  # A killed write must not leave tokens on disk.
-    staging = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    descriptor = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
-            file.write(value)
-        if replace:
-            os.replace(staging, path)
-        else:
-            os.link(staging, path)
-    finally:
-        staging.unlink(missing_ok=True)  # No-op once the replace succeeded.
 
 
 @cache

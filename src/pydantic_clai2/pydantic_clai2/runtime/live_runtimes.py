@@ -8,7 +8,7 @@ opened with `open` or `new` run here, each as a task of `serving`, and close aft
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable, Generator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -20,6 +20,7 @@ from pydantic_ai_harness.step_persistence.conversations import SqliteConversatio
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import LiveSession, SessionEndReason
 from pydantic_clai2.plugins.process_plugins import JoinedSessions, LiveRuntime, handling
+from pydantic_clai2.runtime.live_registry import LiveRegistry
 from pydantic_clai2.runtime.session import continuing_fork
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 
@@ -100,6 +101,7 @@ class LiveRuntimes(JoinedSessions):
         self._switching: dict[str, Event] = {}
         """Sessions resuming another conversation, by ID, set once they have."""
         self._building = False
+        self.registry = LiveRegistry(self.listing)
 
     def listing(self) -> list[LiveSession]:
         """Every live session, oldest first, leaving out those `open` and `new` are still loading."""
@@ -170,18 +172,23 @@ class LiveRuntimes(JoinedSessions):
         What the block raises propagates as it is, not in an exception group.
         """
         try:
-            async with create_task_group() as group:
-                # Set at once: a browser may open a session as soon as the web UI it serves is up.
-                self._group = group
-                group.start_soon(self._close_idle_ones)
+            async with AsyncExitStack() as stack:
                 try:
-                    # A new sessions database switches to WAL on first use, which fails at once when two sessions'
-                    # first saves race, so make it before the sessions opened from here run.
-                    await self._conversations.listing(limit=1)
-                    yield
-                finally:
-                    self._group = None
-                    group.cancel_scope.cancel()
+                    await stack.enter_async_context(self.registry.serving(self.subscribe))
+                except OSError as exc:
+                    _LOGGER.warning('Live session discovery unavailable: %s', exc)
+                async with create_task_group() as group:
+                    # Set at once: a browser may open a session as soon as the web UI it serves is up.
+                    self._group = group
+                    group.start_soon(self._close_idle_ones)
+                    try:
+                        # A new sessions database switches to WAL on first use, which fails at once when two sessions'
+                        # first saves race, so make it before the sessions opened from here run.
+                        await self._conversations.listing(limit=1)
+                        yield
+                    finally:
+                        self._group = None
+                        group.cancel_scope.cancel()
         except BaseExceptionGroup as errors:
             if len(errors.exceptions) == 1:
                 raise errors.exceptions[0] from None

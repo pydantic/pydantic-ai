@@ -76,6 +76,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--database PATH` | Use another settings database (and session folder) |
 | `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell |
 | `clai2 plugins ...` | Edit saved plugin declarations from your shell; they load on the next start |
+| `clai2 sessions` | On Unix, list live sessions by unique ID prefix, folder name, status, title, and workspace |
 
 ### Settings
 
@@ -2153,6 +2154,8 @@ Custom agents are unchanged. To offer the same guide, add
 See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions
+
+On Unix, `clai2 sessions` lists sessions currently open in CLAI processes under your user account, including idle sessions and turns waiting for an `ask_user` answer. It prints `No live sessions.` when none are reachable. Windows reports that Unix sockets are required and exits unsuccessfully. The command does not resume, control, or message sessions. Each row starts with a live-session ID prefix, extended until it is unique across the discovered processes; the folder name is display only. A live process writes its identity and socket path once to a private state file. A same-user `hello` request checks its identity and returns its current sessions, including status transitions tracked in memory. Stale or unreachable processes are not shown; a session listing that exceeds the reply-size bound reports an error instead of silently disappearing. Saved conversations that are not open remain available through `/resume`.
 
 ### Saved sessions and `/resume`
 

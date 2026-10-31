@@ -2,10 +2,13 @@
 
 import gc
 import io
+import json
 import os
 import re
+import sys
 import weakref
 from collections.abc import AsyncIterator, Callable
+from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import ClassVar
 
@@ -17,17 +20,24 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.app import HEADER
-from pydantic_clai2.cli import web as web_module
+from pydantic_clai2.cli import cli, web as web_module
 from pydantic_clai2.cli.web import run_web
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import LiveSession, LiveSessions, Plugin, SessionEnd, SessionEndReason
-from pydantic_clai2.plugins.process_plugins import JoinedSessions, handling
+from pydantic_clai2.plugins import LiveSession, LiveSessions, Plugin, PluginHost, SessionEnd, SessionEndReason
+from pydantic_clai2.plugins.process_plugins import JoinedSessions, LiveRuntime, handling
+from pydantic_clai2.runtime.live_registry import (
+    ControlProtocolError,
+    LiveProcess,
+    LiveRegistry,
+    listing as live_listing,
+)
 from pydantic_clai2.runtime.live_runtimes import LiveRuntimes
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
@@ -148,6 +158,151 @@ def blocked(
     return Agent(FunctionModel(stream_function=stream))
 
 
+async def test_registry_tracks_open_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The real session lifecycle advertises fresh sessions without rewriting process discovery metadata."""
+    fleet = Fleet(tmp_path)
+    async with fleet.live.serving():
+        home = await fleet.live.new(workspace=fleet.folder('home'))
+        records = await live_listing()
+        assert len(records) == 1
+        assert [(session.id, session.name) for session in records[0].sessions] == [(home.id, 'home')]
+        record = fleet.live.registry.directory / f'{os.getpid()}.json'
+        metadata = record.read_bytes()
+        metadata_stat = record.stat()
+        started = records[0].sessions[0].status_since
+        assert started is not None
+        transition = started + timedelta(seconds=1)
+        clock = [transition]
+
+        class Clock:
+            @staticmethod
+            def now(tz: tzinfo | None = None) -> datetime:
+                return clock[0]
+
+        monkeypatch.setattr('pydantic_clai2.runtime.live_registry.datetime', Clock)
+        monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+        await anyio.to_thread.run_sync(cli.run)
+        assert (
+            capsys.readouterr().out
+            == f'ID\tName\tStatus\tTitle\tWorkspace\n{home.id[:8]}\thome\tidle\t\t{home.workspace}\n'
+        )
+        host = PluginHost[None](name='observer', console=Console(file=io.StringIO()), settings={}, live=fleet.live)
+        live = host.live
+        assert live is not None
+        observed: list[str | None] = []
+        unsubscribe = live.subscribe(lambda: observed.append(live.get(home.id).waiting_for))
+        with pytest.raises(ValueError, match='must not be empty'):
+            live.get(home.id).wait_for_user('')
+        finished = live.get(home.id).wait_for_user('approval')
+        assert home.waiting_for == 'approval'
+        clock[0] = transition + timedelta(seconds=1)
+        waiting = fleet.live.registry.snapshot().sessions[0]
+        assert waiting.status == 'waiting'
+        assert waiting.status_since == transition, 'the transition was recorded before a lister requested it'
+        second = home.wait_for_user('a question')
+        assert home.waiting_for == 'a question'
+        second()
+        second()  # Releasing a wait twice leaves the earlier one intact.
+        assert home.waiting_for == 'approval'
+        finished()
+        assert home.waiting_for is None
+        assert observed == ['approval', 'a question', 'approval', None]
+        assert live.listing()[0].waiting_for is None
+        unsubscribe()
+        assert record.read_bytes() == metadata
+        assert (record.stat().st_ino, record.stat().st_mtime_ns) == (metadata_stat.st_ino, metadata_stat.st_mtime_ns)
+        await fleet.live.close(home.id)
+        await until(fleet.live, lambda: not fleet.live.listing())
+        await anyio.to_thread.run_sync(cli.run)
+        assert capsys.readouterr().out == 'No live sessions.\n'
+    assert await live_listing() == []
+
+
+async def test_cli_session_id_prefixes_are_unique_across_processes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def session(identifier: str) -> LiveRuntime:
+        host = PluginHost[None](
+            name='peer', console=Console(file=io.StringIO()), settings={}, workspace=lambda: tmp_path / 'home'
+        )
+        return LiveRuntime(live_id=identifier, host=host, running=lambda: False)
+
+    first = LiveRegistry(lambda: [session('deadbeef0' + '0' * 23)])
+    second = LiveRegistry(lambda: [session('deadbeef1' + '0' * 23)])
+    second.pid = os.getppid()  # A second live process identity, without spawning a subprocess.
+    monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+    async with first.serving(lambda callback: lambda: None), second.serving(lambda callback: lambda: None):
+        await anyio.to_thread.run_sync(cli.run)
+        lines = capsys.readouterr().out.splitlines()
+        assert lines[0] == 'ID\tName\tStatus\tTitle\tWorkspace'
+        assert {line.split('\t')[0] for line in lines[1:]} == {'deadbeef0', 'deadbeef1'}
+        assert {line.split('\t')[1] for line in lines[1:]} == {'home'}
+
+
+def test_cli_listing_errors_are_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def failed_listing() -> list[LiveProcess]:
+        raise ControlProtocolError('Live-session response is too large')
+
+    monkeypatch.setattr('pydantic_clai2.runtime.live_registry.listing', failed_listing)
+    monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+    with pytest.raises(SystemExit, match='too large'):
+        cli.run()
+
+
+async def test_unsafe_socket_folder_does_not_stop_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unsafe runtime path disables discovery rather than preventing the session from starting."""
+    runtime = tmp_path / 'runtime'
+    runtime.mkdir(mode=0o700)
+    (runtime / f'pydantic-clai2-{os.getuid()}').mkdir(mode=0o755)
+    (runtime / f'pydantic-clai2-{os.getuid()}').chmod(0o755)
+    monkeypatch.setenv('XDG_RUNTIME_DIR', str(runtime))
+    fleet = Fleet(tmp_path)
+    async with fleet.live.serving():
+        home = await fleet.live.new(workspace=fleet.folder('home'))
+        assert home.id in [session.id for session in fleet.live.listing()]
+        await fleet.live.close(home.id)
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+async def test_question_status_follows_answer_and_turn_end(tmp_path: Path, cancel: bool) -> None:
+    """The runtime tracks real ask_user events through the public waiting-status contract."""
+    started = anyio.Event()
+    release = anyio.Event()
+
+    async def answer(request: AskUserRequest) -> AskUserResponse:
+        started.set()
+        await release.wait()
+        return AskUserResponse(cancelled=True)
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            questions = {
+                'questions': [{'header': 'Choice', 'question': 'Pick one', 'options': [{'label': 'A'}, {'label': 'B'}]}]
+            }
+            yield {0: DeltaToolCall(name='ask_user_question', json_args=json.dumps(questions))}
+        else:
+            yield 'done'
+
+    fleet = Fleet(tmp_path)
+    fleet.agents['home'] = Agent(FunctionModel(stream_function=respond), capabilities=[AskUser(answerer=answer)])
+    with anyio.fail_after(20):
+        async with fleet.live.serving():
+            home = await fleet.live.new(workspace=fleet.folder('home'))
+            home.send_input('go')
+            await until(fleet.live, lambda: home.running)
+            await started.wait()
+            assert fleet.live.registry.snapshot().sessions[0].status == 'waiting'
+            if cancel:
+                assert home.interrupt()
+            else:
+                release.set()
+            await until(fleet.live, lambda: not home.running)
+            assert home.waiting_for is None
+            assert fleet.live.registry.snapshot().sessions[0].status == 'idle'
+
+
 async def test_sessions_stream_at_once_and_an_interrupt_stops_only_its_own(tmp_path: Path) -> None:
     """Two turns overlap; input sent meanwhile is queued; interrupting A leaves B running to completion."""
     fleet = Fleet(tmp_path)
@@ -168,6 +323,10 @@ async def test_sessions_stream_at_once_and_an_interrupt_stops_only_its_own(tmp_p
             await started['a'].wait()
             await started['b'].wait()
             assert a.running and b.running, 'both turns run at once'
+            finished = b.wait_for_user('a question')
+            assert fleet.live.registry.snapshot().sessions[1].status == 'waiting'
+            finished()
+            assert fleet.live.registry.snapshot().sessions[1].status == 'running'
             b.send_input('and then')
             assert (a.queued, b.queued) == (0, 1)
             assert a.interrupt()

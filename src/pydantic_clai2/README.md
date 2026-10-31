@@ -277,6 +277,11 @@ With `/web` running, the browser can open other sessions while this one runs. `/
 of one of them shows it here, even mid-turn, instead of copying it; the session you
 left keeps running in the browser.
 
+On Unix, `clai2 sessions` lists live sessions across your terminal tabs and processes,
+including idle sessions and those waiting for an answer. It shows unique session-ID
+prefixes and folder names without opening a session or starting a turn. See
+[Sessions](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#sessions).
+
 ### Work in the background: `/fork`
 
 `/fork PROMPT` runs a copy of the conversation in the background while you keep working.
