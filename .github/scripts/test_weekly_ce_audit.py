@@ -181,9 +181,16 @@ def test_policy_validation_ignores_external_diff(repository: tuple[Path, str]):
     git(root, 'config', 'diff.external', str(hook))
     git(root, 'config', 'diff.trustExitCode', 'true')
     (root / 'AGENTS.md').write_text('Changed policy\n')
-    git(root, 'diff', '--quiet', source, '--')
+    git(root, 'diff', source, '--')
     assert marker.exists()
     marker.unlink()
+    # Older Git skips external helpers under --quiet.
+    result = subprocess.run(['git', '-C', str(root), 'diff', '--quiet', source, '--'], check=False)
+    if marker.exists():
+        assert result.returncode == 0
+        marker.unlink()
+    else:
+        assert result.returncode == 1
     with pytest.raises(subprocess.CalledProcessError):
         validate_policy_checkout(root, source, root / '.ce-audit')
     assert not marker.exists()
@@ -383,7 +390,10 @@ def test_workflow_retains_separate_pr_sink_and_protected_review():
     assert "jq 'add'" in preflight
 
 
-def test_preflight_writes_noop_before_inference(repository: tuple[Path, str], monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize('existing_parent', [False, True])
+def test_preflight_writes_noop_before_inference(
+    repository: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, existing_parent: bool
+):
     """An existing workflow PR produces a terminal safe output without invoking a model."""
     root, source = repository
     prs = root / '.ce-audit/prs.json'
@@ -400,7 +410,9 @@ def test_preflight_writes_noop_before_inference(repository: tuple[Path, str], mo
             ]
         )
     )
-    sink = root / '.ce-audit/safeoutputs.jsonl'
+    sink = root / 'runtime/safeoutputs/outputs.jsonl'
+    if existing_parent:
+        sink.parent.mkdir(parents=True)
     monkeypatch.setattr(
         sys,
         'argv',
@@ -482,6 +494,24 @@ def test_submitted_proposal(output: object, expected: tuple[str, dict[str, objec
         ({'items': {}}, 'Invalid agent output items'),
         ({'items': [None]}, 'Expected an object'),
         ({'items': [{'type': 'create_pull_request', 'branch': 'other'}]}, 'Invalid weekly audit branch'),
+        (
+            {
+                'items': [
+                    {'type': 'noop'},
+                    {'type': 'create_pull_request', 'branch': 'gh-aw/weekly-ce-audit-one'},
+                ]
+            },
+            'A noop cannot publish a pull request',
+        ),
+        (
+            {
+                'items': [
+                    {'type': 'create_pull_request', 'branch': 'gh-aw/weekly-ce-audit-one'},
+                    {'type': 'noop'},
+                ]
+            },
+            'A noop cannot publish a pull request',
+        ),
         (
             {
                 'items': [
@@ -653,6 +683,44 @@ def test_main_prepares_review_bundle(
     assert (directory / 'review/candidate.diff').read_bytes() == git(
         root, 'diff', '--no-ext-diff', '--no-textconv', source, revision, '--'
     )
+
+
+def test_publication_rejects_noop_with_reviewed_proposal(
+    reviewed_candidate: tuple[Path, str, str, dict[str, object]], monkeypatch: pytest.MonkeyPatch
+):
+    """Reject contradictory outcomes even when the candidate has valid independent review."""
+    root, source, _, proposal = reviewed_candidate
+    directory = root / '.ce-audit'
+    frozen_issues = root / 'host-issues'
+    frozen_issues.mkdir()
+    output = directory / 'agent-output.json'
+    items: list[dict[str, object]] = [{'type': 'create_pull_request', **proposal}]
+    output.write_text(json.dumps({'items': items}))
+    monkeypatch.setattr(
+        sys,
+        'argv',
+        [
+            'audit',
+            'validate',
+            '--root',
+            str(root),
+            '--source',
+            source,
+            '--directory',
+            str(directory),
+            '--agent-output',
+            str(output),
+            '--agent-log',
+            str(directory / 'review/task.log'),
+            '--issue-evidence',
+            str(frozen_issues),
+        ],
+    )
+    main()
+    items.append({'type': 'noop', 'message': 'No change'})
+    output.write_text(json.dumps({'items': items}))
+    with pytest.raises(ValueError, match='A noop cannot publish a pull request'):
+        main()
 
 
 def test_independent_review_binds_candidate_and_metadata(reviewed_candidate: tuple[Path, str, str, dict[str, object]]):

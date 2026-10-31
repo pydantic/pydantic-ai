@@ -252,8 +252,11 @@ def submitted_proposal(output: object) -> tuple[str, dict[str, object]] | None:
     """Validate the sole PR proposal independently of the final checkout."""
     items = sequence(mapping(output).get('items'), 'Invalid agent output items')
     proposal: tuple[str, dict[str, object]] | None = None
+    has_noop = False
     for item in items:
         row = mapping(item)
+        if row.get('type') == 'noop':
+            has_noop = True
         if row.get('type') != 'create_pull_request':
             continue
         branch = row.get('branch')
@@ -262,6 +265,8 @@ def submitted_proposal(output: object) -> tuple[str, dict[str, object]] | None:
         if proposal is not None:
             raise ValueError('Only one focused PR is permitted')
         proposal = f'refs/heads/{branch}', row
+    if has_noop and proposal is not None:
+        raise ValueError('A noop cannot publish a pull request')
     return proposal
 
 
@@ -490,6 +495,7 @@ def main() -> None:
             if number is not None:
                 if args.safe_outputs is None:
                     raise ValueError('Cannot skip inference without a safe-output path')
+                args.safe_outputs.parent.mkdir(parents=True, exist_ok=True)
                 with args.safe_outputs.open('a') as stream:
                     stream.write(
                         json.dumps({'type': 'noop', 'message': f'Existing weekly CE audit PR #{number}'}) + '\n'
