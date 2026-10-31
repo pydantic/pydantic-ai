@@ -101,6 +101,12 @@ except ImportError as _import_error:
 import httpx
 
 
+class _ChatCompletionAssistantMessageParam(chat.ChatCompletionAssistantMessageParam, total=False):
+    """An assistant message carrying Groq's `reasoning` input field, which older `groq` SDKs don't declare."""
+
+    reasoning: str | None
+
+
 @contextmanager
 def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Generator[None]:
     try:
@@ -617,12 +623,14 @@ class GroqModel(Model[AsyncGroq]):
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         groq_messages: list[chat.ChatCompletionMessageParam] = []
+        send_back_thinking = self.profile.get('groq_send_back_thinking_parts', 'tags')
         for message in messages:
             if isinstance(message, ModelRequest):
                 async for item in self._map_user_message(message):
                     groq_messages.append(item)
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
+                thinkings: list[str] = []
                 tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
@@ -630,8 +638,12 @@ class GroqModel(Model[AsyncGroq]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                        texts.append('\n'.join([start_tag, item.content, end_tag]))
+                        if send_back_thinking == 'field':
+                            if item.content:
+                                thinkings.append(item.content)
+                        else:
+                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
+                            texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                         # These are not currently sent back
                         pass
@@ -646,7 +658,9 @@ class GroqModel(Model[AsyncGroq]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
-                message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
+                message_param = _ChatCompletionAssistantMessageParam(role='assistant')
+                if thinkings:
+                    message_param['reasoning'] = '\n\n'.join(thinkings)
                 if texts:
                     # Note: model responses from this model should only have one text item, so the following
                     # shouldn't merge multiple texts into one unless you switch models between runs:

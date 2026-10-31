@@ -45,6 +45,18 @@ class GroqModelProfile(ModelProfile, total=False):
     The qwen3 family instead only accepts `none`/`default` (see `groq_supports_reasoning_disable`).
     """
 
+    groq_send_back_thinking_parts: Literal['tags', 'field']
+    """How thinking from message history is sent back to the model. Default: `'tags'`.
+
+    * `'tags'`: as text in the assistant message's `content`, enclosed in the `thinking_tags`.
+    * `'field'`: in the assistant message's `reasoning` field.
+
+    Only the gpt-oss family uses `'field'`: Groq always returns its reasoning in that field (it doesn't support
+    `reasoning_format`, see [the Groq docs](https://console.groq.com/docs/reasoning#reasoning-format)), and
+    replaying it as `<think>`-tagged content instead teaches the model to write those tags into its own
+    replies.
+    """
+
 
 def groq_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for a Groq model."""
@@ -73,4 +85,5 @@ def groq_model_profile(model_name: str) -> ModelProfile:
         thinking_always_enabled=is_reasoning_model and not is_qwen3,
         groq_supports_reasoning_disable=is_qwen3,
         groq_supports_graded_reasoning_effort=is_gpt_oss,
+        groq_send_back_thinking_parts='field' if is_gpt_oss else 'tags',
     )

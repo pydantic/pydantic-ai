@@ -78,6 +78,8 @@ Pydantic AI sends a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from mes
 
 Where the provider's own reasoning channel is available — a signed thinking block, an encrypted reasoning item, a dedicated `reasoning` field — that is what carries it. Each of those channels checks a credential the provider minted, a signature or the id it issued for the item, so the channel is only open for a part that still has one and came from a provider that can verify it: the same provider, or one with the same [canonical system](../message-history.md#sending-history-to-another-provider), such as the OpenAI API for reasoning from the Codex backend, or Bedrock for Claude's thinking from the Anthropic API. A part that lost it on a round trip through storage, was rebuilt by a [history processor](../message-history.md#processing-message-history), or came from a model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] chain with another canonical system can't use it; Pydantic AI then writes the reasoning out as text in the model's thinking tags rather than dropping it.
 
+A `reasoning` field that checks no credential takes every part instead, whichever model produced it. Groq's gpt-oss family works this way, because replaying its reasoning as tagged text teaches it to write the tags into its replies — see [Groq](#groq).
+
 Anthropic is the exception to both *where* that text goes and *how* it is tagged — see [Carried-over thinking](#carried-over-thinking).
 
 ## Changing effort mid-conversation
@@ -357,6 +359,8 @@ Groq supports different formats to receive thinking parts:
 - `"raw"`: The thinking part is included in the text content inside `<think>` tags, which are automatically converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
 - `"hidden"`: The thinking part is not included in the text content.
 - `"parsed"`: The thinking part has its own structured part in the response which is converted into a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] object.
+
+The gpt-oss family [doesn't accept `reasoning_format`](https://console.groq.com/docs/reasoning#reasoning-format) and always returns its reasoning in that structured field, so [thinking from message history](#thinking-in-message-history) goes back to it in the same field. Other Groq models get it back as text in `<think>` tags. [`groq_send_back_thinking_parts`][pydantic_ai.profiles.groq.GroqModelProfile.groq_send_back_thinking_parts] sets which a model gets.
 
 The unified [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] setting works across providers: it selects `reasoning_format='parsed'` so thinking parts are returned, and for the gpt-oss family its effort level also drives Groq's `reasoning_effort` (`minimal`/`low` → `'low'`, `medium` → `'medium'`, `high`/`xhigh`/`max` → `'high'`, `True` → `'medium'`).
 
