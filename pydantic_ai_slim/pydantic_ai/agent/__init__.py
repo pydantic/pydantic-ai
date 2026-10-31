@@ -101,6 +101,7 @@ from ..capabilities.abstract import (
     _declares_default_id,  # pyright: ignore[reportPrivateUsage]
     _reject_class_crossing_id,  # pyright: ignore[reportPrivateUsage]
     _repeated_id_message,  # pyright: ignore[reportPrivateUsage]
+    _RunIdInputs,  # pyright: ignore[reportPrivateUsage]
     leaf_capabilities,
     select_workspace,
 )
@@ -1803,10 +1804,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # resolved, as before), so its `ModelSelectionContext` sees the run's ids, deadline and usage limits
         # like later steps' do. Inside a durable workflow or flow, the durability capability supplies the
         # default ids, so a re-execution of this code gets the same ones.
-        resolved_run_id = _agent_graph.resolve_run_id(
-            run_id if run_id is not None else bootstrap_capability.get_default_run_id(),
-            message_history,
-        )
+        if run_id is None:
+            run_id = await bootstrap_capability._get_default_run_id_for_inputs(  # pyright: ignore[reportPrivateUsage]
+                functools.partial(
+                    self._get_run_id_inputs,
+                    user_prompt=user_prompt,
+                    message_history=message_history,
+                    conversation_id=conversation_id,
+                    deps=deps,
+                    metadata=metadata,
+                    spec_metadata=resolved.metadata if resolved is not None else None,
+                )
+            )
+        resolved_run_id = _agent_graph.resolve_run_id(run_id, message_history)
         state = _agent_graph.GraphAgentState(
             message_history=list(message_history) if message_history else [],
             usage=usage,
@@ -2338,21 +2348,53 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             resolve_metadata=functools.partial(self._resolve_and_store_metadata, metadata=metadata),
         )
 
+    def _get_run_id_inputs(
+        self,
+        *,
+        user_prompt: str | Sequence[_messages.UserContent] | None,
+        message_history: Sequence[_messages.ModelMessage] | None,
+        conversation_id: str | None,
+        deps: AgentDepsT,
+        metadata: AgentMetadata[AgentDepsT] | None,
+        spec_metadata: dict[str, object] | None,
+    ) -> _RunIdInputs:
+        first, *remaining = self._get_metadata_sources(metadata, spec_metadata=spec_metadata)
+        # Metadata callbacks receive IDs, so only static values can determine those same IDs.
+        static_metadata = first if first is not None and not callable(first) else None
+        for source in remaining:
+            if source is not None and not callable(source):
+                static_metadata = _merge_metadata(static_metadata, source)
+        return {
+            'prompt': user_prompt,
+            'messages': list(message_history) if message_history else [],
+            # Result caching drops these IDs for cross-run reuse, but identity retains its lineage.
+            'message_history_ids': [(message.run_id, message.conversation_id) for message in message_history or ()],
+            'conversation_id': conversation_id,
+            'deps': deps,
+            'metadata': static_metadata or None,
+        }
+
+    def _get_metadata_sources(
+        self,
+        additional_metadata: AgentMetadata[AgentDepsT] | None,
+        *,
+        spec_metadata: dict[str, object] | None = None,
+    ) -> tuple[AgentMetadata[AgentDepsT] | None, ...]:
+        metadata_override = self._override_metadata.get()
+        if metadata_override is not None:
+            return (metadata_override.value,)
+        return self._metadata, spec_metadata, additional_metadata
+
     def _get_metadata(
         self,
         ctx: RunContext[AgentDepsT],
         additional_metadata: AgentMetadata[AgentDepsT] | None = None,
     ) -> dict[str, Any] | None:
-        metadata_override = self._override_metadata.get()
-        if metadata_override is not None:
-            return self._resolve_metadata_config(metadata_override.value, ctx)
-
-        base_metadata = self._resolve_metadata_config(self._metadata, ctx)
-        run_metadata = self._resolve_metadata_config(additional_metadata, ctx)
-
-        if base_metadata and run_metadata:
-            return {**base_metadata, **run_metadata}
-        return run_metadata or base_metadata
+        first, *remaining = self._get_metadata_sources(additional_metadata)
+        metadata = self._resolve_metadata_config(first, ctx)
+        for source in remaining:
+            metadata = _merge_metadata(metadata, self._resolve_metadata_config(source, ctx))
+        return metadata
 
     def _resolve_metadata_config(
         self,
@@ -5139,6 +5181,12 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 finally:
                     if agent_run.result is not None:
                         self.resolve_metadata(agent_run.ctx)
+
+
+def _merge_metadata(base: dict[str, object] | None, additional: dict[str, object] | None) -> dict[str, object] | None:
+    if base and additional:
+        return {**base, **additional}
+    return additional or base
 
 
 def _cancellation_error_types(capability: AbstractCapability[Any]) -> tuple[type[BaseException], ...]:

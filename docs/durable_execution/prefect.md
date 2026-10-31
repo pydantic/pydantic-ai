@@ -167,8 +167,8 @@ Custom [`@durable_operation`][pydantic_ai.capabilities.durable_operation] calls 
 [`run_id`][pydantic_ai.tools.RunContext.run_id] and a per-operation call sequence in their task cache
 keys. Distinct, stable explicit `run_id=` values keep each run's results attached to that run even
 when runs arrive in a different order on a flow retry. Repeated identical calls within one run
-keep separate recorded results. Automatically derived run IDs still depend on
-arrival order, so pass explicit IDs for branches that can reorder.
+keep separate recorded results. For run identity behavior, see
+[Run and Conversation IDs](#run-and-conversation-ids).
 
 !!! warning "Upgrading custom capability task cache keys"
 
@@ -187,8 +187,8 @@ you deploy the change.
 
 Workspace task cache keys include the run's [`run_id`][pydantic_ai.tools.RunContext.run_id] and a
 per-run call sequence. With distinct, stable explicit `run_id=` values, concurrent runs keep their
-own environments even when their arrival order changes on flow retry. Automatically derived run
-IDs still depend on arrival order, so pass explicit IDs for concurrent branches that can reorder.
+own environments even when their arrival order changes on flow retry. For run identity behavior, see
+[Run and Conversation IDs](#run-and-conversation-ids).
 
 !!! warning "Upgrading workspace task cache keys"
 
@@ -372,7 +372,36 @@ Pydantic AI and provider API clients have their own retry logic. When using Pref
 
 This prevents requests from being retried multiple times at different layers. The layers *multiply*: see [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
 
-If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.agent.Agent.run] in a flow, the defaults are derived from the flow run rather than generated at random, so a flow retry gives each agent run the same IDs as the attempt before it.
+## Run and Conversation IDs
+
+In a Prefect flow, `PrefectDurability` assigns each logical run without an explicit
+[`run_id`][pydantic_ai.tools.RunContext.run_id] a cached, opaque UUIDv4. If no conversation ID is
+supplied or inherited from message history, it derives one from that run ID. The cached result must
+remain available across retries and workers; losing or refreshing it creates a new ID and can
+re-execute tasks keyed by the run ID. Generating a default ID adds one cached Prefect task per run;
+explicit run IDs bypass it.
+
+Runs are distinguished by their [inputs](#caching-and-idempotency), including prompt, message
+history, dependencies and static metadata, along with incoming history's run and conversation IDs
+and any supplied conversation ID. Keep those incoming IDs stable across retries. Calls with
+identical inputs get distinct IDs by call order, so reordering them across a retry can associate
+results with different calls. Differences only in non-serializable dependencies or metadata do not
+distinguish runs; values returned by metadata callbacks are also excluded. Pass distinct,
+retry-stable `run_id=` values when such calls can reorder.
+
+!!! warning "Default ID format migration"
+
+    Cached random UUIDs replace the earlier `<flow run id>:<arrival counter>` defaults for every run
+    using `PrefectDurability`, including sequential runs. The default `conversation_id` derived from
+    each run ID changes with it. Treat these defaults as opaque identifiers; pass `run_id=` and
+    `conversation_id=` explicitly if your application requires a particular format or existing
+    externally stored IDs.
+
+    If stored records or durable capability/workspace tasks must retain their current IDs, let
+    in-flight flows finish before upgrading. Retrying across the upgrade recomputes defaults and
+    can re-execute tasks keyed by those IDs. Model and tool caches keep their existing input
+    projection. Explicit IDs, conversation IDs inherited from message history, and execution
+    outside a flow keep their existing behavior.
 
 ## Caching and Idempotency
 

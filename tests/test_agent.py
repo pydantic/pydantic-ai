@@ -4502,6 +4502,77 @@ async def test_agent_run_metadata_kwarg_ignored_with_override() -> None:
     assert result.metadata == {'env': 'override', 'override_only': True}
 
 
+@dataclass
+class AgentMetadataCompatibilityCase:
+    name: str
+    base: dict[str, object] | None
+    run: dict[str, object] | None
+    expected: dict[str, object] | None
+    identity: Literal['base', 'run', 'new', 'none']
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        AgentMetadataCompatibilityCase('no metadata', None, None, None, 'none'),
+        AgentMetadataCompatibilityCase('empty base', {}, None, {}, 'base'),
+        AgentMetadataCompatibilityCase('empty run', None, {}, None, 'none'),
+        AgentMetadataCompatibilityCase('truthy base and empty run', {'base': True}, {}, {'base': True}, 'base'),
+        AgentMetadataCompatibilityCase('truthy run only', None, {'run': True}, {'run': True}, 'run'),
+        AgentMetadataCompatibilityCase(
+            'two truthy dicts',
+            {'shared': 'base', 'base': True},
+            {'shared': 'run', 'run': True},
+            {'shared': 'run', 'base': True, 'run': True},
+            'new',
+        ),
+    ],
+    ids=lambda case: case.name,
+)
+async def test_agent_metadata_resolution(case: AgentMetadataCompatibilityCase) -> None:
+    agent = Agent(TestModel(), metadata=case.base)
+
+    result = await agent.run('hello', metadata=case.run)
+
+    assert result.metadata == case.expected
+    if case.identity == 'base':
+        assert result.metadata is case.base
+    elif case.identity == 'run':
+        assert result.metadata is case.run
+    elif case.identity == 'new':
+        assert result.metadata is not case.base
+        assert result.metadata is not case.run
+    else:
+        assert result.metadata is None
+
+
+async def test_agent_metadata_factories_resolve_in_order_and_override_skips_them() -> None:
+    calls: list[str] = []
+    spec_metadata: dict[str, object] = {'shared': 'spec', 'spec': True}
+
+    def base_factory(_ctx: RunContext[object]) -> dict[str, object]:
+        calls.append('base')
+        return {'shared': 'base', 'base': True}
+
+    def run_factory(_ctx: RunContext[object]) -> dict[str, object]:
+        calls.append('run')
+        return {'shared': 'run', 'run': True}
+
+    agent = Agent(TestModel(), metadata=base_factory)
+    result = await agent.run('hello', spec=AgentSpec(metadata=spec_metadata), metadata=run_factory)
+
+    assert calls[:2] == ['base', 'run']
+    assert result.metadata == {'shared': 'run', 'spec': True, 'base': True, 'run': True}
+
+    calls.clear()
+    override: dict[str, object] = {}
+    with agent.override(metadata=override):
+        result = await agent.run('hello', spec=AgentSpec(metadata=spec_metadata), metadata=run_factory)
+
+    assert result.metadata is override
+    assert calls == []
+
+
 def test_unknown_tool():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])

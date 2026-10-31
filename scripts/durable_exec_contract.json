@@ -2351,6 +2351,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._cancellation_error_types"
       ]
     },
+    "AbstractCapability._get_default_run_id_for_inputs": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_durability.py::PrefectDurability._get_default_run_id_for_inputs"
+      ]
+    },
     "AbstractCapability._one_per_agent": {
       "engines": [
         "durable_exec"
@@ -2772,6 +2783,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/absurd/_capability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/pgtask/_capability.py::<module>"
+      ]
+    },
+    "_RunIdInputsFactory": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "annotation_only"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_durability.py::<module>"
       ]
     },
     "leaf_capabilities": {
