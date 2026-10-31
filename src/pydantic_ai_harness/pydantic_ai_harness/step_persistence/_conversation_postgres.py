@@ -15,6 +15,7 @@ from pydantic_ai.conversation_store import (
 from pydantic_ai_harness.media import MediaStore, PostgresConnection, PostgresMediaStore, PostgresPool
 from pydantic_ai_harness.step_persistence._conversation_codec import (
     RECORD_ADAPTER,
+    entry_positions,
     keyed_entry_messages,
     load_message,
     missing_entries_error,
@@ -94,7 +95,9 @@ class PostgresConversationStore(ConversationStore):
                     'id TEXT PRIMARY KEY, '
                     f'parent_id TEXT REFERENCES {self._entries} (id), '
                     'kind TEXT NOT NULL, '
-                    f'sha256 TEXT NOT NULL REFERENCES {self._messages} (sha256))'
+                    f'sha256 TEXT NOT NULL REFERENCES {self._messages} (sha256), '
+                    'root_id TEXT NOT NULL, '
+                    'depth INTEGER NOT NULL)'
                 )
                 await connection.execute(
                     f'CREATE INDEX IF NOT EXISTS {self._entries}_parent ON {self._entries} (parent_id)'
@@ -182,16 +185,30 @@ class PostgresConversationStore(ConversationStore):
         messages: list[tuple[str, str]],
         expected_revision: str | None,
     ) -> None:
+        new_ids = {entry.id for entry in new_entries}
+        # The stored entries this write points at: where the new ones continue from, a fork's head and the branches.
+        referenced = {
+            entry_id
+            for entry_id in (*(entry.parent_id for entry in new_entries), record.head_id, *record.branches)
+            if entry_id is not None and entry_id not in new_ids
+        }
+        stored = await self._positions(connection, referenced)
+        if referenced - stored.keys():
+            # A concurrent delete released one of them.
+            raise ConversationConflict(record.conversation_id)
+        await self._lock_histories(connection, {root_id for root_id, _ in stored.values()})
         await self._insert_messages(connection, dict(messages))
         entries = [
-            (entry.id, entry.parent_id, entry.kind, sha256)
-            for entry, (sha256, _) in zip(new_entries, messages, strict=True)
+            (entry.id, entry.parent_id, entry.kind, sha256, root_id, depth)
+            for entry, (sha256, _), (root_id, depth) in zip(
+                new_entries, messages, entry_positions(new_entries, stored), strict=True
+            )
         ]
         for start in range(0, len(entries), _MESSAGES_PER_INSERT):
             batch = entries[start : start + _MESSAGES_PER_INSERT]
-            values = ', '.join(f'(${4 * i + 1}, ${4 * i + 2}, ${4 * i + 3}, ${4 * i + 4})' for i in range(len(batch)))
+            values = ', '.join('(' + ', '.join(f'${6 * i + j}' for j in range(1, 7)) + ')' for i in range(len(batch)))
             await connection.execute(
-                f'INSERT INTO {self._entries} (id, parent_id, kind, sha256) VALUES {values}',
+                f'INSERT INTO {self._entries} (id, parent_id, kind, sha256, root_id, depth) VALUES {values}',
                 *(value for row in batch for value in row),
             )
         text = RECORD_ADAPTER.dump_json(record).decode()
@@ -243,43 +260,92 @@ class PostgresConversationStore(ConversationStore):
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
         await self._ensure_schema()
         async with self._pool.acquire() as connection, connection.transaction():
-            deleted = await connection.fetchrow(
-                f'DELETE FROM {self._records} WHERE conversation_id = $1 AND revision = $2 RETURNING head_id',
+            text = await connection.fetchval(
+                f'SELECT record FROM {self._records} WHERE conversation_id = $1 AND revision = $2',
+                conversation_id,
+                expected_revision,
+            )
+            if text is None:
+                raise ConversationConflict(conversation_id)
+            record = RECORD_ADAPTER.validate_json(str(text))
+            tips = [entry_id for entry_id in (record.head_id, *record.branches) if entry_id is not None]
+            stored = await self._positions(connection, set(tips))
+            await self._lock_histories(connection, {root_id for root_id, _ in stored.values()})
+            deleted = await connection.fetchval(
+                f'DELETE FROM {self._records} WHERE conversation_id = $1 AND revision = $2 RETURNING conversation_id',
                 conversation_id,
                 expected_revision,
             )
             if deleted is None:
+                # Saved or deleted since it was read above.
                 raise ConversationConflict(conversation_id)
-            tips = await connection.fetch(
-                f'DELETE FROM {self._branches} WHERE conversation_id = $1 RETURNING entry_id', conversation_id
-            )
-            for (entry_id,) in [deleted, *tips]:
-                await self._release(connection, None if entry_id is None else str(entry_id))
+            await connection.execute(f'DELETE FROM {self._branches} WHERE conversation_id = $1', conversation_id)
+            released: set[str] = set()
+            for entry_id in tips:
+                released.update(await self._release(connection, entry_id))
+            await self._release_messages(connection, sorted(released))
 
-    async def _release(self, connection: PostgresConnection, entry_id: str | None) -> None:
+    async def _positions(self, connection: PostgresConnection, entry_ids: set[str]) -> dict[str, tuple[str, int]]:
+        """The `root_id` and `depth` of each of these entries that's stored."""
+        if not entry_ids:
+            return {}
+        rows = await connection.fetch(
+            f'SELECT id, root_id, depth FROM {self._entries} WHERE id = ANY($1::text[])', sorted(entry_ids)
+        )
+        positions: dict[str, tuple[str, int]] = {}
+        for entry_id, root_id, depth in rows:
+            assert isinstance(depth, int)
+            positions[str(entry_id)] = (str(root_id), depth)
+        return positions
+
+    async def _lock_histories(self, connection: PostgresConnection, root_ids: set[str]) -> None:
+        """Wait for, then hold until the transaction ends, every other write to the histories starting at these entries.
+
+        Conversations that share a history (a fork and what it was forked from) share its first entry, so
+        saves, forks and deletes touching one history take turns, and a delete can't release what a
+        concurrent write is pointing at. Locks are taken in order, so two writes can't deadlock.
+        """
+        for root_id in sorted(root_ids):
+            await connection.fetchval('SELECT pg_advisory_xact_lock(hashtext($1))', f'{self._entries}:{root_id}')
+
+    async def _release(self, connection: PostgresConnection, entry_id: str) -> list[str]:
         """Delete `entry_id` and its ancestors, up to the first one another record's history or branch still reaches.
 
-        That's a record's head, the last entry of a branch a record lists, or an entry with another child. A
-        message no remaining entry holds goes too.
+        That's a record's head, the last entry of a branch a record lists, or an entry with another child.
+        Returns the SHA-256s of the messages the deleted entries held.
         """
-        while entry_id is not None:
-            deleted = await connection.fetchrow(
-                f'DELETE FROM {self._entries} WHERE id = $1 '
-                f'AND NOT EXISTS (SELECT 1 FROM {self._records} WHERE head_id = $1) '
-                f'AND NOT EXISTS (SELECT 1 FROM {self._branches} WHERE entry_id = $1) '
-                f'AND NOT EXISTS (SELECT 1 FROM {self._entries} WHERE parent_id = $1) '
-                'RETURNING parent_id, sha256',
-                entry_id,
-            )
-            if deleted is None:
-                break
-            parent_id, sha256 = deleted
-            entry_id = None if parent_id is None else str(parent_id)
-            await connection.execute(
-                f'DELETE FROM {self._messages} WHERE sha256 = $1 '
-                f'AND NOT EXISTS (SELECT 1 FROM {self._entries} WHERE sha256 = $1)',
-                sha256,
-            )
+        unused = (
+            f'NOT EXISTS (SELECT 1 FROM {self._records} r WHERE r.head_id = e.id) '
+            f'AND NOT EXISTS (SELECT 1 FROM {self._branches} b WHERE b.entry_id = e.id)'
+        )
+        rows = await connection.fetch(
+            'WITH RECURSIVE doomed (id, parent_id) AS ('
+            f'SELECT e.id, e.parent_id FROM {self._entries} e WHERE e.id = $1 AND {unused} '
+            f'AND NOT EXISTS (SELECT 1 FROM {self._entries} c WHERE c.parent_id = e.id) '
+            'UNION ALL '
+            f'SELECT e.id, e.parent_id FROM {self._entries} e JOIN doomed d ON e.id = d.parent_id WHERE {unused} '
+            f'AND (SELECT count(*) FROM {self._entries} c WHERE c.parent_id = e.id) = 1) '
+            f'DELETE FROM {self._entries} WHERE id IN (SELECT id FROM doomed) RETURNING sha256',
+            entry_id,
+        )
+        return [str(sha256) for (sha256,) in rows]
+
+    async def _release_messages(self, connection: PostgresConnection, sha256s: list[str]) -> None:
+        """Delete the messages among these that no entry holds any more.
+
+        Messages are shared across histories, so another history's save may be pointing an entry at one of
+        them right now. Locking them first makes this wait for that save, and then see its entry.
+        """
+        if not sha256s:
+            return
+        await connection.fetch(
+            f'SELECT sha256 FROM {self._messages} WHERE sha256 = ANY($1::text[]) ORDER BY sha256 FOR UPDATE', sha256s
+        )
+        await connection.execute(
+            f'DELETE FROM {self._messages} AS m WHERE m.sha256 = ANY($1::text[]) '
+            f'AND NOT EXISTS (SELECT 1 FROM {self._entries} e WHERE e.sha256 = m.sha256)',
+            sha256s,
+        )
 
     async def read_entry(self, entry_id: str) -> ConversationEntry:
         await self._ensure_schema()
@@ -301,7 +367,7 @@ class PostgresConversationStore(ConversationStore):
     async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
         """The entries from the first one up to `head_id`, in order, or only the last `limit` of them.
 
-        Read read in one query.
+        Read in one query.
         """
         if head_id is None or limit == 0:
             return []

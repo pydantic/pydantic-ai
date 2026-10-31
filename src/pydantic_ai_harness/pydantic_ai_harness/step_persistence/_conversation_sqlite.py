@@ -19,6 +19,7 @@ from pydantic_ai.conversation_store import (
 from pydantic_ai_harness.media import MediaStore, SqliteMediaStore
 from pydantic_ai_harness.step_persistence._conversation_codec import (
     RECORD_ADAPTER,
+    entry_positions,
     keyed_entry_messages,
     load_message,
     missing_entries_error,
@@ -39,7 +40,9 @@ CREATE TABLE IF NOT EXISTS conversation_entries (
     id TEXT PRIMARY KEY,
     parent_id TEXT REFERENCES conversation_entries (id),
     kind TEXT NOT NULL,
-    sha256 TEXT NOT NULL REFERENCES conversation_messages (sha256)
+    sha256 TEXT NOT NULL REFERENCES conversation_messages (sha256),
+    root_id TEXT NOT NULL,
+    depth INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS conversation_entries_parent ON conversation_entries (parent_id);
 CREATE INDEX IF NOT EXISTS conversation_entries_sha256 ON conversation_entries (sha256);
@@ -97,7 +100,8 @@ class SqliteConversationStore(ConversationStore):
     Tables:
 
     - `conversation_records(conversation_id PK, revision, head_id, scope, updated_at, record)`
-    - `conversation_entries(id PK, parent_id, kind, sha256)`
+    - `conversation_entries(id PK, parent_id, kind, sha256, root_id, depth)`: `root_id` is the first entry of
+      the entry's history and `depth` its distance from it.
     - `conversation_messages(sha256 PK, message)`
     - `conversation_branches(conversation_id, entry_id)`: the last entry of each branch a record lists.
     """
@@ -224,11 +228,27 @@ class SqliteConversationStore(ConversationStore):
                 conn.executemany(
                     'INSERT OR IGNORE INTO conversation_messages (sha256, message) VALUES (?, ?)', messages
                 )
+                new_ids = {entry.id for entry in entries}
+                parents = sorted({entry.parent_id for entry in entries if entry.parent_id not in (None, *new_ids)})
+                stored = {
+                    entry_id: (root_id, depth)
+                    for entry_id, root_id, depth in conn.execute(
+                        'SELECT id, root_id, depth FROM conversation_entries WHERE id IN '
+                        f'({", ".join("?" * len(parents))})',
+                        parents,
+                    )
+                }
+                if len(stored) < len(parents):
+                    # A delete released an entry the new ones continue from.
+                    raise ConversationConflict(record.conversation_id)
                 conn.executemany(
-                    'INSERT INTO conversation_entries (id, parent_id, kind, sha256) VALUES (?, ?, ?, ?)',
+                    'INSERT INTO conversation_entries (id, parent_id, kind, sha256, root_id, depth) '
+                    'VALUES (?, ?, ?, ?, ?, ?)',
                     [
-                        (entry.id, entry.parent_id, entry.kind, sha256)
-                        for entry, (sha256, _) in zip(entries, messages, strict=True)
+                        (entry.id, entry.parent_id, entry.kind, sha256, root_id, depth)
+                        for entry, (sha256, _), (root_id, depth) in zip(
+                            entries, messages, entry_positions(entries, stored), strict=True
+                        )
                     ],
                 )
                 # A fork points into another conversation's history, which a concurrent delete or
@@ -297,7 +317,7 @@ class SqliteConversationStore(ConversationStore):
     async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
         """The entries from the first one up to `head_id`, in order, or only the last `limit` of them.
 
-        Read read in one query.
+        Read in one query.
         """
         if head_id is None or limit == 0:
             return []

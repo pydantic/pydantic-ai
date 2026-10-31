@@ -39,7 +39,7 @@ def _to_sqlite(query: str) -> str:
     query = query.replace(_IDENTITY, 'INTEGER PRIMARY KEY AUTOINCREMENT')
     query = _ANY_ARRAY.sub(r'\1 IN (SELECT value FROM json_each(?\2))', query)
     query = _NOW.sub('pg_now()', _NOW_PLUS.sub(r'pg_now_plus($\1)', query))
-    query = query.replace(' FOR UPDATE SKIP LOCKED', '')
+    query = query.replace(' FOR UPDATE SKIP LOCKED', '').replace(' FOR UPDATE', '')
     query = query.replace('SET TRANSACTION ISOLATION LEVEL READ COMMITTED', 'SELECT 1')
     return _PARAMETER.sub(r'?\1', query)
 

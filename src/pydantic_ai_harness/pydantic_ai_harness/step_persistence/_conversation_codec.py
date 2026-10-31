@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from pydantic import TypeAdapter
 
@@ -33,6 +33,26 @@ async def load_message(text: str, *, media_store: MediaStore | None) -> ModelMes
     if media_store is not None:
         payload = await restore_media(payload, media_store=media_store)
     return _MESSAGE_ADAPTER.validate_python(payload)
+
+
+def entry_positions(
+    entries: Sequence[ConversationEntry], stored: Mapping[str, tuple[str, int]]
+) -> list[tuple[str, int]]:
+    """Each new entry's `root_id`, the first entry of its history, and `depth`, its distance from that entry.
+
+    `stored` maps each stored entry the new ones continue from to its own `root_id` and `depth`.
+    """
+    known = dict(stored)
+    positions: list[tuple[str, int]] = []
+    for entry in entries:
+        if entry.parent_id is None:
+            position = (entry.id, 0)
+        else:
+            root_id, depth = known[entry.parent_id]
+            position = (root_id, depth + 1)
+        known[entry.id] = position
+        positions.append(position)
+    return positions
 
 
 def missing_entries_error(head_id: str) -> LookupError:

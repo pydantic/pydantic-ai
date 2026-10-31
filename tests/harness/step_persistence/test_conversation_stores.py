@@ -220,6 +220,105 @@ async def test_postgres_other_write_errors_are_not_conflicts() -> None:
     pool.close()
 
 
+def _prompt(text: str) -> ModelRequest:
+    return ModelRequest(parts=[UserPromptPart(text)])
+
+
+async def _positions_after_a_fork(
+    store: SqliteConversationStore | PostgresConversationStore,
+) -> tuple[str, list[str], str]:
+    """Save three messages, fork after the second and add one; return each entry's history and depth."""
+    original = Conversation(messages=[_prompt('one'), _prompt('two'), _prompt('three')])
+    entries = await store.save(original)
+    fork = await store.fork(original.conversation_id, at=2)
+    fork.messages.append(_prompt('four'))
+    [added] = await store.save(fork)
+    return entries[0].id, [entry.id for entry in entries], added.id
+
+
+async def test_sqlite_entries_record_their_history_and_depth(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'c.db', media_store=None)
+    root, ids, added = await _positions_after_a_fork(store)
+
+    with closing(sqlite3.connect(tmp_path / 'c.db')) as conn:
+        rows = dict(
+            (entry_id, (root_id, depth))
+            for entry_id, root_id, depth in conn.execute('SELECT id, root_id, depth FROM conversation_entries')
+        )
+    assert rows == {**{entry_id: (root, depth) for depth, entry_id in enumerate(ids)}, added: (root, 2)}
+
+
+async def test_postgres_entries_record_their_history_and_depth() -> None:
+    pool = SqlitePool()
+    store = PostgresConversationStore(pool, media_store=None)
+    root, ids, added = await _positions_after_a_fork(store)
+
+    rows = dict(
+        (entry_id, (root_id, depth))
+        for entry_id, root_id, depth in pool.db.execute('SELECT id, root_id, depth FROM step_persistence_conv_entries')
+    )
+    assert rows == {**{entry_id: (root, depth) for depth, entry_id in enumerate(ids)}, added: (root, 2)}
+    pool.close()
+
+
+async def test_postgres_writes_and_deletes_in_one_history_take_its_lock() -> None:
+    pool = SqlitePool()
+    store = PostgresConversationStore(pool, media_store=None)
+    original = Conversation(messages=[_prompt('one')])
+    await store.save(original)
+
+    def locks() -> int:
+        return sum('pg_advisory_xact_lock' in statement for statement in pool.statements)
+
+    before = locks()
+    await store.fork(original.conversation_id)
+    after_fork = locks()
+    await store.delete(original.conversation_id)
+
+    assert (after_fork - before, locks() - after_fork) == (1, 1)
+    pool.close()
+
+
+async def test_postgres_a_write_that_loses_a_race_with_a_delete_conflicts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A delete can release an entry after the write looked it up; the foreign key then turns it into a conflict."""
+    pool = SqlitePool()
+    pool.db.execute('PRAGMA foreign_keys = ON')
+    store = PostgresConversationStore(pool, media_store=None)
+
+    async def released_after_lookup(_connection: object, entry_ids: set[str]) -> dict[str, tuple[str, int]]:
+        return {entry_id: (entry_id, 0) for entry_id in entry_ids}
+
+    monkeypatch.setattr(store, '_positions', released_after_lookup)
+    entry = ConversationEntry(parent_id='released', message=_prompt('one'))
+    with pytest.raises(ConversationConflict):
+        await store.write_record(
+            ConversationRecord(conversation_id='c', head_id=entry.id), new_entries=[entry], expected_revision=None
+        )
+    pool.close()
+
+
+async def test_postgres_a_write_continuing_from_a_released_entry_conflicts() -> None:
+    pool = SqlitePool()
+    store = PostgresConversationStore(pool, media_store=None)
+    entry = ConversationEntry(parent_id='released', message=_prompt('one'))
+
+    with pytest.raises(ConversationConflict):
+        await store.write_record(
+            ConversationRecord(conversation_id='c', head_id=entry.id), new_entries=[entry], expected_revision=None
+        )
+    pool.close()
+
+
+async def test_sqlite_a_write_continuing_from_a_released_entry_conflicts(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'c.db', media_store=None)
+    entry = ConversationEntry(parent_id='released', message=_prompt('one'))
+
+    with pytest.raises(ConversationConflict):
+        await store.write_record(
+            ConversationRecord(conversation_id='c', head_id=entry.id), new_entries=[entry], expected_revision=None
+        )
+
+
 def test_sqlite_store_rejects_an_in_memory_database_path() -> None:
     with pytest.raises(ValueError, match="`database=':memory:'` is not supported"):
         SqliteConversationStore(database=':memory:')

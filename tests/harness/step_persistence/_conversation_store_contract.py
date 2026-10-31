@@ -603,6 +603,20 @@ class ConversationStoreContract:
         assert await store.load(fork.conversation_id) == fork
         assert await backend.count_entries() == 4
 
+    async def test_deleting_a_conversation_keeps_the_prefix_a_fork_branched_off(self, backend: Backend) -> None:
+        store = backend.store
+        original = Conversation(messages=[_prompt('one'), ModelResponse(parts=[TextPart('two')]), _prompt('three')])
+        await store.save(original)
+        fork = await store.fork(original.conversation_id, at=2)
+        fork.messages.append(_prompt('the fork'))
+        await store.save(fork)
+
+        await store.delete(original.conversation_id)
+
+        assert await store.load(fork.conversation_id) == fork
+        if backend.collects_garbage:
+            assert await backend.count_entries() == 3
+
     async def test_deleting_a_conversation_the_store_does_not_have_does_nothing(self, backend: Backend) -> None:
         store = backend.store
         kept = Conversation(messages=[_prompt('one')])
