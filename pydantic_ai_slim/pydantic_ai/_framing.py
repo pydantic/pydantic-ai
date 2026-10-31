@@ -102,18 +102,21 @@ _LEGACY_NAME: Final = re.compile(r'[a-z_][a-z0-9_]*')
 """The looser rule attribute names and `StructuredContent.tag` followed before `MODEL_VISIBLE_NAME`."""
 
 
-def model_visible_name_error(name: str, *, what: str, legacy: bool = False) -> str | None:
+def model_visible_name_error(name: str, *, what: str, legacy_stacklevel: int | None = None) -> str | None:
     """Check `name` against `MODEL_VISIBLE_NAME`, the one naming rule for model-visible tags and attributes.
 
     Returns `None` if it follows the rule, and otherwise the message for the error the caller raises. With
-    `legacy`, a name the looser rule accepted (`[a-z_][a-z0-9_]*`, such as `_private` or `a__b`) still passes,
-    with a deprecation warning: that's for names a released API already took.
+    `legacy_stacklevel`, a name the looser rule accepted (`[a-z_][a-z0-9_]*`, such as `_private` or `a__b`) still
+    passes, with a deprecation warning: that's for names a released API already took. The value is the `stacklevel`
+    the caller would pass to `warnings.warn` itself to point at the user's code, which only the caller knows.
     """
     if MODEL_VISIBLE_NAME.fullmatch(name):
         return None
     message = f'{what} must be lowercase snake_case, like `judge_feedback`; got {name!r}.'
-    if legacy and _LEGACY_NAME.fullmatch(name):
-        warnings.warn(f'{message} Other names are deprecated.', PydanticAIDeprecationWarning, stacklevel=3)
+    if legacy_stacklevel is not None and _LEGACY_NAME.fullmatch(name):
+        warnings.warn(
+            f'{message} Other names are deprecated.', PydanticAIDeprecationWarning, stacklevel=legacy_stacklevel + 1
+        )
         return None
     return message
 
@@ -216,9 +219,15 @@ def _require_known(tag: str) -> None:
 
 def open_tag(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> str:
     """Core's [`open_tag`][pydantic_ai.framing.open_tag], which also takes the `'system'` voice tag."""
+    return _open_tag(tag, attrs)
+
+
+def _open_tag(tag: FramingTag | RegisteredTag, attrs: dict[str, str | None]) -> str:
     _require_known(tag)
     for name in attrs:
-        if error := model_visible_name_error(name, what='Framing tag attribute names', legacy=True):
+        # A legacy name's warning points at the user's call to `pydantic_ai.framing.open_tag` or `wrap`, which reach
+        # this through this module's function of the same name: `stacklevel=4` from here.
+        if error := model_visible_name_error(name, what='Framing tag attribute names', legacy_stacklevel=4):
             raise UserError(error)
     rendered = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items() if value is not None)
     return f'<{tag}{rendered}>'
@@ -238,7 +247,7 @@ def wrap(tag: FramingTag | RegisteredTag, body: str, /, **attrs: str | None) -> 
     `<system>` tags are escaped there.
     """
     escaped = neutralize_voice_tag(body) if tag == SYSTEM_TAG else neutralize_tags(body)
-    return f'{open_tag(tag, **attrs)}{escaped}{close_tag(tag)}'
+    return f'{_open_tag(tag, attrs)}{escaped}{close_tag(tag)}'
 
 
 def frame(tag: FramingTag | RegisteredTag, body: str, /, **attrs: str | None) -> str:

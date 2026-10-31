@@ -501,8 +501,11 @@ def test_attribute_names_that_could_break_the_tag_are_refused(name: str) -> None
 
 
 def test_a_legacy_attribute_name_still_renders_with_a_deprecation_warning() -> None:
-    with pytest.warns(PydanticAIDeprecationWarning, match='attribute names must be lowercase snake_case'):
+    with pytest.warns(PydanticAIDeprecationWarning, match='attribute names must be lowercase snake_case') as opened:
         assert framing.open_tag(TOOL_RESULT_TAG, _ref='x') == '<tool_result _ref="x">'
+    with pytest.warns(PydanticAIDeprecationWarning, match='attribute names must be lowercase snake_case') as wrapped:
+        assert framing.wrap(TOOL_RESULT_TAG, 'body', _ref='x') == '<tool_result _ref="x">body</tool_result>'
+    assert [w.filename for w in [*opened, *wrapped]] == [__file__, __file__]
 
 
 def test_one_naming_rule_for_model_visible_names() -> None:

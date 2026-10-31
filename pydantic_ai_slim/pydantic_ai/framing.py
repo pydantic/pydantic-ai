@@ -42,7 +42,7 @@ def wrap(tag: DataTag | RegisteredTag, body: str, /, **attrs: str | None) -> str
     written.
 
     Attributes are rendered as by [`open_tag`][pydantic_ai.framing.open_tag]: names must be lowercase
-    letters, digits and underscores, values are HTML-escaped, attributes whose value is `None` are left
+    snake_case (other names the looser earlier rule took are deprecated), values are HTML-escaped, attributes whose value is `None` are left
     off, and the rest keep the order they're given in, so the same call always renders the same bytes.
 
     ```python
@@ -62,7 +62,7 @@ def wrap(tag: DataTag | RegisteredTag, body: str, /, **attrs: str | None) -> str
 
     Raises:
         UserError: If `tag` is `'system'` or isn't registered, or an attribute name isn't lowercase
-            letters, digits and underscores.
+            letters, digits and underscores. A name that is, but isn't snake_case, warns instead.
     """
     _refuse_voice_tag(tag)
     return _framing.wrap(tag, body, **attrs)
@@ -94,7 +94,7 @@ def open_tag(tag: DataTag | RegisteredTag, /, **attrs: str | None) -> str:
 
     Raises:
         UserError: If `tag` is `'system'` or isn't registered, or an attribute name isn't lowercase
-            letters, digits and underscores.
+            letters, digits and underscores. A name that is, but isn't snake_case, warns instead.
     """
     _refuse_voice_tag(tag)
     return _framing.open_tag(tag, **attrs)

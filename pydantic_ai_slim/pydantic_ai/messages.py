@@ -724,7 +724,11 @@ class StructuredContent(TextContent):
             # history fail to load once a later release adds its tag to the framework's own.
             return
         if self.tag is not None:
-            if error := model_visible_name_error(self.tag, what='`StructuredContent.tag`', legacy=True):
+            if error := model_visible_name_error(
+                self.tag,
+                what='`StructuredContent.tag`',
+                legacy_stacklevel=3,  # user -> `__init__` -> here
+            ):
                 raise ValueError(error)
             if self.tag in _FRAMING_TAG_NAMES:
                 raise ValueError(
