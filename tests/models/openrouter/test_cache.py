@@ -7,6 +7,7 @@ OpenRouter API).
 
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import Mapping
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -35,7 +36,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..._inline_snapshot import snapshot
-from ...cassette_utils import single_request_body
+from ...cassette_utils import request_json, single_request_body
 from ...conftest import IsDatetime, IsStr, try_import
 from ..mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
@@ -906,6 +907,48 @@ async def test_openrouter_cache_instructions_gemini_real_api(
     assert usage2.output_tokens > 0
 
 
+async def test_openrouter_cache_gemini_does_not_double_prompt_tokens(
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
+) -> None:
+    """Unified `cache=True` on a Gemini route caches the conversation without billing the prompt twice.
+
+    With a `cache_control` on the final content part of the request, OpenRouter's Google Vertex endpoint bills the
+    cached prefix and then the same prefix again, doubling `prompt_tokens`. So the message breakpoint goes on the
+    closest earlier user or assistant message: none on the first request, the first answer on the second.
+    """
+    model = openrouter_model('google/gemini-3.5-flash-lite')
+    instructions = (
+        'You are a specialized assistant that helps with distributed systems operations. '
+        'You have deep expertise in consensus protocols, CAP theorem, and eventual consistency. '
+    ) * 250  # Above Gemini's minimum cacheable prompt size.
+    report = '\n'.join(
+        f'Incident {i}: node {i % 17} lost quorum for {i % 7 + 1} seconds during a leader election.' for i in range(200)
+    )
+    agent = Agent(
+        model,
+        instructions=instructions,
+        model_settings=OpenRouterModelSettings(
+            cache=True,
+            openrouter_provider={'order': ['google-vertex'], 'allow_fallbacks': False},
+            max_tokens=20,
+        ),
+    )
+
+    result1 = await agent.run(f'{report}\n\nWhich node lost quorum in incident 3? Answer with the number only.')
+    result2 = await agent.run('And in incident 4? Answer with the number only.', message_history=result1.all_messages())
+
+    usage1, usage2 = result1.usage, result2.usage
+    assert (usage1.input_tokens, usage1.cache_write_tokens, usage1.cache_read_tokens) == snapshot((11001, 6817, 6817))
+    assert (usage2.input_tokens, usage2.cache_write_tokens, usage2.cache_read_tokens) == snapshot((11014, 11003, 11003))
+
+    # The role of each message carrying a breakpoint, per request.
+    breakpoint_roles = [
+        [message['role'] for message in request_json(request)['messages'] if 'cache_control' in json.dumps(message)]
+        for request in vcr.requests
+    ]
+    assert breakpoint_roles == snapshot([['system'], ['system', 'assistant']])
+
+
 async def test_openrouter_cache_streaming_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
@@ -1114,6 +1157,70 @@ async def test_openrouter_cache_messages_marks_previous_request_after_wide_turn(
         0,
         len(mapped) - 1,
     ]
+
+
+def _gemini_breakpoints(mapped: list[Any]) -> list[tuple[str, str]]:
+    return [
+        (message['role'], part['text'])
+        for message in mapped
+        if isinstance(content := message.get('content'), list)
+        for part in cast(list[dict[str, Any]], content)
+        if 'cache_control' in part
+    ]
+
+
+async def test_openrouter_gemini_moves_the_message_breakpoint_off_the_request_end() -> None:
+    """On Gemini routes, the message breakpoint goes on the closest user or assistant message before the final one.
+
+    A breakpoint on the final content part of the request makes OpenRouter's Google Vertex endpoint bill the prompt
+    twice, and one on a tool result isn't used. OpenRouter uses only the last one, so earlier ones are dropped.
+    """
+    model = OpenRouterModel('google/gemini-3.8-flash', provider=OpenRouterProvider(api_key='test-key'))
+    settings = OpenRouterModelSettings(openrouter_cache_messages=True)
+    params = ModelRequestParameters()
+
+    first_turn: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Question one.')])]
+    mapped = await model._map_messages(first_turn, params, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert _gemini_breakpoints(mapped) == snapshot([])
+
+    second_turn: list[ModelMessage] = [
+        *first_turn,
+        ModelResponse(parts=[TextPart('Answer one.')]),
+        ModelRequest(parts=[UserPromptPart(content='Question two.')]),
+    ]
+    mapped = await model._map_messages(second_turn, params, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert _gemini_breakpoints(mapped) == snapshot([('assistant', 'Answer one.')])
+
+    calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
+    tool_turn: list[ModelMessage] = [
+        *second_turn,
+        ModelResponse(parts=calls),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in calls]),
+    ]
+    mapped = await model._map_messages(tool_turn, params, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert _gemini_breakpoints(mapped) == snapshot([('user', 'Question two.')])
+
+    multi_part: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Part one.', 'Part two.'])]),
+        *tool_turn[3:],
+    ]
+    mapped = await model._map_messages(multi_part, params, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert _gemini_breakpoints(mapped) == snapshot([('user', 'Part two.')])
+
+    # A `CachePoint` with content after it in the final message is kept; one at its end moves back.
+    inside: list[ModelMessage] = [
+        *second_turn[:2],
+        ModelRequest(parts=[UserPromptPart(content=['Document.', CachePoint(), 'Question two.'])]),
+    ]
+    mapped = await model._map_messages(inside, params)  # pyright: ignore[reportPrivateUsage]
+    assert _gemini_breakpoints(mapped) == snapshot([('user', 'Document.')])
+
+    at_end: list[ModelMessage] = [
+        *second_turn[:2],
+        ModelRequest(parts=[UserPromptPart(content=['Question two.', CachePoint()])]),
+    ]
+    mapped = await model._map_messages(at_end, params)  # pyright: ignore[reportPrivateUsage]
+    assert _gemini_breakpoints(mapped) == snapshot([('assistant', 'Answer one.')])
 
 
 def _done_mock_client() -> AsyncOpenAI:

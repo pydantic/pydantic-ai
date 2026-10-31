@@ -43,6 +43,13 @@ class OpenRouterModelProfile(OpenAIModelProfile, total=False):
 
     openrouter_supports_cache_control: bool
     """Whether the downstream provider supports explicit `cache_control` breakpoints via OpenRouter."""
+    openrouter_supports_trailing_cache_control: bool
+    """Whether a conversation `cache_control` breakpoint can end the request or sit on a tool result.
+
+    Defaults to `True`. `False` for Gemini routes, where OpenRouter uses only the last breakpoint across message
+    content: a breakpoint on the final content part of the request makes OpenRouter's Google Vertex endpoint bill the
+    prompt twice, and one on a tool result isn't used. There, the last breakpoint goes on the closest earlier user or
+    assistant message instead."""
     openrouter_supports_cache_ttl: bool
     """Whether the downstream provider supports TTL in `cache_control`."""
     openrouter_supports_tool_cache: bool
@@ -270,6 +277,9 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 # Only Anthropic routes take a TTL; Gemini caches at its 5-minute default.
                 supported_cache_retentions=('5m', '1h') if supports_anthropic_cache else (),
                 openrouter_supports_cache_control=supports_cache_control,
+                # On Gemini routes, a breakpoint at the end of the request doubles the billed prompt on OpenRouter's
+                # Google Vertex endpoint, so the message breakpoint goes on an earlier message.
+                openrouter_supports_trailing_cache_control=provider != 'google',
                 openrouter_supports_cache_ttl=supports_anthropic_cache,
                 openrouter_supports_tool_cache=supports_anthropic_cache,
                 openrouter_supports_dynamic_instruction_cache=supports_anthropic_cache,
