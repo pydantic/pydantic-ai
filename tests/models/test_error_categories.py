@@ -64,6 +64,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.models.mistral import MistralModel
+    from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.xai import XaiModel
@@ -74,6 +75,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
     from pydantic_ai.providers.mistral import MistralProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
@@ -210,6 +212,14 @@ def _cohere(handler: Handler) -> Model:
         httpx_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     return CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=client))
+
+
+def _ollama(handler: Handler) -> Model:
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    return OllamaModel(
+        'gpt-oss:20b-cloud',
+        provider=OllamaProvider(base_url='http://localhost/v1', api_key='test', http_client=http_client),
+    )
 
 
 def _json(status_code: int, body: Any, headers: dict[str, str] | None = None) -> Handler:
@@ -765,6 +775,23 @@ CASES = [
         ),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400},
+    ),
+    Case(
+        id='ollama-cloud-context-window',
+        model=_ollama,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'message': 'prompt too long; exceeded max context length by 668997 tokens (ref: …)',
+                    'type': 'invalid_request_error',
+                    'param': None,
+                    'code': None,
+                }
+            },
+        ),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': None, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
         id='openai-unavailable',
