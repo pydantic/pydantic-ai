@@ -170,6 +170,36 @@ So a 5-minute cache (1.25x) breaks even after one read and Anthropic's 1-hour ca
 
 On Anthropic models that bind thinking blocks to the prefix that produced them (Claude Fable 5.1, Claude Opus 5.5 and Claude Sonnet 5.5), the same changes mid-conversation cause a 400 error, not just a cache miss: see [Thinking block binding](../models/anthropic.md#thinking-block-binding).
 
+### Where per-turn context belongs
+
+Context that changes on every turn — the page the user is looking at, the row they selected, the drafts in an open form — reads like background the model should have from the start, so it's tempting to put it in `instructions`. Don't: a provider reads tool definitions, then instructions, then messages, so instructions that change on every turn make the cache unusable from that point onward, and the turn pays full price for the instructions and the whole conversation again.
+
+Put it in the message that carries the turn, after a [`CachePoint`][pydantic_ai.messages.CachePoint] that closes the part which stays the same:
+
+```python {title="caching_per_turn_context.py", test="skip"}
+from pydantic_ai import Agent, CachePoint
+from pydantic_ai.capabilities import Caching
+
+agent = Agent('{{ anthropic:large }}', capabilities=[Caching()])
+
+path, line = 'src/app.py', 42  # what the user is looking at, different on every turn
+surrounding_lines = '...'
+question = 'Why does this loop stop one iteration early?'
+
+result = agent.run_sync(
+    [
+        'Answer questions about the file the user is working in.\n\n',
+        CachePoint(),  # everything before this is the same on every turn
+        f'{path} at line {line}:\n\n{surrounding_lines}\n\n{question}',
+    ]
+)
+print(result.output)
+```
+
+The breakpoint keeps the tool definitions, the instructions and the settled messages inside the unchanged prefix, and the turn's own context is appended after it, where a change costs only the tokens it adds. The same reasoning puts a cost-limit wrap-up notice in a trailing user message rather than in instructions.
+
+Two limits. The text before the breakpoint has to be identical between turns for the cache to be read back, so a per-turn value in front of it — even one as cheap as a timestamp — defeats the placement. And a provider that caches implicitly and ignores `CachePoint` (see [How providers cache](#how-providers-cache)) simply caches the conversation as it did before, so the placement costs nothing there but buys nothing either. Values that can be made stable, such as a date at day granularity, still belong in the instructions (see [Changes under your control](#changes-under-your-control)).
+
 ### Provider retention
 
 Provider caches expire after idle gaps. This is unavoidable, but it creates a useful opportunity: schedule history-mutating maintenance for [cache-cold windows](../message-history.md#scheduling-maintenance-into-cache-cold-windows), when the next request would pay the full input price anyway. Each provider's documented default retention is recorded as [`ModelProfile.default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention], a longer retention requested through settings is resolved by [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention], and [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] takes either to predict whether the next request will find the cache cold.
@@ -233,7 +263,7 @@ No warning doesn't prove that caching works: a request that falls short by less 
 Tool, toolset, and capability authors should preserve the same contract:
 
 - Never mutate the cached prefix during a run.
-- Put per-turn dynamic content in the user message, in tool results, or after the last [`CachePoint`][pydantic_ai.messages.CachePoint].
+- Put per-turn dynamic content in the user message, in tool results, or after the last [`CachePoint`][pydantic_ai.messages.CachePoint]; see [Where per-turn context belongs](#where-per-turn-context-belongs).
 - Keep tool definitions and their ordering stable across steps.
 - Use date-only timestamps in instructions.
 - Give instructions that change mid-conversation [`on_change='append'`](../agent.md#appending-instruction-changes), which needs an `id` on your capability or toolset, and [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
