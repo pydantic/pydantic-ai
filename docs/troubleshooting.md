@@ -155,7 +155,7 @@ To inspect the provider request and response, pass a custom `httpx2` or legacy `
 
 ## Tools and Capabilities
 
-### [`UserError`][pydantic_ai.exceptions.UserError]: ``Prepare function 'filter_tools' returned `None`; return `[]` to expose no tools, ...``
+### [`UserError`][pydantic_ai.exceptions.UserError]: `Prepare function 'filter_tools' returned None`; return `[]` to expose no tools, ...
 
 When defining a custom `prepare_tools` hook or [`PrepareTools`](capabilities/prepare-tools.md) capability to dynamically filter tools before a model turn, the hook must return a list of tool definitions (`list[ToolDefinition]`), even if no tools should be active for that step. Returning `None` raises this error.
 
