@@ -356,6 +356,7 @@ navigation:
       - page: "Building Custom Capabilities"
         path: "capabilities/custom.md"
         slug: "capabilities/custom"
+      # harness/clai2.md is intentionally unpublished; see UNPUBLISHED_PAGES in tests/test_docs_navigation.py.
       - page: "Pydantic AI Harness"
         path: "harness/index.md"
         slug: "harness"
