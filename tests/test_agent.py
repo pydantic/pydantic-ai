@@ -11590,6 +11590,42 @@ async def test_run_with_deferred_tool_results_errors():
         )
 
 
+async def test_run_with_deferred_tool_results_for_answered_calls_errors():
+    requests: list[list[ModelMessage]] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        requests.append(messages)
+        return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    def create_file(path: str) -> str:  # pragma: no cover
+        return f'File {path!r} created'
+
+    agent.tool_plain(requires_approval=True)(create_file)
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Create a file')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='create_file', args={'path': 'a.txt'}, tool_call_id='create_file')]
+        ),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='create_file', tool_call_id='create_file', content='File created')]
+        ),
+    ]
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
+        ),
+    ):
+        await agent.run(message_history=message_history, deferred_tool_results=DeferredToolResults())
+
+    # Nothing was left to resolve, so the run says so rather than recording an empty `ModelRequest` in the history.
+    assert requests == []
+
+
 async def test_deferred_tool_requests_reject_duplicate_tool_call_ids():
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
