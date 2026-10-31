@@ -1936,7 +1936,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             response = self._validate_completion(response)
         except ValidationError as e:
             raise ModelInvalidResponseError(
-                self.model_name, f'Invalid response from {self.system} chat completions endpoint: {e}'
+                self.model_name,
+                f'Invalid response from {self.system} chat completions endpoint: {e}',
+                # The SDK builds the completion without validating it, so it holds what the provider sent.
+                body=response.model_dump(warnings=False),
             ) from e
 
         if not response.choices:

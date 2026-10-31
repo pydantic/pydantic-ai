@@ -909,7 +909,23 @@ class ModelRequestTimeout(ModelAPIError):
         self.args = (self.message,)
 
 
-class ModelEmptyResponseError(ModelAPIError, UnexpectedModelBehavior):
+class _ModelResponseError(ModelAPIError, UnexpectedModelBehavior):
+    """A response the model layer couldn't use, which is a model error and, until v3, an `UnexpectedModelBehavior`."""
+
+    # TODO(v3): drop the `UnexpectedModelBehavior` base, which only keeps existing `except` clauses working.
+
+    body: object | None
+    """The response the provider sent, if available."""
+
+    def __init__(self, model_name: str, message: str, *, body: object | None = None):
+        super().__init__(model_name, message, body=body)
+        # `ModelAPIError.__init__` reaches `UnexpectedModelBehavior.__init__` on its way to `AgentRunError`, which
+        # resets `body` as it isn't passed along. It's the `ModelAPIError` field, which takes any body, not just a
+        # string.
+        self.body = body  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class ModelEmptyResponseError(_ModelResponseError):
     """Raised when the provider answered a request successfully but sent no response in it.
 
     For example a stream that ended before its first event, or a completion whose `choices` are empty. It's often a
@@ -922,19 +938,8 @@ class ModelEmptyResponseError(ModelAPIError, UnexpectedModelBehavior):
     subclasses so `except UnexpectedModelBehavior` keeps catching it.
     """
 
-    # TODO(v3): drop the `UnexpectedModelBehavior` base, which only keeps existing `except` clauses working.
 
-    body: object | None
-    """What the provider sent, if anything."""
-
-    def __init__(self, model_name: str, message: str, *, body: object | None = None):
-        super().__init__(model_name, message, body=body)
-        # `ModelAPIError.__init__` reaches `UnexpectedModelBehavior.__init__` on its way to `AgentRunError`, which
-        # resets `body` as it isn't passed along. It's the `ModelAPIError` field, which takes any body, not only a string.
-        self.body = body  # pyright: ignore[reportIncompatibleVariableOverride]
-
-
-class ModelInvalidResponseError(ModelAPIError, UnexpectedModelBehavior):
+class ModelInvalidResponseError(_ModelResponseError):
     """Raised when the provider answered a request successfully but its response couldn't be used.
 
     For example a completion that doesn't match the API's schema, or a response the API doesn't allow, like an MCP
@@ -948,17 +953,6 @@ class ModelInvalidResponseError(ModelAPIError, UnexpectedModelBehavior):
     raise a plain [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which this class still
     subclasses so `except UnexpectedModelBehavior` keeps catching it.
     """
-
-    # TODO(v3): drop the `UnexpectedModelBehavior` base, which only keeps existing `except` clauses working.
-
-    body: object | None
-    """The response the provider sent, if available."""
-
-    def __init__(self, model_name: str, message: str, *, body: object | None = None):
-        super().__init__(model_name, message, body=body)
-        # `ModelAPIError.__init__` reaches `UnexpectedModelBehavior.__init__` on its way to `AgentRunError`, which
-        # resets `body` as it isn't passed along. It's the `ModelAPIError` field, which takes any body, not only a string.
-        self.body = body  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
 def _request_timeout_message(model_name: str, timeout: float, setting: RequestTimeoutSetting) -> str:

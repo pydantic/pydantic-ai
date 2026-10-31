@@ -305,8 +305,8 @@ a `ModelNotFoundError` (OpenAI's Responses API sends `model_not_found` as a 400)
 Gemini API sends `API_KEY_INVALID` as a 400). Exhausted credits are a `ModelQuotaExceededError` instead, even when the
 provider sends them as a 400, as Anthropic does.
 
-A request can also succeed while the response the provider sent in reply can't be used. That's a model error too,
-raised before the agent sees the response, so it's handled like a failed request:
+A request can also succeed while the response the provider sent in reply can't be used. The chat model adapters
+raise that as a model error too, before the agent sees the response, so it's handled like a failed request:
 
 | Exception | Raised when |
 |---|---|
