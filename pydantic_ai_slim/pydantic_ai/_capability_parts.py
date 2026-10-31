@@ -79,17 +79,17 @@ def _render(part: CapabilityPart) -> list[SystemPromptPart | UserPromptPart]:
     marked as the framework's, so the lookalike check skips them; text in the body that resembles a frame gets the
     lookalike note from `prepare_messages`, naming who wrote it (see `content_author`).
     """
-    render = part.render
+    rendering = part.rendering
     content = part.model_content()
     metadata = {_PYDANTIC_AI_METADATA_KEY: {RENDERED_CAPABILITY_PART_KEY: True}}
-    if render.voice == 'instruction':
+    if rendering.voice == 'instruction':
         # Checked when the part was created.
         assert isinstance(content, str)
         return [SystemPromptPart(content, timestamp=part.timestamp, scope=part.scope, metadata=metadata)]
-    assert render.tag is not None
+    assert rendering.tag is not None
     # TODO(#11029): deliver content from a source the operator doesn't control on the tool channel instead, as a
     # framework-inserted read and its result, rebuilding #11837.
-    open_tag, close_tag = capability_frame_tags(render.tag, attrs=part.rendered_attributes())
+    open_tag, close_tag = capability_frame_tags(rendering.tag, attrs=part.rendered_attributes())
     # Only the tags are marked as the framework's: the body is the part's content, which `prepare_messages` checks
     # for lookalike frames like any other text, so a body that closes the frame early is noted rather than trusted.
     author = _AUTHORS[part.source.source_kind]
@@ -98,10 +98,10 @@ def _render(part: CapabilityPart) -> list[SystemPromptPart | UserPromptPart]:
     framed = UserPromptPart(
         [framework_frame_text(open_tag), *body, framework_frame_text(close_tag)], timestamp=part.timestamp
     )
-    if render.note is None or not part.source.trusted:
+    if rendering.note is None or not part.source.trusted:
         return [framed]
-    reference, _ = capability_frame_tags(render.tag, attrs={})
-    note = render.note.replace('{frame}', reference)
+    reference, _ = capability_frame_tags(rendering.tag, attrs={})
+    note = rendering.note.replace('{frame}', reference)
     return [SystemPromptPart(note, timestamp=part.timestamp, metadata=metadata), framed]
 
 

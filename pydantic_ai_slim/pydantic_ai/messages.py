@@ -4475,7 +4475,7 @@ from any other source never reaches the model in the application's voice.
 
 
 @dataclass(repr=False, frozen=True, kw_only=True)
-class CapabilityPartRender:
+class CapabilityPartRendering:
     """How a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is rendered: the facts its class declared, stored on each part.
 
     A part keeps the facts it was created with, so changing a kind's tag, note or attributes later only changes
@@ -4502,21 +4502,21 @@ _KIND_SEGMENT: Final = re.compile(r'[a-z][a-z0-9_]*')
 """Each dot-separated segment of a capability part kind's namespace, and its name, is lowercase snake_case."""
 
 
-def _check_capability_render(owner: str, render: CapabilityPartRender) -> None:
-    """Raise unless `render` describes a part that can be rendered."""
-    if render.voice not in get_args(CapabilityPartVoice):
-        raise UserError(f"{owner} has `voice={render.voice!r}`; it must be `'data'` or `'instruction'`.")
-    if render.voice == 'instruction':
-        if render.tag is not None or render.note is not None or render.attributes:
+def _check_capability_rendering(owner: str, rendering: CapabilityPartRendering) -> None:
+    """Raise unless `rendering` describes a part that can be rendered."""
+    if rendering.voice not in get_args(CapabilityPartVoice):
+        raise UserError(f"{owner} has `voice={rendering.voice!r}`; it must be `'data'` or `'instruction'`.")
+    if rendering.voice == 'instruction':
+        if rendering.tag is not None or rendering.note is not None or rendering.attributes:
             raise UserError(
                 f"{owner} speaks in the application's voice, which renders the content as a system message: it takes no "
                 '`tag`, `note` or `attributes`.'
             )
         return
-    if render.tag is None:
+    if rendering.tag is None:
         raise UserError(f'{owner} is data and needs a `tag` to frame its content in.')
-    check_capability_frame(render.tag, render.attributes)
-    if render.note is not None and render.note.count(_FRAME_PLACEHOLDER) != 1:
+    check_capability_frame(rendering.tag, rendering.attributes)
+    if rendering.note is not None and rendering.note.count(_FRAME_PLACEHOLDER) != 1:
         raise UserError(f'{owner} has a `note` that must name its frame exactly once, as `{_FRAME_PLACEHOLDER}`.')
 
 
@@ -4571,7 +4571,7 @@ class CapabilityPart:
     record_id: str = field(default_factory=lambda: str(uuid7()))
     """A unique id for this record, generated once and stored with it. Never sent to the model."""
 
-    render: CapabilityPartRender = field(default_factory=CapabilityPartRender)
+    rendering: CapabilityPartRendering = field(default_factory=CapabilityPartRendering)
     """How the part is rendered, taken from its class when it's created and stored with it."""
 
     kind: str = ''
@@ -4586,8 +4586,8 @@ class CapabilityPart:
     _registered_kind: ClassVar[str | None] = None
     """The kind this class is registered under; `None` on the bases and unregistered subclasses."""
 
-    _class_render: ClassVar[CapabilityPartRender | None] = None
-    """The render facts this class declares, which new instances store."""
+    _class_rendering: ClassVar[CapabilityPartRendering | None] = None
+    """The rendering facts this class declares, which new instances store."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -4605,13 +4605,13 @@ class CapabilityPart:
                 f'instance (got {self.kind!r}).'
             )
         owner = f'Capability part {self.kind!r}'
-        if cls._voice is not None and self.render.voice != cls._voice:
+        if cls._voice is not None and self.rendering.voice != cls._voice:
             raise UserError(
-                f'{owner} has `voice={cls._voice!r}` from its base, so it cannot render with `voice={self.render.voice!r}`.'
+                f'{owner} has `voice={cls._voice!r}` from its base, so it cannot render with `voice={self.rendering.voice!r}`.'
             )
-        _check_capability_render(owner, self.render)
+        _check_capability_rendering(owner, self.rendering)
         content = self.model_content()
-        if self.render.voice == 'instruction':
+        if self.rendering.voice == 'instruction':
             if not isinstance(content, str):
                 raise UserError(f"{owner} speaks in the application's voice, so its `content` must be a string.")
             if not self.source.trusted:
@@ -4628,7 +4628,7 @@ class CapabilityPart:
                 )
         elif self.scope == 'request':
             raise UserError(f"{owner} is data; only an `InstructionCapabilityPart` can have `scope='request'`.")
-        for name in self.render.attributes:
+        for name in self.rendering.attributes:
             value = self._attribute_value(name)
             if value is not None and (not isinstance(value, str | int) or isinstance(value, bool)):
                 raise UserError(f'{owner} renders `{name}` as an attribute, so it must be a string or an integer.')
@@ -4660,10 +4660,10 @@ class CapabilityPart:
         )
         if recreated:
             part_kind = cls.__dict__['_registered_kind']
-            render = cls.__dict__['_class_render']
+            rendering = cls.__dict__['_class_rendering']
         else:
             part_kind = _capability_part_kind(cls, namespace, name)
-            render = _class_render(cls, tag=tag, attributes=attributes, note=note)
+            rendering = _class_rendering(cls, tag=tag, attributes=attributes, note=note)
         existing = CAPABILITY_PART_TYPES.get(part_kind)
         if existing is not None and not recreated and not _is_redefinition(existing, cls):
             raise UserError(
@@ -4678,11 +4678,11 @@ class CapabilityPart:
         if existing is None or not _keeps_canonical_registration():
             CAPABILITY_PART_TYPES[part_kind] = cls
         cls._registered_kind = part_kind
-        cls._class_render = render
+        cls._class_rendering = rendering
         # As `_inject_tag_field` does for `kind`, in one call: on Python 3.14+ a second one would drop the first's.
-        _utils.prepend_class_annotations(cls, {'kind': str, 'render': CapabilityPartRender})
+        _utils.prepend_class_annotations(cls, {'kind': str, 'rendering': CapabilityPartRendering})
         setattr(cls, 'kind', field(default=part_kind, kw_only=True))
-        setattr(cls, 'render', field(default_factory=lambda: render, kw_only=True))
+        setattr(cls, 'rendering', field(default_factory=lambda: rendering, kw_only=True))
 
     def model_content(self) -> str | StructuredContent | Sequence[UserContent]:
         """What the model sees of this part: its `content`, which every kind declares with the type its base allows.
@@ -4694,14 +4694,14 @@ class CapabilityPart:
 
     def _attribute_value(self, name: str) -> object:
         """The value of the typed field `name`, which the part renders as an attribute."""
-        # A kind's fields aren't statically known here, and `render.attributes` was checked against them.
+        # A kind's fields aren't statically known here, and `rendering.attributes` was checked against them.
         return getattr(self, name, None)
 
     def rendered_attributes(self) -> dict[str, str | None]:
         """The attributes this part's frame carries, in their declared order: `None` leaves one off."""
         return {
             name: None if (value := self._attribute_value(name)) is None else str(value)
-            for name in self.render.attributes
+            for name in self.rendering.attributes
         }
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
@@ -4759,20 +4759,20 @@ def _capability_part_kind(cls: type[CapabilityPart], namespace: str | None, name
     return f'{namespace}.{part_name}'
 
 
-def _class_render(
+def _class_rendering(
     cls: type[CapabilityPart], *, tag: str | None, attributes: Sequence[str] | None, note: str | None
-) -> CapabilityPartRender:
-    """The render facts `cls` declares: its voice's, with the class arguments over those of the kind it extends."""
+) -> CapabilityPartRendering:
+    """The rendering facts `cls` declares: its voice's, with the class arguments over those of the kind it extends."""
     voice = cls._voice  # pyright: ignore[reportPrivateUsage]
     assert voice is not None  # checked by `_capability_part_kind`
-    inherited = cls._class_render or CapabilityPartRender(voice=voice)  # pyright: ignore[reportPrivateUsage]
-    render = CapabilityPartRender(
+    inherited = cls._class_rendering or CapabilityPartRendering(voice=voice)  # pyright: ignore[reportPrivateUsage]
+    rendering = CapabilityPartRendering(
         voice=voice,
         tag=tag if tag is not None else inherited.tag,
         note=note if note is not None else inherited.note,
         attributes=tuple(attributes) if attributes is not None else inherited.attributes,
     )
-    _check_capability_render(f'Capability part {cls.__qualname__}', render)
+    _check_capability_rendering(f'Capability part {cls.__qualname__}', rendering)
     # A kind's own typed fields: `content` and the other fields every part has can't be attributes, which an unknown
     # part would then have nowhere to read from.
     declared = {
@@ -4781,12 +4781,12 @@ def _class_render(
         if issubclass(klass, CapabilityPart) and klass is not CapabilityPart
         for field_name in _utils.own_annotations(klass)
     } - _CAPABILITY_PART_ENVELOPE_FIELDS
-    if missing := [attribute for attribute in render.attributes if attribute not in declared]:
+    if missing := [attribute for attribute in rendering.attributes if attribute not in declared]:
         raise UserError(
             f'Capability part {cls.__qualname__} renders {", ".join(map(repr, missing))} as attributes, but declares '
             'no such field.'
         )
-    return render
+    return rendering
 
 
 @dataclass(repr=False, kw_only=True)
@@ -4880,7 +4880,7 @@ class UnknownCapabilityPart(CapabilityPart, _register=False):
     """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose `kind` isn't registered in this process.
 
     Produced when loading history from a process that had the defining module imported. It renders from its stored
-    [`render`][pydantic_ai.messages.CapabilityPart.render] facts exactly as the original part did, its typed fields
+    [`rendering`][pydantic_ai.messages.CapabilityPart.rendering] facts exactly as the original part did, its typed fields
     ride in `data`, and serialization flattens them again, so a process that does have the defining module imported
     recovers the typed part.
     """
