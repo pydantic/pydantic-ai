@@ -1042,25 +1042,34 @@ class NonRetryableSubclassWorkflow:
         except ActivityError as error:
             application_error = error.cause
             assert isinstance(application_error, ApplicationError)
-            return f'{application_error.type}'
+            return f'{application_error.type}: {application_error.message}'
 
 
 @pytest.mark.parametrize('where', ['model', 'tool'])
 @pytest.mark.parametrize(
-    ('kind', 'error_type'),
+    ('kind', 'error_type', 'message'),
     [
-        pytest.param('unexpected_model_behavior', 'UnexpectedModelBehavior', id='listed-class'),
-        pytest.param('content_filter', 'ContentFilterError', id='unexpected-model-behavior-subclass'),
-        pytest.param('incomplete_tool_call', 'IncompleteToolCall', id='incomplete-tool-call'),
-        pytest.param('app_config', '_AppConfigError', id='user-error-subclass'),
+        pytest.param('unexpected_model_behavior', 'UnexpectedModelBehavior', 'Unexpected response.', id='listed-class'),
+        pytest.param(
+            'content_filter', 'ContentFilterError', 'Content filter triggered.', id='unexpected-model-behavior-subclass'
+        ),
+        pytest.param(
+            'incomplete_tool_call',
+            'IncompleteToolCall',
+            'Token limit exceeded while generating a tool call.',
+            id='incomplete-tool-call',
+        ),
+        pytest.param('app_config', '_AppConfigError', 'The app is misconfigured.', id='user-error-subclass'),
     ],
 )
-async def test_durability_non_retryable_error_subclasses(client: Client, where: str, kind: str, error_type: str):
+async def test_durability_non_retryable_error_subclasses(
+    client: Client, where: str, kind: str, error_type: str, message: str
+):
     """An activity that raises a subclass of an error the retry policy lists as non-retryable, like a
     `ContentFilterError` or an application's own `UserError`, fails on its first attempt, as the listed class does.
 
     Temporal's `non_retryable_error_types` matches the error's exact type name, which a subclass doesn't have. The
-    error keeps its own type name.
+    error keeps its own type name and message.
     """
     _subclass_attempts.clear()
     async with Worker(
@@ -1075,7 +1084,7 @@ async def test_durability_non_retryable_error_subclasses(client: Client, where: 
             id=f'{NonRetryableSubclassWorkflow.__name__}_{kind}_{where}',
             task_queue=TASK_QUEUE,
         )
-    assert output == error_type
+    assert output == f'{error_type}: {message}'
     assert _subclass_attempts == [kind]
 
 
