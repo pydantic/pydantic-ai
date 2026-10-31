@@ -395,6 +395,10 @@ Compatibility with one API does not imply support for the other or for every Ope
 
 When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
 
+## Content as a list of parts
+
+Some OpenAI-compatible APIs return or stream a message's `content` as a list of parts rather than a string, for example Mistral models on the Albert API when an answer carries references: `[{"type": "text", "text": "..."}, {"type": "reference", "reference_ids": [1]}]`. `OpenAIChatModel` joins the text parts into the response's text, and keeps the other parts, as received, in [`provider_details['content_parts']`][pydantic_ai.messages.ModelResponse.provider_details]. On a streamed response, the key is set once the stream ends.
+
 ## Model profile
 
 A model profile tells the model class how to shape requests for a particular model and API: which JSON schema restrictions its tool definitions have, whether tools can be marked as strict, how reasoning is configured, and so on. The providers above select one automatically based on the model name, so you only need this section if a model behind a custom endpoint doesn't work correctly out of the box.
