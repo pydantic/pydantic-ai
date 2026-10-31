@@ -428,7 +428,11 @@ jobs:
           # On 2026-10-27 the step ran 127 to 292 s over 375 pull request runs (median 236 s, p90 259 s),
           # and 23 of them failed only on the budget, with zero type errors, on diffs as small as a
           # docstring; 320 is about 1.1x that maximum and still fails a regression like #8077's.
-          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '320' || '' }}
+          # After #11806 set the worker count and heap above, 181 passing runs from 2026-10-29 to 30
+          # (146 pull request, 20 merge queue, 15 `main`) ran 145 to 288 s (median 231 s, p95 254 s,
+          # p99 274 s); 280 keeps about 10% above that p95, and 1 of the 146 pull request runs
+          # exceeded it.
+          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '280' || '' }}
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
