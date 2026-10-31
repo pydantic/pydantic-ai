@@ -200,6 +200,7 @@ from .conftest import (
     legacy_retry_prompt_part,
     message,
     message_part,
+    no_leaked_tasks,
 )
 from .continuation_utils import ScriptedContinuationModel, scripted_response
 
@@ -10479,20 +10480,17 @@ async def test_parallel_tool_exception_cancels_sibling_tasks():
             raise
         return 'done'  # pragma: no cover
 
-    tasks_before = asyncio.all_tasks()
-    with pytest.raises(RuntimeError, match='boom'):
-        await agent.run('call tools')
+    with no_leaked_tasks():
+        with pytest.raises(RuntimeError, match='boom'):
+            await agent.run('call tools')
 
-    # Give the event loop a moment to process cancellations.
-    await asyncio.sleep(0)
+        # Give the event loop a moment to process cancellations.
+        await asyncio.sleep(0)
 
-    # The slow tool must have started (confirming both tasks ran in parallel).
-    assert slow_tool_started.is_set(), 'slow_tool never started — not running in parallel'
-    # The slow tool must have been cancelled when fast_failing_tool raised.
-    assert slow_tool_cancelled.is_set(), 'slow_tool was not cancelled after RuntimeError'
-    # No new asyncio tasks should be left over from this run.
-    leaked = asyncio.all_tasks() - tasks_before
-    assert not leaked, f'Orphaned tasks remain: {leaked}'
+        # The slow tool must have started (confirming both tasks ran in parallel).
+        assert slow_tool_started.is_set(), 'slow_tool never started — not running in parallel'
+        # The slow tool must have been cancelled when fast_failing_tool raised.
+        assert slow_tool_cancelled.is_set(), 'slow_tool was not cancelled after RuntimeError'
 
 
 async def test_parallel_tool_outer_cancellation_only_cancels_pending_tool_tasks():

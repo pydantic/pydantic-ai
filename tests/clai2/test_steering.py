@@ -1,6 +1,5 @@
 """Messages queue first; explicit steering uses core delivery."""
 
-import asyncio
 from collections.abc import AsyncIterable, Sequence
 from io import StringIO
 from pathlib import Path
@@ -565,29 +564,28 @@ async def test_shell_echoes_steering_while_run_blocked(
     image = BinaryContent(data=b'image', media_type='image/png')
     marker = shell.images.attach([image]) if attachments else ''
     direction = f'change direction {marker}'.strip()
-    before = asyncio.all_tasks()
-    async with editor() as (live, _, _):
-        live.steer = shell.steer
-        async with anyio.create_task_group() as tasks:
-            tasks.start_soon(shell.run_turn, TurnStart(text='start'))
-            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                await started.wait()
-            live.buffer.replace(direction)
-            if route == 'queued':
-                live.feed('enter')
-            live.feed('alt-enter')
-            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                await echoed.wait()
-            assert not release.is_set()
-            assert transcript.getvalue().count(f'> {direction}') == 1
-            assert shell.images.notice == ''
-            assert live.buffer.text == ''
-            assert live.queued_messages == ()
-            if cancel:
-                tasks.cancel_scope.cancel()
-            else:
-                release.set()
-    assert asyncio.all_tasks() - before == set()
+    with no_leaked_tasks():
+        async with editor() as (live, _, _):
+            live.steer = shell.steer
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(shell.run_turn, TurnStart(text='start'))
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await started.wait()
+                live.buffer.replace(direction)
+                if route == 'queued':
+                    live.feed('enter')
+                live.feed('alt-enter')
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await echoed.wait()
+                assert not release.is_set()
+                assert transcript.getvalue().count(f'> {direction}') == 1
+                assert shell.images.notice == ''
+                assert live.buffer.text == ''
+                assert live.queued_messages == ()
+                if cancel:
+                    tasks.cancel_scope.cancel()
+                else:
+                    release.set()
     assert not shell.steer('after turn')
     prompts = [
         part.content
