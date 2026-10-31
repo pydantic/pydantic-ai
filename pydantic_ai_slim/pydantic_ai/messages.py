@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from functools import cached_property
 from mimetypes import MimeTypes
 from os import PathLike
@@ -5479,6 +5479,34 @@ def repair_messages(messages: Sequence[ModelMessage], *, repair_last_response: b
             them would abandon that work.
     """
     return _clean_message_history(list(messages), repair_last_response=repair_last_response)
+
+
+def idle_gaps(messages: Sequence[ModelMessage], *, now: datetime | None = None) -> list[timedelta]:
+    """The idle time between each model response and the request that followed it, oldest first.
+
+    Measured from [`ModelResponse.timestamp`][pydantic_ai.messages.ModelResponse.timestamp] to the next
+    [`ModelRequest.timestamp`][pydantic_ai.messages.ModelRequest.timestamp], the time it was sent. A request that
+    hasn't been sent yet (no timestamp, like the one a capability sees while its settings are resolved) is measured
+    to `now`, which defaults to the current UTC time. Requests with no response before them are skipped, and naive
+    timestamps are read as UTC.
+
+    Cache policies use this to tell a conversation driven by tool calls, with gaps of seconds, from one paced by a
+    person; see [`CachePolicy`][pydantic_ai.capabilities.CachePolicy].
+    """
+    gaps: list[timedelta] = []
+    last_response: datetime | None = None
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            last_response = _as_utc(message.timestamp)
+        elif last_response is not None:
+            sent = _as_utc(message.timestamp) if message.timestamp else (now or _now_utc())
+            gaps.append(sent - last_response)
+            last_response = None
+    return gaps
+
+
+def _as_utc(timestamp: datetime) -> datetime:
+    return timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=UTC)
 
 
 def sanitize_messages(
