@@ -878,11 +878,14 @@ class OpenRouterModel(OpenAIChatModel):
         if max_points is None:
             return
 
+        # The leading system messages carry the instruction points. A later one is a mid-conversation system message,
+        # whose breakpoint is a message point like any other.
+        system_prefix_count = _system_prefix_count(openai_messages)
         reserved, optional_points = split_instruction_cache_points(
             [
                 cast('dict[str, Any]', part)
-                for msg in openai_messages
-                if msg.get('role') in ('system', 'developer') and isinstance(content := msg.get('content'), list)
+                for msg in openai_messages[:system_prefix_count]
+                if isinstance(content := msg.get('content'), list)
                 for part in content
                 if 'cache_control' in cast('dict[str, Any]', part)
             ]
@@ -891,8 +894,8 @@ class OpenRouterModel(OpenAIChatModel):
 
         message_parts = (
             cast('dict[str, Any]', part)
-            for msg in reversed(openai_messages)
-            if msg.get('role') not in ('system', 'developer') and isinstance(content := msg.get('content'), list)
+            for msg in reversed(openai_messages[system_prefix_count:])
+            if isinstance(content := msg.get('content'), list)
             for part in reversed(content)
         )
         for part_dict in excess_cache_points(
@@ -1024,11 +1027,7 @@ class OpenRouterModel(OpenAIChatModel):
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         if not instruction_parts:
             # The leading system messages only: a later one is a mid-conversation system message, not the system prompt.
-            system_prefix_count = next(
-                (index for index, msg in enumerate(openai_messages) if msg.get('role') not in ('system', 'developer')),
-                len(openai_messages),
-            )
-            if system_prefix_count:
+            if system_prefix_count := _system_prefix_count(openai_messages):
                 self._add_cache_control_to_message(openai_messages[system_prefix_count - 1], ttl)
             return
 
@@ -1312,7 +1311,7 @@ class OpenRouterModel(OpenAIChatModel):
             # A request-scoped prompt ends the request as its own user message (see `_request_scoped_tail_texts`),
             # and the next request won't send it, so the breakpoint goes on the message before it.
             end, _ = _request_scoped_suffix_start(
-                openai_messages, _request_scoped_tail_texts(messages), _user_message_text
+                openai_messages, _request_scoped_tail_texts(messages), _request_scoped_message_text
             )
             if end:
                 self._add_cache_control_to_message(openai_messages[end - 1], cache_messages)
@@ -1636,13 +1635,21 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
 
-def _user_message_text(message: chat.ChatCompletionMessageParam) -> str | None:
+def _request_scoped_message_text(message: chat.ChatCompletionMessageParam) -> str | None:
     """A user or system message's text content, which is how a request-scoped prompt renders.
 
     It's a `system` message on a route that takes one mid-conversation, and a `<system>`-tagged user message elsewhere.
     """
     content = message.get('content')
     return content if message['role'] in ('user', 'system') and isinstance(content, str) else None
+
+
+def _system_prefix_count(messages: Sequence[chat.ChatCompletionMessageParam]) -> int:
+    """How many `system` and `developer` messages lead the request: the system prompt and instructions."""
+    return next(
+        (index for index, message in enumerate(messages) if message['role'] not in ('system', 'developer')),
+        len(messages),
+    )
 
 
 def _place_system_messages_before_generation(messages: list[chat.ChatCompletionMessageParam]) -> None:
@@ -1656,11 +1663,7 @@ def _place_system_messages_before_generation(messages: list[chat.ChatCompletionM
     leading system messages are the system prompt and stay where they are. See
     `place_system_messages_before_generation` for `AnthropicModel`'s counterpart.
     """
-    system_prefix_count = next(
-        (index for index, message in enumerate(messages) if message['role'] not in ('system', 'developer')),
-        len(messages),
-    )
-    for index in range(len(messages) - 1, system_prefix_count - 1, -1):
+    for index in range(len(messages) - 1, _system_prefix_count(messages) - 1, -1):
         if messages[index]['role'] != 'system' or 'configuration_update' in messages[index]:
             continue
         target = index + 1

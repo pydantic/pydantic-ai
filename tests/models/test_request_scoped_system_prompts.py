@@ -1164,7 +1164,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_control_openrout
     )
     settings: OpenRouterModelSettings = {'openrouter_cache_messages': '5m'}
 
-    await send(model, duplicate_text_history(), settings)
+    await send(model, duplicate_text_history(SystemPromptPart('Reminder.')), settings)
 
     messages = cast(list[dict[str, Any]], request_capture.body('/chat/completions')['messages'])
     assert [index for index, message in enumerate(messages) if 'cache_control' in str(message)] == [len(messages) - 2]
