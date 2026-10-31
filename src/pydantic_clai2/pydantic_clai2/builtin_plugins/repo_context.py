@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2.plugins import DepsT, Plugin
+from pydantic_clai2.runtime import codex_sessions
 from pydantic_clai2.runtime.session import supports_local_workspace
 
 
@@ -21,8 +22,6 @@ def _global_instruction_files() -> list[str]:
     Codex's is under `CODEX_HOME` when that is set, as Codex reads it. `~/.pydantic-ai/AGENTS.md` is the
     harness's own, so it comes last and is the most specific of the three.
     """
-    from pydantic_clai2.runtime import codex_sessions
-
     home = Path.home()
     return [
         str(home / '.claude' / 'CLAUDE.md'),
