@@ -1331,6 +1331,11 @@ another agent, such as your company's: that agent then also sees your personal
 instructions. Set `global_files` to `false` in a declaration for that agent, or
 `/plugins disable repo_context`, to keep them out.
 
+The walk-up reads every directory above the workspace, up to `/`, not just the
+repository. A session started under a directory other users can write to, such
+as `/tmp/scratch`, also loads `/tmp/AGENTS.md`. Set `walk_up` to `false` when
+you work in such a place.
+
 A repository can declare plugins too, in `.clai/settings.json`; they show as
 `(project)` and rank just above the built-ins. They start off, because a
 repository must not run code as you just because you opened it: CLAI names the

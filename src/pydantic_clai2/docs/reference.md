@@ -437,7 +437,9 @@ from the project file, reads instruction files automatically: one per directory,
 `AGENTS.md` else `CLAUDE.md`, from the launch directory and every directory above
 it, plus your global files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` or
 `$CODEX_HOME/AGENTS.md`, and `~/.pydantic-ai/AGENTS.md`), which also load when
-you use CLAI to run another agent. A subdirectory's file is added the first time
+you use CLAI to run another agent. The walk-up goes all the way to `/`, so under
+a shared directory such as `/tmp` it also reads files other users can write;
+set the plugin's `walk_up` to `false` there. A subdirectory's file is added the first time
 the agent reads, lists, or works in it. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
