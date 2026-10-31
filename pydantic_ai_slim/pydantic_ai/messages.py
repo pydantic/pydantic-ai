@@ -4538,9 +4538,11 @@ class ModelRequestAttempt:
 
     A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
     [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability records one for each model it moved on
-    from, on the response of the model that answered
+    from, and the [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] capability one for each
+    attempt it retried, on the response that answered
     ([`ModelResponse.failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]), or on the
-    [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] when every model failed.
+    [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] when every model failed. Retries and
+    fallbacks share one list, in the order the attempts were made.
     """
 
     model_name: str
@@ -4571,6 +4573,21 @@ class ModelRequestAttempt:
     """The usage the provider reported for the attempt, including its cost where it can be calculated.
 
     `None` when the usage is unknown, as it is for an attempt that raised before returning a response.
+    """
+
+    kind: Literal['retry', 'fallback'] = 'fallback'
+    """How the request moved on from the attempt.
+
+    - `'retry'` — the same model was attempted again, as
+      [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] does, or any hook raising
+      [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] without a model.
+    - `'fallback'` — the request moved on to another model, or none was left to move on to. This is the default.
+    """
+
+    retry_after: float | None = None
+    """Seconds the provider asked to wait before retrying, if the attempt raised an error that said so.
+
+    See [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after].
     """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -4714,7 +4731,7 @@ class ModelResponse:
 
     A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
     [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability records the models it moved on from
-    here. Their usage is not included in `usage`, which is this response's own, but it does
+    here, and [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] the attempts it retried. Their usage is not included in `usage`, which is this response's own, but it does
     count towards the run's [`RunUsage`][pydantic_ai.usage.RunUsage] and
     [`UsageLimits`][pydantic_ai.usage.UsageLimits] token and cost limits. A rejected response's
     parts are not kept. Not sent to the model.

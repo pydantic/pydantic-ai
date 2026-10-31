@@ -17,6 +17,7 @@ from pydantic_ai._utils import aclose_if_supported, await_maybe
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
+from pydantic_ai.capabilities.retry_on_model_errors import RetryOnModelErrors
 from pydantic_ai.capabilities.set_tool_metadata import SetToolMetadata
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
@@ -232,7 +233,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], that fail a model
                 activity without Temporal retrying it, whatever its retry policy says. An error matches when
                 it's an instance of a listed class, so a category also covers its subclasses. The workflow
-                still receives the error as its own class.
+                still receives the error as its own class. When the agent has
+                [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors], every model error is
+                non-retryable, so that capability is the one that retries them, and the retry policy still
+                covers worker crashes and activity timeouts.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -328,6 +332,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         assert self._deps_type is not None
         self._child_workflow_metadata_capability = False
         agent.root_capability.apply(self._detect_child_workflow_metadata)
+        non_retryable_model_errors = self._non_retryable_model_errors
+        if _has_retry_on_model_errors(agent.root_capability):
+            # `RetryOnModelErrors` retries model errors in the workflow, waiting on a durable timer, so the activity
+            # doesn't retry them too: its retry policy is left to crashes and timeouts, which never reach a hook.
+            non_retryable_model_errors = (ModelAPIError,)
         self._operation_backend = TemporalOperationBackend(
             agent_name=self.name,
             deps_type=self._deps_type,
@@ -335,7 +344,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             event_config=self._event_stream_handler_activity_config,
             tool_config=self.activity_config,
             resolve_tool_config=self._resolve_temporal_tool_config,
-            non_retryable_model_errors=self._non_retryable_model_errors,
+            non_retryable_model_errors=non_retryable_model_errors,
             runtime=self,
             parameter_transports=TemporalParameterTransports(self),
         )
@@ -743,3 +752,15 @@ def worker_registrations(durability: TemporalDurability[Any]) -> tuple[list[Call
             workflows.append(registration)
             registered_child_workflow_names.add(workflow_name)
     return activities, workflows
+
+
+def _has_retry_on_model_errors(capability: AbstractCapability[Any]) -> bool:
+    """Whether the agent's capabilities include `RetryOnModelErrors`."""
+    found = False
+
+    def visit(cap: AbstractCapability[Any]) -> None:
+        nonlocal found
+        found = found or isinstance(cap, RetryOnModelErrors)
+
+    capability.apply(visit)
+    return found
