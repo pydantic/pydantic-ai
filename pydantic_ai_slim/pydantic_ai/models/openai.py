@@ -5927,10 +5927,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     detail=detail,
                 )
             elif item.is_document:
-                return ResponseInputFileContentParam(
-                    type='input_file',
-                    file_data=item.data_uri,
-                    filename=f'filename.{item.format}',
+                return _with_file_detail(
+                    ResponseInputFileContentParam(
+                        type='input_file',
+                        file_data=item.data_uri,
+                        filename=f'filename.{item.format}',
+                    ),
+                    item.vendor_metadata,
                 )
             elif item.is_audio:
                 raise NotImplementedError(f'BinaryContent with audio is not supported in OpenAI Responses {context}')
@@ -5954,15 +5957,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         elif isinstance(item, (AudioUrl, DocumentUrl)):
             if item.force_download:
                 downloaded = await download_item(item, data_format='base64_uri', type_format='extension')
-                return ResponseInputFileContentParam(
+                file_param = ResponseInputFileContentParam(
                     type='input_file',
                     file_data=downloaded['data'],
                     filename=f'filename.{downloaded["data_type"]}',
                 )
-            return ResponseInputFileContentParam(
-                type='input_file',
-                file_url=item.url,
-            )
+            else:
+                file_param = ResponseInputFileContentParam(
+                    type='input_file',
+                    file_url=item.url,
+                )
+            return _with_file_detail(file_param, item.vendor_metadata)
         else:
             raise NotImplementedError(f'VideoUrl is not supported in OpenAI Responses {context}')
 
@@ -8054,7 +8059,21 @@ def _uploaded_file_to_response_content(
         if metadata := item.vendor_metadata:
             detail = metadata.get('detail', 'auto')
         return ResponseInputImageContentParam(type='input_image', file_id=item.file_id, detail=detail)
-    return ResponseInputFileContentParam(type='input_file', file_id=item.file_id)
+    return _with_file_detail(
+        ResponseInputFileContentParam(type='input_file', file_id=item.file_id), item.vendor_metadata
+    )
+
+
+def _with_file_detail(
+    file_param: ResponseInputFileContentParam, vendor_metadata: dict[str, Any] | None
+) -> ResponseInputFileContentParam:
+    """Set `detail` on an OpenAI Responses `input_file` param from `vendor_metadata['detail']`, if given.
+
+    When unset, `detail` is omitted so that the API's default (`'auto'`) applies.
+    """
+    if vendor_metadata and (detail := vendor_metadata.get('detail')):
+        file_param['detail'] = detail
+    return file_param
 
 
 def _map_web_search_tool_call(

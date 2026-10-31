@@ -59,6 +59,7 @@ from pydantic_ai import (
     ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UploadedFile,
     UsageLimitExceeded,
     UsageLimitUnavailableWarning,
     UserError,
@@ -705,6 +706,60 @@ async def test_openai_responses_image_detail_vendor_metadata(allow_model_request
     ]
     assert image_parts
     assert all(part['detail'] == 'high' for part in image_parts)
+
+
+async def test_openai_responses_document_detail_vendor_metadata(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    document_url = DocumentUrl('https://example.com/document.pdf', vendor_metadata={'detail': 'low'})
+    binary_document = BinaryContent(b'%PDF', media_type='application/pdf', vendor_metadata={'detail': 'low'})
+    uploaded_document = UploadedFile(
+        file_id='file-abc123',
+        provider_name='openai',
+        media_type='application/pdf',
+        vendor_metadata={'detail': 'low'},
+    )
+    default_document = DocumentUrl('https://example.com/default.pdf')
+
+    result = await agent.run(
+        ['Summarize these documents.', document_url, binary_document, uploaded_document, default_document]
+    )
+    assert result.output == 'done'
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    file_parts = [
+        item
+        for message in response_kwargs[0]['input']
+        if message.get('role') == 'user'
+        for item in message['content']
+        if item['type'] == 'input_file'
+    ]
+    assert file_parts == snapshot(
+        [
+            {'type': 'input_file', 'file_url': 'https://example.com/document.pdf', 'detail': 'low'},
+            {
+                'type': 'input_file',
+                'file_data': 'data:application/pdf;base64,JVBERg==',
+                'filename': 'filename.pdf',
+                'detail': 'low',
+            },
+            {'type': 'input_file', 'file_id': 'file-abc123', 'detail': 'low'},
+            {'type': 'input_file', 'file_url': 'https://example.com/default.pdf'},
+        ]
+    )
 
 
 @pytest.mark.parametrize(
