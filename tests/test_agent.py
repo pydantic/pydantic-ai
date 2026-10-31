@@ -7,12 +7,12 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callab
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeVar, Union
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, TypeVar, Union
 
 import anyio
 import pytest
 from dirty_equals import IsJson
-from pydantic import BaseModel, TypeAdapter, field_validator
+from pydantic import AfterValidator, BaseModel, Field, TypeAdapter, ValidationError, field_validator
 from pydantic_core import ErrorDetails, to_json
 
 from pydantic_ai import (
@@ -318,6 +318,82 @@ def test_result_list_of_models_with_stringified_response():
             Person(name='John Doe'),
             Person(name='Jane Smith'),
         ]
+    )
+
+
+def test_result_validation_error_without_json_string_fallback_error():
+    """https://github.com/pydantic/pydantic-ai/issues/9476
+
+    Not a VCR test: real models can't be made to reliably send these wrongly shaped responses.
+    """
+
+    def check_name(name: str) -> str:
+        if len(name.split()) < 2:
+            raise ValueError('name must be at least 2 words long')
+        return name
+
+    # Neither a wrong type nor a non-JSON string is a JSON string, so only the output type's errors are
+    # reported. A string that is JSON keeps the errors of the `Json[...]` fallback too.
+    responses = iter([123, 'word', '"word"', 'John Doe'])
+
+    def return_name(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = json.dumps({'response': next(responses)})
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_name), output_type=Annotated[str, AfterValidator(check_name)], retries=3)
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('John Doe')
+    retry_prompts = [
+        part.content for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+    ]
+    assert retry_prompts == snapshot(
+        [
+            [{'type': 'string_type', 'loc': ('response',), 'msg': 'Input should be a valid string', 'input': 123}],
+            [
+                {
+                    'type': 'value_error',
+                    'loc': ('response',),
+                    'msg': 'Value error, name must be at least 2 words long',
+                    'input': 'word',
+                }
+            ],
+            [
+                {
+                    'type': 'value_error',
+                    'loc': ('response', 'function-after[check_name(), str]'),
+                    'msg': 'Value error, name must be at least 2 words long',
+                    'input': '"word"',
+                },
+                {
+                    'type': 'value_error',
+                    'loc': ('response', 'json[function-after[check_name(), str]]'),
+                    'msg': 'Value error, name must be at least 2 words long',
+                    'input': 'word',
+                },
+            ],
+        ]
+    )
+
+
+@pytest.mark.filterwarnings('ignore::pydantic.warnings.UnsupportedFieldAttributeWarning')
+def test_result_validation_error_when_only_output_type_accepts_response():
+    # The default only applies to the output type on its own, not to it as a member of the lenient
+    # `T | Json[T]` union, so the union's own error is reported rather than accepting the default.
+    # Not a VCR test: real models can't be made to reliably omit the `response` key.
+    def return_empty(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{}')])
+
+    agent = Agent(FunctionModel(return_empty), output_type=Annotated[list[int], Field(default_factory=list)], retries=0)
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        agent.run_sync('Hello')
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, ValidationError)
+    assert cause.errors(include_url=False) == snapshot(
+        [{'type': 'missing', 'loc': ('response',), 'msg': 'Field required', 'input': {}}]
     )
 
 
