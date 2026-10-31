@@ -54,6 +54,12 @@ class OpenRouterModelProfile(OpenAIModelProfile, total=False):
 
     Anthropic enforces a limit of 4. When set, excess breakpoints are silently removed
     from messages (newest kept first). `None` means no limit."""
+    openrouter_system_messages_precede_generation: bool
+    """Whether the downstream provider keeps a mid-conversation `system` message only right before an assistant turn or at the end of the request.
+
+    OpenRouter turns one anywhere else into user text on Anthropic routes, so `OpenRouterModel` moves each one past
+    the user and tool messages that follow it, as `AnthropicModel` does. Only meaningful together with
+    `supports_inline_system_prompts`."""
     openrouter_supports_forced_tool_choice_with_thinking: bool
     """Deprecated: use [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking] instead.
 
@@ -160,6 +166,36 @@ https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#changing-effor
 """
 
 
+_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    'anthropic': (
+        'claude-fable-5',
+        'claude-mythos-5',
+        'claude-opus-4-8',
+        'claude-opus-5',
+        'claude-sonnet-5-5',
+        'claude-haiku-5-5',
+    ),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that keep a mid-conversation `system` message.
+
+Besides these, every `openai/*` route keeps one except the open-weight `gpt-oss-*` models, which OpenRouter serves from
+other hosts' chat templates. Measured live on Chat Completions (2026-10-30), by whether the prompt cache still hits past
+the message and whether a withdrawal it carries is followed where the same text as a user message is not:
+
+- OpenAI routes keep it where it was sent, from GPT-4o through GPT-6.1, `-pro` variants and o3 included. One `gpt-oss`
+  host dropped it from the prompt altogether.
+- Anthropic routes keep it as a native entry only where Anthropic's own API accepts one, right before an assistant turn
+  or at the end of the request (see `openrouter_system_messages_precede_generation`), and only on the models Anthropic
+  serves the role on, which is the same list as `AnthropicProvider`'s. On Claude Sonnet 4.6, Opus 4.7 and Haiku 4.5,
+  OpenRouter moves it into the top-level system prompt, which busts the cached prefix after it. Claude Sonnet 5 keeps
+  it in place, but Anthropic documents that model as not acting on the entry. This held on every upstream OpenRouter
+  used: Anthropic, Claude Platform on AWS, Amazon Bedrock, Google Vertex AI and Azure.
+- Gemini routes move it into the system instruction, which busts the cached prefix after it.
+
+Mythos isn't routable on OpenRouter and is included on the strength of Anthropic's list.
+"""
+
+
 class OpenRouterProvider(_OpenAISDKProvider):
     """Provider for OpenRouter API."""
 
@@ -227,6 +263,10 @@ class OpenRouterProvider(_OpenAISDKProvider):
             _MID_CONVERSATION_EFFORT_MODEL_PREFIXES.get(provider, ())
         ) and not model_name.lower().endswith('-pro')
 
+        supports_inline_system_prompts = (
+            provider == 'openai' and not model_name.startswith('gpt-oss-')
+        ) or model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES.get(provider, ()))
+
         # Cache capability flags are set on the gateway layer based on the downstream provider.
         # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all
         # coincide with `supports_anthropic_cache` today: they model independent OpenRouter cache
@@ -244,8 +284,8 @@ class OpenRouterProvider(_OpenAISDKProvider):
         #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
         #    setting is always forwarded regardless of the upstream model's own thinking support. OpenRouter only
         #    accepts the older `max_tokens` field, so `openai_chat_supports_max_completion_tokens=False`.
-        #    It also silently transforms mid-conversation system messages rather than handling them natively,
-        #    so `supports_inline_system_prompts=False` selects the deliberate `<system>`-wrapped fallback.
+        #    It keeps mid-conversation system messages only on some routes (see `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`)
+        #    and moves or rewrites them on the others, so those get the deliberate `<system>`-wrapped fallback.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
@@ -255,7 +295,8 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 openai_chat_supports_file_urls=True,
                 openai_chat_supports_web_search=True,
                 openai_chat_supports_max_completion_tokens=False,
-                supports_inline_system_prompts=False,
+                supports_inline_system_prompts=supports_inline_system_prompts,
+                openrouter_system_messages_precede_generation=provider == 'anthropic',
                 supports_thinking=True,
                 # OpenRouter's own Chat Completions extension: a content-less `system` message carrying a
                 # `configuration_update`. Set here because the upstream provider's own channel isn't what's sent.

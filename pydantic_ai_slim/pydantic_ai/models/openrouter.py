@@ -913,8 +913,8 @@ class OpenRouterModel(OpenAIChatModel):
         Anthropic rejects a request where a one-hour breakpoint comes after a five-minute one, processing `tools`, then
         `system`, then `messages` (https://platform.claude.com/docs/en/build-with-claude/prompt-caching), and OpenRouter
         passes that error through. Walking the tools and then the messages matches that order: the only `system`
-        messages are the leading ones that become Anthropic's `system`, since a mid-conversation system prompt is sent
-        as a `<system>`-wrapped user message (`supports_inline_system_prompts=False`).
+        messages are the leading ones that become Anthropic's `system`, and the mid-conversation ones that stay in
+        `messages` as native entries where they are.
         """
         if not self._resolved_profile.get('openrouter_supports_cache_ttl', False):
             return
@@ -1023,10 +1023,13 @@ class OpenRouterModel(OpenAIChatModel):
     ) -> None:
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         if not instruction_parts:
-            for msg in reversed(openai_messages):
-                if msg.get('role') in ('system', 'developer'):
-                    self._add_cache_control_to_message(msg, ttl)
-                    break
+            # The leading system messages only: a later one is a mid-conversation system message, not the system prompt.
+            system_prefix_count = next(
+                (index for index, msg in enumerate(openai_messages) if msg.get('role') not in ('system', 'developer')),
+                len(openai_messages),
+            )
+            if system_prefix_count:
+                self._add_cache_control_to_message(openai_messages[system_prefix_count - 1], ttl)
             return
 
         instruction_role = self._resolved_profile.get('openai_system_prompt_role', None) or 'system'
@@ -1281,6 +1284,10 @@ class OpenRouterModel(OpenAIChatModel):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         mapped = await super()._map_messages(messages, model_request_parameters, model_settings=model_settings)
+        if self._resolved_profile.get('supports_inline_system_prompts', False) and self._resolved_profile.get(
+            'openrouter_system_messages_precede_generation', False
+        ):
+            _place_system_messages_before_generation(mapped)
         # A `configuration_update` message has no content to carry a breakpoint, and an empty text block with one is
         # rejected, so breakpoints are placed as if it weren't there and it goes back in its place afterwards.
         updates = [(index, message) for index, message in enumerate(mapped) if 'configuration_update' in message]
@@ -1630,6 +1637,36 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
 
 
 def _user_message_text(message: chat.ChatCompletionMessageParam) -> str | None:
-    """A user message's text content, which is how a request-scoped prompt renders."""
+    """A user or system message's text content, which is how a request-scoped prompt renders.
+
+    It's a `system` message on a route that takes one mid-conversation, and a `<system>`-tagged user message elsewhere.
+    """
     content = message.get('content')
-    return content if message['role'] == 'user' and isinstance(content, str) else None
+    return content if message['role'] in ('user', 'system') and isinstance(content, str) else None
+
+
+def _place_system_messages_before_generation(messages: list[chat.ChatCompletionMessageParam]) -> None:
+    """Move each mid-conversation `system` message past the user and tool messages that follow it.
+
+    On a route with `openrouter_system_messages_precede_generation`, OpenRouter keeps a `system` message only right
+    before an assistant turn or at the end of the request, and turns one anywhere else into user text. An instruction
+    governs the generation that follows it, which is the same one either way, so moving it costs nothing and keeps its
+    authority. Only user and tool messages are hopped over, so a later instruction never overtakes an earlier one. The
+    content-less `configuration_update` message is hopped over too, since it doesn't have to follow these rules. The
+    leading system messages are the system prompt and stay where they are. See
+    `place_system_messages_before_generation` for `AnthropicModel`'s counterpart.
+    """
+    system_prefix_count = next(
+        (index for index, message in enumerate(messages) if message['role'] not in ('system', 'developer')),
+        len(messages),
+    )
+    for index in range(len(messages) - 1, system_prefix_count - 1, -1):
+        if messages[index]['role'] != 'system' or 'configuration_update' in messages[index]:
+            continue
+        target = index + 1
+        while target < len(messages) and (
+            messages[target]['role'] in ('user', 'tool') or 'configuration_update' in messages[target]
+        ):
+            target += 1
+        if target > index + 1:
+            messages.insert(target - 1, messages.pop(index))

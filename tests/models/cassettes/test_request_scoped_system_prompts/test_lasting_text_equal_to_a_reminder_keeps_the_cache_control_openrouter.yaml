@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - "748"
+      - "733"
       content-type:
       - application/json
       host:
@@ -42,8 +42,8 @@ interactions:
             cache_control:
               type: ephemeral
               ttl: 5m
-        - role: user
-          content: <system>Reminder.</system>
+        - role: system
+          content: Reminder.
         tool_choice: auto
         tools:
         - type: function
@@ -66,6 +66,8 @@ interactions:
       - "*"
       access-control-expose-headers:
       - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -81,9 +83,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792945480-2qC60OYHTzPFKQ4ARvHn
+        id: gen-1793405037-K1j9sNaP969Uy2mikuBP
         object: chat.completion
-        created: 1792945480
+        created: 1793405037
         model: anthropic/claude-haiku-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -101,14 +103,14 @@ interactions:
             reasoning_details:
             - type: reasoning.text
               signature: >-
-                CAQS3wYKEAgTGAI4AUIIdGhpbmtpbmcSDIgRfqIMmXTl54gHThoMKNpqqQrm15dp2WndIjD+JCQkdVbg6w1b6bPPbinMfrkNcP99tid7sch1coTfhmOiFYnLjZVe+sS8MDaIFzQq/AWyOy9uZiVIl85dJ8ce2IImRTEoaUrQz0GQ96ugRnJccu2Ofn16GHjPxVPZ68wYw84lyTZvKpdOsxwXcpbCIhNkKGn2PThQVxaZmpDsOpFHVoolkAvWJ/LIL4Tx14bky/MdUw+sYi9bIiWZ9kk9uI50A4lAQ1mU14VLIaveattY8/9Kl5+F2rZ6ZCth4IuA95RDIUJX5yC9qZmjeMVzS7fX5EkfaXScGM4n7siB13Bhjh2nvGTJCnaXYXtHBOm2Qt9puUJD3TC5LvWnyJRC4tnktMYXsL4jblTlS1FCyRH6+yQVVYPFDgGTg/MQ7Qf/FZAoBQcBLiigfmbJzVAkK298GGAmNgvt1KapgglD288nq2Y0wwIJi/QyrLJPtje2Mmf31bGvteOQOTH+exDBOfx4+RlBDVkqRjJX0E5c3iH8FnKtdSLYW2uM4gpL7qGR+RTv2HOJeIxeIWG2Tc0jyDEtj7ALkn86KDJKoNCuyfskwKDj+QKiSElUdIokzP4jgJJ0C4kgAQiTCNp6hCqQivXGm0VPHslPgBnCNoVjPqrFjl0YFO5myatRrquKI6zEZsomREsw16LCcXaOaIe8lfxrr2Sc+SfG1CA54wVlakIQAt2lXTuNY5cW6IYgf7TiaoWWJpoaSL0z/fglCu3jXjh2RFsbbTDV8AS5l6NGSjYh6mGkamotp6tUqfabxXmoEVPc6yIzP5ZqDTiZmsnjNjkeHPONkZjEgfNDTDvEC7DKmxdxUt4zG48G+s709kzATZ6o0uEChoBoYOs0ZC7VVWaX1rTk9Tl83nCclizPe4d8wlNjlm/64Ug89nLgS0lA6THUFYucL7/XmGDZB/Z6SEfIE7dUc4KbrhIatmfwKprGIQ8qM+3UsvobIfAIoqH4ZboN7+0WxgmLAedvi8+sTO6H2Ep7uvmEjbplnLbkbAipLmPApaIyXQ+BhHloKhY9SzbGi/W0NIvxNu8wN2h2RV/3LRBED4BuXJ3YGucu68W7Z3xCfjWEDNZLQHetYBgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1oYWlrdS01LjUtMjAyNjEwMDd8Y2xhdWRlLW9uLWF3cyJ9
+                CAQSoAcKEAgTGAI4AUIIdGhpbmtpbmcSDPAvXuVfcf+XTc3+exoMYXJ6nZKUm6Dyk1DtIjCzAnpy/rqcFC8fKIGtl6qmJsn888BRzTwylN+HtT6Y/pJK8X9GVwLG6JC2jJ9TtDgqvQZOd2N3hvhZZySTavB+0PmNbJEezBfDrBNmjO714mAgLx98zyg7ByK1OROvBfEPxCJgd/Xh067rZuEwX08BdTYHwfg96JBOUUzpU/dQdIdtzUlyVpS4rJul6xiCTlqBZumu2UmWQDBHyLe3RMbdIi1KKwKspbJwDG68sjsjk+Tt5WWsh0NT2MfIN0AoK+JAoc6a0D8wntxMFIQiIkT/VWiDSDhimZek0ziw3yQZnk4YIJIVHRclHfRMO5pupn1F+yO+VK10RKMJBPsduCfdOdOpFP173JkQNmvw6PxcuSpjS27CPQHqaOviLL+IhgTIa6wQ76lrAHPjxHGMk1BW94UvraRoS97m/3kvnmFa46JLlpNynLVI9qzSkYl7K4XK/3ESctd23lbbV62G+xDmoS2CCsCTpvtOicI3uViSo/7n1JHkIDmS2/8eGlKiMYg50r95gj+Dz9EIfsDzeshKXuNDSA4wRXC1agL2L0c+SipEWgND9FSgdMa7L1j4pwiRkyJGGRZ955SABrhLJmiBxy/V+HTGN3z2HPMtjYnCjNU7q72rUU39gNviRgCwynzg+US2Wdfi6u8BINpVDjvwMDLJIPnCJWIsL+JqJX8LKSW+hKZfCQmgEAUu4vhSF/vLH/SxBKQX8TEUa4fmOnwvVhe5OiyEZSZayn9FqBtgCPxfY/X4bHXKs83H8Ny1Yoegoxg2V8D/j2RAvZfHmD6bHun9tO24E7uJ6e3HDWopNmsJOVRK75EZVTAmYowSaLOBYU+UHEXo9biKm15QoYVau51QVTk9uX3tTn0Rn5h0kWJmS5tJQEEp2q3Q1QhfCXbVXbBo6Bew4QTdpacdqi/wK5a6fbmjQDq4X05US/YP5TpXrHKCnry1/e87XtvQo7WoeWYeKiu0tA2rjYVErJ89g/70/VogSdScjotkO/dfxmGi2mZxZaI8NVlRtgVjZR76qyGas5df+DgLmn6L7vvmWwPdTM2+dgiptfoELlqLQgG1f+etgbrCneMb2gUTx5LLcAaX/jVVWvhIm7/fp3HVBJwYzy0fGBHj23JHiH07ombaVXXR+CgjNYtrZLN6BDw+4n6XOt8gwS5AVCza/1jZGAE=.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1oYWlrdS01LjUtMjAyNjEwMDd8Y2xhdWRlLW9uLWF3cyJ9
               format: anthropic-claude-v1
               index: 0
         usage:
-          prompt_tokens: 456
-          completion_tokens: 86
-          total_tokens: 542
-          cost: 0.0000886
+          prompt_tokens: 452
+          completion_tokens: 102
+          total_tokens: 554
+          cost: 0.0000962
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -116,11 +118,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.0000886
-            upstream_inference_prompt_cost: 0.0000456
-            upstream_inference_completions_cost: 0.000043
+            upstream_inference_cost: 0.0000962
+            upstream_inference_prompt_cost: 0.0000452
+            upstream_inference_completions_cost: 0.000051
           completion_tokens_details:
-            reasoning_tokens: 73
+            reasoning_tokens: 89
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-25T16:24:41.907187+00:00
+  recorded_at: 2026-10-31T00:03:57.984824+00:00

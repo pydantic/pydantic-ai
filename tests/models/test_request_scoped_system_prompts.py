@@ -925,9 +925,8 @@ async def test_openrouter_message_cache_control_goes_before_the_request_scoped_p
 ):
     """`openrouter_cache_messages` marks the message before the reminder, not the reminder.
 
-    OpenRouter takes no `system` entries mid-conversation, so the reminder is its own `<system>`-tagged
-    user message at the end, and it's gone from the next request. With nothing ahead of the reminder,
-    nothing is marked.
+    On this route the reminder is a `system` message at the end, and it's gone from the next request.
+    With nothing ahead of the reminder, nothing is marked.
     """
     model = OpenRouterModel(
         'anthropic/claude-haiku-5.5',
@@ -946,10 +945,10 @@ async def test_openrouter_message_cache_control_goes_before_the_request_scoped_p
                 'tool_call_id': 'call_2',
                 'content': [{'type': 'text', 'text': 'Oslo: 18C', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
             },
-            {'role': 'user', 'content': '<system>Reminder 2.</system>'},
+            {'role': 'system', 'content': 'Reminder 2.'},
         ]
     )
-    assert only_reminder['messages'] == snapshot([{'role': 'user', 'content': '<system>Reminder.</system>'}])
+    assert only_reminder['messages'] == snapshot([{'role': 'system', 'content': 'Reminder.'}])
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
@@ -1169,7 +1168,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_control_openrout
 
     messages = cast(list[dict[str, Any]], request_capture.body('/chat/completions')['messages'])
     assert [index for index, message in enumerate(messages) if 'cache_control' in str(message)] == [len(messages) - 2]
-    assert messages[-1] == {'role': 'user', 'content': '<system>Reminder.</system>'}
+    assert messages[-1] == {'role': 'system', 'content': 'Reminder.'}
 
 
 def ui_history() -> list[ModelMessage]:
