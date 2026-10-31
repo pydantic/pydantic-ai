@@ -59,7 +59,6 @@ from pydantic_ai._utils import (
     fill_run_metadata,
     is_str_dict,
     now_utc,
-    raise_if_cancelling,
 )
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
@@ -4774,7 +4773,6 @@ async def notify_output_retry(
     retry_context: OutputRetryContext,
 ) -> None:
     """Notify capabilities after core accepts an output retry charge."""
-    raise_if_cancelling()
     await ctx.deps.root_capability.on_output_retry(_build_output_run_context(ctx), retry_context=retry_context)
 
 

@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Literal, assert_type
 
 import pytest
 from pydantic import ValidationError
 
-from pydantic_ai import Agent, EndStrategy, ModelRetry, PromptedOutput, RunContext, ToolOutput, capture_run_messages
+from pydantic_ai import (
+    Agent,
+    EndStrategy,
+    ModelRetry,
+    PromptedOutput,
+    RunContext,
+    Tool,
+    ToolOutput,
+    capture_run_messages,
+)
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Hooks,
@@ -22,11 +33,13 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryFeedbackCause,
+    RetryFeedbackPart,
     RetryInfo,
     ToolCallPart,
     ToolRetryCause,
+    ToolReturnPart,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 
@@ -201,3 +214,151 @@ async def test_notification_exception_stops_run_and_preserves_tool_returns(error
     final = messages[-1]
     assert isinstance(final, ModelRequest)
     assert final.state == 'interrupted'
+
+
+@dataclass(frozen=True)
+class Case:
+    end_strategy: EndStrategy
+    expected_retries: tuple[tuple[str, int], ...] = ()
+
+
+CASES: tuple[Case, ...] = (
+    Case('early'),
+    Case('graceful'),
+    Case('exhaustive', (('bad', 1),)),
+)
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.end_strategy) for case in CASES])
+@pytest.mark.parametrize('method', ['run', 'run_stream'])
+async def test_final_result_notifies_accepted_output_tool_retries(
+    case: Case, method: Literal['run', 'run_stream']
+) -> None:
+    received: list[OutputRetryContext] = []
+    calls: list[str] = []
+
+    def response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('request')
+        return ModelResponse(
+            parts=[ToolCallPart('good', {'response': 42}, 'good'), ToolCallPart('bad', {'response': 'invalid'}, 'bad')]
+        )
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        calls.append('request')
+        yield {
+            0: DeltaToolCall(name='good', json_args='{"response":42}', tool_call_id='good'),
+            1: DeltaToolCall(name='bad', json_args='{"response":"invalid"}', tool_call_id='bad'),
+        }
+
+    def record(ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:
+        assert ctx.retry == 1
+        assert retry_context.source == 'output_tool'
+        assert retry_context.tool_call_id == 'bad'
+        received.append(retry_context)
+
+    agent = Agent(
+        FunctionModel(response, stream_function=stream),
+        deps_type=object,
+        output_type=[ToolOutput(int, name='good'), ToolOutput(int, name='bad', max_retries=1)],
+        end_strategy=case.end_strategy,
+        capabilities=[Hooks(output_retry=record)],
+    )
+    if method == 'run':
+        result = await agent.run('Answer.')
+        assert result.output == 42
+        messages = result.all_messages()
+    else:
+        async with agent.run_stream('Answer.') as streamed:
+            assert await streamed.get_output() == 42
+            messages = streamed.all_messages()
+
+    assert tuple((retry.tool_name, retry.retry.attempt) for retry in received) == case.expected_retries
+    assert (
+        tuple(
+            (part.tool_name, part.retry.attempt)
+            for message in messages
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.retry is not None
+        )
+        == case.expected_retries
+    )
+    assert calls == ['request']
+
+
+async def test_function_tool_error_does_not_notify_uncharged_output_retries() -> None:
+    received: list[OutputRetryContext] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        yield {
+            0: DeltaToolCall(name='good', json_args='{"response":42}', tool_call_id='good'),
+            1: DeltaToolCall(name='bad', json_args='{"response":"invalid"}', tool_call_id='bad'),
+            2: DeltaToolCall(name='explode', json_args='{}', tool_call_id='explode'),
+        }
+
+    def explode() -> int:
+        raise RuntimeError('tool failed')
+
+    def record(ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:
+        received.append(retry_context)
+
+    agent = Agent(
+        FunctionModel(stream_function=stream),
+        deps_type=object,
+        output_type=[ToolOutput(int, name='good'), ToolOutput(int, name='bad', max_retries=1)],
+        tools=[Tool(explode, sequential=True)],
+        end_strategy='exhaustive',
+        capabilities=[Hooks(output_retry=record)],
+    )
+    with pytest.raises(RuntimeError, match='tool failed'):
+        async with agent.run_stream('Answer.') as streamed:
+            await streamed.get_output()
+    assert received == []
+
+
+@pytest.mark.parametrize('with_hook', [False, True])
+async def test_absorbed_validator_cancellation_keeps_ordinary_retry_behavior(with_hook: bool) -> None:
+    received: list[OutputRetryContext] = []
+
+    async def record(ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:
+        received.append(retry_context)
+
+    capabilities: list[AbstractCapability[object]] = [Hooks(output_retry=record)] if with_hook else []
+    agent = Agent(TestModel(custom_output_text='ready'), capabilities=capabilities)
+
+    @agent.output_validator
+    async def validate(ctx: RunContext[object], output: str) -> str:
+        if ctx.retry == 0:
+            task = asyncio.current_task()
+            assert task is not None
+            task.cancel()
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                pass
+            raise ModelRetry('Check once more.')
+        return output
+
+    result = await agent.run('Answer.')
+    assert result.output == 'ready'
+    assert result.usage.requests == 2
+    assert len(received) == int(with_hook)
+    request = result.all_messages()[2]
+    assert isinstance(request, ModelRequest)
+    assert any(isinstance(part, RetryFeedbackPart) for part in request.parts)
+
+
+async def test_cancelled_validator_does_not_notify() -> None:
+    received: list[OutputRetryContext] = []
+
+    async def record(ctx: RunContext[object], *, retry_context: OutputRetryContext) -> None:  # pragma: no cover
+        received.append(retry_context)
+
+    agent = Agent(TestModel(custom_output_text='draft'), capabilities=[Hooks(output_retry=record)])
+
+    @agent.output_validator
+    async def validate(output: str) -> str:
+        raise asyncio.CancelledError('cancel validation')
+
+    with pytest.raises(asyncio.CancelledError):
+        await agent.run('Answer.')
+    assert received == []
