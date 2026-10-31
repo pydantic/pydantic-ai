@@ -607,16 +607,15 @@ async def test_retried_error_keeps_the_request_pending():
 
 @dataclass
 class RequestEach(AbstractCapability[Any]):
-    """Requests compaction from `before_model_request` on the first step, once per `(reason, focus)` pair."""
+    """Requests compaction from `before_model_request`, once per `(reason, focus)` pair; the runs make one request."""
 
     requests: list[tuple[str, str | None]]
 
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        if ctx.run_step == 1:
-            for reason, focus in self.requests:
-                ctx.request_compaction(reason=reason, focus=focus)
+        for reason, focus in self.requests:
+            ctx.request_compaction(reason=reason, focus=focus)
         return request_context
 
 
