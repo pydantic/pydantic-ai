@@ -877,6 +877,24 @@ def _map(history: list[ModelMessage], model_name: str = 'claude-opus-4-8') -> li
     return cast('list[dict[str, Any]]', anthropic_messages)
 
 
+@pytest.mark.parametrize('prompt', ['', ' \t\n'])
+def test_blank_mid_conversation_system_prompts_are_omitted(prompt: str) -> None:
+    """Blank inline instructions must not become invalid empty Anthropic system blocks."""
+    assert _map(
+        [
+            ModelRequest(parts=[UserPromptPart('first')]),
+            ModelResponse(parts=[TextPart('answer')]),
+            ModelRequest(parts=[UserPromptPart('again'), SystemPromptPart(prompt)]),
+        ]
+    ) == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'first'}]},
+            {'role': 'assistant', 'content': [{'type': 'text', 'text': 'answer'}]},
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'again'}]},
+        ]
+    )
+
+
 def test_cache_point_ending_a_request_covers_the_instruction():
     """A `CachePoint` that ends a request caches the instruction it was authored after.
 

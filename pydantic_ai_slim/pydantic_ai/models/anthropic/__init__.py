@@ -2802,10 +2802,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         elif standing or not self.profile.get('supports_inline_system_prompts', False):
             map_context.system_prompt_parts.append(part.content)
         else:
+            # Anthropic rejects empty or whitespace-only text blocks in a system entry.
             # System-voice parts within one request all precede the same assistant
             # response. Rendering an interleaved entry after sibling user content is
             # deterministic and preserves the only ordering boundary that matters.
-            request_context.mid_conversation_system_prompts.append(part.content)
+            if part.content.strip():
+                request_context.mid_conversation_system_prompts.append(part.content)
 
     async def _map_user_prompt_part(
         self, part: UserPromptPart, request_context: _MapModelRequestContext, map_context: _MapMessagesContext
