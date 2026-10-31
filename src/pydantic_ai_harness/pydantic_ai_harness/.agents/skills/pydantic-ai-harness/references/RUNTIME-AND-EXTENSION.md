@@ -548,9 +548,13 @@ In the workflow `.md`, import `pydantic/pydantic-ai/src/pydantic_ai_harness/gh-a
 set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is required), and point
 `engine.env.PAI_AGENT` at `module:variable` (for example `my_agent:agent`), at
 `pydantic_ai_harness.researcher:researcher_agent`, or at a `.yml`/`.json` spec. Omit `PAI_AGENT` to run
-`Coder`. Then run `gh aw compile` and commit the `.lock.yml` with it. Gotchas: leave the model off the
-`Agent`, because the engine's `-m` overrides it. Writes go through safe outputs (for example the
-`safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to
+`Coder`. Use gh-aw v1.0.1 or newer with AWF v0.29.0 or newer. Run `gh aw compile` and commit the
+regenerated `.lock.yml`, including for existing workflows. Upgrading the CLI alone leaves existing
+locks unchanged. Omit `evals`, which protected capture rejects. Treat `PAI_AGENT` modules and
+caller-supplied `PYTHONPATH` as trusted engine configuration. Point both settings only at code you trust.
+
+Gotchas: leave the model off the `Agent`, because the engine's `-m` overrides it. Writes go through safe
+outputs (for example the `safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to
 `$GH_AW_SAFE_OUTPUTS` makes the engine exit 0 before starting the agent; gh-aw rejects a `noop`
 without `message`. Install extra dependencies with a workflow `steps:` `pip install --user`.
 The provider key is a repository secret, never `engine.env`. Threat detection on safe outputs runs on
