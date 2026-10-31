@@ -222,7 +222,7 @@ async def test_newcomer_history_shape():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='later', args={}, tool_call_id='c2')],
-                usage=RequestUsage(input_tokens=62, output_tokens=4),
+                usage=RequestUsage(input_tokens=59, output_tokens=4),
                 model_name='function:_unlock_then_call_later:',
                 model_id='function:function:_unlock_then_call_later:',
                 timestamp=IsDatetime(),
@@ -239,7 +239,7 @@ async def test_newcomer_history_shape():
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=64, output_tokens=5),
+                usage=RequestUsage(input_tokens=61, output_tokens=5),
                 model_name='function:_unlock_then_call_later:',
                 model_id='function:function:_unlock_then_call_later:',
                 timestamp=IsDatetime(),

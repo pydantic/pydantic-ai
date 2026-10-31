@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1360"
+      - "1318"
       content-type:
       - application/json
       host:
@@ -32,11 +32,11 @@ interactions:
         system:
         - type: text
           text: |-
-            <context seal="pydantic-ai" id="capability:deferred_capabilities">
+            <context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools. Load this capability before looking up refund policy.
             </context>
-            A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -76,11 +76,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=116
+      - x-originResponse;dur=110
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-d3d7b919a4645daf569eb4dfcd8a32ba-6952d9c07c9d4142-01
+      - 00-26bf44a58df92b073870f1b03b178be2-6bcaaf3951369437-01
       transfer-encoding:
       - chunked
       vary:
@@ -89,36 +89,36 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-fable-5","id":"msg_011CgZBiAtbMQcUrv34Y8gjJ","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":713,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":17,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
+        data: {"type":"message_start","message":{"model":"claude-fable-5","id":"msg_011CgZNq6YP4nxrRMZ3XKBuE","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":691,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":17,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_014W8zchwCWz3fH8nvvoVxJ2","name":"load_capability","input":{},"caller":{"type":"direct"}}             }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01PXHAbYbuMDnxTap4KwQZJ5","name":"load_capability","input":{},"caller":{"type":"direct"}}              }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"id\": "}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"id\": "}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"refund"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"refund"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"s\"}"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"s\"}"}         }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0      }
+        data: {"type":"content_block_stop","index":0 }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":713,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":50,"output_tokens_details":{"thinking_tokens":0}}             }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":691,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":50,"output_tokens_details":{"thinking_tokens":0}}            }
 
         event: message_stop
-        data: {"type":"message_stop"}
+        data: {"type":"message_stop"             }
 
-  recorded_at: 2026-10-30T22:09:23.057739+00:00
+  recorded_at: 2026-10-31T00:35:11.823060+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -130,7 +130,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1852"
+      - "1810"
       content-type:
       - application/json
       host:
@@ -148,14 +148,14 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_014W8zchwCWz3fH8nvvoVxJ2
+          - id: toolu_01PXHAbYbuMDnxTap4KwQZJ5
             type: tool_use
             name: load_capability
             input:
               id: refunds
         - role: user
           content:
-          - tool_use_id: toolu_014W8zchwCWz3fH8nvvoVxJ2
+          - tool_use_id: toolu_01PXHAbYbuMDnxTap4KwQZJ5
             type: tool_result
             content:
             - text: "{\"message\":\"Capability 'refunds' loaded. Its instructions, if any, follow.\"}"
@@ -172,11 +172,11 @@ interactions:
         system:
         - type: text
           text: |-
-            <context seal="pydantic-ai" id="capability:deferred_capabilities">
+            <context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools. Load this capability before looking up refund policy.
             </context>
-            A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -216,11 +216,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=96
+      - x-originResponse;dur=88
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-d36ff7f125cd49eccf1e6a27b6a4a701-9382005435862583-01
+      - 00-bd6fc34b2ac22975ead780e338495e41-202bb6557aff3c16-01
       transfer-encoding:
       - chunked
       vary:
@@ -229,39 +229,39 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-fable-5","id":"msg_011CgZBiNA1JsZeqFsADUxoD","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":918,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
+        data: {"type":"message_start","message":{"model":"claude-fable-5","id":"msg_011CgZNqGrV5QeaYJEAPJMaP","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":896,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":25,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_017PiT4Fs9JXCdb1jhVdzfdY","name":"lookup_refund_policy","input":{},"caller":{"type":"direct"}}              }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01Pun68BRr2unPFL75iKrm1e","name":"lookup_refund_policy","input":{},"caller":{"type":"direct"}} }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"order"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"order"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_id\": \""}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_id\": \""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"order-1"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"order-1"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"23\"}"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"23\"}"}            }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0           }
+        data: {"type":"content_block_stop","index":0   }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":918,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":57,"output_tokens_details":{"thinking_tokens":0}}  }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":896,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":57,"output_tokens_details":{"thinking_tokens":0}}       }
 
         event: message_stop
-        data: {"type":"message_stop" }
+        data: {"type":"message_stop"   }
 
-  recorded_at: 2026-10-30T22:09:25.351233+00:00
+  recorded_at: 2026-10-31T00:35:13.921592+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -273,7 +273,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "2184"
+      - "2142"
       content-type:
       - application/json
       host:
@@ -291,14 +291,14 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_014W8zchwCWz3fH8nvvoVxJ2
+          - id: toolu_01PXHAbYbuMDnxTap4KwQZJ5
             type: tool_use
             name: load_capability
             input:
               id: refunds
         - role: user
           content:
-          - tool_use_id: toolu_014W8zchwCWz3fH8nvvoVxJ2
+          - tool_use_id: toolu_01PXHAbYbuMDnxTap4KwQZJ5
             type: tool_result
             content:
             - text: "{\"message\":\"Capability 'refunds' loaded. Its instructions, if any, follow.\"}"
@@ -312,14 +312,14 @@ interactions:
               name: lookup_refund_policy
         - role: assistant
           content:
-          - id: toolu_017PiT4Fs9JXCdb1jhVdzfdY
+          - id: toolu_01Pun68BRr2unPFL75iKrm1e
             type: tool_use
             name: lookup_refund_policy
             input:
               order_id: order-123
         - role: user
           content:
-          - tool_use_id: toolu_017PiT4Fs9JXCdb1jhVdzfdY
+          - tool_use_id: toolu_01Pun68BRr2unPFL75iKrm1e
             type: tool_result
             content:
             - text: "order-123: refund allowed"
@@ -330,11 +330,11 @@ interactions:
         system:
         - type: text
           text: |-
-            <context seal="pydantic-ai" id="capability:deferred_capabilities">
+            <context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools. Load this capability before looking up refund policy.
             </context>
-            A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -374,11 +374,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=126
+      - x-originResponse;dur=87
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-b2c31f5e6edbc5061e14f303bee3330e-1fca7db6ba1d2d47-01
+      - 00-1077a42b955df94e17d24f9628b692a4-cf2594d2b56805cb-01
       transfer-encoding:
       - chunked
       vary:
@@ -387,7 +387,7 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-fable-5","id":"msg_011CgZBiY5K1751Uw7RM5EN2","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":989,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":11,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
+        data: {"type":"message_start","message":{"model":"claude-fable-5","id":"msg_011CgZNqRpji1giy47zKvYaX","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":967,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":11,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
 
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}              }
@@ -399,15 +399,15 @@ interactions:
         data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"order"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-123: refund allowed"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-123: refund allowed"}         }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0           }
+        data: {"type":"content_block_stop","index":0     }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":989,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":11,"output_tokens_details":{"thinking_tokens":0}} }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":967,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":11,"output_tokens_details":{"thinking_tokens":0}}          }
 
         event: message_stop
-        data: {"type":"message_stop"}
+        data: {"type":"message_stop"        }
 
-  recorded_at: 2026-10-30T22:09:27.325595+00:00
+  recorded_at: 2026-10-31T00:35:15.776422+00:00

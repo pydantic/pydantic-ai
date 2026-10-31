@@ -7943,9 +7943,7 @@ def test_tool_availability_delta_falls_back_to_a_system_instruction():
     assert isinstance(request, ModelRequest)
     [part] = request.parts
     assert isinstance(part, UserPromptPart)
-    assert part.content == snapshot(
-        '<system seal="pydantic-ai">The following tool(s) are now available: `new_tool`</system>'
-    )
+    assert part.content == snapshot('<system>The following tool(s) are now available: `new_tool`</system>')
 
 
 def test_tool_availability_delta_does_not_announce_unknown_tool():
@@ -8019,9 +8017,7 @@ def test_tool_availability_delta_keeps_its_place_among_other_parts():
     )
     announcement = request.parts[1]
     assert isinstance(announcement, UserPromptPart)
-    assert announcement.content == (
-        '<system seal="pydantic-ai">The following tool(s) are now available: `new_tool`</system>'
-    )
+    assert announcement.content == ('<system>The following tool(s) are now available: `new_tool`</system>')
 
 
 def test_tool_availability_delta_adding_nothing_leaves_no_empty_request():

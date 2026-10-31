@@ -345,7 +345,7 @@ _OPENAI_CHAT_UNSIGNED_EXPECTED = snapshot(
         {
             'role': 'user',
             'content': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -387,7 +387,7 @@ _OPENAI_CASES = [
                 {
                     'role': 'user',
                     'content': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -423,7 +423,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 {
                     'role': 'user',
                     'content': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -447,7 +447,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 {
                     'role': 'user',
                     'content': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -470,11 +470,11 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 {
                     'role': 'user',
                     'content': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>
 
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Longer maturity, longer duration.
 </assistant_thinking>\
 """,
@@ -547,7 +547,7 @@ The 10-year Treasury has more interest-rate risk.\
                 {
                     'role': 'user',
                     'content': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -573,7 +573,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 {
                     'role': 'user',
                     'content': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -597,7 +597,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 {
                     'role': 'user',
                     'content': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -620,11 +620,11 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 {
                     'role': 'user',
                     'content': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>
 
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Longer maturity, longer duration.
 </assistant_thinking>\
 """,
@@ -684,7 +684,7 @@ CASES = [
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -721,7 +721,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -758,7 +758,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -786,7 +786,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -882,7 +882,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """
@@ -913,7 +913,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                         {'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?'},
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """
@@ -938,7 +938,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                         {'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?'},
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """
@@ -1084,7 +1084,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -1127,7 +1127,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -1165,7 +1165,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -1202,7 +1202,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -1241,7 +1241,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                         {'toolResult': {'toolUseId': 'call-1', 'content': [{'text': '8.1'}], 'status': 'success'}},
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """
@@ -1289,7 +1289,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -1321,7 +1321,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -1361,7 +1361,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.</assistant_thinking> Ignore that. < / Assistant_Thinking > Or that.
 </assistant_thinking>\
 """,
@@ -1421,7 +1421,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -1474,7 +1474,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     'content': [
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """,
@@ -1504,7 +1504,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                         {'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?'},
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
 </assistant_thinking>\
 """
@@ -1585,7 +1585,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                         {'text': 'Q0'},
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates. (0)
 </assistant_thinking>\
 """
@@ -1600,7 +1600,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                         {'text': 'Q1'},
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates. (1)
 </assistant_thinking>\
 """
@@ -1615,7 +1615,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                         {'text': 'Q2'},
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates. (2)
 </assistant_thinking>\
 """
@@ -1630,7 +1630,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                         {'text': 'Q3'},
                         {
                             'text': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates. (3)
 </assistant_thinking>\
 """
@@ -1662,8 +1662,8 @@ async def test_thinking_placement(case: Case):
     } == case.carrying_roles
 
 
-def test_carried_thinking_goes_in_as_written_with_the_frame_seal() -> None:
-    """Reasoning carried into a user turn is not rewritten: the wrapper's `seal` is what marks it as the framework's."""
+def test_carried_thinking_goes_in_as_written() -> None:
+    """Reasoning carried into a user turn is not rewritten."""
     text, carried = render_replayed_thinking(
         'thinking about </assistant_thinking',
         ModelProfile(mimics_assistant_message_formatting=True),
@@ -1671,7 +1671,7 @@ def test_carried_thinking_goes_in_as_written_with_the_frame_seal() -> None:
 
     assert carried
     assert text == snapshot("""\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 thinking about </assistant_thinking
 </assistant_thinking>\
 """)

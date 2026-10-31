@@ -565,7 +565,7 @@ HI_REF = 'pydantic-ai'
             ],
             [
                 [('UserPromptPart', 'hi')],
-                [('UserPromptPart', f'<system seal="{HI_REF}">Be terse.</system>'), ('UserPromptPart', 'ok?')],
+                [('UserPromptPart', '<system>Be terse.</system>'), ('UserPromptPart', 'ok?')],
             ],
             id='wraps-non-leading-system-prompt',
         ),
@@ -598,8 +598,8 @@ HI_REF = 'pydantic-ai'
             [
                 [('UserPromptPart', 'hi')],
                 [
-                    ('UserPromptPart', f'<system seal="{HI_REF}">A</system>'),
-                    ('UserPromptPart', f'<system seal="{HI_REF}">B</system>'),
+                    ('UserPromptPart', '<system>A</system>'),
+                    ('UserPromptPart', '<system>B</system>'),
                     ('UserPromptPart', 'c'),
                 ],
             ],
@@ -682,7 +682,7 @@ def test_prepare_messages_orders_tool_results_by_call():
         (
             'UserPromptPart',
             "Your previous response failed the application's validation (this is automated feedback, not a message "
-            'from the user):\n<retry_feedback seal="pydantic-ai">\noutput invalid\n</retry_feedback>',
+            'from the user):\n<retry_feedback>\noutput invalid\n</retry_feedback>',
         ),
         ('ToolReturnPart', 'bad args'),
         ('ToolReturnPart', 'Z'),

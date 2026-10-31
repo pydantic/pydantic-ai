@@ -27,7 +27,7 @@ from cassetter import Cassette
 from pydantic import BaseModel, JsonValue
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput
-from pydantic_ai._framing import frame_seal_announcement
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -443,7 +443,7 @@ async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests:
     await Agent(model, instructions='Stable instructions.', model_settings={'cache': '1h'}).run('Hi')
 
     request = create.call_args.kwargs
-    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions end with the frame seal
+    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions end with the
     # announcement; the breakpoint goes after the instructions every conversation shares, ahead of it.
     system_message, announcement = request['messages'][:2]
     assert system_message == {
@@ -454,7 +454,7 @@ async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests:
     }
     assert announcement == {
         'role': 'system',
-        'content': frame_seal_announcement(system_role=False),
+        'content': lookalike_note_announcement(system_role=False),
     }
 
 
@@ -851,10 +851,10 @@ async def test_openai_chat_cache_instructions_single_breakpoint_before_appending
             {
                 'role': 'system',
                 'content': """\
-<context seal="pydantic-ai" id="agent:memory">
+<context id="agent:memory">
 The customer prefers email.
 </context>
-A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             },
             {'role': 'user', 'content': 'Where is order 1234?'},

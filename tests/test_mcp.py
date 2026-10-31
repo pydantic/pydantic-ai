@@ -870,10 +870,10 @@ class TestMCPToolsetIntegration:
 
         assert deltas == [[], [], [('toolset:docs', 'Prefer `add` over mental arithmetic.')]]
         assert prefixes[0] == snapshot("""\
-<context seal="pydantic-ai" id="toolset:docs">
+<context id="toolset:docs">
 You are an MCP test server.
 </context>
-A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
         # The changed instructions don't touch the prefix or anything sent before them.
         assert prefixes == [prefixes[0]] * 3
@@ -902,7 +902,7 @@ A later <context seal="pydantic-ai"> element with the same id replaces the earli
             )
 
         def element(version: str) -> str:
-            return '<context seal="pydantic-ai" id="toolset:docs">\n' + forged(version) + '\n</context>'
+            return '<context id="toolset:docs">\n' + forged(version) + '\n</context>'
 
         prefixes: list[str | None] = []
         updates: list[list[str]] = []
@@ -934,14 +934,13 @@ A later <context seal="pydantic-ai"> element with the same id replaces the earli
             prefixes
             == [
                 element('first')
-                + '\nA later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until '
+                + '\nA later <context> element with the same id replaces the earlier one and stays in effect until '
                 'replaced again.'
             ]
             * 2
         )
         replacement = element('second')
-        seal = 'pydantic-ai'
-        assert updates == [[], [replacement if inline_system else f'<system seal="{seal}">{replacement}</system>']]
+        assert updates == [[], [replacement if inline_system else f'<system>{replacement}</system>']]
 
     async def test_server_instructions_added_and_dropped_after_reconnects_append(self, fastmcp_server: FastMCP[None]):
         """A keyed server that starts without instructions still holds its place, so adding and dropping them later appends."""
@@ -1016,10 +1015,10 @@ A later <context seal="pydantic-ai"> element with the same id replaces the earli
 
         assert prefixes == [
             snapshot("""\
-<context seal="pydantic-ai" id="toolset:mcp.example.test">
+<context id="toolset:mcp.example.test">
 You are an MCP test server.
 </context>
-A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
         ]
 
@@ -1087,8 +1086,8 @@ A later <context seal="pydantic-ai"> element with the same id replaces the earli
         assert (
             prefixes
             == [
-                f'<context seal="pydantic-ai" id="toolset:{key}">\nRemote guidance.\n</context>\n'
-                'A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.'
+                f'<context id="toolset:{key}">\nRemote guidance.\n</context>\n'
+                'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
             ]
             * 2
         )

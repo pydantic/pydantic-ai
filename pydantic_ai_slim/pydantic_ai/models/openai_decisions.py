@@ -473,9 +473,7 @@ class _Conversation:
         else:
             # A trimmed or compacted history can keep a result without its call, which the API refuses natively. It
             # goes on the user channel instead, framed as the tool's so it doesn't read as the user's own words.
-            open_tag, close_tag = frame_tags(
-                TOOL_RESULT_TAG, sealed=True, tool_name=part.tool_name, tool_call_id=part.tool_call_id
-            )
+            open_tag, close_tag = frame_tags(TOOL_RESULT_TAG, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
             framed: list[str | MultiModalContent] = [open_tag, *part.content_items(mode='str'), close_tag]
             self._user(framed)
 

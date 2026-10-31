@@ -9,7 +9,7 @@ import html
 import re
 from typing import TypeGuard
 
-from pydantic_ai._frame_seal import framework_frame_text
+from pydantic_ai._framework_frame import framework_frame_text
 from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.messages import ModelRequestPart, UserPromptPart
 from pydantic_ai_harness._provenance import tagged_text

@@ -46,7 +46,6 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
-    _tool_return_text_and_files,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..output import OutputObjectDefinition
@@ -704,7 +703,7 @@ class GroqModel(Model[AsyncGroq]):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_file_content = _tool_return_text_and_files(part)
+                tool_text, tool_file_content = part.model_response_str_and_user_content()
                 file_content.extend(tool_file_content)
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',

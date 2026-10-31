@@ -66,7 +66,7 @@ class FunctionModel(InMemoryBatchModel):
     supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
     # Nor is there a model to tell what the `<system>` tag means, and the announcement would show up in every
     # history a test inspects.
-    _announces_frame_seal = False
+    _announces_lookalike_notes = False
 
     function: FunctionDef | None
     stream_function: StreamFunctionDef | None

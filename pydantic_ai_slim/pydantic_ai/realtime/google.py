@@ -685,7 +685,7 @@ async def _seed_request_parts(
             )
         elif isinstance(part, CompactionPart):
             if part.content:
-                parts.append(genai_types.Part(text=_conversation_summary_text(part.content, sealed=False)))
+                parts.append(genai_types.Part(text=_conversation_summary_text(part.content)))
         elif isinstance(part, SpeechPart):
             content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)
             if isinstance(content, str):
@@ -1859,9 +1859,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         # A file the tool returned comes framed in provenance tags for the user channel.
                         # Inside the function response it is the tool's by construction, as on a
                         # standard Gemini request, so the tags, which would frame nothing, are dropped.
-                        open_tag, close_tag = _tool_result_provenance_tags(
-                            name, content.tool_call_id, item.identifier, sealed=False
-                        )
+                        open_tag, close_tag = _tool_result_provenance_tags(name, content.tool_call_id, item.identifier)
                         if text_content[-1:] == [open_tag] and index + 1 < len(items) and items[index + 1] == close_tag:
                             text_content.pop()
                             dropped_tags.add(index + 1)

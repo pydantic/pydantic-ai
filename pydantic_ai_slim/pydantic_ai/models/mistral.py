@@ -55,7 +55,6 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
-    _tool_return_text_and_files,  # pyright: ignore[reportPrivateUsage]
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -671,7 +670,7 @@ class MistralModel(Model[Mistral]):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, files = _tool_return_text_and_files(part)
+                tool_text, files = part.model_response_str_and_user_content()
                 file_content.extend(files)
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,

@@ -56,7 +56,6 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
-    _tool_return_text_and_files,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     Model,
@@ -510,7 +509,7 @@ class XaiModel(Model[AsyncClient]):
             tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
             file_content: list[UserContent] = []
             for part in tool_results:
-                text, files = _tool_return_text_and_files(part)
+                text, files = part.model_response_str_and_user_content()
                 xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
                 file_content.extend(files)
             if file_content and (

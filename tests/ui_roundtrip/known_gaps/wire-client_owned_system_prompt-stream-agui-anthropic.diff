@@ -3,10 +3,10 @@
 @@ -201,4 +200,0 @@
 -    },
 -    {
--     "text": "<system seal=\"pydantic-ai\">The job runs in the background.</system>",
+-     "text": "<system>The job runs in the background.</system>",
 -     "type": "text"
 @@ -302,4 +297,0 @@
 -    },
 -    {
--     "text": "<system seal=\"pydantic-ai\">The job runs in the background.</system>",
+-     "text": "<system>The job runs in the background.</system>",
 -     "type": "text"

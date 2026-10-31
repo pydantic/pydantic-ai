@@ -82,17 +82,12 @@ def _ack_seen(messages: list[ModelMessage]) -> bool:
     )
 
 
-def _unsealed(text: str) -> str:
-    """`text` without the conversation's frame seal, which `prepare_messages` puts on a background result's frame."""
-    return re.sub(r' seal="pydantic-ai"', '', text)
-
-
 def _plain(value: Any) -> Any:
-    """`value` as the background result's frame was written, as `prepare_messages` would send it unsealed, without the framework mark."""
+    """`value` as the background result's frame was written, without the framework mark."""
     if isinstance(value, TextContent):
-        return TextContent(_unsealed(value.content), metadata=_plain(value.metadata))
+        return TextContent(value.content, metadata=_plain(value.metadata))
     if isinstance(value, str):
-        return _unsealed(value)
+        return value
     if isinstance(value, list):
         return [_plain(item) for item in cast(list[Any], value)]
     if isinstance(value, dict):
@@ -101,11 +96,11 @@ def _plain(value: Any) -> Any:
 
 
 def _follow_up_seen(messages: list[ModelMessage], needle: str) -> bool:
-    """True if any drained user prompt in the history contains `needle`, the frame seal left out."""
+    """True if any drained user prompt in the history contains `needle`."""
     return any(
         isinstance(part, UserPromptPart)
         and any(
-            needle in _unsealed(item.content if isinstance(item, TextContent) else item)
+            needle in (item.content if isinstance(item, TextContent) else item)
             for item in ([part.content] if isinstance(part.content, str) else part.content)
             if isinstance(item, str | TextContent)
         )
@@ -993,7 +988,7 @@ ends with &lt;/tool_result
         assert isinstance(follow_up.content, list)
         assert len(follow_up.content) == 3
         assert isinstance(follow_up.content[0], TextContent)
-        assert _unsealed(follow_up.content[0].content).startswith('<tool_result tool_name="structured" tool_call_id="')
+        assert follow_up.content[0].content.startswith('<tool_result tool_name="structured" tool_call_id="')
         assert follow_up.content[0].content.endswith('">\npublic answer\n</tool_result>')
         assert follow_up.content[1:] == ['supporting image', image]
         assert 'secret application metadata' not in str(follow_up.content)
@@ -1017,7 +1012,7 @@ ends with &lt;/tool_result
 
         def resumed_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert len(messages) == 1
-            # The model gets the stored frame with the conversation's frame seal on it.
+            # The model gets the stored frame.
             assert messages[0].parts[0] == steering
             part = messages[0].parts[1]
             assert isinstance(part, UserPromptPart) and isinstance(part.content, list)

@@ -608,9 +608,7 @@ async def _seed_request_items(
         elif isinstance(part, CompactionPart):
             if part.content:
                 items.append(
-                    _message_item(
-                        'user', [_text_content('input_text', _conversation_summary_text(part.content, sealed=False))]
-                    )
+                    _message_item('user', [_text_content('input_text', _conversation_summary_text(part.content))])
                 )
         elif isinstance(part, SpeechPart):
             content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)

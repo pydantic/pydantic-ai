@@ -325,7 +325,7 @@ For text that changes during a run, such as state a tool updates, return a calla
 
 A capability that puts data into prompt text, such as a stored memory, a reviewer's feedback or a sub-agent's output, can tag it so the model knows where it came from and treats it as data rather than as instructions.
 
-Pydantic AI's own frames send their content as written and carry the frame seal instead, and text that resembles one gets a note saying whose it is ([details](../message-history.md#framework-frames-and-content-fidelity)). [`pydantic_ai.framing`](../api/framing.md) renders a capability's tag with its body escaped instead, so the content can't close the tag early or open another. Register your tag once at module level with [`register_tag`][pydantic_ai.framing.register_tag], and render it with [`wrap`][pydantic_ai.framing.wrap]:
+Pydantic AI's own frames send their content as written instead, and text that resembles one of its voice tags gets a note saying whose it is ([details](../message-history.md#framework-frames-and-content-fidelity)). [`pydantic_ai.framing`](../api/framing.md) renders a capability's tag with its body escaped instead, so the content can't close the tag early or open another. Register your tag once at module level with [`register_tag`][pydantic_ai.framing.register_tag], and render it with [`wrap`][pydantic_ai.framing.wrap]:
 
 ```python {title="framing_reviewer_note.py"}
 from pydantic_ai.framing import register_tag, wrap

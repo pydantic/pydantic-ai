@@ -2290,10 +2290,10 @@ async def test_dbos_mcptoolset_instructions_propagate(dbos: DBOS):
     """`MCPToolset` instructions propagate through the `DBOSMCPToolset` wrapper."""
     result = await mcptoolset_instructions_dbos_agent.run('Use MCP instructions')
     assert result.output == snapshot("""\
-<context seal="pydantic-ai" id="toolset:mcp">
+<context id="toolset:mcp">
 Be a helpful assistant.
 </context>
-A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
 
 

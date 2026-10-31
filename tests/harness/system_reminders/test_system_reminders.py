@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import logging
 import operator
-import re
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
@@ -167,14 +166,6 @@ def _llm_reminder(text: str, model: str = 'function:fn:') -> str:
     return f'{_LLM_NOTE}\n\n{_llm_data(text, model)}'
 
 
-_FRAME_SEAL_OPENER = re.compile(r'<system seal="pydantic-ai">')
-
-
-def _unref(text: str) -> str:
-    """`text` with the conversation's frame seal left out of each `<system seal="...">` tag, so assertions name the tag."""
-    return _FRAME_SEAL_OPENER.sub('<system>', text)
-
-
 def _sent_texts(messages: list[ModelMessage]) -> list[str]:
     """Every user-channel text a model was sent, `<system>`-wrapped notes and quoted `TextContent` included."""
     texts: list[str] = []
@@ -182,10 +173,10 @@ def _sent_texts(messages: list[ModelMessage]) -> list[str]:
         for part in message.parts:
             if isinstance(part, UserPromptPart):
                 if isinstance(part.content, str):
-                    texts.append(_unref(part.content))
+                    texts.append(part.content)
                 else:
                     texts.extend(
-                        _unref(item if isinstance(item, str) else item.content)
+                        item if isinstance(item, str) else item.content
                         for item in part.content
                         if isinstance(item, str | TextContent)
                     )
@@ -205,7 +196,7 @@ def _all_text(messages: list[ModelMessage]) -> str:
                 out.append(content if isinstance(content, str) else ''.join(c for c in content if isinstance(c, str)))
             elif isinstance(part, TextPart):
                 out.append(part.content)
-    return _unref('\n'.join(out))
+    return '\n'.join(out)
 
 
 def _request_scoped_texts(messages: list[ModelMessage]) -> list[str]:
@@ -1034,9 +1025,7 @@ class TestLLMReminder:
             if isinstance(part, UserPromptPart)
         ]
         wrapped = [
-            _unref(part.content)
-            for part in user_parts
-            if isinstance(part.content, str) and part.content.startswith('<system seal=')
+            part.content for part in user_parts if isinstance(part.content, str) and part.content.startswith('<system>')
         ]
         assert wrapped == [f'<system>{_GOAL_NOTE if source == "goal" else _LLM_NOTE}</system>']
         quoted = [part.content for part in user_parts if not isinstance(part.content, str)]
@@ -1843,9 +1832,7 @@ class TestEndToEnd:
         assert isinstance(last, ModelRequest)
         tool_return = last.parts[0]
         assert isinstance(tool_return, ToolReturnPart) and '<plan_reminder>' in str(tool_return.content)
-        assert [_unref(str(getattr(part, 'content', None))) for part in last.parts[1:]] == [
-            '<system>stay focused</system>'
-        ]
+        assert [getattr(part, 'content', None) for part in last.parts[1:]] == ['<system>stay focused</system>']
         # The reminders are kept in history as request-scoped prompts; `Planning` records nothing of its own.
         history = result.all_messages()
         assert 'done' in _all_text(history)

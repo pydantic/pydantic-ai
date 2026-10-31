@@ -546,7 +546,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
                 # User-channel text, including content a capability added such as a task report: never system voice.
                 from_user = True
             elif isinstance(part, SystemPromptPart):
-                texts.append(frame(SYSTEM_TAG, part.content, sealed=False))
+                texts.append(frame(SYSTEM_TAG, part.content))
                 system_prompts.append(part.content)
             else:
                 raise error

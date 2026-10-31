@@ -52,8 +52,7 @@ def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, 
     would have written the reasoning itself. Reasoning carried into a user message can't: attributed to
     the user, it reads as something the user thought, so it gets an `assistant_thinking` wrapper instead.
 
-    The wrapper carries only the frame `seal` (`FRAME_SEAL`), which says the
-    framework wrote it. Naming the producing model would need `ModelResponse.model_name`,
+    The wrapper carries no attributes. Naming the producing model would need `ModelResponse.model_name`,
     which UI adapters deliberately don't send to the client (it can hold an account id or org name, see
     https://github.com/pydantic/pydantic-ai/issues/5174), so a history that went through a UI would render
     differently from the server's copy and miss the prompt cache. And a `provider` attribute on its own makes
@@ -68,8 +67,8 @@ def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, 
     """
     carry_in_user_turn = profile.get('mimics_assistant_message_formatting', False)
     if carry_in_user_turn:
-        # The reasoning goes in as written; the frame's `seal` is what sets the wrapper apart from a lookalike.
-        text = frame(ASSISTANT_THINKING_TAG, f'\n{content}\n', sealed=True)
+        # The reasoning goes in as written; a lookalike tag in it gets a note instead of an escape.
+        text = frame(ASSISTANT_THINKING_TAG, f'\n{content}\n')
     else:
         start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
         text = '\n'.join([start_tag, content, end_tag])
