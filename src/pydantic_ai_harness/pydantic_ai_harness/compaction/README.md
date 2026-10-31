@@ -29,6 +29,7 @@ alternative: they work with every model and keep the compaction logic (and its c
 | `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | You want a sensible default: spend the expensive summary only when needed |
 | `FallbackCompaction` | depends on chain | Tries the next strategy when one raises | Summarization can fail and deterministic truncation must keep the run alive |
 | `CompactOnRequest` | depends on strategy | Gives the model a tool to ask for a compaction before its next request | The model knows when a phase of work ends better than a size trigger does |
+| `CompactOnCacheExpiry` | depends on compaction | Requests compaction on the first request after the prompt cache expired | Conversations pause longer than the provider's cache lifetime |
 | `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
 | `ReportContextUsage` | zero-LLM | Reports context usage to your application; never edits history | You want a live context gauge in a UI |
 
@@ -409,6 +410,62 @@ The guards answer the model in the tool return, so it learns why nothing happene
 
 Under durable execution, the guards are evaluated in a capability hook rather than in the tool function, because the tool may run in an activity that sees neither the history nor the run's state. The strategy runs as the `compact` durable operation of `CompactOnRequest`, so a replay reuses the recorded history instead of calling the summarizer's model again. Under Temporal that operation is an activity whose run context omits `tracer` and `capabilities`, so a strategy that reads them fails there: `RelevanceCompaction`, and `receipts=True` on `SummarizingCompaction` or `SlidingWindowCompaction`. For the same reason, receipts recorded inside the activity, or skipped on a DBOS replay, add no `compaction.receipt` events to the span.
 
+## `CompactOnCacheExpiry`: compact once the cache has expired
+
+Editing history invalidates the provider's prompt cache from the edit onward, so the next request pays to cache it again. After a pause longer than the cache lasts, that request pays anyway. `CompactOnCacheExpiry` compacts at that moment, so compaction costs no extra cache spend.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching, NativeCompaction
+from pydantic_ai_harness import CompactOnCacheExpiry
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[Caching(), NativeCompaction(), CompactOnCacheExpiry()],
+)
+```
+
+It decides *when* to compact, and the agent's [`compact_history` handlers](https://pydantic.dev/docs/ai/capabilities/compaction/#the-compaction-hook) decide *how*. On the first request after the cache expired, it calls `ctx.request_compaction(reason='cache_expiry')`, and the first capability whose `compact_history` hook returns a result serves it: above, [`NativeCompaction`](https://pydantic.dev/docs/ai/capabilities/compaction/#compacting-on-demand), with the serving model's own compaction API where it has one. The decision is made for each attempt at a request, for the model that will serve it. The strategies on this page don't serve requests yet: they still compact on their own triggers. When one of them already compacted the history for the request, `CompactOnCacheExpiry` doesn't ask.
+
+If no other capability serves the request, `fallback` does. It's `CompactOnCacheExpiry`'s own `compact_history` hook, asked after every other capability's wherever you list it, and it only serves `'cache_expiry'` requests. The default clears all but the five newest tool results and leaves a placeholder that tells the model to call the tool again if it needs the output. Pass another strategy as the first argument, or `None` to disable it. Every compaction marks where the compacted history starts with a `CompactionPart`, so a strategy that writes no summary of its own, like the default, gets one saying `Earlier parts of this conversation were compacted to save context.`, which the model sees as a conversation summary. It goes at the start of the history after the latest compaction, and replaces the one an earlier fallback left there.
+
+A compaction after expiry reads the whole history uncached once. Clearing tool results costs nothing extra.
+
+By default only a history larger than a fifth of the model's context window is compacted, so a short conversation keeps its tool results over a short break.
+
+The compaction is reported like any other, with the [compaction events](https://pydantic.dev/docs/ai/capabilities/compaction/#compaction-events) and on the run result's `compactions`, with reason `'cache_expiry'`. When the fallback runs, its [`compact_messages` span](#tracing) has `compaction.strategy` set to `CompactOnCacheExpiry` and `compaction.idle_seconds` set to the time from the last model response to the request.
+
+### When the cache counts as expired
+
+The decision uses Pydantic AI's [`prompt_cache_outlook`](https://pydantic.dev/docs/ai/core-concepts/message-history/#scheduling-maintenance-into-cache-cold-windows): the time from the last model response to the request being sent, compared with the retention the request's settings ask for (such as `Caching(retention='1h')` or `anthropic_cache='1h'`), or else the provider's documented default. A `CachePoint(ttl='1h')` the provider already received extends it. The gap ends at the request's own timestamp rather than the wall clock, so the decision can be read back from the stored history. It starts at the response's timestamp, which is later than when the provider last used the cache by the generation time, so it understates the gap: on a long generation it compacts later than it could, never too early. The model is the one the request uses, including one chosen by [`SelectModel`](https://pydantic.dev/docs/ai/capabilities/select-model/) or [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/).
+
+| Model | Retention |
+|---|---|
+| Anthropic, including Bedrock's Claude models and OpenRouter's Anthropic routes | 5 minutes, or 1 hour when requested |
+| Bedrock Nova with `Caching()` | 5 minutes |
+| OpenRouter's Gemini routes | 5 minutes |
+| OpenAI GPT-5.6 and later, including GPT-5.6 Sol, Terra and Luna on Bedrock | 30 minutes |
+| OpenAI before GPT-5.6 with `openai_prompt_cache_retention='24h'` | 24 hours |
+| Gemini on Google's own APIs, DeepSeek, xAI, Azure, other OpenAI models, `FallbackModel` | Unknown |
+
+With an unknown retention nothing is compacted. Set `fallback_retention` when you know your deployment's retention. It applies only when neither the settings nor the provider supply one. Pick a value at or above the real retention: a shorter one compacts while the cache is still warm and loses the cache hit. The gap is judged against the next request's retention, because the history doesn't record earlier ones, so lowering `'1h'` to `'5m'` can compact the first request after the change while the 1-hour cache is still warm.
+
+The history has to keep its response timestamps. A history stored on the server and passed as `message_history` keeps them, as does one that round-trips through the [Vercel AI adapter](https://pydantic.dev/docs/ai/integrations/ui/vercel-ai/). AG-UI messages carry no timestamps, so a history rebuilt from an AG-UI client always looks recent and nothing is compacted. Keep the history on the server for the compaction to last, too: a frontend that holds the history and sends it back keeps the messages as they were before the fallback cleared them, so the next cold request clears them again, and each one writes a different prefix.
+
+### Options
+
+- `fallback` (default: clear all but five tool results): the strategy run when no other capability served the request, or `None`.
+- `max_fraction` (default `0.2`) / `max_tokens`: only compact an expired history above this size. `max_tokens` replaces the default fraction, and `max_fraction=None` compacts every expired history. `context_window`, `fallback_context_window`, and `tokenizer` work as on the other strategies.
+- `fallback_retention`: the retention assumed when it is unknown, as above.
+
+It only fires after an idle gap, so a long run without pauses still needs a size-based strategy.
+
+On Anthropic models that bind thinking blocks to the prefix that produced them, any history edit, including this one, invalidates the thinking blocks after the edit. See [thinking block binding](https://pydantic.dev/docs/ai/models/anthropic/#thinking-block-binding) for how Pydantic AI recovers.
+
+Under durable execution the decision is made in workflow code, and the fallback runs as this capability's `compact` durable operation, so a replay reuses its recorded result. The run stamps each request with the wall clock, though, so a replay can still find an expired cache where the original run did not.
+
+Compacting shortly *before* the cache expires, so that a summary request can still read the warm cache, needs a timer between runs and is not covered here. An application with its own scheduler can compact at that point with `compact=` on a run method, or run any strategy with [`compact_now`](#compacting-outside-a-run-compact_now).
+
 ## `ClampOversizedMessages`: surviving a runaway generation
 
 A single model response of repeated whitespace, or a single tool call with a giant payload, can
@@ -778,6 +835,7 @@ to keep span cardinality low. Attributes:
 | `compaction.tokens_after` | int | Estimated token count after compaction |
 | `compaction.model_requested` | bool | `true` when the model asked for the compaction through `CompactOnRequest`; absent otherwise |
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background compaction |
+| `compaction.idle_seconds` | float | Only on `CompactOnCacheExpiry`'s fallback: seconds from the last model response to the request |
 | `compaction.skipped` | str | `not_smaller` when an automatic summary was discarded because it wasn't smaller than the history; the `*_after` attributes then describe the discarded result. Absent otherwise |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is

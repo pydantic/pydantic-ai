@@ -61,6 +61,8 @@ A run compacts when something on it asks: the history is compacted before the ru
 
 Requests from any of these merge while one is pending, as [above](#the-compaction-hook), so a `/compact` command's focus survives an automatic request a capability makes before the same model request.
 
+[Pydantic AI Harness](../harness/index.md)'s [`CompactOnCacheExpiry`](../harness/compaction.md#compactoncacheexpiry-compact-once-the-cache-has-expired) asks from a capability hook, with reason `'cache_expiry'`, on the first request after the provider's prompt cache has expired: that request pays to write the cache anyway, so compacting then costs no extra cache spend. Its request merges with a `/compact` command's for the same request, which keeps the command's `'manual'` reason and focus.
+
 ```python {title="run_compact.py" test="skip" gateway_toggle="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeCompaction

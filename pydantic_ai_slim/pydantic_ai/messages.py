@@ -7102,7 +7102,8 @@ CompactionReason: TypeAlias = (
 """Why the message history is being compacted.
 
 - `'threshold'`: the history grew past a size threshold.
-- `'cache_expiry'`: the provider's prompt cache is about to expire, so compacting now still reads it.
+- `'cache_expiry'`: the provider's prompt cache has expired, so the next request pays to write it anyway, or is
+  about to expire, so compacting now can still read it.
 - `'manual'`: the user or the application asked for it, like a `/compact` command.
 - `'model_requested'`: the model asked for it, like with a tool that requests compaction.
 - `'model_switch'`: the model serving the next request can't use the history's existing compaction.
