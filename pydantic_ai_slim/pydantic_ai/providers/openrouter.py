@@ -10,7 +10,10 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
 from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.anthropic import (
+    _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES as _ANTHROPIC_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
+    anthropic_model_profile,
+)
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -167,14 +170,7 @@ https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#changing-effor
 
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
-    'anthropic': (
-        'claude-fable-5',
-        'claude-mythos-5',
-        'claude-opus-4-8',
-        'claude-opus-5',
-        'claude-sonnet-5-5',
-        'claude-haiku-5-5',
-    ),
+    'anthropic': _ANTHROPIC_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,
 }
 """Model-name prefixes, per upstream provider, of the OpenRouter routes that keep a mid-conversation `system` message.
 
@@ -264,8 +260,8 @@ class OpenRouterProvider(_OpenAISDKProvider):
         ) and not model_name.lower().endswith('-pro')
 
         supports_inline_system_prompts = (
-            provider == 'openai' and not model_name.startswith('gpt-oss-')
-        ) or model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES.get(provider, ()))
+            provider == 'openai' and not model_name.lower().startswith('gpt-oss-')
+        ) or model_name.lower().startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES.get(provider, ()))
 
         # Cache capability flags are set on the gateway layer based on the downstream provider.
         # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all
