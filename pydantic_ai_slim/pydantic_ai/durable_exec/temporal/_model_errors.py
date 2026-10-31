@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import timedelta
 from typing import Any, cast
 
 from pydantic import TypeAdapter
@@ -134,14 +135,16 @@ def model_errors_as_application_errors(
     The `ApplicationError`'s `type` is what a retry policy's `non_retryable_error_types` matches; see
     `_retry_policy_type`. An error that is an instance of one of the `non_retryable` classes is raised as a
     non-retryable `ApplicationError`, so Temporal fails the activity without retrying it whatever the retry
-    policy says.
+    policy says. A retryable error's `retry_after`, which the provider asked for with a `Retry-After` header or
+    the like, is the `ApplicationError`'s `next_retry_delay`, so Temporal waits that long before the next attempt
+    rather than the retry policy's backoff.
     """
     try:
         yield
     except ModelAPIError as error:
         # Checked here, where the error's class is the same as in the workflow, so the workflow can
         # count on rebuilding whatever it receives. Anything that can't cross fails as it always did,
-        # with only the non-retryable flag added if it has to be marked.
+        # with only the non-retryable flag or the retry delay added if it has one.
         try:
             encoded = _encode(error)
         except Exception:
@@ -153,10 +156,15 @@ def model_errors_as_application_errors(
                 detail[_STREAMED_KEY] = _response_adapter.dump_python(streamed, mode='json')
             details = (detail,)
         retryable = not isinstance(error, non_retryable)
-        if retryable and not details:
+        next_retry_delay = timedelta(seconds=error.retry_after) if retryable and error.retry_after is not None else None
+        if retryable and not details and next_retry_delay is None:
             raise
         raise ApplicationError(
-            str(error), *details, type=_retry_policy_type(error), non_retryable=not retryable
+            str(error),
+            *details,
+            type=_retry_policy_type(error),
+            non_retryable=not retryable,
+            next_retry_delay=next_retry_delay,
         ) from error
 
 

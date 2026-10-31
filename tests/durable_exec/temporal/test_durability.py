@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import re
 import sys
+import time
 import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
@@ -979,6 +980,63 @@ async def test_durability_non_model_error_still_reaches_workflow_as_activity_err
             task_queue=TASK_QUEUE,
         )
     assert output == 'ActivityError'
+
+
+# --- A model error's `retry_after` is the delay before Temporal's next attempt ---
+
+_retry_after_attempts: list[float] = []
+
+
+def _retry_after_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    _retry_after_attempts.append(time.monotonic())
+    raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-model', retry_after=1.0)
+
+
+retry_after_agent = Agent(
+    FunctionModel(_retry_after_model_fn),
+    name='durability_retry_after',
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=2, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class RetryAfterWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            return (await retry_after_agent.run('hello')).output
+        except ModelRateLimitError as error:
+            activity_error = error.__cause__
+            assert isinstance(activity_error, ActivityError)
+            application_error = activity_error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{error.retry_after} {application_error.next_retry_delay}'
+
+
+async def test_durability_model_error_retry_after_delays_next_attempt(client: Client):
+    """Temporal waits a model error's `retry_after` before attempting the model request again, rather than the
+    retry policy's backoff, and the workflow still receives the error as its own class."""
+    _retry_after_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RetryAfterWorkflow],
+        plugins=[AgentPlugin(retry_after_agent)],
+    ):
+        output = await client.execute_workflow(
+            RetryAfterWorkflow.run, id=RetryAfterWorkflow.__name__, task_queue=TASK_QUEUE
+        )
+    assert output == '1.0 0:00:01'
+    assert len(_retry_after_attempts) == 2
+    # The retry policy's own backoff would have retried after 10 milliseconds.
+    assert _retry_after_attempts[1] - _retry_after_attempts[0] >= 1.0
 
 
 # --- `ModelSettings['request_timeout']` runs on the workflow's clock ---
