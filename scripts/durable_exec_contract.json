@@ -2457,6 +2457,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::_TerminalEventPublisher.after_run"
       ]
     },
+    "AbstractCapability.apply": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::_has_retry_on_model_errors"
+      ]
+    },
     "AbstractCapability.before_model_request": {
       "engines": [
         "durable_exec",
@@ -2978,6 +2989,19 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
+      ]
+    }
+  },
+  "pydantic_ai_slim/pydantic_ai/capabilities/retry_on_model_errors.py": {
+    "RetryOnModelErrors": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>"
       ]
     }
   },
