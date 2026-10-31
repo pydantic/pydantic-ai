@@ -535,6 +535,7 @@ OPTIONAL_DEPENDENCIES: dict[str, str] = {
     'ExaSearch': 'exa_py',
     'IPythonCodeMode': 'jupyter_client',
     'ModalSandbox': 'modal',
+    'OpenSandbox': 'opensandbox',
     'PlaywrightBrowser': 'playwright',
     'PromptInjectionDefender': 'stackone_defender',
     'SmolSandbox': 'smol',
