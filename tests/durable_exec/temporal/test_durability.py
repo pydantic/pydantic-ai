@@ -666,6 +666,68 @@ async def test_durability_retry_waits_on_a_durable_timer(client: Client):
     assert len([e for e in history.events if e.HasField('timer_started_event_attributes')]) == 1
 
 
+_flaky_calls: list[str] = []
+
+
+def _flaky_once_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    _flaky_calls.append('flaky')
+    if len(_flaky_calls) == 1:
+        raise ModelHTTPError.for_category(
+            ModelUnavailableError, status_code=503, model_name='flaky', headers={'retry-after-ms': '10'}
+        )
+    return ModelResponse(parts=[TextPart('recovered')])
+
+
+retry_owner_durable_agent = Agent(
+    FunctionModel(_flaky_once_model_fn, model_name='flaky'),
+    name='durability_retry_owner_agent',
+    capabilities=[
+        RetryOnModelErrors(),
+        TemporalDurability(
+            # A retry policy that would retry the model error itself, were it retryable.
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        ),
+    ],
+)
+
+
+@workflow.defn
+class RetryOwnerDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await retry_owner_durable_agent.run(prompt)).output
+
+
+async def test_durability_retry_owns_model_errors_over_the_activity_retry_policy(client: Client):
+    """With `RetryOnModelErrors`, a model error isn't retried by the activity's retry policy, but by the capability.
+
+    The failed attempt and the retry are activities of their own, with a workflow timer between them, rather than one
+    activity that Temporal attempts twice. The retry policy is left to crashes and timeouts.
+    """
+    _flaky_calls.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RetryOwnerDurableAgentWorkflow],
+        plugins=[AgentPlugin(retry_owner_durable_agent)],
+    ):
+        wf = await client.start_workflow(
+            RetryOwnerDurableAgentWorkflow.run,
+            args=['hello'],
+            id=RetryOwnerDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+    assert output == 'recovered'
+    assert _flaky_calls == ['flaky', 'flaky']
+    assert _scheduled_activity_count(history) == 2
+    assert len([e for e in history.events if e.HasField('timer_started_event_attributes')]) == 1
+
+
 _backup_streamed: list[str] = []
 
 
