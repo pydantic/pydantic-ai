@@ -181,7 +181,9 @@ class Coder(CombinedCapability[AgentDepsT]):
                 id='coder_instructions',
                 instructions=[
                     coder_instructions(
-                        repo_context=bundled_repo_context is not None and bundled_repo_context.autoload_instructions,
+                        repo_files=bundled_repo_context.filenames
+                        if bundled_repo_context is not None and bundled_repo_context.autoload_instructions
+                        else None,
                         nested_instructions=bundled_repo_context is not None
                         and bundled_repo_context.nested_traversal
                         and bundled_repo_context.nested_inject == 'contents',
