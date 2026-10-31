@@ -105,6 +105,8 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `sessions.naming` | `true` | Name saved sessions in the background using a model. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
+| `repo_context.walk_up_root` | `~` | User-only inclusive stop for instruction autoload when the plugin's `walk_up` is on. |
+| `repo_context.autoload_symlink_roots` | `[]` | User-only JSON list of authorized external instruction-symlink target directories, for autoload only. |
 | `worktrees.remove_commands` | `{}` | User-only repository-to-argv map for confirmed exit cleanup. See [Register a worktree removal command](#register-a-worktree-removal-command). |
 
 ### Environment variables at a glance
@@ -399,6 +401,8 @@ and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
 first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
+For instruction-loading settings, see [Repository instructions](#repository-instructions).
+
 `plugins` takes the module declarations used by `/plugins add NAME module[:Class] [JSON]`: an `id`, a `factory`
 (`module` or `module:attr`), an optional `path`, and optional `settings`. A
 relative `path` is relative to the folder that holds `.clai`, whichever
@@ -437,6 +441,35 @@ built-in `repo_context` plugin (harness `RepoContext`), which is separate from
 the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
+
+### Repository instructions
+
+By default, `repo_context` reads only the workspace's `CLAUDE.md` and `AGENTS.md`.
+Enable its existing `walk_up` option to read ancestors too:
+
+```text
+/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
+/set repo_context.walk_up_root /srv/projects
+/set repo_context.autoload_symlink_roots '["~/agent-context"]'
+```
+
+`walk_up` defaults to `false`; setting a root does not turn it on. When enabled,
+it reads ancestors up to `repo_context.walk_up_root`, inclusive (`~`, your home,
+by default). A root outside the workspace's ancestors leaves only the workspace
+scanned. `repo_context.autoload_symlink_roots` defaults to `[]`; set it to a JSON
+list of directories if your instruction files are symlinks into a shared directory.
+
+Both settings are user-only, not plugin JSON options; `.clai/settings.json`
+rejects their fields. Use absolute paths, `~`, or `~/...`, not relative paths,
+`~other-user`, or environment-variable interpolation. Quote paths containing
+spaces, such as `/set repo_context.walk_up_root '/srv/My Projects'`, and
+single-quote the whole JSON list as above. Paths are normalized when used and
+need not exist when saved. Changes apply on the next run, not during a running turn.
+
+Authorize a directory holding only trusted instructions, not `/` or all of home:
+repository symlinks can select any readable file beneath it. See
+[Repo Context](../../../docs/harness/repo-context.md#shared-instruction-symlinks)
+for symlink loading, scope, and backend requirements.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.

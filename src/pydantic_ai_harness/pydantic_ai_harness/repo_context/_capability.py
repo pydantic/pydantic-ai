@@ -11,6 +11,7 @@ from typing import Any, Literal
 from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
 from pydantic_ai._utils import is_str_dict, replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -23,9 +24,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai.workspaces import Workspace
+from pydantic_ai.workspaces import SupportsCommands, SupportsRealpath, Workspace
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
-from pydantic_ai_harness._workspace import in_working_dir, require_workspace, workspace_path
+from pydantic_ai_harness._workspace import in_working_dir, innermost_backend, require_workspace, workspace_path
 from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
 from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
@@ -145,6 +146,14 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     autoload_instructions: bool = True
     """Strategy 1: load instruction files into the system prompt."""
 
+    autoload_symlink_roots: Sequence[str | Path] = field(default=(), kw_only=True)
+    """Authorize external autoload targets beneath these workspace paths, empty by default.
+
+    Roots and targets are resolved through the workspace. Requires a backend implementing
+    `SupportsRealpath` or command execution for workspace symlink resolution. External files
+    retain their scanned entry's label. Nested traversal and inventory are unaffected.
+    """
+
     expose_inventory_tool: bool = False
     """Strategy 2: expose the asset-inventory tool."""
 
@@ -221,7 +230,18 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         home = None
         if self.home_dir is not None:
             home = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
-        self._context_files = await discover_instruction_files(workspace, working_dir, home, self.filenames)
+        symlink_roots: list[Path] = []
+        if self.autoload_symlink_roots:
+            if not isinstance(innermost_backend(workspace), (SupportsRealpath, SupportsCommands)):
+                raise UserError(
+                    '`RepoContext.autoload_symlink_roots` requires a workspace backend implementing '
+                    '`SupportsRealpath` or `SupportsCommands` to resolve symlinks safely.'
+                )
+            for root in self.autoload_symlink_roots:
+                symlink_roots.append(Path(await workspace.realpath(workspace_path(Path(root)))))
+        self._context_files = await discover_instruction_files(
+            workspace, working_dir, home, self.filenames, autoload_symlink_roots=symlink_roots
+        )
         # The walk-up loaded the working directory's instruction files (or an identical ancestor copy), so nested
         # traversal has nothing to add there. A file that appears there later in the run is still surfaced.
         if self.nested_traversal and await dir_context_file_path(workspace, working_dir, self.filenames) is not None:
