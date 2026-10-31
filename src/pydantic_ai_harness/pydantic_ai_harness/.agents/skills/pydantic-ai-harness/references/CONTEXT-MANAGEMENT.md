@@ -136,7 +136,7 @@ one LLM call per compaction. `model=None` inherits the run's model; a non-text m
 example a decision model) needs `model=` set or the first compaction raises `UserError`.
 Useful keyword options: `model_settings`, `summarization_capabilities` (outer capabilities do not
 run on the summary call), `incremental=True` (update the previous summary rather than
-re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary_prompt` (must
+re-summarize), `keep_user_messages=False`, `tool_return_max_chars=None` (renders tool results whole; set a cap for a smaller-window summarizer `model`), `summary_prompt` (must
 contain `{messages}` and no other replacement field; any other prompt emits a `HarnessDeprecationWarning`
 and will raise `ValueError` in a future release), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
