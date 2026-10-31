@@ -10,9 +10,10 @@ rather than to a local tool of their own.
 
 from __future__ import annotations
 
+import inspect
 import warnings
 
-from pydantic_ai._warnings import PydanticAIDeprecationWarning, get_warning_stacklevel
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 
 
@@ -46,8 +47,13 @@ def check_deprecated_fallback_model(
     # Attribute the notice to the first frame whose top-level package isn't `pydantic_ai`, so it
     # points at the user whether they constructed the capability directly or loaded an old spec.
     # Compared as a top-level package rather than a prefix: `pydantic_ai_harness` is a caller.
+    frame = inspect.currentframe()
+    stacklevel = 1
+    while frame is not None and frame.f_globals.get('__name__', '').partition('.')[0] == 'pydantic_ai':
+        frame = frame.f_back
+        stacklevel += 1
     warnings.warn(
         '`fallback_model` is deprecated; use `fallback_subagent_model` instead.',
         PydanticAIDeprecationWarning,
-        stacklevel=get_warning_stacklevel(),
+        stacklevel=stacklevel,
     )

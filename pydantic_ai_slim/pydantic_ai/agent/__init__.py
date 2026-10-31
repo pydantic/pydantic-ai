@@ -83,7 +83,7 @@ from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
 from .._template import validate_from_spec_args
-from .._warnings import PydanticAIDeprecationWarning, get_warning_stacklevel
+from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
     AbstractCapability,
     AgentCapability,
@@ -95,7 +95,7 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import collect_leaves, has_capability_type, unwrap_capability
+from ..capabilities._ordering import collect_leaves, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -2050,19 +2050,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Diagnose precedence here, where the run arguments are known, without querying
             # model contributions that an explicit model must skip.
             for capability in leaf_capabilities(run_capability):
-                capability = unwrap_capability(capability)
+                while isinstance(capability, WrapperCapability):
+                    capability = capability.wrapped
                 if isinstance(capability, ModelFallbackCap) and capability.output_retry_threshold:
                     # Skip run wrappers to attribute direct calls to their caller. Background
                     # event-stream tasks have no originating caller on their stack.
+                    frame = inspect.currentframe()
+                    stacklevel = 1
+                    try:
+                        while frame is not None and frame.f_globals.get('__name__', '').partition('.')[0] in {
+                            'pydantic_ai',
+                            'pydantic_graph',
+                            'contextlib',
+                            'asyncio',
+                        }:
+                            frame = frame.f_back
+                            stacklevel += 1
+                    finally:
+                        del frame
                     warnings.warn(
                         f'`ModelFallback` output switching (`output_retry_threshold='
                         f'{capability.output_retry_threshold!r}`) is disabled by the explicit run '
                         f'`model` {model_id or model_used.model_id!r}. Configure the starting model on '
                         '`Agent(model=...)` and let `ModelFallback` control selection to enable output switching.',
                         UserWarning,
-                        stacklevel=get_warning_stacklevel(
-                            skip_packages=('pydantic_ai', 'pydantic_graph', 'contextlib', 'asyncio')
-                        ),
+                        stacklevel=stacklevel,
                     )
         # Read back off the resolved tree, which also sees an `Instrumentation` that only a `for_run`
         # contributed, so every later step's `RunContext` describes what the run's spans use.
@@ -5248,7 +5260,8 @@ def _run_instrumentation_settings(
     instrumentations: list[InstrumentationCap] = []
     for capability in capabilities:
         for leaf in leaf_capabilities(capability):
-            leaf = unwrap_capability(leaf)
+            while isinstance(leaf, WrapperCapability):
+                leaf = leaf.wrapped
             if isinstance(leaf, InstrumentationCap):
                 instrumentations.append(leaf)
     return instrumentations[-1].settings if instrumentations else default
@@ -5356,7 +5369,8 @@ def _reject_second_of_a_kind(capabilities: Sequence[AbstractCapability[Any]]) ->
     by_kind: dict[str, list[AbstractCapability[Any]]] = {}
     for root in capabilities:
         for capability in leaf_capabilities(root):
-            capability = unwrap_capability(capability)
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
             if (kind := capability._one_per_agent) is not None:  # pyright: ignore[reportPrivateUsage]
                 by_kind.setdefault(kind, []).append(capability)
             if is_deferred_group(capability):
@@ -5373,7 +5387,8 @@ def _reject_second_of_a_kind(capabilities: Sequence[AbstractCapability[Any]]) ->
 def _reject_one_per_agent_in_group(group: CombinedCapability[Any]) -> None:
     """Reject a durable execution engine inside a deferred group: it must wrap every toolset from the first request."""
     for inner in leaf_capabilities(group):
-        inner = unwrap_capability(inner)
+        while isinstance(inner, WrapperCapability):
+            inner = inner.wrapped
         if (kind := inner._one_per_agent) is not None:  # pyright: ignore[reportPrivateUsage]
             raise exceptions.UserError(
                 f'`{type(inner).__name__}` is inside capability {group.id!r}, but a {kind} must be passed to '

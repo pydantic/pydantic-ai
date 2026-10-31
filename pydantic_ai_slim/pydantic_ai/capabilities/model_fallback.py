@@ -75,10 +75,11 @@ _SPEC_FALLBACK_ERRORS: dict[str, type[ModelAPIError]] = {
 
 @dataclass(frozen=True)
 class _OutputRetryState:
-    """The serving selection and its configured threshold for one response."""
+    """The serving selection, retry threshold, and next chain position for one response."""
 
     selection: Model | str
     threshold: int | None
+    next_index: int
 
 
 @dataclass(init=False)
@@ -363,11 +364,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         if (
             self._output_transition is not None
             and self._output_model is not None
-            and (
-                self._output_model == request_context.model_id
-                if isinstance(self._output_model, str)
-                else _is_or_wraps(request_context.model, self._output_model)
-            )
+            and _matches_model(self._output_model, request_context.model, request_context.model_id)
         ):
             retry = self._output_transition
             assert self._output_response is not None
@@ -427,11 +424,22 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         if request_context.streaming or not await self._chain.falls_back(response):
             if self.output_retry_threshold is not None:
                 selection = request_context.model_id or request_context.model
+                # Distinct configured instances can share a model ID. Chain position follows
+                # the serving instance or alias; only retry counts use the stable model ID.
+                next_index = next(
+                    (
+                        index + 1
+                        for index, candidate in enumerate(self.models)
+                        if _matches_model(candidate, request_context.model, request_context.model_id)
+                    ),
+                    0,
+                )
                 self._output_response = _OutputRetryState(
                     selection=selection,
                     threshold=self.output_retry_threshold.get(_pin_id(selection))
                     if isinstance(self.output_retry_threshold, Mapping)
                     else self.output_retry_threshold,
+                    next_index=max(self._output_cursor, next_index),
                 )
             # A suspended response's continuation, in this run or a later one that resumes it, goes back to the
             # model that started the provider-side job, which the agent records as the response's `model_id`.
@@ -451,9 +459,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         # Every charge belongs to the model that produced this response. Failed siblings must not
         # retire an untried candidate while the next step's switch is still pending.
         if failures >= response.threshold and self._output_transition is None:
-            serving_index = self._index_of(model_id)
-            start = max(self._output_cursor, serving_index + 1 if serving_index is not None else 0)
-            for index in range(start, len(self.models)):
+            for index in range(response.next_index, len(self.models)):
                 candidate = self.models[index]
                 if not self._already_attempted(candidate):
                     self._output_model = candidate
@@ -623,3 +629,9 @@ def _is_or_wraps(model: Model, candidate: Model) -> bool:
         if not isinstance(model, WrapperModel):
             return False
         model = model.wrapped
+
+
+def _matches_model(candidate: Model | str, model: Model, model_id: str | None) -> bool:
+    if isinstance(candidate, str):
+        return candidate == model_id
+    return _is_or_wraps(model, candidate)

@@ -7,10 +7,8 @@ from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.tools import AgentDepsT
 
 from .abstract import AbstractCapability, CapabilityOrdering, CapabilityRef
-from .wrapper import WrapperCapability
 
 if TYPE_CHECKING:
     from .abstract import CapabilityPosition
@@ -191,13 +189,6 @@ def collect_leaves(cap: AbstractCapability[Any]) -> list[AbstractCapability[Any]
     leaves: list[AbstractCapability[Any]] = []
     cap.apply(leaves.append)
     return leaves
-
-
-def unwrap_capability(capability: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-    """Return a wrapper's innermost delegate without changing the registered leaf traversal."""
-    while isinstance(capability, WrapperCapability):
-        capability = capability.wrapped
-    return capability
 
 
 def has_capability_type(
