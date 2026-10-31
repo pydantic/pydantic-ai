@@ -2974,3 +2974,50 @@ def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_na
     profile = provider_classes[provider_name].model_profile(model_name)
     assert profile is not None
     assert profile.get('supports_forced_tool_choice') is False
+
+
+def test_gemma_4_thinking_declared_across_routes() -> None:
+    """Gemma 4 resolves a hybrid-thinking profile on every route that serves it."""
+    from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.cerebras import CerebrasProvider
+    from pydantic_ai.providers.huggingface import HuggingFaceProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+    from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.vercel import VercelProvider
+    from pydantic_ai.providers.vllm import VLLMProvider
+
+    routes: list[tuple[str, Any]] = [
+        ('ollama', lambda: OllamaProvider.model_profile('gemma4:31b')),
+        ('huggingface', lambda: HuggingFaceProvider.model_profile('google/gemma-4-26B-A4B-it')),
+        ('cerebras', lambda: CerebrasProvider.model_profile('gemma-4-31b')),
+        ('vercel', lambda: VercelProvider.model_profile('google/gemma-4-31b-it')),
+        ('vercel', lambda: VercelProvider.model_profile('google/gemma-4-26b-a4b-it')),
+        ('sambanova', lambda: SambaNovaProvider.model_profile('gemma-4-31B-it')),
+        ('bedrock', lambda: BedrockProvider.model_profile('google.gemma-4-31b')),
+        (
+            'openai-compatible',
+            lambda: OpenAICompatibleProvider(
+                'google/gemma-4-31b-it', base_url='https://gateway.test/v1', api_key='test'
+            ).model_profile('google/gemma-4-31b-it'),
+        ),
+        ('vllm', lambda: VLLMProvider.model_profile('google/gemma-4-31b-it')),
+    ]
+    for route, resolve in routes:
+        profile = resolve()
+        assert profile is not None, f'{route}: no profile resolved'
+        assert profile.get('supports_thinking') is True, f'{route}: gemma 4 not thinking-capable'
+        assert not profile.get('thinking_always_enabled'), f'{route}: gemma 4 must stay default-off'
+
+
+def test_gemma_3_routes_stay_non_thinking() -> None:
+    """Negative control: gemma 3 stays non-thinking on the same dispatch paths."""
+    from pydantic_ai.providers.cerebras import CerebrasProvider
+    from pydantic_ai.providers.vercel import VercelProvider
+
+    for route, profile in (
+        ('cerebras', CerebrasProvider.model_profile('gemma-3-27b')),
+        ('vercel', VercelProvider.model_profile('google/gemma-3-27b-it')),
+    ):
+        assert profile is not None, f'{route}: no profile resolved'
+        assert profile.get('supports_thinking') is False, f'{route}: gemma 3 must stay non-thinking'

@@ -6,6 +6,7 @@ from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
@@ -58,6 +59,7 @@ class SambaNovaProvider(_OpenAISDKProvider):
         """
         prefix_to_profile = {
             'deepseek-': deepseek_model_profile,
+            'gemma': google_model_profile,
             'meta-llama-': meta_model_profile,
             'llama-': meta_model_profile,
             'qwen': qwen_model_profile,
