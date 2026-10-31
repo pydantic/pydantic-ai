@@ -335,8 +335,8 @@ def _with_late_registration(
         return _late_adapter(cls, frozen).dump_python(
             [value],
             mode='json' if info.mode == 'json' else 'python',
-            include=None if info.include is None else {0: info.include},
-            exclude=None if info.exclude is None else {0: info.exclude},
+            include=_in_list(info.include),
+            exclude=_in_list(info.exclude),
             by_alias=info.by_alias,
             exclude_unset=info.exclude_unset,
             exclude_defaults=info.exclude_defaults,
@@ -349,6 +349,15 @@ def _with_late_registration(
         unknown_schema,
         serialization=pydantic_core.core_schema.wrap_serializer_function_ser_schema(serialize, info_arg=True),
     )
+
+
+def _in_list(selection: Any) -> Any:
+    """A field selection from `SerializationInfo`, applied to the only item of a one-item list.
+
+    `Any`: pydantic-core types the selection as its own `IncExCall`, and `TypeAdapter.dump_python` takes pydantic's
+    `IncEx`, the same shape under a different name.
+    """
+    return None if selection is None else {0: selection}
 
 
 @functools.cache
