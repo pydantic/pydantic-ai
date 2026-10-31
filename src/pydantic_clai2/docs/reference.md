@@ -440,7 +440,7 @@ it, plus your global files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` or
 you use CLAI to run another agent. The walk-up goes all the way to `/`, so under
 a shared directory such as `/tmp` it also reads files other users can write;
 set the plugin's `walk_up` to `false` there. A subdirectory's file is added the first time
-the agent reads, lists, or works in it. `/plugins disable repo_context` turns it off, for this and
+the agent reads or lists something in it. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
 
