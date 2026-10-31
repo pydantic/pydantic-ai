@@ -31,7 +31,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-LONG_DECODE_TIMEOUT = 20 * 60
+_LONG_DECODE_TIMEOUT = 20 * 60
 """Google [recommends](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) 20 minutes for long decode."""
 
 
@@ -40,7 +40,7 @@ def _create_google_httpx2_client() -> httpx2.AsyncClient:
 
     The Gateway's Google route creates this client too.
     """
-    return create_async_httpx2_client(timeout=httpx2.Timeout(LONG_DECODE_TIMEOUT, connect=5))
+    return create_async_httpx2_client(timeout=httpx2.Timeout(_LONG_DECODE_TIMEOUT, connect=5))
 
 
 class BaseGoogleProvider(Provider[Client], ABC):
@@ -108,7 +108,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
                 warnings.warn(
                     "The `http_client` passed to the Google provider has httpx's default 5-second timeout, so a "
                     'request fails when the model takes more than 5 seconds to respond. Give the client a longer '
-                    f'`timeout`, like the {LONG_DECODE_TIMEOUT // 60} minutes Google recommends for long decode.',
+                    f'`timeout`, like the {_LONG_DECODE_TIMEOUT // 60} minutes Google recommends for long decode.',
                     UserWarning,
                     stacklevel=3,
                 )

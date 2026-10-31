@@ -149,7 +149,7 @@ try:
         VideoMetadataDict,
     )
 
-    from ..providers.google import LONG_DECODE_TIMEOUT
+    from ..providers.google import _LONG_DECODE_TIMEOUT  # pyright: ignore[reportPrivateUsage]
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google model, '
@@ -1155,7 +1155,7 @@ class GoogleModel(Model[Client]):
         if caller_name := next((name for name in headers if name.lower() == 'x-server-timeout'), None):
             headers['X-Server-Timeout'] = headers.pop(caller_name)
         elif client_timeout_ms := self.client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
-            server_timeout = max(client_timeout_ms / 1000, LONG_DECODE_TIMEOUT)
+            server_timeout = max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)
             headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
         http_options: HttpOptionsDict = {'headers': headers}
         if (timeout := model_settings.get('timeout')) is not None:
