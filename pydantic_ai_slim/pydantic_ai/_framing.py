@@ -281,7 +281,8 @@ def lookalike_note_announcement(*, system_role: bool) -> str:
     end of the standing system prompt. With one, it goes in a native system message the first time the conversation
     has a frame or a note to explain.
 
-    The wording (`none3`) was measured live across Gemini, Claude (native and on Bedrock), GPT and DeepSeek models.
+    The wording was measured live across Gemini, Claude (native and on Bedrock), GPT and DeepSeek models, against
+    announcing a marker attribute on the application's frames; the numbers are in #11813.
     """
     if system_role:
         return _NOTE_ANNOUNCEMENT
