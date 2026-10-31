@@ -150,8 +150,8 @@ class TurnReminder(AbstractCapability[Any]):
 
 
 def unref(value: Any) -> Any:
-    """`value` with the conversation's frame seal left out of every `<system seal="...">` tag, so assertions name the tag."""
-    return json.loads(re.sub(r'<system seal=\\"pydantic-ai\\">', '<system>', json.dumps(value)))
+    """`value` with the conversation's frame seal left out of every `<system>` tag, so assertions name the tag."""
+    return json.loads(re.sub(r'<system>', '<system>', json.dumps(value)))
 
 
 def weather_agent(model: Any, **kwargs: Any) -> Agent[None, str]:
@@ -840,8 +840,8 @@ def test_current_request_scoped_prompts_move_to_the_last_request():
             ModelRequest(
                 parts=[
                     UserPromptPart(content='Are you there?', timestamp=IsDatetime()),
-                    UserPromptPart(content='<system seal="pydantic-ai">Reminder A.</system>', timestamp=IsDatetime()),
-                    UserPromptPart(content='<system seal="pydantic-ai">Reminder B.</system>', timestamp=IsDatetime()),
+                    UserPromptPart(content='<system>Reminder A.</system>', timestamp=IsDatetime()),
+                    UserPromptPart(content='<system>Reminder B.</system>', timestamp=IsDatetime()),
                 ],
                 metadata={'__pydantic_ai__': {'request_scoped_tail': 2}},
             ),
@@ -951,12 +951,12 @@ async def test_bedrock_message_cache_point_goes_before_the_request_scoped_prompt
         [
             {'toolResult': {'toolUseId': 'call_2', 'content': [{'text': 'Oslo: 18C'}], 'status': 'success'}},
             {'cachePoint': {'type': 'default'}},
-            {'text': '<system seal="pydantic-ai">Reminder 2.</system>'},
+            {'text': '<system>Reminder 2.</system>'},
         ]
     )
     assert 'Reminder 1.' not in str(tool_loop['messages'])
     assert only_reminder['messages'] == snapshot(
-        [{'role': 'user', 'content': [{'text': '<system seal="pydantic-ai">Reminder.</system>'}]}]
+        [{'role': 'user', 'content': [{'text': '<system>Reminder.</system>'}]}]
     )
 
 
@@ -987,12 +987,10 @@ async def test_openrouter_message_cache_control_goes_before_the_request_scoped_p
                 'tool_call_id': 'call_2',
                 'content': [{'type': 'text', 'text': 'Oslo: 18C', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
             },
-            {'role': 'user', 'content': '<system seal="pydantic-ai">Reminder 2.</system>'},
+            {'role': 'user', 'content': '<system>Reminder 2.</system>'},
         ]
     )
-    assert only_reminder['messages'] == snapshot(
-        [{'role': 'user', 'content': '<system seal="pydantic-ai">Reminder.</system>'}]
-    )
+    assert only_reminder['messages'] == snapshot([{'role': 'user', 'content': '<system>Reminder.</system>'}])
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
@@ -1144,14 +1142,13 @@ def duplicate_text_history(lasting: ModelRequestPart | None = None) -> list[Mode
     By default the lasting text is user text, carrying the conversation's frame seal as the reminder does. On a model
     without mid-conversation system messages, `lasting` is a lasting `SystemPromptPart` with the reminder's text.
     """
-    seal = 'pydantic-ai'
     return [
         ModelRequest(parts=[UserPromptPart('Weather in Paris?')]),
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1')]),
         ModelRequest(
             parts=[
                 ToolReturnPart('get_weather', 'Paris: 18C', tool_call_id='call_1'),
-                lasting or UserPromptPart(f'<system seal="{seal}">Reminder.</system>'),
+                lasting or UserPromptPart('<system>Reminder.</system>'),
             ]
         ),
         ModelRequest(parts=[SystemPromptPart('Reminder.', scope='request')]),

@@ -4974,8 +4974,7 @@ def _cross_model_reveal_secondary(messages: list[ModelMessage], info: AgentInfo)
     assert not any(isinstance(part, ToolAvailabilityDeltaPart) for part in parts)
     assert any(
         isinstance(part, UserPromptPart)
-        and part.content
-        == '<system seal="pydantic-ai">The following tool(s) are now available: `cross_model_refund`</system>'
+        and part.content == '<system>The following tool(s) are now available: `cross_model_refund`</system>'
         for part in parts
     )
     assert 'cross_model_refund' in {tool.name for tool in info.function_tools}
@@ -6887,7 +6886,7 @@ class RetryFeedbackAnswer:
 _retry_feedback_shown: list[list[SystemPromptPart | UserPromptPart]] = []
 """The retry feedback the model was shown, one entry per model request."""
 
-_RETRY_FEEDBACK_TAGS = ('<system seal=', '<validation_errors seal=')
+_RETRY_FEEDBACK_TAGS = ('<system>', '<validation_errors>')
 """The two tags a translated `RetryFeedbackPart` can arrive under; a `SystemPromptPart` needs none."""
 
 
@@ -7080,7 +7079,7 @@ async def test_durability_output_retry_feedback_survives_the_activity_and_a_resu
                 UserPromptPart(
                     content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors seal="pydantic-ai">
+<validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
 </validation_errors>\
 """,
@@ -7091,7 +7090,7 @@ Your previous response failed the application's validation (this is automated fe
                 UserPromptPart(
                     content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors seal="pydantic-ai">
+<validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
 </validation_errors>\
 """,

@@ -52,11 +52,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=223
+      - x-originResponse;dur=119
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-f79aa9940ebeec06d127d5c5fa5e8f4d-96fef2a32bda2206-01
+      - 00-bf80f140b7804967e2b76eb2756b4e29-763e9c9ef5f56322-01
       transfer-encoding:
       - chunked
       vary:
@@ -65,468 +65,423 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CgXUss4HFQ9MprnCf9NAv","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":69,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}  }
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CgZNrPeoXUXeERU1KERpP","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":69,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}             }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}         }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSwAoKEAgTGAI4AUIIdGhpbmtpbmcSDBUXwq0R5tHEVfja6BoM5X8EW2Hq+Kyp3R6qIjBUtISR/oqDKNyrR+pcr+8s2nyt4qjRneI27VHLYrishfdseMqX7RwyYNdydGfeDIMq3QlKwwDLWmMqXiClrnQkkDueUwNOLHw9gGFxei+XZRrSlGyj1iMgqkhdFsnNKccNnsoEjOltFR7K/6q8d61kS063/yDehqOeQDyMY9jsd+TihEQSv+Vwx6qOtsHy2akDtGSotbkIn8vIV0cIvLjyqo1UX8u9SDzvXX/38yQ7QxYf+BlOKIWWOmYxeU2IsB3pZoo2S57/w6FW/OPUbr/1DKnUz5vBZPY6sOiIptzDU/AbWiZ1shTFVnJ48c6BEXQaWXS5pjmbtIFn2PcQXeK3gtLdYIaEsM0VPlJ7N920S9qEoruZVnw6mo01Nmz1q8pLsfOcELeYpLELOjCMswLtNq/rKcwK431Ri4lQFSYeCJsi85uLheXlJXPKsj9pGfA6pkTrVOgfET5jpx5mGCvmS+Q0jHuisbtFjUEnErsUtuCVG/MQWInyOTsxcqQwfdim6TEbqirmtXtTAx0+xbqiRqhjYVv1tAHFBIn6LNEGDzcWp4xb3Ix23sjuMx/B61T4De0AepH+UodlOr1VPnfXsufKVjCMuKsU8jlYy+WIAOwNE29AN5w3m/QhiWHVaCUqNFbohfA0tbbV6VBGgkB8jxg/Ie3WD4rw+qPw2+T0gadsCEdTCcr1br3YtYYBEkcY8d1t2c0jTd6qVdjaQ9eL8c+VPEOkmD+848b435gPi8Sri53z//EhrOklmTZVQ4ZdOjgE0Y+NRj09BCSMMZ5Rn/J9JNQtRdvjmBgx136aKX6FKIH65WGq5LxxPOK3n9GFmVn6QY37kswyulaJDYzTFJ6GJQNvOvsM7f4WQ5l/nra9rhKGnvNuerJpQqBnwrVJ3iEQEpLLyL7WzteJaztxh80VJN613KcQB/6DjGtI4x6pI/7Ot+TOaGa5jloIsfH8+7YJPflzCzy1X9XVienPI+HduBZNzqf0PJdimtZ0lLMgarYu8YWyXzwB1jz2/B2Rcp1DlPRU35SiTMvzWdQ69tb4terLPui2K6xAXM6IQjQaUQRQtzdyAGpKt4CIL6HLofqk0brrbHly+rsODik80wmd/Oeq7hVjcLZUvj6E4QqOzfxPjVgy4DBDTNGF9IrGawjiWqebXDFZgVVcQUZmLubJY3duispZGT39r+tmQSe7AwLHA1IxS1+ygi8X8ZUrloJ4L5HT8ndzbwXmufHuZKWpcqIsCZufrO+62BASGUA9qUf7J0MWoNifOJZwhAr4y8KuTKnt8gmhDS0mrMBme1SikjqvOQBmBtJihiVA9HSzb1QzW61d/PlGVS3ksgR3nWa/6pgDMFbszC7X19N85l4TwJbJMPVb7IoG/ecFfpmvqCbbelPwhFusAxNXoNZgYCkm4U3B4exwaJXF1yRj+P0CwomOWVAicDWA9FJRj9DqtLYhzD8DWERQcpdBiXNmdWgxycAUHhcW1ainUAPF5fBRc+2ByP8W3Bab+oeNfLDygNQBZjU0ZDtiiTInCMomCwhkWjFoUeMAMNTO+KNm2pvzb7mpmRAGHg4VFyHnL1uNrU9fJwAAEziw8c7Anb8XX/clBi7HfOcRYiyQO2ALv2ioadMdvbVoiYvFLufpcBmEtA0ZhtcraKcmxYuK1Dk39uMx8EQYgNoNBYCn6qbIqx5wIIZ4wo/0oononlSJBVwHnv2DWS5G1q2OhsnFPwcYAQ=="}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSpgkKEAgTGAI4AUIIdGhpbmtpbmcSDF023RItBYtirEP4RBoMbXzGgU6Hk9mZb1ZYIjAa91o9gF2FeOuxTQyftlqjBd8sq2g7IQPP8c0uKF8pxJf+cXdXJR/HEXfqWsSKIyYqwwiRZ0nk/HEtF+LXVpWlrZDqoAHdKQOLuR4JlQlychyaB4d5KHPXJTzoGO388BUirN2ChCgLD0Hvy8VXVRd0DtPd/FSu0PsDRudOef5urjJPQFrbPXXfCIwpQnc3mIj2pwYz0MYhS4jQv8i7J9kIztlPIpGICkimCA66Hs8CBQeX2qS5Xv8fY3zrvH0K/q3ZsHU2DaCkRerqnnZFTScpdIDgNByAj7slcIIPEZjI3qhdHjptmpSw4QUSLqrmBTd8nvDRpinKUFQx81R2C1ZH5oHTXCPnl/AalkY+RU+nWttoTKshogQs6h3+fZlkDvr1pw3VAAMhvvOVzyj34ShFeFnHYL9P4bcV6DteXKXl4OX+7p9azrRg5LhQjxR9DmW75xPDrcZs+KktczIO0OwD9SqiuwJCneGM6OSZb6XBsq14XP+Hm5cDxfwY/tQmKz303C/kSqsumpvrrzL2bquNcIe60W/cQavfBtx0zziK57G4O6zC7EPHAZk8Em0uc67ynaj9ZhJiEulrLNGrYdoL81X+BmEp0W7vPp9ydnv8jvR6TrGwNAFC07EUeltvumuR5h+0EJJ96yizU1j/KmmME98bxo8dgl1o/mIFfzahIkw5Bh7q1paJa9OJHOsd+IetrTPIUpDpYvn9HgZboAra2PmSbzV2+z3S9DjaHo/emXvuDkLIFk5W2zUUVwwOaSsTNSsLRe8/l8OWxARnXddVH+0TffnjFv9Nbnui/BGdL+AD2YvkZEvISufMWS1+EHy7QLQpOAzTHfPUftobvKfzt+5MCTg4lyna9shpvCghT5G6VCua7LSLB4JLfLllQcFDSsne9kvDIJK5J1aTnv8hsO18CQ6Tc0NvBKNXUJ2WsVuA08k0Mqi0oU5RB+zaiaDuxZBoeG8IlovWXCgsyBAqAwH56HfL1m5sTiUPTqIC3LZrd9ykdjpV+h8r5AJHbMLEjx8I/YDIheWubBq0KhPrakXOrFkkNRjdv5u2ht3pCIAp7kjXAhG1PqinOO7aWEE9Hx/ejazuOfw5Xglhd2g3cgPq0Ts1YpjQehB+y1AdK1H3GbLl2zX780aTZ7jNWBjCsklYmOiPQPQ88DW3TWHBLda4DGVt0qkwUG/xNVXXnwf26WOpq4+dkoIrxBQ16WaoAheLxEN8yv4ygSAGVgwR4/7bBKJWhUiihv7mjMPJhc16RN8hyruGU2d4hDsmziCF6/FGOmJ5X2OlwpAMAJD3MebQg5ViEl09BUNg7TZ9x9pHxOh/4EdjrO3+MxLU24un1g2w8fMKN7remqFg64xYmNzyuvifiDTAWAPvS9fJmL7deTCY+Y1zDhwHxgrk74vdLIZIZPMCDQKd4P7LeO08vouY7T7/tdINNawDco1rJ8ZY9i34wnKkS+oaZFf60g/R+Wsq3033Wz/mJxd3oeo5cgFKnSNtnYfDm6o0o2JKZS0W8aqg+RgB"}    }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0    }
+        data: {"type":"content_block_stop","index":0}
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}      }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"My"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"##"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" earlier \"loo"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Code"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ks fine\" was too br"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Review: `add`"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ief. Here's a fu"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n```"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ller review.\n\n```python\ndef"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"python\ndef add(a,"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" add(a, b): return a"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" b): return a + b\n```"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" + b\n```\n\n**Corre"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nMy ear"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ctness:** It works"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"lier \""}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"."}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Looks fine\""}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" It returns `a + b`"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" was too br"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for any operands that support `+"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ief. The"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"`.\n\n##"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" function is correct, but there are"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Issues and"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" several things worth noting."}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" suggestions\n\n###"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n### Observ"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 1. No type ann"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ations\n\n1. **No type ann"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"otations"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"otations.** It"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\nWithout h"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'s unclear what types"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ints, the int"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" `"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ent is unclear. Is"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"add"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" this meant for numbers only"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"` is meant to accept."} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", or should"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Because `+` is"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" it also accept strings, l"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" overloaded, it accep"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ists, and other"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ts many"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" types that"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" types"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" support `+`? Annot"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":","} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ations document"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" s"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ometimes unintentionally"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" intent and let t"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":":\n   - `add(1"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ools like mypy and"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", 2)` → `3"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" pyright catch mis"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"`\n   - `add(\"a"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"use.\n\n**If nume"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\", \"b\")` → `\""}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ric add"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ab\"`\n   - `"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ition is intended:**\n```"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"add([1], [2])`"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"python\ndef add(a: float"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" → `[1, 2]"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", b: float) -> float"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"`\n   - `add(1"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":":\n    return a + b"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", \"2\")` → `T"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n```\n(Under PEP"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ypeError` at runtime"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 484, `float"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n2. **Single-line"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"` also accepts `int`"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" definition.** P"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".)\n\n**If it"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"EP 8 disc"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" should be"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ourages putting the body on the"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" generic over any"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" same line as `def`."}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" type sup"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Most linters (fl"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"porting `+`:**"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ake8 "}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n```python\nfrom typing import"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"E704) will flag it."}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Protocol, TypeV"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n3. **No docstring"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ar\n\nT = TypeV"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".** For"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ar(\"T\","}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a trivial function"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" bound=\"S"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" this is minor, but in"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"upportsAdd\")"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a public API it's worth st"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nclass SupportsAdd"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ating intent.\n\n4. **"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"(Protocol):\n    "}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Naming."}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"def __add__(self: T"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** `add` is f"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", other: T,"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ine, but if"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" /) -> T: ..."}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" it l"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\ndef add(a: T,"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ives in a module with"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" b: T) -> T:"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" other"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n    return a + b\n```"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ar"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n### 2. One"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ithmetic helpers,"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-line compound statement\nP"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" make"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"EP 8 discourages"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" sure it"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" putting the body on the same line"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" doesn't shadow `"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" as `def`. Spl"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"operator.add` or c"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"itting it impro"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ause confusion.\n\n5"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ves readability and mak"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". **Consider whether it"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"es diffs and"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'s needed."}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" debugging cleaner:"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** If it"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n```python\ndef add(a"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'s used as a callback ("}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":": float"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"e.g., with"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", b: float) -> float"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" `functools.reduce`"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":":\n    return a + b"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"), `operator.add` already"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n```\n\n### 3. No doc"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ex"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"string\nEven tr"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ists.\n\n### Suggest"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ivial public"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ions\n\n**Option A"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" functions benefit from a short"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":": Numeric-only ("}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" doc"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"most"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"string:\n```python\ndef"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" common int"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" add(a: float, b:"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ent)"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" float) -> float:\n    "} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**\n\n```python\ndef"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\"\"\"Return the"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" add(a: float, b:"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" sum of a"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" float) -> float:\n    "}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and b.\"\"\"\n    return a"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\"\"\"Return the sum of two"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" + b\n```\n\n### 4"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" numbers.\"\"\"\n    return"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". Implicit beh"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a + b\n```\n\n("}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"avior with mixed types"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Under"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n`add(1, \"2\")"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" PEP 484, `float"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"` raises `TypeError"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"` also"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"` at runtime, and `"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" accepts `int`.)"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"add(["}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n**Option B: Pre"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"1], [2])` sil"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"serve the input"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ently concatenates lists."}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" type with"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Type annotations pl"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a const"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"us a static checker will flag"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"rained TypeVar**"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" these."}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n```python\nfrom typing import"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" If you need runtime en"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" TypeVar"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"forcement, valid"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nNumber = TypeVar(\""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ate explicitly:\n```"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Number\", int, float,"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"python\nfrom numbers import"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" complex)\n\ndef add(a"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Real"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":": Number, b: Number"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\ndef add(a: Real"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":") -> Number:\n    "}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", b: Real) ->"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\"\"\"Return the sum of two"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Real:\n    \"\"\"Return"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" numbers of the same num"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the sum of a and b."}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"eric type.\"\"\"\n    return"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Raises TypeError for"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a + b\n```\n\n**"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" non-real inputs.\"\"\""}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Option C: Use"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n    if not isinstance"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the stand"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"(a, Real) or not"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ard library instead**\n\n```python"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" isinstance(b,"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\nfrom operator import add\nfrom"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Real):\n        raise Typ"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" funct"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"eError(f\""}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ools import reduce"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Expected real numbers, got"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\ntotal: int = reduce("}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" {type(a).__name__"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"add, [1, 2,"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"} and {type(b).__"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 3, 4])\n```"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"name__}\")\n    return a"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n### Verdict"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" + b\n```\n\n### 5"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\nThe"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". Consider whether the"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" logic is correct."}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" function is needed"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Add"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\nIf it"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" type h"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" only"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ints and a"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" w"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" docstring, split it"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"raps `+`, the stand"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" across two lines, and dec"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ard library's"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ide whether it should"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" `operator.add` already does"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" be"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" this, for"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" rest"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" example"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ricted to numbers."}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for use with `funct"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Option A is the sim"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ools.reduce`:"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"plest impro"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n```python\nimport"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"vement for"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" operator\nfrom functools import re"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" most cod"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"duce\n\ntotal: int"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" = reduce(operator."}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"add, [1, 2,"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 3], 0)\n```"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n## Recommended version"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n```python\ndef add(a:"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" float, b: float) ->"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" float:\n    \"\"\"Return the"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" sum of a and b.\"\"\""}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n    return a + b\n```"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n**Verdict:**"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" The logic is correct."} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" It should be approved after"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" adding type annotations, a"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" docstring, and stand"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ard formatting."}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ebases."}          }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1        }
+        data: {"type":"content_block_stop","index":1}
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":69,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1133,"output_tokens_details":{"thinking_tokens":219}}      }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":69,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":878,"output_tokens_details":{"thinking_tokens":166}}               }
 
         event: message_stop
-        data: {"type":"message_stop"            }
+        data: {"type":"message_stop"       }
 
-  recorded_at: 2026-10-30T00:33:26.734455+00:00
+  recorded_at: 2026-10-31T00:35:35.445012+00:00

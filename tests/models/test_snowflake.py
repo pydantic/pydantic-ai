@@ -180,7 +180,7 @@ def test_snowflake_replays_foreign_thinking_as_tags(provider: SnowflakeProvider)
         {
             'role': 'user',
             'content': """\
-<assistant_thinking seal="pydantic-ai">
+<assistant_thinking>
 foreign reasoning
 </assistant_thinking>\
 """,

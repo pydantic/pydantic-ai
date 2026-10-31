@@ -1889,7 +1889,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                     # This media lands on a user turn, so it is framed with the call it
                                     # came from — see `_tool_result_provenance_tags`.
                                     open_tag, close_tag = _tool_result_provenance_tags(
-                                        part.tool_name, part.tool_call_id, item.identifier, sealed=True
+                                        part.tool_name, part.tool_call_id, item.identifier
                                     )
                                     framed_media: list[ContentBlockUnionTypeDef] = [
                                         {'text': open_tag},

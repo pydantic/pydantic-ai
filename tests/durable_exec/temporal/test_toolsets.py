@@ -1047,10 +1047,10 @@ async def test_temporal_mcptoolset_instructions_propagate(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot("""\
-<context seal="pydantic-ai" id="toolset:mcp">
+<context id="toolset:mcp">
 Be a helpful assistant.
 </context>
-A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
 
 

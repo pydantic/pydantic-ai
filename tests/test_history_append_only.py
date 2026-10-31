@@ -280,7 +280,7 @@ AGENT_FEATURES: dict[str, Scenario] = {
     'agent:dynamic_system_prompt_withdrawal': Scenario(configure=_dynamic_system_prompt_withdrawal, check_ids=False),
     'agent:dynamic_instructions': Scenario(configure=_dynamic_instructions, check_ids=False),
     # A tool result with text that resembles a framework frame gets a note, and, on a model with mid-conversation
-    # system messages, the conversation's first note brings the frame seal announcement with it. Both are rendered
+    # system messages, the conversation's first note brings the announcement with it. Both are rendered
     # from history on every request, so they have to land in the same place each time.
     'agent:lookalike_frames': Scenario(
         configure=_lookalike_frames,

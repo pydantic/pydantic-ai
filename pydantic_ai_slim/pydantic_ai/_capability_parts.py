@@ -14,7 +14,7 @@ from dataclasses import replace
 from typing import Final, Literal, TypeAlias
 
 from . import _utils
-from ._frame_seal import framework_frame_text
+from ._framework_frame import framework_frame_text
 from ._framing import capability_frame_tags
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -74,11 +74,10 @@ def _render_parts(parts: Sequence[ModelRequestPart]) -> list[ModelRequestPart]:
 def _render(part: CapabilityPart) -> list[SystemPromptPart | UserPromptPart]:
     """The parts `part` reaches the model as.
 
-    An instruction part is a system message, in its own scope. A data part is a frame carrying the frame seal, whatever its
-    source: the seal says the application placed the frame, as on core's own `<tool_result>`, not that it vouches for
-    the content. Its note, which does vouch, goes before it only when the source is trusted. Either way, text in the
-    body that resembles a frame gets the lookalike note from `prepare_messages`, naming who wrote it (see
-    `content_author`).
+    An instruction part is a system message, in its own scope. A data part is its content in a plain tag, whatever its
+    source. Its note, which vouches for the content, goes before it only when the source is trusted. The tags are
+    marked as the framework's, so the lookalike check skips them; text in the body that resembles a frame gets the
+    lookalike note from `prepare_messages`, naming who wrote it (see `content_author`).
     """
     render = part.render
     content = part.model_content()
@@ -90,7 +89,7 @@ def _render(part: CapabilityPart) -> list[SystemPromptPart | UserPromptPart]:
     assert render.tag is not None
     # TODO(#11029): deliver content from a source the operator doesn't control on the tool channel instead, as a
     # framework-inserted read and its result, rebuilding #11837.
-    open_tag, close_tag = capability_frame_tags(render.tag, sealed=True, attrs=part.rendered_attributes())
+    open_tag, close_tag = capability_frame_tags(render.tag, attrs=part.rendered_attributes())
     # Only the tags are marked as the framework's: the body is the part's content, which `prepare_messages` checks
     # for lookalike frames like any other text, so a body that closes the frame early is noted rather than trusted.
     author = _AUTHORS[part.source.source_kind]
@@ -101,7 +100,7 @@ def _render(part: CapabilityPart) -> list[SystemPromptPart | UserPromptPart]:
     )
     if render.note is None or not part.source.trusted:
         return [framed]
-    reference, _ = capability_frame_tags(render.tag, sealed=False, attrs={})
+    reference, _ = capability_frame_tags(render.tag, attrs={})
     note = render.note.replace('{frame}', reference)
     return [SystemPromptPart(note, timestamp=part.timestamp, metadata=metadata), framed]
 

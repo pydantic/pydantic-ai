@@ -4206,7 +4206,6 @@ async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
         for chunk in cast(list[dict[str, Any]], message['content'])
         if chunk['type'] == 'text' and chunk['text'].startswith('<tool_result')
     ]
-    seal = 'pydantic-ai'
     assert tags == [
-        f'<tool_result seal="{seal}" tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">'
+        f'<tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">'
     ]

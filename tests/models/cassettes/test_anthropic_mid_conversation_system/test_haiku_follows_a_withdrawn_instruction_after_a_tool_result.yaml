@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "763"
+      - "721"
       content-type:
       - application/json
       host:
@@ -34,10 +34,10 @@ interactions:
           text: You are a concise assistant.
         - type: text
           text: |-
-            <context seal="pydantic-ai" id="agent:sign_off">
+            <context id="agent:sign_off">
             End every reply with the sign-off '-- Team Alpha'.
             </context>
-            A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -63,11 +63,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=221
+      - x-originResponse;dur=89
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-e216672e767ed7e2a04cf99974503397-46a137efde1161f4-01
+      - 00-d0ebbed07ab7f25a1a011e0e0f972183-ed0f7886cd135de3-01
       transfer-encoding:
       - chunked
       vary:
@@ -76,39 +76,39 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CgZBeix3eU69WcBN7WfBk","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":502,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}             }
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CgZNrGG3Zn1E9K65TZsF3","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":480,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01JFn44ighKmwefcz3Lp4i5f","name":"lookup","input":{},"caller":{"type":"direct"}}               }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01CrA4tYhNXqtURkFP34hdUV","name":"lookup","input":{},"caller":{"type":"direct"}}               }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"q\": \""}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"q\": \""}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"capital"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"capital"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" of Aus"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" of Aus"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tralia\"}"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tralia\"}"} }
 
         event: content_block_stop
         data: {"type":"content_block_stop","index":0           }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":502,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":52,"output_tokens_details":{"thinking_tokens":0}}               }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":480,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":52,"output_tokens_details":{"thinking_tokens":0}} }
 
         event: message_stop
-        data: {"type":"message_stop"  }
+        data: {"type":"message_stop"             }
 
-  recorded_at: 2026-10-30T22:08:34.490398+00:00
+  recorded_at: 2026-10-31T00:35:25.924434+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -120,7 +120,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1351"
+      - "1288"
       content-type:
       - application/json
       host:
@@ -138,14 +138,14 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_01JFn44ighKmwefcz3Lp4i5f
+          - id: toolu_01CrA4tYhNXqtURkFP34hdUV
             type: tool_use
             name: lookup
             input:
               q: capital of Australia
         - role: user
           content:
-          - tool_use_id: toolu_01JFn44ighKmwefcz3Lp4i5f
+          - tool_use_id: toolu_01CrA4tYhNXqtURkFP34hdUV
             type: tool_result
             content:
             - text: Canberra
@@ -158,7 +158,7 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context seal="pydantic-ai" id="agent:sign_off">
+              <context id="agent:sign_off">
               This context has been withdrawn.
               </context>
             type: text
@@ -169,10 +169,10 @@ interactions:
           text: You are a concise assistant.
         - type: text
           text: |-
-            <context seal="pydantic-ai" id="agent:sign_off">
+            <context id="agent:sign_off">
             End every reply with the sign-off '-- Team Alpha'.
             </context>
-            A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -198,11 +198,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=97
+      - x-originResponse;dur=101
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-99f97f613da1fef1f673649577c06e84-4e22c7c1fd78a7e1-01
+      - 00-bf839e1a8f0b26abca4d818f5177f0a9-ab9b8bfc22e3c1b5-01
       transfer-encoding:
       - chunked
       vary:
@@ -211,42 +211,42 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CgZBenaZvCNFSboVNF6MT","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":631,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}     }
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CgZNrKBAtk6nowTc2Lxsn","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":598,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}       }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}            }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS5AoKEAgTGAI4AUIIdGhpbmtpbmcSDNK5UFFYHnyNijZCuBoMW3bnsS+fux0HrUlgIjAPMmMxvxbculpAzQvAjkpHuPRDhL98tR/IApx9dy7JlvZdOwww1cBr+2m4idrGHhkqgQo7kL5XLDWQM5OYtUFxNbOzPaIyMUCW4fGXALQQ9dNgDxvglmVqdRpe7hw84F+hY+KlfuMlSWVQl9XA1Ookw+34oZOJkFMEji5nKkRar+9hvG/m9GtA5sL6zl75U6+UAN/om+N3L0qn31E7DKWEWH8BhNzs2tIRG2wpUCk59Q10gsiz+b3I3nwRkxpLhOdRpv5urb4uFWepXgi/oBw5MXYrry+DxjUiAW8Zuf/BzDvAoxb6Jze6GHVNOb+OeMfQv9kXZHqWXK7yz5Scr5dC5VKAZmK9XO6FPc6XocGm1QhdJTgpks39PsXsPgnmJA9l5QIcFOrtPurz5H9DjGqXckluFWGn+0B10gF8WJnSGtAN6kDacGL399FtBpF8HeJY1AV43S7f5wI9WZDQkRjdIojfUnmzB7gDV+vMyeSiz3vobS+aDd/+LL3yG8NePhENxYBdo7dtuPcn/+QbS8z5ghld6ZYdY7TfxGST7iFxhcZEPCIjYdZ0soK6To6qYATZ5SP5BFFbusvJWNz3s18huz9AFrnZ9VGfL43cc483DusxK69LkPZNSaN81oemar4cozkNun4xBQo2yZilYqkwSJc0cZPj5uv5uVD+uAvMMnpWajRxoMJbeUTL6OB42T3nrBhje4zTBjTUbB1encF0bp+2PlOWY29Ka2JKcS1PHLwidWyvl+A/9KyKl8T5LTjIUDAmFYIXUV8sbhNcc1XDEFx2BLq17UBz6xVLA8ViB5ltm/KaTlaRJ12QuUlk/fP71U8ZUQPV0CKOvhFsdEu1o7VJk5t80MgSORrtDPc0ek/z2HUkBbOfWKOzjh+/nL+fAUs6PXpuntYo10o6Amq2Bky+4xGqgaxE33toapbAgfio0UahPiEEBqiay/oFjs+TY7T6k7uS5T/dNtCFBT71OCBfb2bCHFJZAGiYA9sMD+sCc8oQ9279/nC8EESEV6waz5CLvHczMmkdxKhP6XY+/+cpRlYAoBhMoP7uIj5asMlIvzfM+NtR5dBIl1jYXXgra7dneT2oDokcbdjOJcDHlv0iuzMdouG3ZQ4ljNlKEHULM1w6tpOtlT8taTHzM3QDIKCS8JkcJh8v5JNxbk3n1Lq5sdadAA6gRj6yjJwB/RyBzWEKLgJmLMZGnkxbVSTVtgbNUptMQZqXKSne7pLHMfYgX3XC/E6euXD3Fxm+jDlc1egchsi5h7l1XfH+SA2R1UgwjYpBQOXEDVBL1atuuYk7w2hr1juMLlLupXsjd1VIQYgs3tgJznkirNlyvp1E41vXkbDydDepaNrrzxfZicGx1evZy6fvRRDoMotTcoCsA5IT/aLH/cPzjKa0q2F2lQiO4FfDml6ZrxwSZ5bdcsd1Kv1Jrwg1RtSjRuBEQRRDFpu1s5jPVCVFrxzpL7RjPe2KT4kEPFH9e0N6Rcjw75E0cbLWGOBv5H3spwfdfnJy2rzRAm+b6Kv6UGKpeVLMiON52zP1vJbrt28cXIkie220pT0OynV8VMjYzcf6M9kKOUzxXC7J9gnFxTtJTu8bCyMWeNCDgnanU64kJS4UAVIx3ch3rEsyLv1HqCepFY1bZNprunFJOZRdLEbvtAliNjYepP1PZaiVaqiTK9qIYW8+7T4YsYr98F3WQSak5vFeCtu3+43iv2OigzIf8jsKagBFhFmvUHp9a3pFSeCTNIi5szEnlvDiOjCPg6I6DknnBEUYAQ=="}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS/gcKEAgTGAI4AUIIdGhpbmtpbmcSDFuh8iwFrV8NvAysphoMbprF9xOeC8QTfHBRIjBlShD8CYjQHism9OvWIjf6vDp2nhgguNzbbPobDA2jtob1RPGD63rupsbWXau3yLMqmweMJv5j9D89uGx13HdoS7B6dKJwDyyRrnppZ32yj1tJQ3luZU+3QNVN8IXHCQamM60/+y1hfFM4pZXLZgcSFaoUaYL9u/6km4OdZ5/k+3RhYWZV/cXDdnch4ud4uHJE5gN/yy4mfryy4ZpdgAA2YJONYDBR7jDSzDNLA/X0Xy6xXuZzgFpV5a+gRKKWu6zMM3C2XwONqKJL476Awr+oGyn0gRrCdS9AfC+DzG91kW5A7NJW3uVQhv5XccjF0pXfrKqOCZufHwC/XbGXHX8tH3Xc46WaxpkiMJZV54+rKVSx3djx+o5294O2sXIg0mHPmznR1KIF+1lJwgA+uKQ8YisM5sXXouO7NQ/OAhU/qgmPBvGKmxp62sNSlwP+hobw1BhvEQ8V6NqsKHhiv0oOzFtgUkSXgvOpUH2y1WSREL65lLHB5PMDKr3OZe3URSPATxTEJPNvHzvT6p5ebdPZC/zkhhGnjjW/+yG3XBAYT559J+Y+2IgimS26haLiwnWCbyA1A16geEUC81QNAgGS9sCKlxtDFxIPkm5sZQc4VIQ3xCSFD/k8s6xlk5NjGADbybnZSIezedmgBP94hlZWKFl/U6sZoePRdlQtH6+ZWSYotZaJPQOEYVuEG+QAgDpgS4/Ry85Rn7lTO+bwt6hhlyFp+W3OEMPqIvS9jsqVzD7AAKxWPhRO9kD5NIyAhwSo6FGRP+NDR8/yG/DF2zIUIhIgyanGQSIemJQrYPghgzetttBiE5jKiUBmxduqkGtHYXTP3smutHZFTVxD1UXnUUvlg5WKslDT89Xpoj5xQJHzS1cY7pKfc+YcZ/6zUagFiLDHN7XZlIeTQwtmR2swIphO9ThTHKp16Vpu9VOqB29DcfomU+JuUYWsTaEwoPlbLzeg38Wi3TVY2JjbQPIaBGZWYE/S0EFr7EVtosmQ5Yx/0k95zFjvd4LT0vmJy2jeNM86U1SWPEOei2K0SFrbcaaQ5I9s6FabaO17uEHEI3QrfExt00z/gZ5PxC0/ELm+GIwVaWn+UQf8kpyjbGOuJbPz/69QyVmdJAjaKlHlFX0E9eGracqopzmjFrEHQficJ33hXEJyUkGNUlOO/qOMk3Vn3epDn+M9qaunQ+KcUB9jjx0dvxBmfex9JAGTp+Dh5op8rsJMQByctvkveKc4M2FX2EKHSiKFImw2EQHDyPOjB7YnzyRnwX7s8KRrQJSDTSoO5Ilc6p72wEJCaBgB"}             }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0}
+        data: {"type":"content_block_stop","index":0             }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""} }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The cap"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The capital"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ital of Australia is Can"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" of Australia is Canber"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"berra."}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ra."}             }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1    }
+        data: {"type":"content_block_stop","index":1            }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":631,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":231,"output_tokens_details":{"thinking_tokens":216}}  }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":598,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":128,"output_tokens_details":{"thinking_tokens":113}} }
 
         event: message_stop
-        data: {"type":"message_stop"        }
+        data: {"type":"message_stop"}
 
-  recorded_at: 2026-10-30T22:08:36.285720+00:00
+  recorded_at: 2026-10-31T00:35:26.949084+00:00

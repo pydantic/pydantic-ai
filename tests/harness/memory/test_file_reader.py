@@ -129,7 +129,7 @@ class TestGuidanceStaysStatic:
         [instructions] = with_file_system.instructions
         assert instructions is not None
         assert instructions.startswith(without.instructions[0])
-        assert '<context seal="pydantic-ai" id="toolset:memory:directory">\n' + directory in instructions
+        assert '<context id="toolset:memory:directory">\n' + directory in instructions
 
 
 class TestReaderKept:
@@ -250,13 +250,9 @@ class TestSeveralFileMemories:
         assert len(instructions) == 2
         assert instructions[0] == instructions[1]
         assert instructions[0] is not None
+        assert '<context id="toolset:memory:directory">\nMemory files are in `.agent-memory/main/`' in instructions[0]
         assert (
-            '<context seal="pydantic-ai" id="toolset:memory:directory">\nMemory files are in `.agent-memory/main/`'
-            in instructions[0]
-        )
-        assert (
-            '<context seal="pydantic-ai" id="toolset:org_memory:directory">\nMemory files are in `.agent-memory/org/`'
-            in instructions[0]
+            '<context id="toolset:org_memory:directory">\nMemory files are in `.agent-memory/org/`' in instructions[0]
         )
 
 

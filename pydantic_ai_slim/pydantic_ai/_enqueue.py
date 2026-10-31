@@ -11,7 +11,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
 
-from ._frame_seal import is_framework_frame
+from ._framework_frame import is_framework_frame
 from ._framing import resembles_frame
 from ._utils import fill_run_metadata
 from ._uuid import uuid7
@@ -151,7 +151,7 @@ def hand_built_capability_speech(messages: Sequence[ModelMessage]) -> str | None
     """What in `messages` a capability built by hand that a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] should say, or `None`.
 
     That's a bare `SystemPromptPart`, or user-channel text with something that looks like a framework frame (a
-    `<system` tag or a `seal` attribute) that the framework didn't mark as its own frame.
+    `<system` or `<context` tag) that the framework didn't mark as its own frame.
     """
     for message in messages:
         if not isinstance(message, ModelRequest):
@@ -164,7 +164,7 @@ def hand_built_capability_speech(messages: Sequence[ModelMessage]) -> str | None
                 for item in ([part.content] if isinstance(part.content, str) else part.content)
                 if isinstance(item, str) or (isinstance(item, TextContent) and not is_framework_frame(item))
             ):
-                return 'user text containing what looks like a framework frame (a `<system` tag or a `seal` attribute)'
+                return 'user text containing what looks like a framework frame (such as a `<system` tag)'
     return None
 
 

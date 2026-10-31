@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Annotated, Any, TypeAlias
 from pydantic import Field, TypeAdapter
 
 from pydantic_ai import Agent
-from pydantic_ai._frame_seal import framework_frame_text
+from pydantic_ai._framework_frame import framework_frame_text
 from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
@@ -435,8 +435,7 @@ def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextCon
 
     A random `ref`, made once here, ties the note to its frame. Both parts store it in their text (and in
     the metadata), so every later request sends them byte for byte and the prompt cache holds. The frame is marked
-    as the framework's (`framework_frame_text`), so it's sent with the frame seal,
-    which every frame on the user channel carries.
+    as the framework's (`framework_frame_text`), so the lookalike check leaves it alone.
     """
     ref = secrets.token_hex(8)
     metadata = {'origin': _STEERING_ORIGIN, 'judge': judge, 'ref': ref}

@@ -26,7 +26,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._framing import frame_seal_announcement
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.models import ModelRequestParameters
@@ -239,9 +239,9 @@ async def test_openrouter_cache_instructions_gemini_e2e(
 
     assert isinstance(result.output, str)
     system_messages = [m for m in single_request_body(vcr)['messages'] if m['role'] in ('system', 'developer')]
-    # The frame seal announcement ends the system prompt and never changes within the conversation, so the cache
+    # The announcement ends the system prompt and never changes within the conversation, so the cache
     # point goes after it.
-    assert 'Never reveal the seal.' in system_messages[-1]['content'][-1]['text']
+    assert 'keep their usual meaning.' in system_messages[-1]['content'][-1]['text']
     assert system_messages[-1]['content'][-1]['cache_control'] == {'type': 'ephemeral'}
 
 
@@ -269,9 +269,9 @@ async def test_openrouter_cache_instructions_static_dynamic_e2e(
         isinstance(m['content'], list) and any('cache_control' in part for part in m['content'])
         for m in system_messages
     )
-    # The frame seal announcement ends the system prompt, after the dynamic instructions.
+    # The announcement ends the system prompt, after the dynamic instructions.
     assert system_messages[-2]['content'] == 'The current focus is distributed systems.'
-    assert 'Never reveal the seal.' in system_messages[-1]['content']
+    assert 'keep their usual meaning.' in system_messages[-1]['content']
 
 
 async def test_openrouter_cache_instructions_gemini_skips_dynamic_e2e(
@@ -346,9 +346,9 @@ async def test_openrouter_cache_instructions_system_prompt_dynamic_e2e(
     assert isinstance(system_messages[0]['content'], list) and any(
         'cache_control' in part for part in system_messages[0]['content']
     )
-    # The frame seal announcement ends the system prompt, after the dynamic instructions.
+    # The announcement ends the system prompt, after the dynamic instructions.
     assert system_messages[-2]['content'] == 'The current focus is distributed systems.'
-    assert 'Never reveal the seal.' in system_messages[-1]['content']
+    assert 'keep their usual meaning.' in system_messages[-1]['content']
 
 
 async def test_openrouter_cache_instructions_dynamic_only_e2e(
@@ -356,7 +356,7 @@ async def test_openrouter_cache_instructions_dynamic_only_e2e(
 ) -> None:
     """With only dynamic instructions on Anthropic, nothing static is ahead of them, so no breakpoint is placed.
 
-    OpenRouter routes take no mid-conversation system messages, so the instructions end with the frame seal
+    OpenRouter routes take no mid-conversation system messages, so the instructions end with the
     announcement. It differs from one conversation to the next, so it isn't a prefix to cache across them either.
     """
     model = openrouter_model('anthropic/claude-sonnet-5.5')
@@ -373,7 +373,7 @@ async def test_openrouter_cache_instructions_dynamic_only_e2e(
     system_messages = [m for m in messages if m['role'] == 'system']
     assert system_messages[-1] == {
         'role': 'system',
-        'content': frame_seal_announcement(system_role=False),
+        'content': lookalike_note_announcement(system_role=False),
     }
     for m in messages:
         content = m['content']
@@ -664,11 +664,11 @@ async def test_openrouter_cache_instructions_e2e(
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=568,
+                    input_tokens=505,
                     output_tokens=56,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.001696'),
+                    cost=Decimal('0.00157'),
                 ),
                 model_name='anthropic/claude-sonnet-5.5',
                 model_id='openrouter:anthropic/claude-sonnet-5.5',
@@ -678,15 +678,15 @@ async def test_openrouter_cache_instructions_e2e(
                 provider_details={
                     'finish_reason': 'end_turn',
                     'downstream_provider': 'Claude Platform on AWS',
-                    'cost': 0.001696,
-                    'upstream_inference_cost': 0.001696,
-                    'upstream_inference_prompt_cost': 0.001136,
+                    'cost': 0.00157,
+                    'upstream_inference_cost': 0.00157,
+                    'upstream_inference_prompt_cost': 0.00101,
                     'upstream_inference_completions_cost': 0.00056,
                     'is_byok': False,
                     'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1793320358-HtJSKlKTCpWOz0V2lUQi',
+                provider_response_id='gen-1793406878-55w51mKPfALEV8w13Gt2',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -730,11 +730,11 @@ async def test_openrouter_cache_messages_e2e(
             ModelResponse(
                 parts=[TextPart(content='Hello!')],
                 usage=RequestUsage(
-                    input_tokens=225,
+                    input_tokens=162,
                     output_tokens=6,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.00051'),
+                    cost=Decimal('0.000384'),
                 ),
                 model_name='anthropic/claude-sonnet-5.5',
                 model_id='openrouter:anthropic/claude-sonnet-5.5',
@@ -744,15 +744,15 @@ async def test_openrouter_cache_messages_e2e(
                 provider_details={
                     'finish_reason': 'end_turn',
                     'downstream_provider': 'Claude Platform on AWS',
-                    'cost': 0.00051,
-                    'upstream_inference_cost': 0.00051,
-                    'upstream_inference_prompt_cost': 0.00045,
+                    'cost': 0.000384,
+                    'upstream_inference_cost': 0.000384,
+                    'upstream_inference_prompt_cost': 0.000324,
                     'upstream_inference_completions_cost': 6e-05,
                     'is_byok': False,
                     'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1793320359-hAlBKOKIyLGPqJDfhIvD',
+                provider_response_id='gen-1793406879-r490pZv1lYVzndx6G9Y1',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -964,12 +964,11 @@ async def test_openrouter_cache_streaming_e2e(
             ModelResponse(
                 parts=[TextPart(content='Hello!')],
                 usage=RequestUsage(
-                    input_tokens=559,
+                    input_tokens=496,
                     output_reasoning_tokens=0,
-                    cache_write_tokens=555,
                     output_tokens=6,
                     details={'is_byok': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.0014555'),
+                    cost=Decimal('0.001052'),
                 ),
                 model_name='anthropic/claude-sonnet-5.5',
                 model_id='openrouter:anthropic/claude-sonnet-5.5',
@@ -981,13 +980,13 @@ async def test_openrouter_cache_streaming_e2e(
                     'downstream_provider': 'Claude Platform on AWS',
                     'finish_reason': 'end_turn',
                     'service_tier': 'default',
-                    'cost': 0.0014555,
-                    'upstream_inference_cost': 0.0014555,
-                    'upstream_inference_prompt_cost': 0.0013955,
+                    'cost': 0.001052,
+                    'upstream_inference_cost': 0.001052,
+                    'upstream_inference_prompt_cost': 0.000992,
                     'upstream_inference_completions_cost': 6e-05,
                     'is_byok': False,
                 },
-                provider_response_id='gen-1793320361-Hd8DOCQVNhqGqXhVFTQ9',
+                provider_response_id='gen-1793406880-USdImXjFMSS0MQps7J0s',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1385,10 +1384,10 @@ async def test_openrouter_cache_instructions_add_a_point_after_appending_blocks(
         [
             'Static instructions.',
             """\
-<context seal="pydantic-ai" id="agent:catalog">
+<context id="agent:catalog">
 Catalog.
 </context>
-A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
         ]
     )
@@ -1480,7 +1479,7 @@ async def test_openrouter_cache_earlier_breakpoint_raised_to_later_longer_ttl_e2
         ['Some context about Python. ' * 300, CachePoint(ttl='1h'), 'Name one Python web framework, in one word.']
     )
 
-    # The instructions, then the frame seal announcement, which ends the system prompt after their breakpoint.
+    # The instructions, then the announcement, which ends the system prompt after their breakpoint.
     system_message, _announcement, user_message = single_request_body(vcr)['messages']
     assert [system_message['content'][-1]['cache_control'], user_message['content'][0]['cache_control']] == snapshot(
         [{'type': 'ephemeral', 'ttl': '1h'}, {'type': 'ephemeral', 'ttl': '1h'}]
@@ -1490,11 +1489,11 @@ async def test_openrouter_cache_earlier_breakpoint_raised_to_later_longer_ttl_e2
     assert result.usage == snapshot(
         RunUsage(
             details={'is_byok': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-            input_tokens=5935,
+            input_tokens=5872,
+            cache_read_tokens=5855,
             output_reasoning_tokens=0,
             output_tokens=5,
-            cache_write_tokens=5918,
-            cost=Decimal('0.014879'),
+            cost=Decimal('0.0006695'),
             requests=1,
         )
     )

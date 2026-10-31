@@ -1055,7 +1055,7 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
             'role': 'user',
             'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback seal="pydantic-ai">
+<retry_feedback>
 Response is invalid
 </retry_feedback>\
 """,
@@ -1177,7 +1177,7 @@ async def test_image_tool_return_is_forwarded_as_user_message():
                     {
                         'type': 'text',
                         'image_url': None,
-                        'text': '<tool_result seal="pydantic-ai" tool_name="get_image" tool_call_id="call_1" file_id="01a7df">',
+                        'text': '<tool_result tool_name="get_image" tool_call_id="call_1" file_id="01a7df">',
                     },
                     {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'text': None},
                     {'type': 'text', 'image_url': None, 'text': '</tool_result>'},

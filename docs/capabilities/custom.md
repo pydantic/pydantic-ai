@@ -415,10 +415,10 @@ A data part from the example reaches the model as its note, then the tagged cont
 
 ```text
 The accompanying <review_feedback> is feedback from an automated reviewer about your last step.
-<review_feedback seal="…" reviewer="loop_check">The second search repeats the first one.</review_feedback>
+<review_feedback reviewer="loop_check">The second search repeats the first one.</review_feedback>
 ```
 
-The note is a mid-conversation system message, or a sealed `<system>` block on a model without one. The tags carry the [frame seal](../message-history.md#framework-frames-and-content-fidelity), and its content goes between them exactly as written: nothing is escaped, a file goes in as a file, and text in it that looks like a framework frame gets the same note as such text from a user.
+The note is a mid-conversation system message, or a `<system>` block on a model without one. The content goes between the tags exactly as written: nothing is escaped, a file goes in as a file, and text in it that looks like a framework frame gets a [note](../message-history.md#framework-frames-and-content-fidelity), like such text from a user.
 
 ### Where the content came from
 
@@ -431,9 +431,9 @@ Every part has a [`source`][pydantic_ai.messages.CapabilityPart.source], which d
 | [`ToolResultSource(tool_name=...)`][pydantic_ai.messages.ToolResultSource]: a tool's output | No |
 | [`UserSource()`][pydantic_ai.messages.UserSource]: the user wrote it | No |
 
-An instruction part speaks with the operator's authority, so it needs a trusted source, and its content is a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText]: text your code builds from its own values, your configuration, or a file read with [`OperatorText.from_workspace`][pydantic_ai.messages.OperatorText.from_workspace], which refuses a workspace whose files the operator doesn't control. A type checker rejects any other string, and creating one from an untrusted source raises a [`UserError`][pydantic_ai.exceptions.UserError]. A data part's tags always carry the seal, which says the application placed the frame, not that it vouches for what's in it; from a source that isn't trusted, the part goes out without its note, which would.
+An instruction part speaks with the operator's authority, so it needs a trusted source, and its content is a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText]: text your code builds from its own values, your configuration, or a file read with [`OperatorText.from_workspace`][pydantic_ai.messages.OperatorText.from_workspace], which refuses a workspace whose files the operator doesn't control. A type checker rejects any other string, and creating one from an untrusted source raises a [`UserError`][pydantic_ai.exceptions.UserError]. From a source that isn't trusted, a data part goes out without its note, which would vouch for the content.
 
-Text in a data part that looks like a framework frame (a `<system>` tag or a `seal` attribute) gets a note in the application's voice naming who wrote it: the tool, the file's author or the user, by the part's source. Text from an `OperatorSource` is the application's own and gets none.
+Text in a data part that looks like a framework frame (such as a `<system>` tag) gets a note in the application's voice naming who wrote it: the tool, the file's author or the user, by the part's source. Text from an `OperatorSource` is the application's own and gets none.
 
 ### Stored with the history
 
@@ -441,13 +441,13 @@ Capability parts are stored in the message history like any other part, so they 
 
 The [UI adapters](../ui/overview.md) keep capability parts on the server: they aren't sent to the frontend, and [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops one a client sends back, since a client could write one in the application's voice. A conversation whose model should keep seeing them keeps its history on the server, for example with [conversation storage](../persistence.md).
 
-Calling `ctx.enqueue` from a capability's hook or tool with a bare [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart], or with user text that contains something that looks like a framework frame (a `<system>` tag or a `seal` attribute), emits a `UserWarning` pointing here. Application code, such as a tool registered on the agent, enqueues either as before.
+Calling `ctx.enqueue` from a capability's hook or tool with a bare [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart], or with user text that contains something that looks like a framework frame (such as a `<system>` tag), emits a `UserWarning` pointing here. Application code, such as a tool registered on the agent, enqueues either as before.
 
 ## Framing data in prompt text
 
 A capability that puts data into prompt text, such as a stored memory, a reviewer's feedback or a sub-agent's output, can tag it so the model knows where it came from and treats it as data rather than as instructions. For something the capability tells the model mid-conversation, define a [capability part](#capability-parts), which frames it for you. The functions below are for text that isn't one, such as a value interpolated into instructions or a tool's return content.
 
-Pydantic AI's own frames send their content as written and carry the frame seal instead, and text that resembles one gets a note saying whose it is ([details](../message-history.md#framework-frames-and-content-fidelity)). [`pydantic_ai.framing`](../api/framing.md) renders a capability's tag with its body escaped instead, so the content can't close the tag early or open another. Register your tag once at module level with [`register_tag`][pydantic_ai.framing.register_tag], and render it with [`wrap`][pydantic_ai.framing.wrap]:
+Pydantic AI's own frames send their content as written instead, and text that resembles one of its voice tags gets a note saying whose it is ([details](../message-history.md#framework-frames-and-content-fidelity)). [`pydantic_ai.framing`](../api/framing.md) renders a capability's tag with its body escaped instead, so the content can't close the tag early or open another. Register your tag once at module level with [`register_tag`][pydantic_ai.framing.register_tag], and render it with [`wrap`][pydantic_ai.framing.wrap]:
 
 ```python {title="framing_reviewer_note.py"}
 from pydantic_ai.framing import register_tag, wrap

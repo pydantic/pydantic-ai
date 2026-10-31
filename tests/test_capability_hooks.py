@@ -3696,7 +3696,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
-                    usage=RequestUsage(input_tokens=79, output_tokens=4),
+                    usage=RequestUsage(input_tokens=76, output_tokens=4),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
@@ -4098,7 +4098,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='second attempt')],
-                    usage=RequestUsage(input_tokens=76, output_tokens=4),
+                    usage=RequestUsage(input_tokens=73, output_tokens=4),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
@@ -4191,7 +4191,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='recovered response')],
-                    usage=RequestUsage(input_tokens=78, output_tokens=2),
+                    usage=RequestUsage(input_tokens=75, output_tokens=2),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),

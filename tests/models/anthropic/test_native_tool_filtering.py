@@ -229,7 +229,7 @@ async def test_anthropic_agent_recovers_from_unconfigured_native_tool_call(allow
             {'role': 'user', 'content': [{'text': 'hello', 'type': 'text'}]},
             {
                 'role': 'user',
-                'content': [{'text': '<system seal="pydantic-ai">Please return text.</system>', 'type': 'text'}],
+                'content': [{'text': '<system>Please return text.</system>', 'type': 'text'}],
             },
         ]
     )

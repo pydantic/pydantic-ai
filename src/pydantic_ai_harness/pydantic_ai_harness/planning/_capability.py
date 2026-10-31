@@ -7,7 +7,7 @@ from copy import copy
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from pydantic_ai._frame_seal import framework_frame_text
+from pydantic_ai._framework_frame import framework_frame_text
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (

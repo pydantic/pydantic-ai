@@ -211,8 +211,7 @@ def test_assistant_text_history_complex():
     sampling_messages = create_message.call_args.args[0]
     assert create_message.call_args.kwargs['system_prompt'] == ''
     assert any(
-        isinstance(message.content, TextContent)
-        and message.content.text == '<system seal="pydantic-ai">system content</system>'
+        isinstance(message.content, TextContent) and message.content.text == '<system>system content</system>'
         for message in sampling_messages
     )
 
@@ -297,7 +296,7 @@ def test_output_retry_history():
                     'type': 'text',
                     'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback seal="pydantic-ai">
+<retry_feedback>
 Try again
 </retry_feedback>\
 """,
@@ -359,7 +358,7 @@ def test_framework_tool_history():
                 'content': {
                     'type': 'text',
                     'text': """\
-<system seal="pydantic-ai"><context seal="pydantic-ai" id="capability:forecast">
+<system><context id="capability:forecast">
 This context has been withdrawn, and the withdrawal stays in effect until replaced again.
 </context></system>\
 """,
@@ -403,11 +402,11 @@ async def test_append_instruction_baseline_is_tagged_like_its_updates():
     first = await agent.run('Continue.', deps='A')
     await agent.run('Continue.', deps='B', message_history=first.all_messages())
     assert create_message.call_args.kwargs['system_prompt'] == snapshot("""\
-<context seal="pydantic-ai" id="agent:state">
+<context id="agent:state">
 A
 </context>
-A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.<context seal="pydantic-ai" id="agent:state">
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.<context id="agent:state">
 A
 </context>
-A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)

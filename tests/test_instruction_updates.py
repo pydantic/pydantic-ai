@@ -14,7 +14,7 @@ from _pytest.mark.structures import ParameterSet
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
-from pydantic_ai._framing import frame_seal_announcement
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._instructions import recorded_prefix
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError, UserError
@@ -233,7 +233,7 @@ async def test_instruction_updates_hook_unset_ends_a_window_without_blocks():
     ).all_messages()
     # `B` is first seen in that empty window, so it's delivered as a change.
     history = (await agent.run('Continue.', deps=State('B'), message_history=history)).all_messages()
-    assert received[-1] == ['<context seal="pydantic-ai" id="agent:state">\nB\n</context>']
+    assert received[-1] == ['<context id="agent:state">\nB\n</context>']
     # Unsetting the parts again ends this window as well, so `B` isn't sent.
     result = await agent.run('Continue.', deps=State('B'), message_history=history, capabilities=unset)
     assert received[-1] == []
@@ -256,8 +256,8 @@ async def test_instruction_updates_hook_appended_request_preserves_history():
         assert isinstance(request, ModelRequest)
         # History keeps the content; only the request the model receives carries the rendering.
         assert [part.content for part in info.model_request_parameters.instruction_parts or []] == [
-            '<context seal="pydantic-ai" id="agent:state">\nA\n</context>\n'
-            'A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.'
+            '<context id="agent:state">\nA\n</context>\n'
+            'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
         ]
         assert [part.content for part in request.parts if isinstance(part, UserPromptPart)][:2] == [
             'Continue.',
@@ -294,10 +294,10 @@ async def test_instruction_updates_hook_appended_request_preserves_history():
 
     assert updates == snapshot([[], ['B'], ['B'], ['B', 'C']])
     assert prefixes[0] == snapshot("""\
-<context seal="pydantic-ai" id="agent:state">
+<context id="agent:state">
 A
 </context>
-A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.\
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
     assert prefixes == [prefixes[0]] * 4
     for previous, current in zip(captured, captured[1:]):
@@ -536,12 +536,14 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
         (['C', f'sha256:{_sha256("Chatty.")}'], []),
         (None, ['D']),
     ]
-    sentence = 'A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.'
+    sentence = (
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+    )
     assert prefixes == [
-        f'<context seal="pydantic-ai" id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
-        f'<context seal="pydantic-ai" id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
-        f'<context seal="pydantic-ai" id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
-        f'<context seal="pydantic-ai" id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
+        f'<context id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
+        f'<context id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
+        f'<context id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
+        f'<context id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
     ]
     assert isinstance(agent.model, Model)
     current_parts = [
@@ -551,7 +553,7 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
     projected = agent.model.prepare_messages(history, ModelRequestParameters(instruction_parts=current_parts))
     # The change from the earlier window is superseded. The current window's requests were all sent the
     # request's prefix, so their instructions render from it; the earlier window's keep their recorded content.
-    assert context_statements(projected) == ['<context seal="pydantic-ai" id="agent:state">\nD\n</context>']
+    assert context_statements(projected) == ['<context id="agent:state">\nD\n</context>']
     assert [message.instructions for message in projected if isinstance(message, ModelRequest)] == [
         'A\n\nTerse.',
         'A\n\nTerse.',
@@ -655,9 +657,9 @@ async def test_instruction_updates_coexist_with_request_scoped_prompts(inline_sy
         history = result.all_messages()
 
     def wrapped(text: str) -> str:
-        return text if inline_system else f'<system seal="{CONTINUE_REF}">{text}</system>'
+        return text if inline_system else f'<system>{text}</system>'
 
-    change = wrapped('<context seal="pydantic-ai" id="agent:state">\nB\n</context>')
+    change = wrapped('<context id="agent:state">\nB\n</context>')
     assert received == [
         [wrapped('Reminder 1.')],
         [change, wrapped('Reminder 2.')],
@@ -776,7 +778,7 @@ async def test_instruction_updates_unaddressable_change_opens_a_new_window(addre
     )
     change = history[2].parts[1]
     assert isinstance(change, InstructionDeltaPart) and change.id is None
-    assert change.render() == '<context seal="pydantic-ai">\nUnknown\n</context>'
+    assert change.render() == '<context>\nUnknown\n</context>'
     agent = Agent(
         TestModel(custom_output_text='ok'),
         instructions=InstructionPart(content='B', name='state', on_change='append'),
@@ -1090,8 +1092,8 @@ async def test_instruction_updates_suspended_resume_after_a_rewritten_block_chan
     assert isinstance(model, Model)
     rendered = model.prepare_request(None, ModelRequestParameters(instruction_parts=captured_parts[0]))[1]
     assert InstructionPart.join(rendered.instruction_parts or []) == (
-        '<context seal="pydantic-ai" id="agent:state">\nA\n</context>\n'
-        'A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.'
+        '<context id="agent:state">\nA\n</context>\n'
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
         '\n\nTerse.'
     )
 
@@ -1162,7 +1164,7 @@ async def test_instruction_updates_suspended_resume_retains_prefix_parts(inline:
         if isinstance(message, ModelRequest)
         for part in message.parts
     )
-    assert '<context seal="pydantic-ai" id="agent:state">\\nB\\n</context>' in repr(captured_messages)
+    assert '<context id="agent:state">\\nB\\n</context>' in repr(captured_messages)
     assert any(
         isinstance(part, InstructionDeltaPart) and part.content == 'B'
         for message in result.all_messages()
@@ -1396,10 +1398,10 @@ async def test_instruction_updates_downgraded_empty_block_is_not_sent(case: str,
         with pytest.warns(UserWarning, match='rewriting its prefix instead'):
             # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
             await agent.run('Continue.', model_settings={'max_tokens': 1024})
-    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions end with what `<system seal>` means.
+    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the instructions end with what `<system>` means.
     assert bodies[0]['system'] == [
         {'type': 'text', 'text': 'Stable.'},
-        {'type': 'text', 'text': frame_seal_announcement(system_role=False)},
+        {'type': 'text', 'text': lookalike_note_announcement(system_role=False)},
     ]
 
 
@@ -1567,10 +1569,7 @@ def test_instruction_updates_render_escapes_the_id():
     part = InstructionDeltaPart(
         id=InstructionId(CapabilityInstructionSource('"quoted" <id>'), name='state'), content='New.'
     )
-    assert (
-        part.render()
-        == '<context seal="pydantic-ai" id="capability:&quot;quoted&quot; &lt;id&gt;:state">\nNew.\n</context>'
-    )
+    assert part.render() == '<context id="capability:&quot;quoted&quot; &lt;id&gt;:state">\nNew.\n</context>'
 
 
 def test_instruction_updates_render_escapes_closing_tags_in_the_content():
@@ -1578,7 +1577,7 @@ def test_instruction_updates_render_escapes_closing_tags_in_the_content():
     part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context_diff> after.')
     assert part.render() == snapshot(
         """\
-<context seal="pydantic-ai" id="agent:state">
+<context id="agent:state">
 Before </context></System > </context_diff> after.
 </context>\
 """
@@ -1601,7 +1600,7 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
     )
     assert part.render(previous=MEMORY) == snapshot(
         """\
-<context_diff seal="pydantic-ai" id="agent:memory">
+<context_diff id="agent:memory">
 --- before
 +++ after
 @@ -5,5 +5,5 @@
@@ -1614,13 +1613,13 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
 </context_diff>\
 """
     )
-    full = f'<context seal="pydantic-ai" id="agent:memory">\n{edited}\n</context>'
+    full = f'<context id="agent:memory">\n{edited}\n</context>'
     # Without the text the change replaces, or with other text, the model gets the full replacement.
     assert part.render() == full
     assert part.render(previous=f'{MEMORY}\n- Fact 21: value 21.') == full
     # So it does when the diff would be longer.
     short = InstructionDeltaPart(id=STATE_ID, content='B', base_hash=_sha256('A'))
-    assert short.render(previous='A') == '<context seal="pydantic-ai" id="agent:state">\nB\n</context>'
+    assert short.render(previous='A') == '<context id="agent:state">\nB\n</context>'
 
 
 @pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
@@ -1654,7 +1653,7 @@ async def test_instruction_updates_send_long_block_edits_as_diffs():
     assert received[1] == [deltas[0].render(previous=MEMORY)]
     # Each request renders the earlier changes exactly as before, so the cached prefix holds.
     assert received[2] == [*received[1], deltas[1].render(previous=first_edit)]
-    assert all(statement.startswith('<context_diff seal="pydantic-ai" id="agent:memory">') for statement in received[2])
+    assert all(statement.startswith('<context_diff id="agent:memory">') for statement in received[2])
 
     # A processor that drops the first change leaves the second without the text it was computed
     # against, so the model gets it in full.
@@ -1673,7 +1672,7 @@ async def test_instruction_updates_send_long_block_edits_as_diffs():
         message_history=history,
         capabilities=[ProcessHistory(drop_first_change)],
     )
-    assert received == [[f'<context seal="pydantic-ai" id="agent:memory">\n{second_edit}\n</context>']]
+    assert received == [[f'<context id="agent:memory">\n{second_edit}\n</context>']]
 
 
 @pytest.mark.parametrize('include_content', [False, True])
@@ -1703,19 +1702,19 @@ CONTINUE_REF = 'pydantic-ai'
 
 RENDERINGS: dict[bool, tuple[str, list[str]]] = {
     True: (
-        'Stable.\n\n<context seal="pydantic-ai" id="agent:state">\nA\n</context>\n'
-        'A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.',
+        'Stable.\n\n<context id="agent:state">\nA\n</context>\n'
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.',
         [
-            '<context seal="pydantic-ai" id="agent:state">\nB\n</context>',
-            '<context seal="pydantic-ai" id="agent:state">\nThis context has been withdrawn.\n</context>',
+            '<context id="agent:state">\nB\n</context>',
+            '<context id="agent:state">\nThis context has been withdrawn.\n</context>',
         ],
     ),
     False: (
-        'Stable.\n\n<context seal="pydantic-ai" id="agent:state">\nA\n</context>\n'
-        'A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.',
+        'Stable.\n\n<context id="agent:state">\nA\n</context>\n'
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.',
         [
-            f'<system seal="{CONTINUE_REF}"><context seal="pydantic-ai" id="agent:state">\nB\n</context></system>',
-            f'<system seal="{CONTINUE_REF}"><context seal="pydantic-ai" id="agent:state">\n'
+            '<system><context id="agent:state">\nB\n</context></system>',
+            '<system><context id="agent:state">\n'
             'This context has been withdrawn, and the withdrawal stays in effect until replaced again.\n'
             '</context></system>',
         ],
@@ -1844,8 +1843,12 @@ WIRE_CASES: list[ParameterSet] = [
 ]
 
 
-NEUTRAL_SENTENCE = 'A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.'
-PERSISTENCE_SENTENCE = 'A later <context seal="pydantic-ai"> element with the same id replaces the earlier one and stays in effect until replaced again.'
+NEUTRAL_SENTENCE = (
+    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+)
+PERSISTENCE_SENTENCE = (
+    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+)
 
 
 def wire_contains(body: object, text: str) -> bool:
@@ -1864,8 +1867,8 @@ def expected_update(case: WireCase, instruction_id: str, content: str | None, hi
             if case.inline_system
             else 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
         )
-    element = f'<context seal="pydantic-ai" id="{instruction_id}">\n{content}\n</context>'
-    return element if case.inline_system else f'<system seal="pydantic-ai">{element}</system>'
+    element = f'<context id="{instruction_id}">\n{content}\n</context>'
+    return element if case.inline_system else f'<system>{element}</system>'
 
 
 @pytest.fixture
@@ -1950,7 +1953,7 @@ async def test_instruction_updates_preserve_wire_prefix(
             sentence = NEUTRAL_SENTENCE if case.inline_system else PERSISTENCE_SENTENCE
             assert wire_contains(
                 body,
-                f'<context seal="pydantic-ai" id="capability:memory:state">\nSend parcels to warehouse A.\n</context>\n{sentence}',
+                f'<context id="capability:memory:state">\nSend parcels to warehouse A.\n</context>\n{sentence}',
             )
         else:
             prior = request_capture.body(index=index - 1)
@@ -1961,9 +1964,7 @@ async def test_instruction_updates_preserve_wire_prefix(
                 assert wire_contains(wire_messages, expected_update(case, 'capability:memory:state', content, history))
             if case.continuation:
                 assert body['previous_response_id'] == prior_response_id
-                assert str(wire_messages).count('<context seal="pydantic-ai" id=') == (
-                    1 if expected_updates[index] else 0
-                )
+                assert str(wire_messages).count('<context id=') == (1 if expected_updates[index] else 0)
             else:
                 previous_messages = prior['input' if case.provider == 'responses' else 'messages']
                 assert isinstance(previous_messages, list)
@@ -2035,7 +2036,7 @@ async def test_instruction_updates_after_tool_mutation(
     sentence = NEUTRAL_SENTENCE if case.inline_system else PERSISTENCE_SENTENCE
     assert wire_contains(
         first,
-        f'<context seal="pydantic-ai" id="capability:todos:state">\nTodo status: pending.\n</context>\n{sentence}',
+        f'<context id="capability:todos:state">\nTodo status: pending.\n</context>\n{sentence}',
     )
     assert wire_contains(
         second_messages, expected_update(case, 'capability:todos:state', 'Todo status: done.', history)

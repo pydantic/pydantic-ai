@@ -883,7 +883,7 @@ async def test_plain_retry_prompt_does_not_answer_tool_call():
             UserPromptPart(
                 content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback seal="pydantic-ai">
+<retry_feedback>
 Response was not valid, try again.
 </retry_feedback>\
 """,

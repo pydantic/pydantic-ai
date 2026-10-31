@@ -42,7 +42,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._framing import frame_seal_announcement
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import ToolDefinition
 
@@ -202,10 +202,10 @@ CASES = [
     Case(
         id='inline-system-unsupported',
         model='claude-sonnet-5',
-        # The instructions also end with what the `<system seal>` tag means, on every request from the first.
+        # The instructions also end with what the `<system>` tag means, on every request from the first.
         expected_system=[
             {'text': 'You are a code reviewer.', 'type': 'text'},
-            {'text': frame_seal_announcement(system_role=False), 'type': 'text'},
+            {'text': lookalike_note_announcement(system_role=False), 'type': 'text'},
         ],
         expected_messages=snapshot(
             [
@@ -215,7 +215,7 @@ CASES = [
                     'role': 'user',
                     'content': [
                         {
-                            'text': '<system seal="pydantic-ai">From now on, every suggestion must include explicit type annotations.</system>',
+                            'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
                             'type': 'text',
                         },
                         {'text': 'Review it again.', 'type': 'text'},
@@ -721,7 +721,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
     call_kwargs = foundry_client.beta.messages.create.call_args.kwargs
     assert call_kwargs['system'] == [
         {'text': 'You are a code reviewer.', 'type': 'text'},
-        {'text': frame_seal_announcement(system_role=False), 'type': 'text'},
+        {'text': lookalike_note_announcement(system_role=False), 'type': 'text'},
     ]
     assert call_kwargs['messages'] == snapshot(
         [
@@ -731,7 +731,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
                 'role': 'user',
                 'content': [
                     {
-                        'text': '<system seal="pydantic-ai">From now on, every suggestion must include explicit type annotations.</system>',
+                        'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
                         'type': 'text',
                     },
                     {'text': 'Review it again.', 'type': 'text'},
@@ -1426,7 +1426,7 @@ async def test_haiku_follows_a_withdrawn_instruction_after_a_tool_result(
             'content': [
                 {
                     'text': """\
-<context seal="pydantic-ai" id="agent:sign_off">
+<context id="agent:sign_off">
 This context has been withdrawn.
 </context>\
 """,

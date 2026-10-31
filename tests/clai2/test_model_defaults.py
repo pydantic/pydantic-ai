@@ -137,7 +137,7 @@ async def test_cache_defaults_reach_anthropic_request(
     if saved:
         # A saved native setting takes precedence over the unified default.
         assert request['cache_control'] is OMIT
-        # Claude Sonnet 4.6 has no mid-conversation system messages, so the frame seal announcement ends the
+        # Claude Sonnet 4.6 has no mid-conversation system messages, so the announcement ends the
         # instructions, after their cache point.
         assert request['system'][-2]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
         assert 'cache_control' not in request['system'][-1]

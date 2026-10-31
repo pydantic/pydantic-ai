@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from pydantic_ai._frame_seal import framework_frame_text
+from pydantic_ai._framework_frame import framework_frame_text
 from pydantic_ai._framing import TOOL_RESULT_TAG, close_tag, neutralize_tags, open_tag
 from pydantic_ai.messages import TextContent, UserContent
 from pydantic_ai_harness._provenance import tagged_text
@@ -36,7 +36,7 @@ def escape_tool_result_body(text: str) -> str:
 
 
 def make_background_completion(text: str, task_id: str) -> TextContent:
-    """The completion as a frame the framework wrote, so it's sent with the frame seal."""
+    """The completion as a frame the framework wrote, so the lookalike check leaves it alone."""
     return framework_frame_text(text, metadata={'origin': _BACKGROUND_RESULT_ORIGIN, 'tool_call_id': task_id})
 
 

@@ -13,7 +13,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent
-from pydantic_ai._frame_seal import framework_frame_text
+from pydantic_ai._framework_frame import framework_frame_text
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability

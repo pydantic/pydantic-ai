@@ -151,7 +151,7 @@ async def test_history_processor_run_replaces_message_history(
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='<system seal="pydantic-ai">Processed answer</system>',
+                        content='<system>Processed answer</system>',
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -176,7 +176,7 @@ async def test_history_processor_run_replaces_message_history(
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
-                usage=RequestUsage(input_tokens=57, output_tokens=2),
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
@@ -220,7 +220,7 @@ async def test_history_processor_streaming_replaces_message_history(
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='<system seal="pydantic-ai">Processed answer</system>',
+                        content='<system>Processed answer</system>',
                         timestamp=IsDatetime(),
                     ),
                 ],

@@ -6,7 +6,6 @@ import asyncio
 import dataclasses
 import functools
 import inspect
-import re
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Any, ForwardRef, Optional
@@ -644,12 +643,8 @@ class TestInputGuardrailRedaction:
         guard_calls: list[str] = []
         model_completions: list[tuple[str, object]] = []
 
-        def unsealed(text: str) -> str:
-            # `prepare_messages` puts the conversation's frame seal on the background result's frame.
-            return re.sub(r' seal="pydantic-ai"', '', text)
-
         def guard(prompt: str) -> bool | GuardrailResult:
-            guard_calls.append(unsealed(prompt))
+            guard_calls.append(prompt)
             if prompt.startswith('<tool_result'):
                 return GuardrailResult.replace('[redacted]')
             return True
@@ -666,7 +661,7 @@ class TestInputGuardrailRedaction:
             ]
             if completions:
                 metadata = {key: value for key, value in completions[-1].metadata.items() if key != '__pydantic_ai__'}
-                model_completions.append((unsealed(completions[-1].content), metadata))
+                model_completions.append((completions[-1].content, metadata))
                 return ModelResponse(parts=[TextPart('done')])
             return ModelResponse(parts=[ToolCallPart('lookup', '{}', tool_call_id='tool-1')])
 

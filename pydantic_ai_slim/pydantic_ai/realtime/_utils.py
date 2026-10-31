@@ -89,7 +89,7 @@ def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMe
     # prompt mustn't promote the system prompt after it into the standing one `session_instructions` skips.
     standing_prompt_count = len(_standing_system_prompt(messages))
     messages = _drop_superseded_request_scoped_prompts(list(messages))
-    return _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count, sealed=False)
+    return _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
 
 def replay_recorded_system_prompts_in_place(messages: Sequence[ModelMessage]) -> Sequence[ModelMessage]:
@@ -108,7 +108,7 @@ def replay_recorded_system_prompts_in_place(messages: Sequence[ModelMessage]) ->
     if not (standing_count := _standing_system_prompt_count(first_request)):
         return messages
     parts = [
-        UserPromptPart(content=frame(SYSTEM_TAG, part.content, sealed=False), timestamp=part.timestamp)
+        UserPromptPart(content=frame(SYSTEM_TAG, part.content), timestamp=part.timestamp)
         if position < standing_count and isinstance(part, SystemPromptPart)
         else part
         for position, part in enumerate(first_request.parts)
@@ -157,7 +157,7 @@ class SystemPromptText(str):
     """The prompt as written, without the tags."""
 
     def __new__(cls, system_prompt: str) -> SystemPromptText:
-        text = super().__new__(cls, frame(SYSTEM_TAG, system_prompt, sealed=False))
+        text = super().__new__(cls, frame(SYSTEM_TAG, system_prompt))
         text.system_prompt = system_prompt
         return text
 
@@ -260,7 +260,7 @@ def seed_retry_feedback_text(part: RetryFeedbackPart) -> str:
     model from reading it as something a person said (https://github.com/pydantic/pydantic-ai/issues/6404).
     """
     text = part.model_response()
-    return frame(SYSTEM_TAG, text, sealed=False) if _retry_feedback_speaks_for_the_harness(part) else text
+    return frame(SYSTEM_TAG, text) if _retry_feedback_speaks_for_the_harness(part) else text
 
 
 @overload
