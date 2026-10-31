@@ -619,6 +619,99 @@ class TestNestedTraversal:
         ]
         assert parts == [(UserPromptPart, 'go'), *note]
 
+    @pytest.mark.parametrize(
+        'call',
+        [
+            pytest.param(('write_file', {'path': 'sub/new.py', 'content': 'new'}), id='write'),
+            pytest.param(('edit_file', {'path': 'sub/one.py', 'old_text': 'one', 'new_text': 'two'}), id='edit'),
+        ],
+    )
+    async def test_writing_or_editing_a_file_surfaces_its_directory(
+        self, tmp_path: Path, call: tuple[str, dict[str, str]]
+    ) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name=call[0], json_args=json.dumps(call[1]), tool_call_id='call')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path, content_hashes=False),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>']
+        )
+
+    @pytest.mark.parametrize(
+        ('call', 'notes'),
+        [
+            pytest.param(('write_file', {'path': 'sub/AGENTS.md', 'content': 'WRITTEN'}), snapshot([]), id='write'),
+            # A read can return a window of the file and an edit changes part of it, so the note still comes.
+            pytest.param(
+                ('read_file', {'path': 'sub/AGENTS.md'}),
+                snapshot(['<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>']),
+                id='read',
+            ),
+            pytest.param(
+                ('edit_file', {'path': 'sub/AGENTS.md', 'old_text': 'NESTED', 'new_text': 'EDITED'}),
+                snapshot(['<context-file path="sub/AGENTS.md">\nEDITED BODY\n</context-file>']),
+                id='edit',
+            ),
+        ],
+    )
+    async def test_only_writing_the_instruction_file_itself_counts_as_surfacing_it(
+        self, tmp_path: Path, call: tuple[str, dict[str, str]], notes: list[str]
+    ) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            returns = _tool_returns(messages)
+            if returns == 0:
+                yield {0: DeltaToolCall(name=call[0], json_args=json.dumps(call[1]), tool_call_id='call')}
+            elif returns == 1:
+                # Either way the directory now counts as surfaced, so a later read there adds nothing.
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"sub/one.py"}', tool_call_id='one')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path, content_hashes=False),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == notes
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_writing_the_instruction_file_through_a_symlink_counts_as_surfacing_it(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        (tmp_path / 'sub' / 'CLAUDE.md').symlink_to('AGENTS.md')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                args = json.dumps({'path': 'sub/CLAUDE.md', 'content': 'WRITTEN'})
+                yield {0: DeltaToolCall(name='write_file', json_args=args, tool_call_id='call')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path, content_hashes=False),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == []
+
     async def test_reading_a_deep_file_surfaces_every_directory_between_it_and_the_working_directory(
         self, tmp_path: Path
     ) -> None:
@@ -988,7 +1081,7 @@ class TestNestedTraversal:
 
         with pytest.warns(
             HarnessDeprecationWarning,
-            match='Traversal detection now reacts to `FileReadEvent` and `DirectoryListedEvent`',
+            match='Traversal detection now reacts to `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent`',
         ):
             capability = RepoContext(
                 autoload_instructions=False,

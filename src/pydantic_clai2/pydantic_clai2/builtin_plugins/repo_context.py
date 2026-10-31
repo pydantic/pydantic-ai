@@ -28,8 +28,8 @@ class RepoContextSettings(BaseModel):
     nested_traversal: bool = Field(
         default=False,
         description=(
-            'Surface the instruction files of a directory the agent reads or lists, and of every directory between it '
-            'and the workspace.'
+            'Surface the instruction files of a directory the agent reads, lists, writes or edits in, and of every '
+            'directory between it and the workspace.'
         ),
     )
     nested_inject: Literal['pointer', 'contents'] = Field(

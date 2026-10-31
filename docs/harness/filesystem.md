@@ -292,10 +292,10 @@ async def hold_migrations(ctx, event):
 ```
 
 Other capabilities subscribe with `@on_event` on a method, the way
-`RepoContext` follows `FileReadEvent` and `DirectoryListedEvent`. A host with
-its own file tools can emit the same event types by importing them from
-`pydantic_ai_harness.filesystem`, which lets subscribers react without
-depending on tool names or raw model arguments.
+`RepoContext` follows `FileReadEvent`, `DirectoryListedEvent` and
+`FileWrittenEvent`. A host with its own file tools can emit the same event types
+by importing them from `pydantic_ai_harness.filesystem`, which lets subscribers
+react without depending on tool names or raw model arguments.
 
 `FileSystem` emits no OpenTelemetry spans of its own: the core tool-call span
 already records each operation and its result, and the events above carry the

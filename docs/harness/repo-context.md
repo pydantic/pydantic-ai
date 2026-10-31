@@ -56,12 +56,16 @@ With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'
 
 ### 3. Nested-on-traversal (off by default)
 
-When the model lists a directory or reads a file in it, surface the
-`CLAUDE.md`/`AGENTS.md` of that directory and of every directory between it and
-the working directory, shallowest first: reading `packages/foo/src/x.py` also
-surfaces `packages/foo/AGENTS.md`. This strategy subscribes to `FileReadEvent` and
-`DirectoryListedEvent`, so it receives normalized, containment-checked paths
-instead of inspecting raw tool arguments. It remains opt-in:
+When the model lists a directory, reads a file in it, or writes or edits a file
+in it, surface the `CLAUDE.md`/`AGENTS.md` of that directory and of every
+directory between it and the working directory, shallowest first: reading
+`packages/foo/src/x.py` also surfaces `packages/foo/AGENTS.md`. A plain
+`FileWrittenEvent` for the instruction file itself counts as surfacing it, since
+the model wrote the whole file. A `FileReadEvent` or `FileEditedEvent` for it
+doesn't: a read can return part of the file and an edit changes part of it. This
+strategy subscribes to `FileReadEvent`, `DirectoryListedEvent` and
+`FileWrittenEvent`, so it receives normalized, containment-checked paths instead
+of inspecting raw tool arguments. It remains opt-in:
 
 ```python
 from pydantic_ai import Agent
@@ -99,9 +103,9 @@ more deeply nested file wins a conflict, and the user's direct instructions win
 over all of them. The statement is static, so it stays in the cached prefix.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
-the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
-`pydantic_ai_harness.filesystem`; set `root_dir` to the directory the event's
-`path` is relative to.
+the same types by importing `FileReadEvent`, `DirectoryListedEvent` and
+`FileWrittenEvent` from `pydantic_ai_harness.filesystem`; set `root_dir` to the
+directory the event's `path` is relative to.
 
 The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
 subdirectory of the working directory still surfaces the right directory. A
