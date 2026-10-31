@@ -721,6 +721,9 @@ def no_leaked_tasks(loop: asyncio.AbstractEventLoop | None = None) -> Generator[
     Freezes every existing object out of the cyclic collector's reach for the block, as `young_gc` does, so an
     earlier test's garbage can't be finalized here and queue tasks on the running loop. Tasks already running at
     entry are ignored. Pass `loop` when the test drives that loop itself instead of running on it.
+
+    Don't use it in a test that requests `young_gc`: `gc.unfreeze()` thaws every frozen object, so leaving the
+    block would undo the fixture's freeze for the rest of the test.
     """
     gc.freeze()
     try:
