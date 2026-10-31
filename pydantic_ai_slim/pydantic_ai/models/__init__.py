@@ -1760,10 +1760,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
+        prefix = model_request_parameters.instruction_parts if model_request_parameters is not None else None
         # Asked before the instruction state is projected, which drops the records it's read from.
-        first_context_request = _first_context_request(
-            messages, model_request_parameters.instruction_parts if model_request_parameters is not None else None
-        )
+        first_context_request = _first_context_request(messages, prefix)
         messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
@@ -1771,7 +1770,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _project_instruction_state(
                 messages,
                 inline_system=inline_system,
-                prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
+                prefix=prefix,
             )
 
         messages = _render_system_prompt_contexts(
