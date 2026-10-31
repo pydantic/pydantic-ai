@@ -67,6 +67,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.google import GoogleProvider
@@ -76,6 +77,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from pydantic_ai.providers.zai import ZaiProvider
     from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
     from .mock_xai import MockXai, get_grok_text_chunk
@@ -140,6 +142,16 @@ def _anthropic(handler: Handler) -> Model:
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+
+
+def _zai(handler: Handler) -> Model:
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=client))
 
 
 def _anthropic_bedrock(handler: Handler) -> Model:
@@ -467,6 +479,45 @@ CASES = [
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
         has_cause=False,
+    ),
+    Case(
+        id='zai-insufficient-balance',
+        model=_zai,
+        handler=_json(
+            429,
+            {'error': {'code': '1113', 'message': 'Insufficient balance or no resource package. Please recharge.'}},
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': '1113'},
+    ),
+    Case(
+        id='zai-plan-limit',
+        model=_zai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'code': '1310',
+                    'message': 'Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-02.',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': '1310'},
+    ),
+    Case(
+        id='zai-rate-limit',
+        model=_zai,
+        handler=_json(429, {'error': {'code': '1302', 'message': 'Rate limit reached for requests'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '1302'},
+    ),
+    Case(
+        id='openai-numeric-code-rate-limit',
+        model=_openai,
+        handler=_json(429, {'error': {'code': '1113', 'message': 'Too many requests'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '1113'},
     ),
     Case(
         id='anthropic-overloaded',
