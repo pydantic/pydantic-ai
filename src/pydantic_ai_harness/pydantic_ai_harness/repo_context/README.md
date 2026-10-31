@@ -93,13 +93,16 @@ result = agent.run_sync('List the source directory.')
 ```
 
 `nested_inject='contents'` (default) enqueues the file body; `'pointer'`
-enqueues a one-line note pointing at the file. A 9-model benchmark found the rule
-in a nested file followed in 99% of runs with `'contents'`, 95% with `'pointer'`,
-and 39% with nested traversal off. Pass `nested_traversal=False` to turn it off. `nested_max_chars` (32,000 by default)
-caps the characters of file bodies `'contents'` inlines per conversation, counting every inlined note
-still in the history the model sees, so earlier runs count and a compaction frees room: a file that
-would go past it is surfaced as a pointer instead, and `None` removes the cap.
-The note reaches message history before the next model request. A directory counts as surfaced while its note
+enqueues a one-line note pointing at the file. A
+[9-model benchmark](https://github.com/pydantic/pydantic-ai/issues/11683#issuecomment-6510271135)
+found the rule in a nested file followed in 99% of runs with `'contents'`, 95%
+with `'pointer'`, and 39% with nested traversal off. Pass
+`nested_traversal=False` to turn it off. `nested_max_chars` (32,000 by default)
+caps the characters of file bodies `'contents'` inlines per conversation,
+counting every inlined note still in the history the model sees, so earlier
+runs count and a compaction frees room: a file that would go past it is
+surfaced as a pointer instead, and `None` removes the cap. The note reaches
+message history before the next model request. A directory counts as surfaced while its note
 is still in the conversation: a later run of the same conversation doesn't
 repeat it, and once compaction summarizes the note away, the next traversal
 surfaces it again. The working directory's files are not surfaced again when
