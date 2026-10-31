@@ -129,7 +129,7 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 4. [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/)`(walk_up='repo_root')`
    for repository instructions: the `CLAUDE.md`/`AGENTS.md` files from the repository root down to the working directory
    at run start, and those in subdirectories when the agent first reads or lists something under them. A
-   subdirectory file that would take the run past `RepoContext`'s default budget of 32,000 characters of inlined
+   subdirectory file that would take the conversation past `RepoContext`'s default budget of 32,000 characters of inlined
    instructions is surfaced as a pointer instead.
    Pass your own `RepoContext` as `repo_context=` to use it in this one's place, or `repo_context=False` to leave
    it out when the agent already binds its own `RepoContext`, so the
