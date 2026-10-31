@@ -1087,7 +1087,8 @@ class TestCapabilityCreationToolset:
         finally:
             _gate(gate, 'release').set()
         assert await anyio.to_thread.run_sync(written.wait, _READY_TIMEOUT)
-        assert [record.name for record in CapabilityStore(tmp_path).list_all()] == ['slow']
+        records = await anyio.to_thread.run_sync(CapabilityStore(tmp_path).list_all)
+        assert [record.name for record in records] == ['slow']
 
     async def test_author_validation_failure_message(self, tmp_path: Path) -> None:
         toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))

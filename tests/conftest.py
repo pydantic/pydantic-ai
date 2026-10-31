@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import ast
 import asyncio
 import dataclasses
 import gc
@@ -481,12 +482,90 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.TextIOWrapper.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedReader.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedWriter.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    # Prefect's async `LocalFileSystem.aread_path`/`awrite_path` still touch the disk synchronously; the
+    # durable capability operations persist their results through them.
+    ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path')),
+    ('os.mkdir', 'prefect/filesystems.py', 'awrite_path'),
+    # `posixpath.relpath` calls `abspath`, which BlockBuster flags although it only reads the current directory
+    # for a relative path. The harness relativizes absolute workspace paths with it.
+    ('os.path.abspath', '<frozen posixpath>', 'relpath'),
+    ('os.path.abspath', 'posixpath.py', 'relpath'),
+    # Spawning a Monty worker pool locates the worker binary, once per pool.
+    ('os.stat', 'pydantic_monty/_binary.py', 'find_monty_binary'),
+    # Inside a Temporal workflow, Code Mode reaches Monty through a blocking portal, the only way to reach it
+    # there, so starting and stopping the portal and each call through it wait on the portal thread.
+    (
+        'threading.Lock.acquire',
+        'pydantic_ai_harness/_monty_exec.py',
+        ('get_session', 'call_monty', '_enter_monty', '_release_monty'),
+    ),
+    # Capabilities resolve their executables, and clients their package versions, once when they're built.
+    *(
+        (func, f'pydantic_ai_harness/docker_sandbox/{module}', constructor)
+        for func in ('os.stat', 'os.access', 'os.path.abspath')
+        for module, constructor in (('_capability.py', '__post_init__'), ('_backend.py', '__init__'))
+    ),
+    ('os.stat', 'exa_py/utils.py', '_get_package_version'),
+    ('os.path.abspath', 'exa_py/utils.py', '_get_package_version'),
+    ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    # Each `browse_web` call builds browser-use's `Agent`, which imports its LLM adapters, reads its prompt
+    # templates, and sets up a scratch file system and screenshot directory. The build stays on the event loop
+    # because it goes through `BrowserAgentFactory`, which users can replace and which may need the running loop.
+    *(
+        (func, 'browser_use/agent/service.py', '__init__')
+        for func in (
+            'os.stat',
+            'os.mkdir',
+            'os.listdir',
+            'os.unlink',
+            'os.rmdir',
+            'io.TextIOWrapper.read',
+            'io.TextIOWrapper.write',
+            'io.BufferedReader.read',
+        )
+    ),
+    # browser-use creates its config directories the first time it reads one, and its PostHog telemetry client
+    # resolves the current directory when it's built; both happen once per process.
+    ('os.stat', 'browser_use/config.py', '_ensure_dirs'),
+    ('os.mkdir', 'browser_use/config.py', '_ensure_dirs'),
+    ('os.getcwd', 'posthog/client.py', '__init__'),
+    # Starting a LocalStack container checks that the Docker socket it mounts exists, once per container.
+    ('os.stat', 'pydantic_ai_harness/localstack/_container.py', '_run_argv'),
+    # MCP clients' `pydantic-settings` read `.env` files when they're constructed, once per connection.
+    ('os.stat', 'pydantic_settings/sources/providers/dotenv.py', '_read_env_files'),
+    # An in-process MCP server reads its package version when a session initializes.
+    ('os.stat', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    ('os.listdir', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    ('io.TextIOWrapper.read', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    # The test blocks the agent loop on purpose, to check a run that never starts.
+    ('threading.Lock.acquire', 'tests/harness/aws_lambda/test_aws_lambda.py', 'block_loop'),
 ]
+
+
+# Test doubles that serve a remote service from local files, processes or SQLite, synchronously. Any blocking call
+# made in one of their functions is the stand-in's own work; the harness code calling them stays checked.
+BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
+    'tests/harness/_postgres_sqlite.py',
+    'tests/harness/boxd_sandbox/fake_boxd.py',
+    'tests/harness/boxlite_sandbox/fake_boxlite.py',
+    'tests/harness/daytona_sandbox/fake_daytona.py',
+    'tests/harness/e2b_sandbox/fake_e2b.py',
+)
+
+
+def _function_names(path: str) -> tuple[str, ...]:
+    """Every function name a frame running code in `path` can have."""
+    tree = ast.parse((Path(__file__).parent.parent / path).read_text(encoding='utf-8'))
+    defined = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)}
+    return tuple(sorted(defined | {'<lambda>', '<genexpr>'}))
 
 
 def _configure_blockbuster(
     exemptions: Sequence[tuple[str, str, str | tuple[str, ...]]] = BLOCKBUSTER_EXEMPTIONS,
     excluded_modules: tuple[str, ...] = (),
+    test_doubles: Sequence[str] = BLOCKBUSTER_TEST_DOUBLES,
 ) -> BlockBuster:
     # BlockBuster imports ForbiddenFruit, which mutates builtins during import. Disabled CI lanes
     # must remain unaffected by that instrumentation.
@@ -500,6 +579,10 @@ def _configure_blockbuster(
     )
     for func, filename, functions in exemptions:
         bb.functions[func].can_block_in(filename, functions)
+    for path in test_doubles:
+        functions = _function_names(path)
+        for function in bb.functions.values():
+            function.can_block_in(path, functions)
     return bb
 
 

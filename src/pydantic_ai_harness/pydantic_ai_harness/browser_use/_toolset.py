@@ -13,6 +13,7 @@ from typing import Literal, Protocol
 from urllib.parse import quote_plus, urlsplit
 
 import anyio
+import anyio.to_thread
 from pydantic import BaseModel, JsonValue, ValidationError
 
 from pydantic_ai.exceptions import ModelRetry
@@ -828,7 +829,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
             self._active_call_sessions += 1
         session: BrowserSession | None = None
         try:
-            session = self._build_session()
+            session = await anyio.to_thread.run_sync(self._build_session)
             return await self._run_agent(task, llm, session)
         finally:
             with anyio.CancelScope(shield=True):
@@ -850,7 +851,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
                     'cannot open another one. Build a new capability to browse again.'
                 )
             if self._shared_session is None:
-                self._shared_session = self._build_session()
+                self._shared_session = await anyio.to_thread.run_sync(self._build_session)
             try:
                 return await self._run_agent(task, llm, self._shared_session)
             except BaseException:

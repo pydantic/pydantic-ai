@@ -668,7 +668,7 @@ class _FakeChromium:
         close_error: Exception | None = None,
     ) -> None:
         self._page = page
-        # An existing path so the real `os.path.exists` pre-check takes the launch
+        # An existing path so the real existence pre-check takes the launch
         # branch; a bogus path models a missing Chromium binary.
         self._executable_path = '/nonexistent/chromium-binary' if executable_missing else sys.executable
         self._launch_error = launch_error
