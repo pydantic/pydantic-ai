@@ -36,6 +36,7 @@ try:
     from rich.console import Console, ConsoleOptions, RenderResult
     from rich.live import Live
     from rich.markdown import CodeBlock, Heading, Markdown
+    from rich.markup import escape
     from rich.status import Status
     from rich.style import Style
     from rich.syntax import Syntax
@@ -515,9 +516,9 @@ async def run_chat(
                     console.print('[dim]Interrupted[/dim]')  # pragma: no cover
                 except Exception as e:
                     cause = getattr(e, '__cause__', None)
-                    console.print(f'\n[red]{type(e).__name__}:[/red] {e}')
+                    console.print(f'\n[red]{type(e).__name__}:[/red] {escape(str(e))}')
                     if cause:
-                        console.print(f'[dim]Caused by: {cause}[/dim]')
+                        console.print(f'[dim]Caused by: {escape(str(cause))}[/dim]')
 
 
 async def ask_agent(
@@ -733,7 +734,7 @@ def handle_slash_command(
             # `soft_wrap` keeps the JSON on a single line for piping; the text has no markup to render.
             console.print(format_usage(usage or _usage.RunUsage(), turns, as_json=option == 'json'), soft_wrap=True)
         else:
-            console.print(f'[red]Unknown `/usage` option[/red] [magenta]`{ident_prompt}`[/magenta]')
+            console.print(f'[red]Unknown `/usage` option[/red] [magenta]`{escape(ident_prompt)}`[/magenta]')
     else:
-        console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
+        console.print(f'[red]Unknown command[/red] [magenta]`{escape(ident_prompt)}`[/magenta]')
     return None, multiline

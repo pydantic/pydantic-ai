@@ -685,6 +685,42 @@ async def test_chat_keeps_toolsets_open_after_failed_turn(mocker: MockerFixture,
     assert toolset.full_releases == snapshot(1)
 
 
+async def test_chat_survives_error_text_that_looks_like_markup(mocker: MockerFixture, env: TestEnv, tmp_path: Path):
+    """A failed turn whose error text resembles Rich markup is printed literally, not parsed as markup.
+
+    Both the exception and its `__cause__` can carry arbitrary text (HTTP bodies, paths, JSON);
+    interpolating them into a markup string unescaped raised `MarkupError` while reporting the
+    failure, which killed the REPL.
+    """
+    env.set('OPENAI_API_KEY', 'test')
+    attempts = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError('request failed: [/timeout] body') from ValueError('cause [/x]')
+        return ModelResponse(parts=[TextPart('recovered')])
+
+    with create_pipe_input() as inp:
+        inp.send_text('fail\n')
+        inp.send_text('succeed\n')
+        inp.send_text('/exit\n')
+        session = PromptSession[Any](input=inp, output=DummyOutput())
+        mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
+
+        output = StringIO()
+        console = Console(file=output, force_terminal=False, width=80)
+        agent = Agent(FunctionModel(function=respond))
+        assert await run_chat(False, agent, console, 'monokai', 'clai', config_dir=tmp_path) == 0
+
+    rendered = output.getvalue()
+    assert 'RuntimeError: request failed: [/timeout] body' in rendered
+    assert 'Caused by: cause [/x]' in rendered
+    assert 'recovered' in rendered
+    assert attempts == snapshot(2)
+
+
 def test_custom_auto_suggest_completes_special_commands():
     """Typing a prefix of a slash command suggests the rest; anything else falls back to history."""
     suggest = CustomAutoSuggest(['/exit'])
@@ -804,6 +840,17 @@ def test_handle_slash_command_other():
     io = StringIO()
     assert handle_slash_command('/foobar', [], False, Console(file=io), 'default') == (None, False)
     assert io.getvalue() == snapshot('Unknown command `/foobar`\n')
+
+
+def test_handle_slash_command_markup_like_command():
+    # A command whose text looks like Rich markup is printed literally, not parsed as markup.
+    io = StringIO()
+    assert handle_slash_command('/foo[/bar]', [], False, Console(file=io), 'default') == (None, False)
+    assert io.getvalue() == snapshot('Unknown command `/foo[/bar]`\n')
+
+    io = StringIO()
+    assert handle_slash_command('/usage-[/x]', [], False, Console(file=io), 'default') == (None, False)
+    assert io.getvalue() == snapshot('Unknown `/usage` option `/usage-[/x]`\n')
 
 
 def test_format_usage():
