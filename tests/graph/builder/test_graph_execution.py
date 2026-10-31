@@ -25,6 +25,7 @@ class ExecutionState:
     counter: int = 0
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
     """`Graph.run_sync` must replace a closed thread-current event loop."""
     builder = GraphBuilder(state_type=ExecutionState, output_type=int)
