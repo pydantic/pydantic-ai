@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded
@@ -74,3 +75,33 @@ class TestCodeMode:
         assert len(limit_errors) == 2
         assert limit_errors[0] == limit_errors[1]
         assert additions == [(3, 4)]
+
+    async def test_code_mode_submits_final_output_in_a_flow(self, prefect_test_server: None, tmp_path: Path) -> None:
+        """The code can submit the run's output under Prefect, with nested tools still running as tasks."""
+
+        class Total(BaseModel):
+            total: int
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            code = 'total = await add(a=40, b=2)\nfinal_result(total=total)'
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code}, tool_call_id='submit')])
+
+        async def add(a: int, b: int) -> int:
+            """Add two numbers."""
+            return a + b
+
+        agent = Agent(
+            FunctionModel(model),
+            name='code_mode_prefect_submit',
+            output_type=Total,
+            tools=[add],
+            capabilities=[CodeMode(allow_final_output=True), PrefectDurability()],
+        )
+
+        @flow
+        async def run() -> tuple[Total, int]:
+            result = await agent.run('Add 40 and 2')
+            return result.output, result.usage.requests
+
+        with temporary_settings({PREFECT_LOCAL_STORAGE_PATH: tmp_path}):
+            assert await run() == (Total(total=42), 1)

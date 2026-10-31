@@ -276,6 +276,48 @@ explicit override. `run_code` is replayed in workflow code, so measuring elapsed
 make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
 time-bounded work behind a Temporal activity instead.
 
+## Submitting the final output
+
+When the code has computed the final output, such as an object built from tool results with long IDs in it, returning it means the model has to copy it into its output on another turn, at the cost of a model request and the risk of a mistyped ID. Pass `allow_final_output=True` to let the code submit it directly:
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+
+class Invoice(BaseModel):
+    order_id: str
+    customer_id: str
+    total_cents: int
+
+
+agent = Agent('anthropic:claude-sonnet-5-5', output_type=Invoice, capabilities=[CodeMode(allow_final_output=True)])
+
+
+@agent.tool_plain
+def get_order(order_id: str) -> dict:
+    """Look up an order."""
+    return {'id': order_id, 'customer': 'cus_Q8fZ3kLmW2', 'lines': [1250, 4999]}
+
+
+result = agent.run_sync('Invoice order ord_8Kq2Zp.')
+print(result.output)
+#> order_id='ord_8Kq2Zp' customer_id='cus_Q8fZ3kLmW2' total_cents=6249
+```
+
+The sandbox gets one function per output type, named and typed like the outputs listed in [`RunContext.output_tool_defs`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.output_tool_defs), whatever the [output mode](https://ai.pydantic.dev/output/#output-modes). Here that's `final_result`, so the model can write:
+
+```python
+order = await get_order(order_id='ord_8Kq2Zp')
+final_result(order_id=order['id'], customer_id=order['customer'], total_cents=sum(order['lines']))
+```
+
+With a union output type, there's one function per member, so the code picks the type it means by calling its function. On a fresh REPL's first snippet, the sandbox's type checker checks the arguments against the function's signature before the code runs. Either way, they then go through [`RunContext.submit_output`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.submit_output), which validates and processes them exactly like output from the model, so the run still only ends on output that matches `output_type`.
+
+Calling an output function stops the code there. If the output is accepted, `run_code` returns as usual with what the code printed before it, and the run ends without another model request. If it's rejected, `run_code` is answered with the validation errors, the rejection uses up one of the agent's output retries, and the REPL keeps the variables the code defined, so the model can fix the value and call the function again.
+
 ## Concurrent tool calls
 
 Sandboxed tools render as `async def` functions, so generated code can start several calls and
@@ -844,6 +886,7 @@ CodeMode(
     speculate=None,       # read-only tool names, or 'declared', to start while run_code streams
     monty_sandbox=None,     # a ws:// or wss:// URL, or a function that returns the pool
     repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
+    allow_final_output=False, # let the code submit the run's final output
     dynamic_catalog=True,
 )
 ```
