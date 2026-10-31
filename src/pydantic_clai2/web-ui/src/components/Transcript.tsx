@@ -6,6 +6,7 @@ import { WorkspaceLinkContext } from '../workspaceLink'
 import type { Item } from '../protocol'
 import type { Entry } from '../state'
 import { cell } from '../code'
+import { copyText } from '../clipboard'
 import { compact, duration } from '../format'
 import type { TurnSummary } from '../state'
 import { ChevronIcon } from './icons'
@@ -46,6 +47,20 @@ function Thumbnail({ id }: { id: string }) {
   )
 }
 
+function MessageCopy({ text }: { text: string }) {
+  if (!text.trim()) return null
+  return (
+    <button
+      className="message-copy"
+      type="button"
+      aria-live="polite"
+      onClick={(event) => void copyText(text, event.currentTarget)}
+    >
+      Copy
+    </button>
+  )
+}
+
 const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live: boolean }) {
   switch (entry.kind) {
     case 'user':
@@ -61,10 +76,16 @@ const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live:
             )}
             {entry.text}
           </div>
+          <MessageCopy text={entry.text} />
         </div>
       )
     case 'assistant':
-      return <Markdown className={`assistant ${live ? 'streaming' : ''}`} text={entry.text} live={live} />
+      return (
+        <div className="assistant-message">
+          <Markdown className={`assistant ${live ? 'streaming' : ''}`} text={entry.text} live={live} />
+          {!live && <MessageCopy text={entry.text} />}
+        </div>
+      )
     case 'thinking':
       return <Thinking text={entry.text} live={live} />
     case 'tool':

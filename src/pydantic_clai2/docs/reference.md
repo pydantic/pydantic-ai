@@ -2565,6 +2565,10 @@ looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
 
+- **Copy.** Hover over a user message or finished assistant message to reveal **Copy** below it
+  (also shown on keyboard focus or touchscreens). Use it to copy the message's text
+  on the browser's device, including from saved history. Assistant messages keep their original
+  Markdown, with code fences and links. See the [web UI](../PLUGINS.md#web-this-session-in-your-browser).
 - **Status dots.** A dot beside a live session in the sidebar shows that it runs a
   turn, that input waits behind its turn, or that it asks you a question.
 - **Esc** and the stop button interrupt the session you are looking at, and only it.
