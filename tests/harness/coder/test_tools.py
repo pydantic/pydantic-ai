@@ -18,6 +18,7 @@ from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
+from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.subagents import TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
@@ -72,6 +73,7 @@ class TestCoder:
 
     @pytest.mark.parametrize('extra_limits', [False, True])
     async def test_durable_binding(self, tmp_path: Path, extra_limits: bool) -> None:
+        (tmp_path / '.git').mkdir()
         durability = RecordingDurability()
         capabilities: list[AbstractCapability[object]] = [
             LocalWorkspace(tmp_path),
@@ -85,8 +87,8 @@ class TestCoder:
         assert result.output == 'done'
         assert [(name, getattr(args[0], 'method', None)) for name, args in durability.calls] == [
             ('coder__capability__workspace.call', 'ensure'),
-            ('coder__capability__workspace.call', 'stat'),
-            ('coder__capability__workspace.call', 'stat'),
+            ('coder__capability__workspace.call', 'exists'),
+            *[('coder__capability__workspace.call', 'stat')] * 4,
             ('coder__model.request_stream', None),
         ]
 
@@ -238,7 +240,7 @@ class TestCoder:
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
         tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
-        assert ('instruction files (AGENTS.md, CLAUDE.md) in the project directory are' in text) is repo_context
+        assert ('instruction files (AGENTS.md, CLAUDE.md) that apply to the project' in text) is repo_context
         rule = (
             'spawn sub-agents with `delegate_task` unless the user or applicable AGENTS.md\ninstructions explicitly ask'
         )
@@ -267,6 +269,49 @@ class TestCoder:
         assert model.last_model_request_parameters is not None
         parts = model.last_model_request_parameters.instruction_parts or []
         assert not any('Your project is' in part.content for part in parts)
+
+    async def test_a_given_repo_context_keeps_the_project_note(self, tmp_path: Path) -> None:
+        model = TestModel(call_tools=[])
+        coder = Coder(repo_context=RepoContext(expose_inventory_tool=False))
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        parts = model.last_model_request_parameters.instruction_parts or []
+        assert sum('Your project is' in part.content for part in parts) == 1
+
+    @pytest.mark.parametrize(
+        ('config', 'loaded', 'nested'),
+        [
+            ('bundled', True, True),
+            ('walk_up_only', True, False),
+            ('nested_pointer', True, False),
+            ('no_autoload', False, True),
+        ],
+    )
+    async def test_instructions_describe_what_the_repo_context_loads(
+        self, tmp_path: Path, config: str, loaded: bool, nested: bool
+    ) -> None:
+        if config == 'bundled':
+            coder = Coder()
+        elif config == 'walk_up_only':
+            coder = Coder(repo_context=RepoContext(nested_traversal=False))
+        elif config == 'nested_pointer':
+            coder = Coder(repo_context=RepoContext(nested_inject='pointer'))
+        else:
+            coder = Coder(repo_context=RepoContext(autoload_instructions=False))
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        assert ('are already loaded into your context' in text) is loaded
+        assert ("A subdirectory's instruction files are added to your context" in text) is nested
+
+    async def test_instructions_name_the_configured_instruction_files(self, tmp_path: Path) -> None:
+        model = TestModel(call_tools=[])
+        coder = Coder(repo_context=RepoContext(filenames=('RULES.md',)))
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        assert 'Repository instruction files (RULES.md) that apply to the project' in text
 
     @pytest.mark.parametrize('repo_context', [True, False])
     async def test_repo_context_is_optional(self, tmp_path: Path, repo_context: bool) -> None:

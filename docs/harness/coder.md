@@ -129,8 +129,11 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
    Each file tool allows five consecutive retries (for a denied path or a stale edit) rather than the agent's default one,
    so a repeated correctable mistake does not end a long run.
 3. [`Shell`](shell.md)`(denied_commands=[], allow_interactive=True, default_timeout=270, tools=['shell'])`.
-4. [`RepoContext`](repo-context.md)`(expose_inventory_tool=False)` for repository instructions and structure.
-   Pass `repo_context=False` to leave it out when the agent already binds its own `RepoContext`, so the
+4. [`RepoContext`](repo-context.md)`(walk_up='repo_root')`
+   for repository instructions: the instruction file of each directory (`AGENTS.md`, else `CLAUDE.md`) from the repository root down to the working directory
+   at run start, and those in subdirectories when the agent first reads or lists something under them.
+   Pass your own `RepoContext` as `repo_context=` to use it in this one's place, or `repo_context=False` to leave
+   it out when the agent already binds its own `RepoContext`, so the
    instruction files are not loaded twice.
 5. [`SubAgents`](subagents.md)`(include_self=True, agent_folders=None)`, so the agent can hand a self-contained
    sub-task to a fresh run of itself (see below). Pass `sub_agents=False` to leave it out.
@@ -290,6 +293,8 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 ## Upgrading
 
 `json-repair` moved from the base install to the `coder` and `repair-tool-arguments` extras. If you install plain `pydantic-ai-harness`, importing `Coder` or `coder_agent` raises an `ImportError`: install `pydantic-ai-harness[coder]`, or add `coder` to the extras you already use. If you use `RepairToolArguments` on its own, install `pydantic-ai-harness[repair-tool-arguments]`.
+
+`Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, one per directory with `AGENTS.md` ahead of `CLAUDE.md`, and inlines a subdirectory's instruction file the first time the agent reads or lists something under it. Its bundled `RepoContext` is now `RepoContext(walk_up='repo_root')`. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To get close to the old behavior, pass `Coder(repo_context=RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False))`. It only approximates it: a directory holding both files now loads only `CLAUDE.md`, where it used to load both.
 
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 
