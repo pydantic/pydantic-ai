@@ -394,7 +394,11 @@ def test_lookalike_trigger_in_user_prompts(content: Any, noted: list[LookalikeSo
     notes = [part.content for part in request.parts if isinstance(part, UserPromptPart | SystemPromptPart)]
     *notes, prompt = notes
     assert prompt == content
-    assert notes == [f'<system>{lookalike_frame_note(source, preceding=False)}</system>' for source in noted]
+    authors = {'user': 'user', 'file': 'author of the file', 'tool': 'tool'}
+    assert len(notes) == len(noted)
+    for note, source in zip(notes, noted):
+        assert isinstance(note, str) and note.startswith('<system>') and note.endswith('</system>')
+        assert f'written by the {authors[source]}, not by the application' in note
 
 
 @pytest.mark.parametrize(

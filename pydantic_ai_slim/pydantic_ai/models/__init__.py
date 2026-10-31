@@ -61,8 +61,9 @@ from .._framing import (
     in_second_model_prompt,
     lookalike_frame_note,
     lookalike_note_announcement,
+    lookalike_tags,
     neutralize_tags,
-    resembles_frame,
+    resembles_frame as resembles_frame,
 )
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import (
@@ -1997,12 +1998,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         for original, part in zip(authored.parts, request.parts):
             sources = _lookalike_sources(original)
             if _is_tool_result_part(part):
-                if sources:
+                for _, tags in sources:
                     tool_notes.append(
                         SystemPromptPart(
                             content=lookalike_frame_note(
                                 'tool',
                                 preceding=not precede_tool_results,
+                                tags=tags,
+                                system_role=inline_system,
                                 tool_name=part.tool_name,
                                 tool_call_id=part.tool_call_id,
                             ),
@@ -2035,10 +2038,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
             notes = [
                 SystemPromptPart(
-                    content=lookalike_frame_note(source, preceding=after),
+                    content=lookalike_frame_note(source, preceding=after, tags=tags, system_role=inline_system),
                     timestamp=request.timestamp or _utils.now_utc(),
                 )
-                for source in sources
+                for source, tags in sources
             ]
             framed.extend(notes)
             parts.extend([part, *notes] if after else [*notes, part])
@@ -3999,8 +4002,8 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
     return new_messages if changed else messages
 
 
-def _lookalike_sources(part: ModelRequestPart) -> list[LookalikeSource]:
-    """Who wrote the text in `part` that resembles a framework frame: the user, a file's author, or a tool.
+def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, list[str]]]:
+    """Who wrote the text in `part` that resembles a framework frame, with the system-voice tags it opens.
 
     A user prompt's text and its text files are checked separately, so each gets a note naming its author. A tool
     result is checked whole, its text files included. Text files are read as UTF-8; other files have no text to check.
@@ -4008,31 +4011,27 @@ def _lookalike_sources(part: ModelRequestPart) -> list[LookalikeSource]:
     # TODO(v3): remove `RetryPromptPart`
     if isinstance(part, RetryPromptPart) and part.tool_name is not None:  # pyright: ignore[reportDeprecated]
         part = _translate_legacy_retry_part(part)
+    found: dict[LookalikeSource, list[str]] = {}
+
+    def check(source: LookalikeSource, text: str | None) -> None:
+        if text is not None and (tags := lookalike_tags(text)):
+            found.setdefault(source, []).extend(tag for tag in tags if tag not in found.get(source, ()))
+
     if isinstance(part, UserPromptPart):
         items: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
-        sources: list[LookalikeSource] = []
-        if any(resembles_frame(text) for item in items if (text := _text_of(item)) is not None):
-            sources.append('user')
-        if any(resembles_frame(text) for item in items if (text := _text_file_content(item)) is not None):
-            sources.append('file')
+        for item in items:
+            check('user', _text_of(item))
+        for item in items:
+            check('file', _text_file_content(item))
         # A frame a capability wrote around someone else's text, such as a background tool's output: the frame's own
         # tags aren't a lookalike, the body can hold one.
         for item in items:
-            if (
-                is_framework_frame(item)
-                and (body := framework_frame_body(item)) is not None
-                and body[0] not in sources
-                and resembles_frame(body[1])
-            ):
-                sources.append(body[0])
-        return sources
-    if isinstance(part, ToolReturnPart):
-        texts = (
-            _text_of(item) if (text := _text_file_content(item)) is None else text
-            for item in part.content_items(mode='str', wrap_if_error=False)
-        )
-        return ['tool'] if any(text is not None and resembles_frame(text) for text in texts) else []
-    return []
+            if is_framework_frame(item) and (body := framework_frame_body(item)) is not None:
+                check(*body)
+    elif isinstance(part, ToolReturnPart):
+        for item in part.content_items(mode='str', wrap_if_error=False):
+            check('tool', _text_of(item) if (text := _text_file_content(item)) is None else text)
+    return list(found.items())
 
 
 def _text_of(item: object) -> str | None:

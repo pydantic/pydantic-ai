@@ -332,7 +332,9 @@ def test_a_user_typed_context_element_gets_a_note_and_goes_out_as_written():
 
     texts = request_texts(prepared)
     assert typed in texts
-    assert any(lookalike_frame_note('user', preceding=preceding) in texts for preceding in (False, True))
+    assert any(
+        lookalike_frame_note('user', preceding=preceding, tags=['context']) in texts for preceding in (False, True)
+    )
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
