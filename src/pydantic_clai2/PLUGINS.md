@@ -1123,7 +1123,7 @@ settings using the former import paths are redirected to the new modules.
 |---|---|---|---|
 | `coder` | `pydantic_clai2.builtin_plugins.coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true, "agent_folders": ["agents"]}` | the file and shell tools, task delegation and disk agents, and Agent Skills with a `/command` each |
 | `ask_user` | `pydantic_clai2.builtin_plugins.ask_user_menu` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
-| `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads the instruction files (`AGENTS.md`, else `CLAUDE.md`) of the launch directory, its ancestors and your home directory into the instructions, and a subdirectory's as the agent works there |
+| `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads the instruction files (`AGENTS.md`, else `CLAUDE.md`) of the launch directory and its ancestors, plus your user-global ones (`~/.claude/CLAUDE.md` and the like), into the instructions, and a subdirectory's as the agent works there |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `hooks` | `pydantic_clai2.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
