@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
-from pydantic_ai._utils import replace_no_init
+from pydantic_ai._utils import is_str_dict, replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai.messages import SystemPromptPart, ToolCallPart
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    SystemPromptPart,
+    TextContent,
+    ToolCallPart,
+    UserPromptPart,
+    post_compaction_window,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace
@@ -50,6 +59,8 @@ _NESTED_PRECEDENCE = (
     "files conflict, the more deeply nested one takes precedence, and the user's direct instructions take "
     'precedence over all of them.'
 )
+_NESTED_NOTE_ORIGIN = 'pydantic-ai-harness.repo_context.nested_note.v1'
+"""The `origin` in the `metadata` of every part a nested note enqueues, next to the surfaced `directory`."""
 _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
 _TRAVERSAL_DEPRECATION = (
@@ -160,11 +171,14 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     _context_files: list[ContextFile] | None = field(default=None, init=False, repr=False, compare=False)
     """Walk-up result for this run, loaded once in `before_run` via `ctx.workspace`."""
 
-    _seen_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
-    """Run-scoped set of directories Strategy 3 should not surface again.
+    _pending_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+    """Directories whose Strategy 3 note is enqueued but not yet in history."""
 
-    Those it already surfaced, plus the working directory when the walk-up loaded its file.
-    """
+    _loaded_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+    """Directories whose instruction files Strategy 1 put in the instructions, which Strategy 3 never repeats."""
+
+    _latest_compaction: CompactionPart | None = field(default=None, init=False, repr=False, compare=False)
+    """The latest compaction in history when `_pending_dirs` was last checked; a new one clears them."""
 
     _cached_working_dir: Path | None = field(default=None, init=False, repr=False, compare=False)
     """The workspace's working directory for this run."""
@@ -191,7 +205,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         """
         run = replace_no_init(self)
         run._context_files = None
-        run._seen_dirs = set()
+        run._pending_dirs = set()
+        run._loaded_dirs = set()
+        run._latest_compaction = None
         run._cached_working_dir = None
         return run
 
@@ -209,7 +225,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         # The walk-up loaded the working directory's instruction files (or an identical ancestor copy), so nested
         # traversal has nothing to add there. A file that appears there later in the run is still surfaced.
         if self.nested_traversal and await dir_context_file_path(workspace, working_dir, self.filenames) is not None:
-            self._seen_dirs.add(str(working_dir))
+            self._loaded_dirs.add(str(working_dir))
 
     def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
         """Cache-stable instructions resolved after `before_run` loads workspace files."""
@@ -323,24 +339,55 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         Files are enqueued shallowest first, so the most specific file is the latest one the model reads.
         """
         working_dir = await self._working_dir(ctx.workspace)
+        in_history = self._sync_surfaced_dirs(ctx.messages)
         for current in directories_up_to(directory, working_dir):
-            await self._enqueue_directory(ctx, current, written_file=written_file)
+            await self._enqueue_directory(ctx, current, in_history, written_file=written_file)
 
     async def _enqueue_directory(
-        self, ctx: RunContext[AgentDepsT], directory: Path, *, written_file: Path | None = None
+        self, ctx: RunContext[AgentDepsT], directory: Path, in_history: set[str], *, written_file: Path | None = None
     ) -> None:
         key = str(directory)
-        if key in self._seen_dirs:
+        if self._surfaced(key, in_history):
             return
         context_file = await find_dir_context_file(ctx.workspace, directory, self.filenames)
         # Parallel traversals can probe the same directory concurrently; re-check after the await.
-        if context_file is None or key in self._seen_dirs:
+        if context_file is None or self._surfaced(key, in_history):
             return
-        self._seen_dirs.add(key)
-        # The model just wrote the instruction file itself, so a note would repeat what it wrote.
+        self._pending_dirs.add(key)
+        # The model just wrote the instruction file itself, so a note would repeat what it wrote. The directory stays
+        # pending, so it isn't surfaced again until a compaction summarizes the write away.
         if written_file is not None and await self._same_file(ctx.workspace, written_file, context_file.path):
             return
-        ctx.enqueue(*self._render_note(context_file))
+        ctx.enqueue(*_stamp(self._render_note(context_file), key))
+
+    def _surfaced(self, key: str, in_history: set[str]) -> bool:
+        return key in self._loaded_dirs or key in self._pending_dirs or key in in_history
+
+    def _sync_surfaced_dirs(self, messages: Sequence[ModelMessage]) -> set[str]:
+        """Update the pending notes against history, and return the directories whose note is in the window.
+
+        Call it once per traversal, before any `_surfaced` check.
+
+        A note survives in history until compaction summarizes it away, so this is derived from the window
+        rather than remembered, and it covers notes from earlier runs of the conversation. Notes enqueued but
+        not yet in history are tracked until they appear there, or until a new compaction replaces the history
+        they would have been in.
+        """
+        latest = _latest_compaction(messages)
+        if latest is not self._latest_compaction:
+            self._latest_compaction = latest
+            self._pending_dirs.clear()
+        in_history = {
+            directory
+            for message in post_compaction_window(messages)
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+            for item in part.content
+            if isinstance(item, TextContent) and (directory := _note_directory(item.metadata)) is not None
+        }
+        self._pending_dirs -= in_history
+        return in_history
 
     async def _same_file(self, workspace: Workspace, written_file: Path, context_file: Path) -> bool:
         if written_file.name not in self.filenames:
@@ -378,3 +425,30 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Serialization name for agent-spec support."""
         return 'RepoContext'
+
+
+def _stamp(parts: Sequence[str | SystemPromptPart], directory: str) -> Iterator[TextContent | SystemPromptPart]:
+    """Mark a note's parts as RepoContext's, so history scans and compaction recognize them by metadata."""
+    for part in parts:
+        # A dict per part, so mutating one part's metadata doesn't change the other's.
+        metadata = {'origin': _NESTED_NOTE_ORIGIN, 'directory': directory}
+        yield (
+            replace(part, metadata=metadata)
+            if isinstance(part, SystemPromptPart)
+            else TextContent(part, metadata=metadata)
+        )
+
+
+def _latest_compaction(messages: Sequence[ModelMessage]) -> CompactionPart | None:
+    for message in reversed(messages):
+        for part in reversed(message.parts):
+            if isinstance(part, CompactionPart):
+                return part
+    return None
+
+
+def _note_directory(metadata: object) -> str | None:
+    if not is_str_dict(metadata) or metadata.get('origin') != _NESTED_NOTE_ORIGIN:
+        return None
+    directory = metadata.get('directory')
+    return directory if isinstance(directory, str) else None

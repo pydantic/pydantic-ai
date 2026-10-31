@@ -78,6 +78,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import (
+    _content_filter,
     _display,
     _enqueue,
     _output,
@@ -3852,18 +3853,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 # `stop_reason: 'refusal'`), so a thinking-only response is filtered too. Re-prompting it
                 # would only repeat the refused request.
                 if self.model_response.finish_reason == 'content_filter':
-                    details = self.model_response.provider_details or {}
                     body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
-
-                    if reason := details.get('finish_reason'):
-                        message = f"Content filter triggered. Finish reason: '{reason}'"
-                    elif reason := details.get('block_reason'):
-                        message = f"Content filter triggered. Block reason: '{reason}'"
-                    elif refusal := details.get('refusal'):
-                        message = f'Content filter triggered. Refusal: {refusal!r}'
-                    else:  # pragma: no cover
-                        message = 'Content filter triggered.'
-
+                    message = _content_filter.content_filter_message(self.model_response.provider_details)
                     raise exceptions.ContentFilterError(message, body=body)
 
                 # If the output type allows `None`, a response with no text output is a valid result:

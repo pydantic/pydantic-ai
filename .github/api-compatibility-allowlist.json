@@ -457,8 +457,8 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11470"
     },
     {
-      "against": "v2.63.0",
-      "fingerprint": "ba9cf963f7276078e6e0f01722735a466bd11e59a88dde3adb3a9b06edc1f3af",
+      "against": "v2.64.0",
+      "fingerprint": "4e1925e3faed41dd95a308d9b1c1553631f2d5c5bab1d95a83ada28213a8de0d",
       "reason": "`RepoContextSettings.nested_traversal` keeps its type and default; only its `Field` description changed, to say nested traversal reacts to writes and edits as well as reads and listings, and surfaces every directory between the traversed one and the workspace.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11701"
     }
