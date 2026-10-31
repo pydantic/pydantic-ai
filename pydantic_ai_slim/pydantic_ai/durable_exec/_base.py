@@ -81,7 +81,6 @@ from ._capability_operation import (
     collect_capability_operations,
     recover_capability,
 )
-from ._codec import IDENTITY_CODEC
 from ._operation import (
     CacheIdentity,
     CapabilityOperationId,
@@ -103,7 +102,6 @@ from ._operation import (
     ToolsetGetToolsParams,
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
-    TypedResultCodec,
 )
 from ._operation_backend import (
     BoundDurableOperation,
@@ -648,9 +646,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     handler=handler,
                     parameter_transport=backend.parameter_transports.capability_operation(declaration),
                     cache_identity=CapabilityCacheIdentity(),
-                    result_codec=TypedResultCodec(
+                    result_codec=self._typed_result_codec(
                         capability_operation_result_type(declaration.result_type),
-                        mode='identity' if self.engine_spec.codec is IDENTITY_CODEC else 'json',
                     ),
                     config_role='capability',
                 )
