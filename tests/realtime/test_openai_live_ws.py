@@ -294,6 +294,78 @@ async def test_typed_question_runs_the_agents_tool(
     ] == ['session.close', 'session.closed']
 
 
+async def test_instruction_change_updates_the_backend(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
+) -> None:
+    """A changed agent instruction goes to the backend, whose instructions are the agent's, with `session.update`.
+
+    The backend answers typed text, so the second question is answered with the changed instruction.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
+    )
+    code_word = {'value': 'BLUE'}
+    agent = Agent(_BACKEND, instructions='Answer in one short sentence.')
+
+    @agent.instructions(name='code_word')
+    def current_code_word() -> str:
+        return f'The code word is {code_word["value"]}. Tell the user when they ask for it.'
+
+    async with agent.realtime(model).session() as session:
+        await session.send('What is the code word?')
+        # Changed while the first reply is under way: the session re-resolves the instructions once it's over.
+        code_word['value'] = 'ORANGE'
+        with anyio.fail_after(60):
+            await session.wait_for_reply()
+        await session.send('What is the code word now?')
+        with anyio.fail_after(60):
+            await session.wait_for_reply()
+        if realtime_recording:  # pragma: no cover
+            # Replay's clock moves with the recorded frames: keep the ones that carry it past the turn's end.
+            await anyio.sleep(0.5)
+        messages = session.all_messages()
+
+    updates = [
+        interaction.data['session']
+        for interaction in cassette.interactions
+        if isinstance(interaction, CassetteMessage) and interaction.data.get('type') == 'session.update'
+    ]
+    assert updates == snapshot(
+        [
+            {
+                'delegation': {
+                    'type': 'responses',
+                    'responses': {
+                        'instructions': """\
+Answer in one short sentence.
+
+<context id="agent:code_word">
+The code word is BLUE. Tell the user when they ask for it.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+
+<context id="agent:code_word">
+The code word is ORANGE. Tell the user when they ask for it.
+</context>\
+"""
+                    },
+                }
+            }
+        ]
+    )
+    speech = [
+        part.transcript
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ]
+    assert speech[-1] is not None and 'orange' in speech[-1].lower()
+
+
 async def test_typed_small_talk_is_answered_in_one_reply(
     openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:

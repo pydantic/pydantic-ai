@@ -1206,14 +1206,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         return self._id if self._id_explicit else None
 
     @property
-    def _appends_instructions_by_default(self) -> bool:
-        # The server instructions `get_instructions` returns append by the framework's choice. This is
-        # declared for the toolset, not for each block, so a subclass's own append blocks under the same
-        # `id` are silent too where appending isn't supported. So is a block a `DynamicToolset` with an
-        # `id` of its own keys anew, since only the toolset's own `id` is recognised.
-        return self.include_instructions
-
-    @property
     def label(self) -> str:
         if self.id:
             return super().label

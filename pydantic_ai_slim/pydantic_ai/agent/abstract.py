@@ -10,6 +10,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     Generator,
+    Mapping,
     Sequence,
 )
 from concurrent.futures import Executor
@@ -29,6 +30,7 @@ from .. import (
     _agent_graph,
     _display,
     _instructions,
+    _system_prompt,
     _utils,
     exceptions,
     messages as _messages,
@@ -2303,6 +2305,15 @@ class _RealtimeSessionResolution(Generic[AgentDepsT]):
     """The agent's resolved system prompt, which a fresh session records first; empty when history was seeded."""
     short_circuited: bool = False
     """A `wrap_run` hook returned a result without opening the session; nothing below was resolved."""
+    resolve_instructions: (
+        Callable[[RunContext[AgentDepsT], AbstractToolset[AgentDepsT]], Awaitable[list[_messages.InstructionPart]]]
+        | None
+    ) = None
+    """Resolves the session's instruction parts as they were resolved at connect, so its changes can go out mid-session."""
+    appending_system_prompts: Mapping[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = field(
+        default_factory=dict[str, '_system_prompt.SystemPromptRunner[AgentDepsT]']
+    )
+    """The dynamic system prompts registered with `on_change='append'`, by `dynamic_ref`, re-evaluated mid-session."""
 
 
 def _accepts_message_history(answer_webrtc_offer: Callable[..., Any]) -> bool:

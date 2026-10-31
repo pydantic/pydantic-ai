@@ -148,7 +148,7 @@ from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
-from ..toolsets._instruction_collection import collect_toolset_instructions, framework_appended_toolset_sources
+from ..toolsets._instruction_collection import collect_toolset_instructions
 from ..toolsets._tool_search import parse_discovered_tools
 from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
@@ -4313,47 +4313,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sourced_instructions = self._get_instructions(
                 additional_instructions=instructions, cap_instructions=resolved_caps.instructions
             )
-            # Build `InstructionPart`s (static parts first, then dynamic functions, then dynamic toolset
-            # instructions) and join with the canonical `InstructionPart.join` — same double-newline
-            # separator, static-before-dynamic ordering, and per-source `id`s as the graph run.
-            # KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
-            instruction_parts = await _instructions.resolve_sourced_instructions(sourced_instructions, run_context)
-            instruction_parts.extend(await collect_toolset_instructions(tool_manager.toolset, run_context))
-            if appended := _instructions.explicitly_appended_blocks(
-                sourced_instructions,
-                instruction_parts,
-                framework_toolset_sources=framework_appended_toolset_sources(tool_manager.toolset),
-            ):
-                warnings.warn(
-                    "`on_change='append'` is not supported by realtime sessions, so instruction blocks "
-                    f'{", ".join(map(repr, appended))} are sent as session instructions and their changes are not '
-                    'appended.',
-                    UserWarning,
-                    stacklevel=2,
-                )
-            if appending_system_prompts := [
-                runner.context_id for runner in self._system_prompt_functions if runner.context_id is not None
-            ]:
-                warnings.warn(
-                    "`on_change='append'` is not supported by realtime sessions, so dynamic system prompts "
-                    f'{", ".join(map(repr, appending_system_prompts))} are re-evaluated in place and their changes '
-                    'are not appended.',
-                    UserWarning,
-                    stacklevel=2,
-                )
-            # Nothing appends here, so an empty append-mode block has no withdrawal to record.
-            instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
             # A standard run states a loaded deferred capability's instructions in history, after its load return,
             # which seeding skips: a session has no channel for them. They join the session's own instructions
             # instead, after the rest, resolved as the graph resolves them before each request.
             # KEEP IN SYNC with the graph's `_get_loaded_instructions`.
-            for capability_id in _instructions.LoadedInstructionValues.of(message_history or ()).stated_in_history:
-                capability = run_context.capabilities.get(capability_id)
-                if capability is not None and capability.defer_loading is True:
-                    loaded_parts = await resolve_loaded_capability_instructions(
-                        capability_id, tool_manager.toolset, run_context
-                    )
-                    instruction_parts.extend(part for part in loaded_parts if part.content)
+            loaded_capability_ids = [
+                capability_id
+                for capability_id in _instructions.LoadedInstructionValues.of(message_history or ()).stated_in_history
+                if (capability := run_context.capabilities.get(capability_id)) is not None
+                and capability.defer_loading is True
+            ]
+
+            async def resolve_instruction_parts(
+                ctx: RunContext[AgentDepsT], toolset: AbstractToolset[AgentDepsT]
+            ) -> list[_messages.InstructionPart]:
+                """Resolve the session's instructions, at connect and again before each model turn.
+
+                Built from `InstructionPart`s (static parts first, then dynamic functions, then dynamic toolset
+                instructions) with the same per-source `id`s as the graph run, every block that can change appending
+                its changes: see `session_instruction_parts`.
+                KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
+                """
+                parts = await _instructions.resolve_sourced_instructions(sourced_instructions, ctx)
+                parts.extend(await collect_toolset_instructions(toolset, ctx))
+                loaded_parts: list[_messages.InstructionPart] = []
+                for capability_id in loaded_capability_ids:
+                    loaded_parts.extend(await resolve_loaded_capability_instructions(capability_id, toolset, ctx))
+                return _instructions.session_instruction_parts(parts, loaded_parts)
+
+            instruction_parts = await resolve_instruction_parts(run_context, tool_manager.toolset)
             resolved_instructions = _messages.InstructionPart.join(instruction_parts)
             # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
             # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
@@ -4457,6 +4445,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 run_id=run_id,
                 wrap_event_stream=wrap_event_stream,
                 lifecycle=lifecycle_state,
+                resolve_instructions=resolve_instruction_parts,
+                appending_system_prompts={
+                    ref: runner
+                    for ref, runner in self._system_prompt_dynamic_functions.items()
+                    if runner.context_id is not None
+                },
             )
             try:
                 yield resolution
@@ -4678,6 +4672,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_request_parameters=resolved.model_request_parameters,
                     model_settings=session_settings,
                     wrap_event_stream=resolved.wrap_event_stream,
+                    _resolve_instructions=resolved.resolve_instructions,
+                    _appending_system_prompts=resolved.appending_system_prompts,
                 )
                 lifecycle.session = session
                 resolved.run_context.realtime_session = session

@@ -818,9 +818,11 @@ async def test_wrap_run_context_is_ambient_throughout_session() -> None:
         async for _ in session:
             pass
 
-    assert seen == [
+    # The instructions are resolved at connect, then again before the tool's result and after the response.
+    assert seen[:2] == [('instructions', 'managed prompt'), ('caller', 'managed prompt')]
+    assert sorted(seen[2:]) == [
         ('instructions', 'managed prompt'),
-        ('caller', 'managed prompt'),
+        ('instructions', 'managed prompt'),
         ('tool', 'managed prompt'),
     ]
     assert ambient.get(None) is None
