@@ -238,6 +238,25 @@ class TestCoder:
         assert all('failed several times in a row' in result for result in results[MAX_FILE_TOOL_RETRIES:-1])
         assert (tmp_path / 'probe.py').read_text() == 'x'
 
+    async def test_other_tool_errors_still_end_the_run(self, tmp_path: Path) -> None:
+        """Only an exhausted retry comes back to the model; any other tool error still ends the run."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('boom', {})])
+
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[Coder[None](repo_context=False, sub_agents=False)],
+        )
+
+        @agent.tool_plain
+        def boom() -> str:
+            raise RuntimeError('tool crashed')
+
+        with pytest.raises(RuntimeError, match='tool crashed'):
+            await agent.run('Use the tools', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+
     @pytest.mark.parametrize('repo_context', [False, True])
     @pytest.mark.parametrize('sub_agents', [False, True])
     async def test_instructions_follow_the_composition(
