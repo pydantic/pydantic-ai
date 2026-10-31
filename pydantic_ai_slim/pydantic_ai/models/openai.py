@@ -7966,13 +7966,31 @@ def _build_tool_search_return_part(
     stashes the provider item identity and state on `provider_details` for replay.
     """
     matches: list[ToolSearchMatch] = []
-    # `output_item.tools` is a union of OpenAI Responses tool variants; only
-    # function tools carry a stable `name` field. Other variants (file_search,
-    # image generation, etc.) can't appear here in practice but aren't
-    # statically excluded from the union, so we filter by type.
+    seen: set[str] = set()
+
+    def _add(name: str) -> None:
+        if name in seen:
+            return
+        seen.add(name)
+        matches.append({'name': name})
+
+    # `output_item.tools` is a union of OpenAI Responses tool variants. Bare
+    # function tools carry `name` directly. Deferred tools are often returned
+    # wrapped in a `NamespaceTool` whose name equals the tool name and whose
+    # `tools` list repeats the function definition — skipping those wrappers
+    # records `discovered_tools: []` and the next request never rehydrates the
+    # deferred schemas. Other variants (file_search, image generation, etc.)
+    # have no usable function name and are skipped.
     for t in output_item.tools:
         if isinstance(t, responses.FunctionTool):
-            matches.append({'name': t.name})
+            _add(t.name)
+            continue
+        if isinstance(t, responses.NamespaceTool):
+            for inner in t.tools:
+                if getattr(inner, 'type', None) == 'function':
+                    name = getattr(inner, 'name', None)
+                    if isinstance(name, str) and name:
+                        _add(name)
     return NativeToolSearchReturnPart(
         provider_name=provider_name,
         content={'discovered_tools': matches},
