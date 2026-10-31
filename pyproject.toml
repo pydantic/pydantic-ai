@@ -240,6 +240,9 @@ boxlite = "2026-10-18T01:35:01Z"
 # TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 prefect = "2026-10-21T03:46:00Z"
+# complexipy 8.3.0 is the audited release the `lint` group pins exactly.
+# TODO(dsfaccini): Remove after 2026-11-03 05:00 UTC, then run `uv lock`.
+complexipy = "2026-10-27T05:00:00Z"
 # boxd 0.2.20 is the `boxd` floor: it is the first release with `machines.fs`.
 # TODO(adtyavrdhn): Remove after 2026-11-03 23:56 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
@@ -316,6 +319,10 @@ coverage = [
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@6c644106e03138abae01d8d60105d4a7ad4916a1",
 ]
 lint = [
+    # The cognitive complexity gate scores code with complexipy in-process. This exact release was
+    # audited by dsfaccini, which is why it is pinned, and why `[tool.uv.exclude-newer-package]` admits
+    # it until it is 7 days old. Bump it deliberately, after auditing the new release.
+    "complexipy==8.3.0",
     "mypy>=1.11.2",
     "pyright>=1.1.414",
     "ruff>=0.14.14",
@@ -348,6 +355,8 @@ include = [
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/check_complexity.py",
+    "scripts/test_check_complexity.py",
     "scripts/durable_exec_contract.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
@@ -473,6 +482,7 @@ quote-style = "single"
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
 ".github/scripts/test_clai2_web_bundle.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
+"scripts/test_check_complexity.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
 "!tests/**/*.py" = ["TID253"]
 # Modules dedicated to one of the heavy dependencies `TID253` bans need it at module level, e.g. for Temporal
@@ -482,6 +492,18 @@ quote-style = "single"
 "tests/harness/boxlite_sandbox/*.py" = ["TID253"]
 "tests/harness/e2b_sandbox/*.py" = ["TID253"]
 "tests/harness/smol_sandbox/*.py" = ["TID253"]
+
+# Read by `scripts/check_complexity.py`, which pre-commit and CI run, and by a plain `complexipy` run.
+[tool.complexipy]
+paths = [
+    "pydantic_ai_slim/pydantic_ai",
+    "pydantic_graph/pydantic_graph",
+    "pydantic_evals/pydantic_evals",
+    "src/pydantic_ai_harness/pydantic_ai_harness",
+    "src/pydantic_clai2/pydantic_clai2",
+]
+max-complexity-allowed = 15
+cache-dir = ".cache/complexipy"
 
 [tool.pyright]
 pythonVersion = "3.11"
@@ -501,6 +523,8 @@ include = [
     "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/check_complexity.py",
+    "scripts/test_check_complexity.py",
     "scripts/durable_exec_contract.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
@@ -521,6 +545,7 @@ executionEnvironments = [
     # type check on an older interpreter, so they are analysed above the library's floor.
     { root = "scripts/typecheck_changed.py", pythonVersion = "3.11" },
     { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = "scripts/test_check_complexity.py", extraPaths = ["scripts"], reportPrivateUsage = false },
 ]
 exclude = [
     # Need `browser-use`, which the workspace lock excludes; the `harness browser-use` CI job checks them.

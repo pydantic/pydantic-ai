@@ -106,6 +106,13 @@ subagent must be enforced by its agent definition. Read a large diff in chunks,
 core implementation before tests. Inspect changed cassettes when they are evidence for changed
 behavior; skip only unchanged or demonstrably irrelevant generated payloads.
 
+## The complexity check
+
+`scripts/check_complexity.py` is the cognitive complexity check. It fails a change that adds a function
+over the limit, takes a function over the limit, or makes a function already over the limit worse.
+Do not run it: pre-commit runs it on every commit, and CI runs it on the pull request.
+`agent_docs/complexity.md` maps each failure to its fix.
+
 ## Return the review locally
 
 Do not post comments, submit a GitHub review, or modify the branch. Return only actionable
