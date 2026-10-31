@@ -860,6 +860,14 @@ class TestNestedTraversal:
             ['<context-file path="AGENTS.md">\nWRITTEN DURING THE RUN\n</context-file>']
         )
 
+    async def test_no_budget_inlines_every_file(self, tmp_path: Path) -> None:
+        for name in 'ab':
+            _write(tmp_path / name / 'AGENTS.md', name.upper() * 20_000)
+            _write(tmp_path / name / 'x.py', 'x')
+        result = await self._read_files(tmp_path, ['a/x.py', 'b/x.py'], nested_max_chars=None)
+        notes = _repo_notes(result.all_messages())
+        assert [note.count('A') + note.count('B') >= 20_000 for note in notes] == [True, True]
+
     async def test_contents_past_the_budget_are_surfaced_as_pointers(self, tmp_path: Path) -> None:
         _write(tmp_path / 'a' / 'AGENTS.md', 'A' * 10)
         _write(tmp_path / 'b' / 'AGENTS.md', 'B' * 30)
