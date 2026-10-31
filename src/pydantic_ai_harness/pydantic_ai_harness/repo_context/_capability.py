@@ -357,10 +357,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     async def _enqueue_directory(self, ctx: RunContext[AgentDepsT], directory: Path, in_history: set[str]) -> None:
         key = str(directory)
-        if self._surfaced(key, in_history):
-            return
         context_file = await find_dir_context_file(ctx.workspace, directory, self.filenames)
-        # Parallel traversals can probe the same directory concurrently; re-check after the await.
+        # `_enqueue_context` skipped it if it was already surfaced, but parallel traversals can probe the same
+        # directory concurrently, so check again after the await.
         if context_file is None or self._surfaced(key, in_history):
             return
         self._pending_dirs.add(key)
