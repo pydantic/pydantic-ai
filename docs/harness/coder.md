@@ -221,7 +221,8 @@ accessible to commands in a local workspace.
 ## Instructions
 
 The default instructions keep engineering guidance brief: autonomous investigation and completion,
-focused changes and verification, and pragmatic DRY, YAGNI, SOLID, and the Zen of Python.
+focused changes and verification, pragmatic DRY, YAGNI, and the Zen of Python, and matching the
+surrounding code's style, structure, and imports rather than adding new abstractions.
 They also ask the agent to leave only the requested change in the project: check behavior with inline
 shell scripts rather than new files, add tests only where the project already has them, and delete
 scratch files before finishing.

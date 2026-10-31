@@ -205,7 +205,9 @@ class TestCoder:
         guidance = next(part.content for part in parts if 'Zen of Python' in part.content)
         default = guidance.removesuffix('\n' + extra_instructions) if extra_instructions else guidance
         assert len(default.split()) < 500
-        assert all(principle in default for principle in ('DRY', 'YAGNI', 'SOLID'))
+        assert all(principle in default for principle in ('DRY', 'YAGNI', 'Zen of Python'))
+        assert 'SOLID' not in default
+        assert "Match the surrounding code's style,\nstructure, and imports" in default
         assert 'delete any scratch files you created' in default
         assert 'in full with `read_file` rather than batched `cat` in the shell' in default
         assert 'batch independent searches into one\nshell call' in default
