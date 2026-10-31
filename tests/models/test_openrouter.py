@@ -1602,7 +1602,7 @@ async def test_openrouter_native_mid_conversation_system_prompt(
     )
 
     assert result.output == 'NONE'
-    roles = [message['role'] for message in request_capture.body()['messages']]
+    roles = [message['role'] for message in cast(list[dict[str, Any]], request_capture.body()['messages'])]
     if model_name.startswith('anthropic/'):
         assert roles == ['system', 'user', 'assistant', 'user', 'system']
     else:
