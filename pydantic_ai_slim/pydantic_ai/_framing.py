@@ -28,7 +28,7 @@ import re
 import threading
 import unicodedata
 import warnings
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Final, Literal, NewType, get_args
@@ -217,9 +217,17 @@ def _require_known(tag: str) -> None:
 def open_tag(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> str:
     """Core's [`open_tag`][pydantic_ai.framing.open_tag], which also takes the `'system'` voice tag."""
     _require_known(tag)
-    for name in attrs:
-        if error := model_visible_name_error(name, what='Framing tag attribute names', legacy=True):
+    return _open_tag(tag, attrs, legacy=True)
+
+
+def _check_attribute_names(names: Iterable[str], *, legacy: bool) -> None:
+    for name in names:
+        if error := model_visible_name_error(name, what='Framing tag attribute names', legacy=legacy):
             raise UserError(error)
+
+
+def _open_tag(tag: str, attrs: Mapping[str, str | None], *, legacy: bool) -> str:
+    _check_attribute_names(attrs, legacy=legacy)
     rendered = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items() if value is not None)
     return f'<{tag}{rendered}>'
 
@@ -255,6 +263,37 @@ def frame(tag: FramingTag | RegisteredTag, body: str, /, **attrs: str | None) ->
 def frame_tags(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> tuple[str, str]:
     """The opening and closing tags of a [`frame`][pydantic_ai._framing.frame], for a body that isn't a string, such as a file."""
     return open_tag(tag, **attrs), close_tag(tag)
+
+
+def check_capability_frame(tag: str, attribute_names: Iterable[str]) -> None:
+    """Raise unless `tag` and `attribute_names` can frame a [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart].
+
+    The tag is lowercase snake_case, doesn't end in the reserved `_diff`, and isn't one of the system-voice tags the
+    lookalike check looks for, such as `system` or `context`: data must not look like the application's voice. One of
+    Pydantic AI's own data tags, such as `'tool_result'`, is fine. It isn't registered with `register_tag`: a capability
+    part's body is never escaped, so there's no escape set for it to join.
+    """
+    if error := model_visible_name_error(tag, what='Framing tag names'):
+        raise UserError(error)
+    if tag.endswith(_DIFF_SUFFIX):
+        raise UserError(
+            f'{tag!r} ends in `{_DIFF_SUFFIX}`, which is reserved for a diff element: name the tag differently.'
+        )
+    if tag in _system_voice_tags:
+        raise UserError(
+            f'{tag!r} is a system-voice tag, which data must not use: subclass `InstructionCapabilityPart` for a part in '
+            "the application's voice, or name the tag after what the data is."
+        )
+    _check_attribute_names(attribute_names, legacy=False)
+
+
+def capability_frame_tags(tag: str, /, *, attrs: Mapping[str, str | None]) -> tuple[str, str]:
+    """The opening and closing tags of a [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart]'s frame.
+
+    Like [`frame_tags`][pydantic_ai._framing.frame_tags], for a tag the part's class declared, which
+    `check_capability_frame` has checked and nothing registers.
+    """
+    return _open_tag(tag, attrs, legacy=False), f'</{tag}>'
 
 
 _NOTE_ANNOUNCEMENT: Final = (

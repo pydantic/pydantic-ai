@@ -25,6 +25,7 @@ from pydantic_core import ErrorDetails
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -248,11 +249,17 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
             return None
         return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
     # Tool-list, capability, instruction and effort bookkeeping rather than conversation, so there is no line to
-    # contribute. Redundant against the union as it stands today, but kept explicit so the fallthrough below stays a
+    # contribute, and nor does a capability's record. Redundant against the union as it stands today, but kept explicit so the fallthrough below stays a
     # real branch at runtime rather than dead code.
     if isinstance(
         part,
-        (ToolAvailabilityDeltaPart, CapabilityLoadDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart),
+        (
+            ToolAvailabilityDeltaPart,
+            CapabilityLoadDeltaPart,
+            InstructionBaselinePart,
+            ModelSettingsDeltaPart,
+            CapabilityPart,
+        ),
     ):
         return None
     # A part pydantic-ai added after this was written. Indexing it would mean guessing which

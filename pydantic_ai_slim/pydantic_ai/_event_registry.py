@@ -16,7 +16,8 @@ import dataclasses
 import functools
 import warnings
 from collections.abc import Callable, Mapping
-from typing import Any, Generic, TypeVar, overload
+from types import GenericAlias
+from typing import Any, Generic, TypeVar, cast, overload
 
 import pydantic
 import pydantic_core
@@ -235,11 +236,22 @@ def event_family_schema(
     tag_field: str,
     unknown_type: type[Any],
     envelope_fields: frozenset[str],
+    family: str = 'event',
+    late_registration: pydantic.ConfigDict | None = None,
 ) -> pydantic_core.core_schema.CoreSchema:
-    """Build the tagged union over an event registry, degrading unregistered tags to `unknown_type`."""
+    """Build the tagged union over an event registry, degrading unregistered tags to `unknown_type`.
+
+    `family` names what the registry holds in the warning about an unregistered tag.
+
+    With `late_registration`, a class registered after this schema was built still validates to, and serializes
+    as, itself rather than the unknown envelope, through an adapter of its own built with that config. Without it,
+    such a class degrades to the unknown envelope in a schema built before it, as described on [`EventRegistry`][].
+    """
     # Snapshot the registry: the union's choices are fixed once this schema is built, so a class
     # registered later must degrade to the unknown envelope rather than produce a dangling tag.
     known_tags = frozenset(registry)
+
+    late_class = _late_class_finder(registry, known_tags, tag_field) if late_registration is not None else None
 
     def discriminator(value: Any) -> str | None:
         if is_str_dict(value):
@@ -250,13 +262,18 @@ def event_family_schema(
         tag = getattr(value, tag_field, None)
         if isinstance(tag, str) and tag in known_tags:
             return tag
-        return _UNKNOWN_TAG if isinstance(value, unknown_type) else None
+        is_late = late_class is not None and late_class(value) is not None
+        return _UNKNOWN_TAG if isinstance(value, unknown_type) or is_late else None
 
     unknown_schema = pydantic_core.core_schema.no_info_before_validator_function(
-        _gather_unknown_payload(tag_field, unknown_type, envelope_fields),
+        _gather_unknown_payload(tag_field, unknown_type, envelope_fields, family),
         handler.generate_schema(unknown_type),
         serialization=pydantic_core.core_schema.wrap_serializer_function_ser_schema(_flatten_unknown),
     )
+    if late_class is not None and late_registration is not None:
+        unknown_schema = _with_late_registration(
+            unknown_schema, late_class=late_class, unknown_type=unknown_type, config=late_registration
+        )
     choices: dict[str, pydantic_core.core_schema.CoreSchema] = {}
     for tag, event_cls in registry.items():
         if not dataclasses.is_dataclass(event_cls):
@@ -266,6 +283,93 @@ def event_family_schema(
         choices[tag] = _canonicalizing_schema(handler, event_cls)
     choices[_UNKNOWN_TAG] = unknown_schema
     return pydantic_core.core_schema.tagged_union_schema(choices, discriminator)
+
+
+def _late_class_finder(
+    registry: Mapping[str, type[Any]], known_tags: frozenset[str], tag_field: str
+) -> Callable[[Any], type[Any] | None]:
+    """A function giving the class a value belongs to, when that class registered after `known_tags` was taken."""
+
+    def late_class(value: Any) -> type[Any] | None:
+        tag = value.get(tag_field) if is_str_dict(value) else getattr(value, tag_field, None)
+        if not isinstance(tag, str) or tag in known_tags:
+            return None
+        return registry.get(tag)
+
+    return late_class
+
+
+def _with_late_registration(
+    unknown_schema: pydantic_core.core_schema.CoreSchema,
+    *,
+    late_class: Callable[[Any], type[Any] | None],
+    unknown_type: type[Any],
+    config: pydantic.ConfigDict,
+) -> pydantic_core.core_schema.CoreSchema:
+    """`unknown_schema`, also validating and serializing a class registered since the schema was built as itself."""
+    # Hashable, for the adapter cache.
+    frozen = tuple(sorted(config.items()))
+
+    def validate(
+        value: Any,
+        validate_unknown: pydantic_core.core_schema.ValidatorFunctionWrapHandler,
+        info: pydantic_core.core_schema.ValidationInfo,
+    ) -> Any:
+        if (cls := late_class(value)) is None:
+            return validate_unknown(value)
+        if isinstance(value, cls):
+            return value
+        adapter = _late_adapter(cls, frozen)
+        if info.mode == 'json':
+            return adapter.validate_json(pydantic_core.to_json([value]))[0]
+        return adapter.validate_python([value])[0]
+
+    def serialize(
+        value: Any,
+        serialize_unknown: pydantic_core.core_schema.SerializerFunctionWrapHandler,
+        info: pydantic_core.core_schema.SerializationInfo,
+    ) -> Any:
+        if isinstance(value, unknown_type) or (cls := late_class(value)) is None:
+            # The wrapped schema's own serializer flattens the unknown envelope.
+            return serialize_unknown(value)
+        # The adapter dumps a one-item list, so the field selection applies to its only item.
+        return _late_adapter(cls, frozen).dump_python(
+            [value],
+            mode='json' if info.mode == 'json' else 'python',
+            include=_in_list(info.include),
+            exclude=_in_list(info.exclude),
+            by_alias=info.by_alias,
+            exclude_unset=info.exclude_unset,
+            exclude_defaults=info.exclude_defaults,
+            exclude_none=info.exclude_none,
+            round_trip=info.round_trip,
+        )[0]
+
+    return pydantic_core.core_schema.with_info_wrap_validator_function(
+        validate,
+        unknown_schema,
+        serialization=pydantic_core.core_schema.wrap_serializer_function_ser_schema(serialize, info_arg=True),
+    )
+
+
+def _in_list(selection: Any) -> Any:
+    """A field selection from `SerializationInfo`, applied to the only item of a one-item list.
+
+    `Any`: pydantic-core types the selection as its own `IncExCall`, and `TypeAdapter.dump_python` takes pydantic's
+    `IncEx`, the same shape under a different name.
+    """
+    return None if selection is None else {0: selection}
+
+
+@functools.cache
+def _late_adapter(cls: type[Any], config: tuple[tuple[str, Any], ...]) -> pydantic.TypeAdapter[list[Any]]:
+    """An adapter for a class registered after a family schema was built, with that schema's config.
+
+    A list, because a `TypeAdapter` of a dataclass can't take a config of its own.
+    """
+    # `list[cls]` built at runtime: `cls` is a class the registry holds, which no type expression can name.
+    items: Any = GenericAlias(list, (cls,))
+    return pydantic.TypeAdapter(items, config=cast(pydantic.ConfigDict, dict(config)))
 
 
 def _canonicalizing_schema(handler: pydantic.GetCoreSchemaHandler, event_cls: type[Any]) -> Any:
@@ -288,7 +392,7 @@ def _canonicalizing_schema(handler: pydantic.GetCoreSchemaHandler, event_cls: ty
 
 
 def _gather_unknown_payload(
-    tag_field: str, unknown_type: type[Any], envelope_fields: frozenset[str]
+    tag_field: str, unknown_type: type[Any], envelope_fields: frozenset[str], family: str
 ) -> Callable[[Any], Any]:
     """Before-validator for the unknown-event envelope: move unrecognized payload fields into `data`.
 
@@ -306,8 +410,8 @@ def _gather_unknown_payload(
             if payload:
                 envelope['data'] = payload
             warnings.warn(
-                f'Unknown event {tag_field} {value.get(tag_field)!r}; validating as {unknown_type.__name__}. '
-                f'Is the module that defines this event imported? (A serializer built before the event '
+                f'Unknown {family} {tag_field} {value.get(tag_field)!r}; validating as {unknown_type.__name__}. '
+                f'Is the module that defines this {family} imported? (A serializer built before the {family} '
                 f'class was defined also treats it as unknown.)',
                 UserWarning,
                 stacklevel=2,

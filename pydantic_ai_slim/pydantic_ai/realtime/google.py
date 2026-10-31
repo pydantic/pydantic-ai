@@ -52,6 +52,7 @@ from ..messages import (
     BinaryImage,
     CachePoint,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -672,6 +673,8 @@ async def _seed_request_parts(
                 ToolAvailabilityDeltaPart,
                 CapabilityLoadDeltaPart,
                 ModelSettingsDeltaPart,
+                # Rendered into the parts below by `wrap_seeded_system_prompts` before seeding.
+                CapabilityPart,
             ),
         ):
             # System prompts are seeded through session instructions, and tool-availability news
