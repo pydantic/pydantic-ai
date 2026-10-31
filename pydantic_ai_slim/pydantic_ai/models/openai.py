@@ -22,7 +22,19 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    Never,
+    TypeAlias,
+    TypeVar,
+    assert_never,
+    cast,
+    get_args,
+    overload,
+)
 
 import httpx2
 from httpx2 import Timeout as HTTPX2Timeout
@@ -154,7 +166,7 @@ from . import (
     get_user_agent,
 )
 from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
-from ._prompt_cache import snap_cache_setting, split_cache_setting
+from ._prompt_cache import split_cache_setting
 from ._sdk_retries import with_max_retries
 from ._tool_choice import (
     ResolvedToolChoice,
@@ -872,13 +884,17 @@ class _ResponsesCreateParams(TypedDict):
     moderation: Moderation | Omit
 
 
+_OpenAIPromptCacheTTL: TypeAlias = Literal['30m', '12h']
+"""The prompt cache TTLs OpenAI accepts on GPT-5.6 and later."""
+
+
 class OpenAIPromptCacheOptions(TypedDict, total=False):
     """Options for OpenAI prompt caching on GPT-5.6 models."""
 
     mode: Literal['implicit', 'explicit']
     """Whether OpenAI may create an implicit cache breakpoint. Defaults to `implicit`."""
 
-    ttl: Literal['30m', '12h']
+    ttl: _OpenAIPromptCacheTTL
     """The minimum lifetime for cache breakpoints. Defaults to `30m`.
 
     `12h` is accepted only by the Responses API; Chat Completions rejects it with a 400.
@@ -1413,7 +1429,7 @@ def _translate_openai_cache(
     translated = cast(OpenAIChatModelSettings, {**(model_settings or {})})
     # The retention has been snapped to the profile's `supported_cache_retentions`, which OpenAI's TTLs make up.
     retention, messages = split_cache_setting(params.cache)
-    ttl: Literal['30m', '12h'] = '12h' if retention == '12h' else '30m'
+    ttl: _OpenAIPromptCacheTTL = '12h' if retention == '12h' else '30m'
     translated['openai_prompt_cache_options'] = (
         {'mode': 'implicit', 'ttl': ttl} if messages else _PREFIX_ONLY_CACHE_OPTIONS[ttl]
     )
@@ -1421,7 +1437,7 @@ def _translate_openai_cache(
     return translated
 
 
-_PREFIX_ONLY_CACHE_OPTIONS: dict[Literal['30m', '12h'], OpenAIPromptCacheOptions] = {
+_PREFIX_ONLY_CACHE_OPTIONS: dict[_OpenAIPromptCacheTTL, OpenAIPromptCacheOptions] = {
     '30m': {'mode': 'explicit', 'ttl': '30m'},
     '12h': {'mode': 'explicit', 'ttl': '12h'},
 }
@@ -1563,13 +1579,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
         return super()._no_batch_api_message()
 
-    def _resolved_cache_setting(self, cache: CacheSetting | None) -> CacheSetting | None:
-        # Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on GPT-5.6 and GPT-6),
-        # while the Responses API on the same models accepts it, so the 12-hour tier is left out here.
-        if cache is None or cache is False or not self.profile.get('supports_cache', False):
-            return super()._resolved_cache_setting(cache)
-        supported = self.profile.get('supported_cache_retentions', ())
-        return snap_cache_setting(cache, tuple(tier for tier in supported if tier != '12h'))
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Leave the `'12h'` cache retention out of `supported_cache_retentions`, before the user's `profile=` applies.
+
+        Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6
+        and GPT-6.1 model), while the Responses API on the same models accepts it, and the providers declare their
+        tiers per model rather than per API.
+        """
+        retentions = profile.get('supported_cache_retentions', ())
+        if '12h' not in retentions:
+            return profile
+        return merge_profile(
+            profile, ModelProfile(supported_cache_retentions=tuple(tier for tier in retentions if tier != '12h'))
+        )
 
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
@@ -1820,7 +1842,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                     prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                     # Passed through as given: Chat Completions rejects a `'12h'` TTL with a 400, and the unified
-                    # `cache` setting never sends one here (see `_resolved_cache_setting`).
+                    # `cache` setting never sends one here (see `_instance_profile_defaults`).
                     prompt_cache_options=cast(
                         'ChatPromptCacheOptions | Omit', model_settings.get('openai_prompt_cache_options', OMIT)
                     ),

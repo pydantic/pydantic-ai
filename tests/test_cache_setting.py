@@ -510,6 +510,7 @@ class TestOpenAICacheRetention:
     def test_chat_snaps_12h_to_30m(self, model_name: str):
         """Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400, so the unified setting sends `'30m'`."""
         model = OpenAIChatModel(model_name, provider=OpenAIProvider(api_key='test'))
+        assert model.profile.get('supported_cache_retentions') == ('30m',)
         settings, params = model.prepare_request(ModelSettings(cache='12h'), ModelRequestParameters())
         assert params.cache == '30m'
         assert settings == {
