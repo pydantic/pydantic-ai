@@ -13,6 +13,7 @@ import reprlib
 import time
 import uuid
 import warnings
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
@@ -59,7 +60,6 @@ from .._framing import (
     LookalikeSource,
     frame,
     in_second_model_prompt,
-    is_framework_note,
     lookalike_frame_note,
     lookalike_note_announcement,
     lookalike_tags,
@@ -1988,9 +1988,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if frame_at is not None:
                 if announce and not announced:
                     announced = True
-                    announcement = SystemPromptPart(
-                        content=lookalike_note_announcement(system_role=True),
-                        timestamp=message.timestamp or _utils.now_utc(),
+                    announcement = _framework_added(
+                        SystemPromptPart(
+                            content=lookalike_note_announcement(system_role=True),
+                            timestamp=message.timestamp or _utils.now_utc(),
+                        )
                     )
                     parts.insert(frame_at, announcement)
             if len(parts) != len(message.parts) or any(new is not old for new, old in zip(parts, message.parts)):
@@ -2022,16 +2024,18 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if _is_tool_result_part(part):
                 for _, tags in sources:
                     tool_notes.append(
-                        SystemPromptPart(
-                            content=lookalike_frame_note(
-                                'tool',
-                                preceding=not precede_tool_results,
-                                tags=tags,
-                                system_role=inline_system,
-                                tool_name=part.tool_name,
-                                tool_call_id=part.tool_call_id,
-                            ),
-                            timestamp=request.timestamp or _utils.now_utc(),
+                        _framework_added(
+                            SystemPromptPart(
+                                content=lookalike_frame_note(
+                                    'tool',
+                                    preceding=not precede_tool_results,
+                                    tags=tags,
+                                    system_role=inline_system,
+                                    tool_name=part.tool_name,
+                                    tool_call_id=part.tool_call_id,
+                                ),
+                                timestamp=request.timestamp or _utils.now_utc(),
+                            )
                         )
                     )
                 if self._relocates_tool_files and isinstance(part, ToolReturnPart) and part.files:
@@ -2059,9 +2063,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 or (first_request and all(isinstance(p, SystemPromptPart) for p in parts))
             )
             notes = [
-                SystemPromptPart(
-                    content=lookalike_frame_note(source, preceding=after, tags=tags, system_role=inline_system),
-                    timestamp=request.timestamp or _utils.now_utc(),
+                _framework_added(
+                    SystemPromptPart(
+                        content=lookalike_frame_note(source, preceding=after, tags=tags, system_role=inline_system),
+                        timestamp=request.timestamp or _utils.now_utc(),
+                    )
                 )
                 for source, tags in sources
             ]
@@ -2304,8 +2310,32 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             and (parts or _first_request_has_standing_prompt(messages))
         ):
             announcement = lookalike_note_announcement(system_role=False)
-            parts = [*(parts or []), InstructionPart(content=announcement, dynamic=True)]
+            parts = [*(parts or []), _framework_added(InstructionPart(content=announcement, dynamic=True))]
         return parts
+
+
+_FrameworkAdded = TypeVar('_FrameworkAdded', SystemPromptPart, UserPromptPart, InstructionPart)
+
+_framework_added_parts: weakref.WeakValueDictionary[int, SystemPromptPart | UserPromptPart | InstructionPart] = (
+    weakref.WeakValueDictionary()
+)
+"""The parts `prepare_messages` and `_get_instruction_parts` add on their own, the lookalike notes and the
+announcement, by identity: text alone can't tell them apart from the same words a user or tool wrote."""
+
+
+def _framework_added(part: _FrameworkAdded) -> _FrameworkAdded:
+    _framework_added_parts[id(part)] = part
+    return part
+
+
+def _is_framework_added(part: object) -> bool:
+    """Whether `part` is a lookalike note or the announcement that Pydantic AI added to a request it's preparing."""
+    return _framework_added_parts.get(id(part)) is part
+
+
+def _wrapped_system_prompt(part: SystemPromptPart) -> UserPromptPart:
+    wrapped = UserPromptPart(content=frame(SYSTEM_TAG, part.content), timestamp=part.timestamp)
+    return _framework_added(wrapped) if _is_framework_added(part) else wrapped
 
 
 def _instruction_parts_of(
@@ -2341,11 +2371,7 @@ def _instruction_parts_of(
                 # TODO(v3): remove `RetryPromptPart`
                 isinstance(p, ToolReturnPart | RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
                 # A lookalike note or the announcement `prepare_messages` added doesn't make it a real request.
-                or (
-                    isinstance(p, SystemPromptPart | UserPromptPart)
-                    and isinstance(p.content, str)
-                    and is_framework_note(p.content)
-                )
+                or _is_framework_added(p)
                 for p in most_recent.parts
             )
             and second.instructions is not None
@@ -4019,9 +4045,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
         start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
-                UserPromptPart(content=frame(SYSTEM_TAG, part.content), timestamp=part.timestamp)
-                if index >= start and isinstance(part, SystemPromptPart)
-                else part
+                _wrapped_system_prompt(part) if index >= start and isinstance(part, SystemPromptPart) else part
                 for index, part in enumerate(msg.parts)
             ]
             new_messages.append(replace(msg, parts=new_parts))

@@ -11,7 +11,6 @@ from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, override
 
 from .. import _model_errors, usage
-from .._framing import is_framework_note
 from .._run_context import RunContext
 from .._utils import is_str_dict
 from ..exceptions import ModelAPIError, ModelHTTPError, ModelRequestRejectedError, UserError
@@ -37,6 +36,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _effort_window_baseline,  # pyright: ignore[reportPrivateUsage]
+    _is_framework_added,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
@@ -1038,7 +1038,7 @@ class OpenRouterModel(OpenAIChatModel):
         # The announcement ends the instructions and is marked dynamic only to keep cache points ahead of
         # it: its text never changes, so it doesn't keep the instructions from caching.
         if not caches_instruction_prefix and any(
-            part.dynamic and not is_framework_note(part.content) for part in instruction_parts
+            part.dynamic and not _is_framework_added(part) for part in instruction_parts
         ):
             # OpenRouter normalizes Google system/developer messages into Gemini's single
             # `systemInstruction`, which Gemini caches as an immutable block (explicit
