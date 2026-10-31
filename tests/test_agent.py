@@ -11593,14 +11593,14 @@ async def test_run_with_deferred_tool_results_errors():
 async def test_run_with_deferred_tool_results_for_answered_calls_errors():
     requests: list[list[ModelMessage]] = []
 
-    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
         requests.append(messages)
-        return ModelResponse(parts=[TextPart('Done!')])  # pragma: no cover
+        return ModelResponse(parts=[TextPart('Done!')])
 
     agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
 
-    def create_file(path: str) -> str:
-        return f'File {path!r} created'  # pragma: no cover
+    def create_file(path: str) -> str:  # pragma: no cover
+        return f'File {path!r} created'
 
     agent.tool_plain(requires_approval=True)(create_file)
 
