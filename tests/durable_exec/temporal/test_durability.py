@@ -1013,10 +1013,6 @@ def _subclass_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
     return ModelResponse(parts=[ToolCallPart('raise_framework_error', {'kind': kind})])
 
 
-_subclass_toolset = FunctionToolset[None](id='subclass_toolset')
-
-
-@_subclass_toolset.tool_plain
 def raise_framework_error(kind: str) -> str:
     _raise_framework_error(kind)
     return 'unreachable'  # pragma: no cover
@@ -1025,7 +1021,7 @@ def raise_framework_error(kind: str) -> str:
 subclass_error_agent = Agent(
     FunctionModel(_subclass_model_fn),
     name='durability_non_retryable_subclasses',
-    toolsets=[_subclass_toolset],
+    toolsets=[FunctionToolset(tools=[raise_framework_error], id='subclass_toolset')],
     capabilities=[
         TemporalDurability(
             activity_config=ActivityConfig(
@@ -1046,7 +1042,7 @@ class NonRetryableSubclassWorkflow:
         except ActivityError as error:
             application_error = error.cause
             assert isinstance(application_error, ApplicationError)
-            return application_error.type
+            return f'{application_error.type}'
 
 
 @pytest.mark.parametrize('where', ['model', 'tool'])
