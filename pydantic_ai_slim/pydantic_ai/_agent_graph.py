@@ -1246,6 +1246,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
         tool_call_results.update(deferred_tool_results.to_tool_call_results())
 
+        answered: set[str] = set()
         if last_model_request:
             for part in last_model_request.parts:
                 if _is_tool_result_part(part):
@@ -1254,6 +1255,14 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                             f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
                         )
                     tool_call_results[part.tool_call_id] = 'skip'
+                    answered.add(part.tool_call_id)
+
+        if all(call.tool_call_id in answered for call in last_model_response.tool_calls):
+            # The last request already answered every call, so these results resolve nothing.
+            # Continuing would run a step with no parts of its own and record an empty `ModelRequest` in the history.
+            raise exceptions.UserError(
+                'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
+            )
 
         # Skip ModelRequestNode and go directly to CallToolsNode
         return CallToolsNode[DepsT, NodeRunEndT](
