@@ -98,7 +98,7 @@ class _ReportExhaustedRetries(AbstractCapability[AgentDepsT]):
             raise error
         raise ToolFailed(
             f'{cause.message}\n\n`{call.tool_name}` has failed several times in a row. Do not repeat the same '
-            'call: check the current state (for example, re-read the file) and try a different approach.'
+            'call: check the current state and try a different approach.'
         ) from error
 
 
@@ -109,7 +109,7 @@ MAX_OUTPUT_CHARS = 64000
 """Characters kept from any tool result."""
 
 MAX_FILE_TOOL_RETRIES = 5
-"""Consecutive retries each file tool allows before its errors come back as plain failures.
+"""Consecutive retries each file tool allows before its execution errors come back as plain failures.
 
 A denied path or a stale edit is corrected from the error message. With the agent's default
 budget of one, a second consecutive mistake with the same tool ends a long autonomous run
