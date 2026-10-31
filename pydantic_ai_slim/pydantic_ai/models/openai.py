@@ -935,7 +935,7 @@ class OpenAIPromptCacheOptions(TypedDict, total=False):
     mode: Literal['implicit', 'explicit']
     """Whether OpenAI may create an implicit cache breakpoint. Defaults to `implicit`."""
 
-    ttl: _OpenAIPromptCacheTTL
+    ttl: Literal['30m', '12h']
     """The minimum lifetime for cache breakpoints. Defaults to `30m`.
 
     `12h` is accepted only by the Responses API; Chat Completions rejects it with a 400.
