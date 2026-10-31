@@ -14,7 +14,13 @@ import inspect
 import itertools
 from collections import Counter, defaultdict, deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
-from contextlib import AbstractContextManager, AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    ExitStack,
+    asynccontextmanager,
+    contextmanager,
+)
 from dataclasses import dataclass, field, replace
 from types import NoneType
 from typing import (
@@ -435,6 +441,8 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         OutputT: The type of the output data
     """
 
+    _run_context: AbstractAsyncContextManager[None]
+
     def __init__(
         self,
         graph: Graph[StateT, DepsT, InputT, OutputT],
@@ -492,17 +500,15 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         self._iterator = self._iterator_instance.iter_graph(self._first_task)
 
         self.__traceparent = traceparent
-        self._async_exit_stack = AsyncExitStack()
 
     async def __aenter__(self):
-        self._async_exit_stack.enter_context(_unwrap_exception_groups())
-        await self._async_exit_stack.enter_async_context(self._iterator_task_group)
-        await self._async_exit_stack.enter_async_context(self._iterator_context())
+        self._run_context = self._iterator_context()
+        await self._run_context.__aenter__()
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any):
         try:
-            await self._async_exit_stack.__aexit__(exc_type, exc_val, exc_tb)
+            await self._run_context.__aexit__(exc_type, exc_val, exc_tb)
         finally:
             # The run can outlive execution for result inspection; the iterator owns temporary task/reducer state.
             # Detach it after teardown, including errors and cancellation.
@@ -511,12 +517,15 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
     @asynccontextmanager
     async def _iterator_context(self) -> AsyncGenerator[None]:
         assert self._iterator_instance is not None
-        try:
-            yield
-        finally:
-            self._iterator_instance.iter_stream_sender.close()
-            self._iterator_instance.iter_stream_receiver.close()
-            await self._iterator.aclose()
+        # Nested contexts avoid AsyncExitStack's error frames retaining the exception group they raise on Python 3.11.
+        with _unwrap_exception_groups():
+            async with self._iterator_task_group:
+                try:
+                    yield
+                finally:
+                    self._iterator_instance.iter_stream_sender.close()
+                    self._iterator_instance.iter_stream_receiver.close()
+                    await self._iterator.aclose()
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
@@ -556,15 +565,19 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             Exception: If a node raised an error and the caller has not recovered via
                 `override_next()`.
         """
-        if self._next is None:
-            self._next = await anext(self._iterator)
-        else:
-            self._next = await self._iterator.asend(self._next)
-        if isinstance(self._next, ErrorMarker):
-            # A node raised an error. Store it so the caller can recover via
-            # override_next() before the next __anext__ call re-raises.
-            raise self._next.error
-        return self._next
+        try:
+            if self._next is None:
+                self._next = await anext(self._iterator)
+            else:
+                self._next = await self._iterator.asend(self._next)
+            if isinstance(self._next, ErrorMarker):
+                # A node raised an error. Store it so the caller can recover via
+                # override_next() before the next __anext__ call re-raises.
+                raise self._next.error
+            return self._next
+        finally:
+            # ErrorMarker keeps the exception, whose finished traceback frames must not point back to this run.
+            del self
 
     async def next(
         self, value: EndMarker[OutputT] | Sequence[GraphTaskRequest] | None = None
@@ -580,13 +593,17 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         Returns:
             The next execution result: either an EndMarker, or sequence of GraphTasks
         """
-        if self._next is None:
-            # Prevent `TypeError: can't send non-None value to a just-started async generator`
-            # if `next` is called before the `first_node` has run.
-            await anext(self)
-        if value is not None:
-            self._set_next(value)
-        return await anext(self)
+        try:
+            if self._next is None:
+                # Prevent `TypeError: can't send non-None value to a just-started async generator`
+                # if `next` is called before the `first_node` has run.
+                await anext(self)
+            if value is not None:
+                self._set_next(value)
+            return await anext(self)
+        finally:
+            # ErrorMarker caches the traceback; completed frames must not retain this run.
+            del self
 
     def override_next(self, value: Sequence[GraphTaskRequest] | EndMarker[OutputT]) -> None:
         """Override the next pending step, allowing the graph to continue after an `End` or error.
@@ -1138,7 +1155,13 @@ def _unwrap_exception_groups():
             if exception.__cause__ is None:
                 # bizarrely, this prevents recursion errors when formatting the exception for logfire
                 exception.__cause__ = None
-            raise exception
+            context = exception.__context__
+            try:
+                raise exception
+            finally:
+                # Preserve the leaf's chain rather than a synthetic group -> leaf -> group cycle.
+                exception.__context__ = context
+                del exception
 
 
 # === GraphBuilder ===
