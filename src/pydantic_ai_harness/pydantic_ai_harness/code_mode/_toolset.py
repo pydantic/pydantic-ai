@@ -218,14 +218,31 @@ def _is_duration_exhausted(error: MontyRuntimeError) -> bool:
     site, which keeps the tool's own message. Wording alone would therefore misread a tool that
     failed with `'time limit exceeded'` in its message.
 
-    Exceeding `max_memory` is excluded by either signal, since it reports different wording and
-    carries a frame from the allocation that tripped it. Keeping both means neither has to be
-    sound alone.
+    Exceeding `max_memory` is excluded by either signal: its allocation failures report different
+    wording and carry a frame, and the worker-kill form carries Monty's terminated-worker wording
+    with no frame at all. Keeping both means neither has to be sound alone.
 
     Callers must read `False` as "not known to be a timeout". A miss keeps the session and the
     ordinary runtime-error message.
     """
     return not error.traceback() and _exhausted_sandbox_limit(error) == 'max_duration_secs'
+
+
+def _worker_memory_killed(error: MontyRuntimeError) -> bool:
+    """Whether this runtime error reports Monty's worker being killed for exceeding its memory limit.
+
+    Stricter than `_exhausted_sandbox_limit` for the same reason `_is_duration_exhausted` is: it
+    gates a session reset, and a wrong reset discards REPL state the session could still use.
+
+    The kill interrupts the worker rather than failing at a particular operation, so Monty
+    attaches no frame, and the checkout finished with the worker. The in-snippet allocation
+    failure keeps its frame and reports `memory limit exceeded` wording instead, so it does not
+    match; a tool raising the kill's wording in its own message keeps a frame and does not match
+    either.
+    """
+    return not error.traceback() and (
+        'the worker exceeded its memory limit and was terminated' in error.display(format='msg')
+    )
 
 
 def _elided(count: int, shown: int, unit: str) -> str:
@@ -1293,7 +1310,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # semantics are the same -- the model gets another chance.
             message = f'Runtime error:\n{capture.prepend_to(e.display())}'
             duration_spent = _is_duration_exhausted(e)
-            if execution.budget_exhausted or _exhausted_sandbox_limit(e) is not None:
+            worker_killed = _worker_memory_killed(e)
+            if execution.budget_exhausted or worker_killed or _exhausted_sandbox_limit(e) is not None:
                 # A retry is the only record the model gets of an uncaught failure, and these
                 # calls already started. Without them the model reruns their side effects when
                 # it retries. Asking which limit tripped, rather than testing one flag per limit,
@@ -1309,6 +1327,16 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     '\n\nThe code ran longer than `max_duration_secs` and was stopped, so the '
                     'session was reset. Re-run any imports, recreate any state you need, and make '
                     'the code do less work per call.'
+                )
+            if worker_killed:
+                # The kill finished the checkout with the worker even though Monty reports it as
+                # a sandbox MemoryError, so every later call would fail on the finished session.
+                # Reset like a crash and tell the model its REPL state is gone.
+                await run_state.reset()
+                message += (
+                    '\n\nThe sandbox worker was terminated for exceeding its memory limit, so the '
+                    'session was reset. Re-run any imports, recreate any state you need, and make '
+                    'the code use less memory per call.'
                 )
             if isinstance(e.exception(), RuntimeError) and re.fullmatch(
                 r'suspension limit [0-9]+ exceeded', e.display(format='msg')
