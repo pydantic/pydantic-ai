@@ -298,8 +298,7 @@ async def test_openrouter_effort_change_keeps_the_cache(
 
     _, second_request = request_capture.bodies()
     # The instructions are left out: they're the long cached prefix.
-    # Past the standing prompt: the `<system>` tag announcement and the catalogue.
-    messages = cast(list[Any], second_request['messages'])[2:]
+    messages = cast(list[Any], second_request['messages'])[1:]
     assert {'reasoning': second_request['reasoning'], 'messages': messages} == expected_request
     assert second.response.usage.cache_read_tokens >= first.response.usage.input_tokens - 100
 
