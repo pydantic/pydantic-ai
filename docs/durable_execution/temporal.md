@@ -997,8 +997,6 @@ When using Temporal, it's recommended to not use [transport retries](../retries.
 
 You can customize Temporal's retry policy using [activity configuration](#activity-configuration).
 
-When a model error says how long to wait before trying again, in its [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] (read from a `Retry-After` or `retry-after-ms` header, for example), Temporal waits that long before the next attempt of the model request activity, instead of the retry policy's backoff. The wait is capped at the retry policy's `maximum_interval`, which defaults to 100 times its `initial_interval` (100 seconds by default), so a provider asking for hours doesn't park the activity for hours. The retry policy's `maximum_attempts` and the activity's `schedule_to_close_timeout` still apply. To fail or [fall back](../capabilities/model-fallback.md) instead of waiting, list [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] in [`non_retryable_model_errors`](#activity-retries).
-
 An exception a tool raises reaches workflow code as Temporal's `ActivityError`, with the original exception's class name in `cause.type`.
 
 A model error is different: with [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] a model request raises, such as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], reaches workflow code as itself, with its fields, rather than as an `ActivityError`. A field value that isn't JSON-serializable, like an unusual response body, crosses as its string form. This applies to Pydantic AI's own error classes: a subclass you define still arrives as an `ActivityError`. That's what lets `on_model_request_error` hooks and other workflow-side code that handles model errors work the same with and without Temporal. Temporal still retries the failed activity according to its retry policy before the error reaches the workflow, and the original `ActivityError` is the rebuilt error's `__cause__`.
@@ -1030,6 +1028,8 @@ agent = Agent(
     ],
 )
 ```
+
+When a model error says how long to wait before trying again, in its [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] (read from a `Retry-After` or `retry-after-ms` header, for example), Temporal waits that long before the next attempt of the model request activity, instead of the retry policy's backoff. The wait is capped at the retry policy's `maximum_interval`, which defaults to 100 times its `initial_interval` (100 seconds by default), so a provider asking for hours doesn't park the activity for hours. The retry policy's `maximum_attempts` and the activity's `schedule_to_close_timeout` still apply. To fail or [fall back](../capabilities/model-fallback.md) instead of waiting, list [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] in `non_retryable_model_errors`.
 
 ## Observability with Logfire
 
