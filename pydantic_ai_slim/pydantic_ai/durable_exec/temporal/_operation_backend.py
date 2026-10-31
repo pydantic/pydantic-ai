@@ -41,7 +41,7 @@ from ._toolset import (
     ChildWorkflowOperationConfig,
     heartbeating,
     model_response_payload_errors,
-    non_retryable_error_types_raised,
+    non_retryable_subclasses_as_application_errors,
 )
 
 ParamsT = TypeVar('ParamsT')
@@ -261,7 +261,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
         async def activity_handler(params: Any, deps: Any = None) -> ResultT:
             semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
             async with heartbeating():
-                with non_retryable_error_types_raised():
+                with non_retryable_subclasses_as_application_errors():
                     if model_operation:
                         with model_errors_as_application_errors(self._non_retryable_model_errors):
                             return await operation.handler(semantic_params)

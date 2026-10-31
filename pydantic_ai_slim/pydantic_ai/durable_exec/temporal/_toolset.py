@@ -181,7 +181,7 @@ NON_RETRYABLE_ERRORS: tuple[type[Exception], ...] = (
 def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
     """Return a copy of `retry_policy` with the framework's non-retryable errors ensured.
 
-    The policy names each class, and `non_retryable_error_types_raised` covers their subclasses.
+    The policy names each class, and `non_retryable_subclasses_as_application_errors` covers their subclasses.
     """
     retry_policy = copy.copy(retry_policy) if retry_policy else RetryPolicy()
     existing = retry_policy.non_retryable_error_types or []
@@ -196,7 +196,7 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
 
 
 @contextmanager
-def non_retryable_error_types_raised() -> Generator[None]:
+def non_retryable_subclasses_as_application_errors() -> Generator[None]:
     """Raise a subclass of one of `NON_RETRYABLE_ERRORS` as a non-retryable `ApplicationError`.
 
     A retry policy's `non_retryable_error_types` matches the exact name of the error's class, so naming
