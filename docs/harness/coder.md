@@ -143,9 +143,13 @@ Then the plumbing, which the agent never calls directly:
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
    capabilities bind its inherited operations without colliding with a separately configured `ToolOutputLimits`.
 8. [`RepairToolArguments`](repair-tool-arguments.md) repairs malformed JSON tool arguments before normal validation (see below).
-9. Prompt caching, the same as [`Caching()`](../capabilities/caching.md) unless the model, the agent, or a capability listed before
+9. Once a tool's retries run out while it executes, its last error goes back to the model as a failed tool result
+   with a prompt to try a different approach, rather than ending the run. This covers every tool, `delegate_task`
+   included, so consecutive delegate failures no longer abort the parent. Running out on argument validation
+   (see item 8) still ends the run, and usage limits still bound a model that never changes course.
+10. Prompt caching, the same as [`Caching()`](../capabilities/caching.md) unless the model, the agent, or a capability listed before
    `Coder` already sets `cache` (see below). Pass `caching=False` to leave it out.
-10. Strict mode off for `Coder`'s own tools (see below). Pass `strict=None` to leave it out.
+11. Strict mode off for `Coder`'s own tools (see below). Pass `strict=None` to leave it out.
 
 Every tool comes from `FileSystem`, `Shell`, or `SubAgents`; those pages document each one in full. Build the same
 agent from the pieces to change any setting, for example to keep content hashes, add `list_directory`,
