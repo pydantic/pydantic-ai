@@ -866,27 +866,9 @@ class TestNestedTraversal:
         _write(tmp_path / 'c' / 'AGENTS.md', 'C' * 10)
         for name in 'abc':
             _write(tmp_path / name / 'x.py', 'x')
-        paths = ['a/x.py', 'b/x.py', 'c/x.py']
-
-        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-            returns = _tool_returns(messages)
-            if returns < len(paths):
-                args = json.dumps({'path': paths[returns]})
-                yield {0: DeltaToolCall(name='read_file', json_args=args, tool_call_id=f'call{returns}')}
-            else:
-                yield 'done'
-
-        result = await Agent(
-            FunctionModel(stream_function=stream),
-            capabilities=[
-                FileSystem(root_dir=tmp_path),
-                RepoContext(
-                    autoload_instructions=False, nested_traversal=True, nested_inject='contents', nested_max_chars=25
-                ),
-            ],
-        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        result = await self._read_files(tmp_path, ['a/x.py', 'b/x.py', 'c/x.py'], nested_max_chars=25)
         parts = [
-            (type(part).__name__, part.content if isinstance(part, SystemPromptPart) else _user_text(part))
+            (type(part), part.content if isinstance(part, SystemPromptPart) else _user_text(part))
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -895,7 +877,7 @@ class TestNestedTraversal:
         assert parts == snapshot(
             [
                 (
-                    'UserPromptPart',
+                    UserPromptPart,
                     """\
 <context-file path="a/AGENTS.md">
 AAAAAAAAAA
@@ -903,12 +885,12 @@ AAAAAAAAAA
 """,
                 ),
                 (
-                    'SystemPromptPart',
+                    SystemPromptPart,
                     'A directory you just accessed has an instruction file, not loaded here. Its path is in the `<context-file>` tag that follows. Read the file if it is relevant to your task.',
                 ),
-                ('UserPromptPart', '<context-file path="b/AGENTS.md" />'),
+                (UserPromptPart, '<context-file path="b/AGENTS.md" />'),
                 (
-                    'UserPromptPart',
+                    UserPromptPart,
                     """\
 <context-file path="c/AGENTS.md">
 CCCCCCCCCC
