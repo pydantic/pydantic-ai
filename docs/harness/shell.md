@@ -393,6 +393,8 @@ workspace capability in Python).
 
 `Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`; the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](../durable_execution/temporal.md#harness-command-timeouts) to raise it.
 
+A `start_command` or `shell` call that runs again, as a durable retry or a conversation continued from its saved history after a crash, returns the job it started the first time instead of running its command twice. The same tool call ID in another model response is a different call. `run_command` keeps no such record: a call that runs again runs its command again.
+
 ## Further reading
 
 - [Pydantic AI capabilities](../capabilities/overview.md)
