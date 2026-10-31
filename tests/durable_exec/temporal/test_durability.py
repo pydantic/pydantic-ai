@@ -89,6 +89,7 @@ from pydantic_ai.exceptions import (
     ModelHTTPError,
     ModelNotFoundError,
     ModelOverloadedError,
+    ModelQuotaExceededError,
     ModelRateLimitError,
     ModelRetry,
     ModelTimeoutError,
@@ -880,6 +881,10 @@ def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Mo
         raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='test-model')
     if prompt.content == 'not_found':
         raise ModelHTTPError.for_category(ModelNotFoundError, status_code=404, model_name='test-model')
+    if prompt.content == 'quota':
+        raise ModelHTTPError.for_category(ModelQuotaExceededError, status_code=402, model_name='test-model')
+    if prompt.content == 'request_timeout':
+        raise ModelRequestTimeout('test-model', 1.0, setting='first_event_timeout')
     raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-model')
 
 
@@ -902,12 +907,27 @@ non_retryable_agent = Agent(
 )
 
 
+default_non_retryable_agent = Agent(
+    FunctionModel(_non_retryable_model_fn),
+    name='durability_default_non_retryable_model_errors',
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
 @workflow.defn
 class NonRetryableModelErrorWorkflow:
     @workflow.run
-    async def run(self, error_kind: str) -> str:
+    async def run(self, error_kind: str, default: bool = False) -> str:
+        agent = default_non_retryable_agent if default else non_retryable_agent
         try:
-            return (await non_retryable_agent.run(error_kind)).output
+            return (await agent.run(error_kind)).output
         except ModelAPIError as error:
             activity_error = error.__cause__
             assert isinstance(activity_error, ActivityError)
@@ -959,6 +979,48 @@ async def test_durability_non_retryable_model_errors(client: Client, error_kind:
             NonRetryableModelErrorWorkflow.run,
             args=[error_kind],
             id=f'{NonRetryableModelErrorWorkflow.__name__}_{error_kind}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == expected
+    assert _non_retryable_attempts == [error_kind] * attempts
+
+
+@pytest.mark.parametrize(
+    ('error_kind', 'attempts', 'expected'),
+    [
+        pytest.param(
+            'context_window',
+            1,
+            'ModelContextWindowExceededError ModelHTTPError non_retryable=True',
+            id='context-window',
+        ),
+        pytest.param(
+            'authentication', 1, 'ModelAuthenticationError ModelHTTPError non_retryable=True', id='authentication'
+        ),
+        pytest.param('not_found', 1, 'ModelNotFoundError ModelHTTPError non_retryable=True', id='not-found'),
+        pytest.param('quota', 1, 'ModelQuotaExceededError ModelHTTPError non_retryable=True', id='quota'),
+        pytest.param('request_timeout', 1, 'ModelRequestTimeout ModelRequestTimeout non_retryable=True', id='timeout'),
+        pytest.param('rate_limit', 3, 'ModelRateLimitError ModelHTTPError non_retryable=False', id='rate-limit'),
+        pytest.param('overloaded', 3, 'ModelOverloadedError ModelAPIError non_retryable=False', id='overloaded'),
+    ],
+)
+async def test_durability_default_non_retryable_model_errors(
+    client: Client, error_kind: str, attempts: int, expected: str
+):
+    """By default, a model error another attempt can't fix (a rejected request, an exhausted quota, or a request that
+    ran out of its deadline) fails the activity on its first attempt, while a transient one is retried as the retry
+    policy says."""
+    _non_retryable_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NonRetryableModelErrorWorkflow],
+        plugins=[AgentPlugin(default_non_retryable_agent)],
+    ):
+        output = await client.execute_workflow(
+            NonRetryableModelErrorWorkflow.run,
+            args=[error_kind, True],
+            id=f'{NonRetryableModelErrorWorkflow.__name__}_default_{error_kind}',
             task_queue=TASK_QUEUE,
         )
     assert output == expected
