@@ -41,6 +41,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelConnectionError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelRetry,
     TransportPhase,
@@ -4209,3 +4210,36 @@ async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
     assert tags == snapshot(
         [f'<tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">']
     )
+
+
+async def test_empty_choices_raise_model_empty_response_error(allow_model_requests: None):
+    """A completion without choices is a model error, so `FallbackModel` falls back on it, rather than an `AssertionError`."""
+    response = completion_message(MistralAssistantMessage(content='unused'))
+    response.choices = []
+    model = MistralModel(
+        'mistral-large-latest', provider=MistralProvider(mistral_client=MockMistralAI.create_mock(response))
+    )
+
+    with pytest.raises(ModelEmptyResponseError, match='Unexpected empty response choices from Mistral') as exc_info:
+        await Agent(model).run('hello')
+    assert exc_info.value.model_name == 'mistral-large-latest'
+
+
+async def test_choice_without_message_raises_model_empty_response_error(allow_model_requests: None):
+    response = completion_message(MistralAssistantMessage(content='unused'))
+    response.choices[0].message = None
+    model = MistralModel(
+        'mistral-large-latest', provider=MistralProvider(mistral_client=MockMistralAI.create_mock(response))
+    )
+
+    with pytest.raises(ModelEmptyResponseError, match='Unexpected empty response message from Mistral'):
+        await Agent(model).run('hello')
+
+
+async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
+    mock_client = MockMistralAI.create_stream_mock([[]])
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
+        async with Agent(model).run_stream('hello'):
+            pass

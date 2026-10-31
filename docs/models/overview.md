@@ -305,6 +305,19 @@ a `ModelNotFoundError` (OpenAI's Responses API sends `model_not_found` as a 400)
 Gemini API sends `API_KEY_INVALID` as a 400). Exhausted credits are a `ModelQuotaExceededError` instead, even when the
 provider sends them as a 400, as Anthropic does.
 
+A request can also succeed while the response the provider sent in reply can't be used. That's a model error too,
+raised before the agent sees the response, so it's handled like a failed request:
+
+| Exception | Raised when |
+|---|---|
+| [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] | The provider sent no response, e.g. a stream that ended before its first event, or a completion without choices. Often a transient glitch, so sending the request again may help. |
+| [`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError] | The response couldn't be read, e.g. a completion that doesn't match the API's schema. Sending the same request again often gets the same response. |
+
+Both are also an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which these responses
+used to raise, so existing `except UnexpectedModelBehavior` blocks keep catching them. A response the agent can't use
+once the model has returned it, like one with no output or one cut off at the token limit, is judged in the
+[agent loop](../agent.md) instead, and raises a plain `UnexpectedModelBehavior` or is re-prompted.
+
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message
 only where the provider offers nothing else. Every `ModelAPIError` also exposes the provider's
@@ -460,7 +473,9 @@ common use case. That includes every [error category](#handling-model-api-errors
 unavailable or overloaded providers, server errors, connection failures and timeouts,
 and rejected requests, including [context window overflows](#context-window-overflow): another model or provider may
 accept a request, credentials or model name the first one rejected, and a model with a larger context window may
-accept an input that overflowed another model's. To fall back only on some of them, pass those categories
+accept an input that overflowed another model's. It also includes a response the model couldn't use, a
+[`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] or
+[`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError]. To fall back only on some of them, pass those categories
 as `fallback_on`, e.g. `fallback_on=(ModelRateLimitError, ModelUnavailableError, ModelServerError)`.
 
 This behavior is controlled by the `fallback_on` parameter (see
