@@ -537,12 +537,13 @@ directory holding one of `root_markers` (`('.git',)`; `Coder` uses this); `'all'
 `walk_up='repo_root'`. It is a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises
 `UserError`. `global_files` lists user-global instruction files, loaded first with the lowest precedence.
 `nested_traversal=True` (the default) surfaces the instruction files between the working directory and
-whatever `FileSystem` reads or lists, shallowest first and each directory once per run
-(`nested_inject='contents'` by default, or `'pointer'`), in the message tail so the cached prefix stays
-stable. With it on, the instructions also gain one static sentence: each instruction file applies to
-its subtree, the deeper file wins, and the user's direct instructions win over all of them.
-`nested_max_chars` (32,000 by default) caps the `'contents'` inlined per run: a file that would go past it
-becomes a pointer; `None` removes the cap. It doesn't apply with `nested_inject='pointer'`.
+whatever `FileSystem` reads or lists, shallowest first, each directory once while its note is in the
+conversation (`nested_inject='contents'` by default, or `'pointer'`), in the message tail so the cached
+prefix stays stable. With it on, the instructions also gain one static sentence: each instruction file
+applies to its subtree, the deeper file wins, and the user's direct instructions win over all of them.
+`nested_max_chars` (32,000 by default) caps the `'contents'` inlined per run, starting over after a
+compaction: a file that would go past it becomes a pointer; `None` removes the cap. It doesn't apply with
+`nested_inject='pointer'`.
 
 ## Macroscope
 

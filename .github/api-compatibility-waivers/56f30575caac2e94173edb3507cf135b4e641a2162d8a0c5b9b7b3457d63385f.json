@@ -1,0 +1,5 @@
+{
+  "against": "v2.64.0",
+  "reason": "Harness 0.x: `RepoContext` now surfaces nested instruction files by default, which a 9-model benchmark on #11683 found followed in 99% of runs against 39% without. Pass `nested_traversal=False` to keep the old behavior.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+}

@@ -8,6 +8,7 @@ import sys
 import time
 import uuid
 import warnings
+from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
@@ -15,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
@@ -144,6 +145,8 @@ except ImportError:  # pragma: lax no cover
 try:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .responses_websocket import ScriptedSocket, responses_reply, text_events, websocket_model
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
@@ -154,6 +157,7 @@ from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from .._inline_snapshot import snapshot
+from ..append_only import drain_events
 from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ..clock_utils import LONG_TIMEOUT, Clock
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
@@ -263,6 +267,89 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DB
 async def round_trip_workspace(ctx: RunContext[None]) -> str:
     await ctx.workspace.write_text('note.txt', 'workspace content')
     return await ctx.workspace.read_text('note.txt')
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_dbos_agent_model_steps_use_http_for_responses_websocket(
+    allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """A workflow run does not implicitly own a socket across its model steps."""
+    pytest.importorskip('websockets')
+    connect = AsyncMock()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        agent = Agent(websocket_model(client), name=f'responses_websocket_{"stream" if stream else "request"}')
+        dbos_agent = DBOSAgent(agent, event_stream_handler=drain_events if stream else None)  # pyright: ignore[reportDeprecated]
+        assert (await dbos_agent.run('hello')).output == 'from HTTP'
+    connect.assert_not_called()
+
+
+async def test_dbos_model_run_scope_outside_workflow_forwards_socket_ownership(
+    allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip('websockets')
+    socket = ScriptedSocket()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', AsyncMock(return_value=socket))
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        model = websocket_model(client)
+        wrapped = DBOSModel(
+            model,
+            step_name_prefix='outside_websocket_scope',
+            step_config={},
+            get_event_stream_handler=lambda: None,
+        )
+        async with wrapped._run_scope():  # pyright: ignore[reportPrivateUsage]
+            response = await model.request([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
+            assert response.text == 'ready'
+            assert socket.close_count == 0
+    assert len(socket.sent) == 1
+    assert socket.close_count == 1
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_dbos_workflow_agent_scope_owns_responses_websocket(
+    allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """A workflow-owned agent outlives its steps, which can borrow its loop-local socket."""
+    pytest.importorskip('websockets')
+    socket = ScriptedSocket(
+        responses=deque(
+            [
+                text_events('first', 'resp_dbos_first', store=False),
+                text_events('second', 'resp_dbos_second', store=False),
+            ]
+        )
+    )
+    connect = AsyncMock(return_value=socket)
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        model = websocket_model(client)
+        agent = Agent(model, name='dbos_websocket_owner', capabilities=[DBOSDurability()])
+
+        @DBOS.workflow()
+        async def run_agent() -> str:
+            async with agent:
+                first = await agent.run('first')
+                if stream:
+                    async with agent.run_stream('second', message_history=first.all_messages()) as result:
+                        output = await result.get_output()
+                else:
+                    output = (await agent.run('second', message_history=first.all_messages())).output
+                assert socket.close_count == 0
+                return output
+
+        assert await run_agent() == 'second'
+
+        @DBOS.workflow()
+        async def run_unowned() -> str:
+            return (await agent.run('no outer owner')).output
+
+        assert await run_unowned() == 'from HTTP'
+    assert connect.call_count == 1
+    assert len(socket.sent) == 2
+    assert socket.sent[1]['previous_response_id'] == 'resp_dbos_first'
+    assert socket.close_count == 1
+    assert model._websocket.states == {}  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_dbos_agent_rejects_a_workspace_in_its_workflow(dbos: DBOS, tmp_path: Path) -> None:

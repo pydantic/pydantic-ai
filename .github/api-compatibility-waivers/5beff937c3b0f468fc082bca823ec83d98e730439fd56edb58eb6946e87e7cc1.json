@@ -1,0 +1,5 @@
+{
+  "against": "v2.64.0",
+  "reason": "clai2's `repo_context` now walks every ancestor of the workspace by default, as Claude Code does; its type is unchanged. Set `walk_up` to `false` to scan only the workspace.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+}

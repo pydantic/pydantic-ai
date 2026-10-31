@@ -1610,8 +1610,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        message_history, usage, conversation_id = _agent_graph.resolve_conversation(
-            conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
+        message_history, usage, conversation_id, conversation_revision, conversation_unsaved, conversation_unchecked = (
+            _agent_graph.resolve_conversation(
+                conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
+            )
         )
 
         if infer_name and self.name is None:
@@ -1623,6 +1625,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
+            conversation_revision=conversation_revision,
+            conversation_unsaved=conversation_unsaved,
+            conversation_unchecked=conversation_unchecked,
             run_id=run_id,
             model=model,
             instructions=instructions,
@@ -1650,6 +1655,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        conversation_revision: str | None = None,
+        conversation_unsaved: list[_messages.ModelMessage] | None = None,
+        conversation_unchecked: bool = False,
         run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -1810,6 +1818,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 message_history,
                 default=bootstrap_capability.get_default_conversation_id(resolved_run_id),
             ),
+            conversation_revision=conversation_revision,
+            conversation_unsaved=conversation_unsaved,
+            conversation_unchecked=conversation_unchecked,
         )
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
@@ -5088,6 +5099,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # when this run is on another event loop. A durable run sends its requests from the engine's
                 # activities, steps or tasks instead, and a Temporal workflow's event loop isn't theirs.
                 self.model._refresh_http_client()  # pyright: ignore[reportPrivateUsage]
+                # The run holds the connections the model opens on demand without entering it, which would close the
+                # provider's HTTP client when the run ends.
+                await stack.enter_async_context(self.model._run_scope())  # pyright: ignore[reportPrivateUsage]
 
             async def _finalize_result(result: AgentRunResult[Any]) -> None:
                 self.usage_limits.check_cost(result.usage)
