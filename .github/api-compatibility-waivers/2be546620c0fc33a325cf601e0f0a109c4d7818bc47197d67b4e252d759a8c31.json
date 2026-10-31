@@ -1,0 +1,5 @@
+{
+  "against": "v2.64.0",
+  "reason": "clai2's `repo_context` now inlines nested instruction files by default, matching `RepoContext`; its type is unchanged. Set `nested_inject` to `\"pointer\"` to keep the old behavior.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+}

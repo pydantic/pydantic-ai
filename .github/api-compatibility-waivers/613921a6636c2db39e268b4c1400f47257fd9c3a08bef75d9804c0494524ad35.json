@@ -1,0 +1,5 @@
+{
+  "against": "v2.64.0",
+  "reason": "clai2 `RepoContextSettings.nested_traversal` now defaults to `True` (nested instruction files on, as in `Coder`); its type is unchanged and the description is the one v2.64.0 shipped.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+}
