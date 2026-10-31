@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any, Literal, TypeAlias, assert_never, cast
 
@@ -86,6 +87,21 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
 
 
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
+
+
+def provisions_code_execution(tools: Sequence[BetaToolUnionParam]) -> bool:
+    """Whether Anthropic gives a request with these tools a code execution container.
+
+    A `code_execution_*` tool does, and so does a `20260209` web tool, whose `allowed_callers` defaults to code
+    execution. Tools are matched by wire type, since a function tool can have any name.
+    """
+    for tool in tools:
+        tool_type = tool.get('type')
+        if tool_type and (
+            tool_type.startswith('code_execution_') or tool_type in ('web_search_20260209', 'web_fetch_20260209')
+        ):
+            return True
+    return False
 
 
 def build_custom_tool_search_replay_blocks(
