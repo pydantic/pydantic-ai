@@ -411,6 +411,74 @@ def test_session_routes(make_fleet: MakeFleet) -> None:
         messages(socket, until=kind('turn_ended', session=q))
 
 
+def test_archiving_closes_an_idle_session_no_browser_shows(make_fleet: MakeFleet) -> None:
+    """An idle session opened earlier closes as it is archived; one a browser shows, or one running, is refused."""
+    gate: list[Gate] = []
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gate.append(Gate(portal, 'c'))
+        return {'c': gate[0].agent()}
+
+    fleet = make_fleet(agents)
+    a = fleet.launch.session.conversation_id
+    b = fleet.new('b')
+    c = fleet.new('c')
+    with fleet.socket() as socket:
+        connected(socket)
+        watch(socket, b)
+        messages(socket, until=snapshot_of(b))
+        fleet.post(f'/api/sessions/{b}/input', {'text': 'hi'})
+        messages(socket, until=kind('turn_ended', session=b))
+        refused = fleet.post('/api/sessions/archive', {'ids': [b]})
+        assert (refused.status_code, 'is open in another live session' in refused.json()['detail']) == (400, True)
+        refused = fleet.post('/api/sessions/archive', {'ids': [a]})
+        assert (refused.status_code, 'current session cannot be archived' in refused.json()['detail']) == (400, True)
+        fleet.post(f'/api/sessions/{c}/input', {'text': 'go'})
+        fleet.portal.call(gate[0].started.wait)
+        watch(socket, a)
+        messages(socket, until=snapshot_of(a))
+        assert fleet.post('/api/sessions/archive', {'ids': [b]}).status_code == 204
+        assert b not in [session.conversation.conversation_id for session in fleet.service.live.listing()]
+        saved = fleet.portal.call(lambda: fleet.launch.process.conversations.get(conversation_id=b))
+        assert saved.summary.archived_at is not None
+        assert fleet.post('/api/sessions/archive', {'ids': [c]}).status_code == 400, 'a running session stays'
+        fleet.portal.call(gate[0].release.set)
+
+
+def test_archiving_keeps_a_session_whose_background_fork_runs(make_fleet: MakeFleet) -> None:
+    """An unshown session with no turn running stays live while its `/fork` runs, so archiving it is refused."""
+    gate: list[Gate] = []
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gate.append(Gate(portal, 'b'))
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            if any(isinstance(part, UserPromptPart) and part.content == 'slow' for part in messages[-1].parts):
+                gate[0].started.set()
+                await gate[0].release.wait()
+            yield 'ok'
+
+        return {'b': Agent(FunctionModel(stream_function=stream), deps_type=type(None))}
+
+    fleet = make_fleet(agents)
+    a = fleet.launch.session.conversation_id
+    b = fleet.new('b')
+    session_b = fleet.service.session(b).session
+    with fleet.socket() as socket:
+        connected(socket)
+        watch(socket, b)
+        fleet.post(f'/api/sessions/{b}/input', {'text': 'hi'})
+        messages(socket, until=kind('turn_ended', session=b))
+        fleet.post(f'/api/sessions/{b}/input', {'text': '/fork slow'})
+        fleet.portal.call(gate[0].started.wait)
+        watch(socket, a)
+        messages(socket, until=snapshot_of(a))
+        assert fleet.post('/api/sessions/archive', {'ids': [b]}).status_code == 400
+        assert session_b in fleet.service.live.listing()
+        assert [fork.status for fork in session_b.forks] == ['running']
+        fleet.portal.call(gate[0].release.set)
+
+
 def test_open_makes_a_saved_session_live_once(make_fleet: MakeFleet) -> None:
     """Opening a saved session resumes it in its own folder, once; the legacy routes then drive it."""
     fleet = make_fleet()
