@@ -188,6 +188,17 @@ signalled, which does not stop the command.
 """
 
 
+def _parse_status(text: str | None) -> tuple[bool, int | None]:
+    """`(running, exit_code)` from the text of `status.json`; no or unreadable text counts as running."""
+    try:
+        exit_code = json.loads(text)['exit_code'] if text is not None else None
+    except (ValueError, KeyError, TypeError):
+        exit_code = None
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+        return True, None
+    return False, exit_code
+
+
 @dataclass(kw_only=True)
 class Job:
     """One detached command and the files that describe it inside the workspace."""
@@ -309,14 +320,34 @@ class Job:
 
     async def status(self) -> tuple[bool, int | None]:
         """`(running, exit_code)`; a job whose status is not yet published counts as running."""
+        return _parse_status(await self.status_text())
+
+    async def wait(self, timeout: float) -> tuple[bool, int | None] | None:
+        """`status()` once the job exits or `timeout` seconds pass, polling with a backoff.
+
+        `None` when the job is gone: a job from `launch` or `attach` has published its status and
+        its handle, so when neither can be read its directory was removed by `cleanup` and it will
+        never exit. Waiting on it would only run out the clock.
+        """
+        status = await self._observe()
+        if timeout > 0:
+            interval = POLL_MIN
+            with anyio.move_on_after(timeout) as scope:
+                while status is not None and status[0]:
+                    await anyio.sleep(interval)
+                    status = await self._observe()
+                    interval = min(interval * 2, POLL_MAX)
+            if scope.cancel_called:
+                # The poll the deadline cut short, or an exit just before it, is not in `status` yet.
+                status = await self._observe()
+        return status
+
+    async def _observe(self) -> tuple[bool, int | None] | None:
+        """`status()`, or `None` when the job's directory is gone rather than its status unpublished."""
         text = await self.status_text()
-        try:
-            exit_code = json.loads(text)['exit_code'] if text is not None else None
-        except (ValueError, KeyError, TypeError):
-            exit_code = None
-        if isinstance(exit_code, bool) or not isinstance(exit_code, int):
-            return True, None
-        return False, exit_code
+        if text is None and await Job.attach(self.workspace, self.directory, combined=self.combined) is None:
+            return None
+        return _parse_status(text)
 
     async def size(self, path: str) -> int:
         try:
