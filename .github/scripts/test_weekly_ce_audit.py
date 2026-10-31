@@ -163,7 +163,7 @@ def test_policy_validation_ignores_configured_clean_filter(repository: tuple[Pat
     subprocess.run(['git', '-C', str(root), 'diff', '--quiet', source, '--'], check=True)
     assert marker.exists()
     marker.unlink()
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(ValueError, match='Reviewer workspace must remain at the immutable policy source'):
         validate_policy_checkout(root, source, root / '.ce-audit')
     assert not marker.exists()
     assert validate_edits(root, source, inventory(root, source)) == ['AGENTS.md']
@@ -191,9 +191,18 @@ def test_policy_validation_ignores_external_diff(repository: tuple[Path, str]):
         marker.unlink()
     else:
         assert result.returncode == 1
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(ValueError, match='Reviewer workspace must remain at the immutable policy source'):
         validate_policy_checkout(root, source, root / '.ce-audit')
     assert not marker.exists()
+
+
+def test_policy_validation_preserves_git_failures(repository: tuple[Path, str]):
+    """Keep fatal Git errors distinct from a changed reviewer workspace."""
+    root, source = repository
+    (root / '.git/index').write_bytes(b'invalid index')
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        validate_policy_checkout(root, source, root / '.ce-audit')
+    assert error.value.returncode == 128
 
 
 def test_receipt_reconciles_canonical_report_only_and_paged_reads(repository: tuple[Path, str]):
@@ -434,7 +443,10 @@ def test_preflight_writes_noop_before_inference(
         ],
     )
     main()
-    assert json.loads(sink.read_text()) == {'type': 'noop', 'message': 'Existing weekly CE audit PR #123'}
+    assert json.loads(sink.read_text()) == {
+        'type': 'noop',
+        'message': 'Existing weekly agent instructions audit PR #123',
+    }
 
 
 def test_selected_branch_cannot_bypass_boundary_by_switching_checkout(repository: tuple[Path, str]):

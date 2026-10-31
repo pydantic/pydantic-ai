@@ -274,7 +274,12 @@ def validate_policy_checkout(root: Path, source: str, directory: Path) -> None:
     """Reject candidate instructions in the reviewer's stable checkout or bundle ancestors."""
     if git(root, 'rev-parse', 'HEAD').decode().strip() != source:
         raise ValueError('Reviewer workspace must remain at the immutable policy source')
-    git(root, 'diff', '--no-ext-diff', '--no-textconv', '--quiet', source, '--')
+    try:
+        git(root, 'diff', '--no-ext-diff', '--no-textconv', '--quiet', source, '--')
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 1:
+            raise
+        raise ValueError('Reviewer workspace must remain at the immutable policy source') from error
     for parent in (directory, directory / 'review'):
         if any((parent / name).exists() for name in ('AGENTS.md', 'CLAUDE.md')):
             raise ValueError('Review bundle must not introduce instruction overlays')
@@ -498,7 +503,10 @@ def main() -> None:
                 args.safe_outputs.parent.mkdir(parents=True, exist_ok=True)
                 with args.safe_outputs.open('a') as stream:
                     stream.write(
-                        json.dumps({'type': 'noop', 'message': f'Existing weekly CE audit PR #{number}'}) + '\n'
+                        json.dumps(
+                            {'type': 'noop', 'message': f'Existing weekly agent instructions audit PR #{number}'}
+                        )
+                        + '\n'
                     )
         return
     paths = validate_edits(args.root, args.source, entries)
@@ -526,7 +534,7 @@ def main() -> None:
                 raise ValueError('Receipt findings must contain text')
             findings.append(finding)
     summary: list[str] = [
-        '# Weekly CE audit coverage',
+        '# Weekly agent instructions audit coverage',
         f'Source: `{args.source}`',
         f'Reported canonical coverage: {"incomplete" if unread else "complete"}.',
         'A receipt attests reads; structural validation does not prove comprehension.',
