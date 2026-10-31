@@ -18,7 +18,7 @@ from pydantic import BaseModel, JsonValue, ValidationError
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness.browser_use._model import RunChatModel, resolve_chat_model
+from pydantic_ai_harness.browser_use._model import RunChatModel, host_budget, host_budget_exhausted, resolve_chat_model
 from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 
 try:
@@ -554,6 +554,25 @@ def default_browser_agent(request: BrowserTask) -> BrowserAgent:
     )
 
 
+async def _never_stop() -> bool:
+    return False
+
+
+def _stop_on_exhausted_budget(agent: BrowserAgent) -> None:
+    """Make a browser-use agent stop once the host's usage limit is hit, keeping any stop callback it has.
+
+    browser-use counts a refused model call as one more failed step and keeps driving the browser
+    until `max_failures`; its stop callback ends the run cleanly at the next step instead.
+    """
+    if isinstance(agent, _BrowserUseAgent):
+        previous = agent.register_should_stop_callback or _never_stop
+
+        async def should_stop() -> bool:
+            return host_budget_exhausted() or await previous()
+
+        agent.register_should_stop_callback = should_stop
+
+
 def _disable_browser_use_telemetry(agent: BrowserAgent) -> None:
     """Replace a browser-use agent's telemetry client with a no-op; other agents are left alone."""
     if isinstance(agent, _BrowserUseAgent):
@@ -695,6 +714,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
             # Applied here rather than in `default_browser_agent`, so a custom factory
             # that builds a real browser-use agent gets the same policy.
             _disable_browser_use_telemetry(agent)
+        _stop_on_exhausted_budget(agent)
         return await agent.run(max_steps=self._max_steps)
 
     def _render_result(self, history: BrowserAgentHistory) -> str:
@@ -762,11 +782,15 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         # Resolved per call rather than cached: the run's model can differ between runs
         # (`agent.run(model=...)`, `agent.override(model=...)`) while the toolset is shared.
         llm = self._llm if self._llm is not None else RunChatModel(ctx)
-        if self._session_scope == 'call':
-            history = await self._run_in_fresh_session(task, llm)
-        else:
-            await self._retry_pending_cleanup()
-            history = await self._run_in_shared_session(task, llm)
+        with host_budget(ctx) as budget:
+            if self._session_scope == 'call':
+                history = await self._run_in_fresh_session(task, llm)
+            else:
+                await self._retry_pending_cleanup()
+                history = await self._run_in_shared_session(task, llm)
+        if budget.exceeded is not None:
+            # browser-use swallows the error and carries on to a result; the host run must stop instead.
+            raise budget.exceeded
         return self._render_result(history)
 
     def _redact_json(self, value: JsonValue) -> JsonValue:
