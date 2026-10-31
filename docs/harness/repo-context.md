@@ -66,12 +66,16 @@ only the working directory is scanned.
 If several repositories symlink their instruction files into a shared directory,
 authorize that directory with
 `RepoContext(autoload_symlink_roots=('/opt/agent-context',))`. This keyword-only
-option defaults to empty, which skips links outside the directory being scanned.
-Each resolved target must be inside a resolved authorized root. The option only
+option defaults to empty, which skips links outside the directory being scanned
+when the backend resolves symlinks. Each resolved target must be inside a resolved
+authorized root when a nonempty allowlist is used. The option only
 affects autoload: it does not scan the shared directory, extend the walk-up, or
 change inventory or nested traversal. The workspace backend needs native realpath
 support (`SupportsRealpath`) or command execution (`SupportsCommands`) to resolve
-links; otherwise the run raises `UserError`.
+links; a nonempty `autoload_symlink_roots` raises `UserError` without either.
+With neither protocol, `Workspace.realpath` only normalizes path strings, so
+scans with the empty default cannot enforce symlink containment. Use symlink-free
+storage or a backend that resolves symlinks.
 
 An external link keeps its scanned entry's label, such as `../AGENTS.md`, because
 that directory defines where the instructions apply. Same-directory links keep
@@ -90,8 +94,10 @@ With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'
 
 ### 3. Nested-on-traversal (off by default)
 
-When the model lists or reads a directory, surface that directory's
-`CLAUDE.md`/`AGENTS.md`. This strategy subscribes to `FileReadEvent` and
+When the model lists a directory or reads a file in it, surface the
+`CLAUDE.md`/`AGENTS.md` of that directory and of every directory between it and
+the working directory, shallowest first: reading `packages/foo/src/x.py` also
+surfaces `packages/foo/AGENTS.md`. This strategy subscribes to `FileReadEvent` and
 `DirectoryListedEvent`, so it receives normalized, containment-checked paths
 instead of inspecting raw tool arguments. It remains opt-in:
 
@@ -116,10 +122,16 @@ result = agent.run_sync('List the source directory.')
 
 `nested_inject='pointer'` (default) enqueues a one-line note pointing at the
 file; `'contents'` enqueues the file body. The note reaches message history
-before the next model request. Each directory is surfaced at most once per run.
-Same-directory instruction symlinks are named after their targets. External
-instruction symlinks are skipped, even when `autoload_symlink_roots` authorizes
-their targets for autoload.
+before the next model request. A directory counts as surfaced while its note
+is still in the conversation: a later run of the same conversation doesn't
+repeat it, and once compaction summarizes the note away, the next traversal
+surfaces it again. The working directory's files are not surfaced again when
+the walk-up already loaded them. Every part of a note carries
+`{'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': ...}`
+in its `metadata`, which is how `RepoContext` and compaction recognize it.
+Same-directory instruction symlinks are named after their targets. Where the
+backend resolves symlinks, external instruction symlinks are skipped, even when
+`autoload_symlink_roots` authorizes their targets for autoload.
 
 With nested traversal on, the instructions also tell the model how instruction
 files relate: each applies to its own directory and everything below it, the

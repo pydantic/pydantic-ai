@@ -535,8 +535,10 @@ files beneath it. See
 [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
 for resolution, labels, and backend requirements.
 
-`nested_traversal=True` surfaces a directory's instruction file when `FileSystem` reads or lists it
-(`nested_inject='pointer'` or `'contents'`), in the message tail so the cached prefix stays stable.
+`nested_traversal=True` surfaces the instruction files between the working directory and whatever
+`FileSystem` reads or lists, shallowest first, each directory once while its note is in the
+conversation (`nested_inject='pointer'` or `'contents'`), in the message tail so the cached prefix
+stays stable.
 With it on, the instructions also gain one static sentence: each instruction file applies to its
 subtree, the deeper file wins, and the user's direct instructions win over all of them.
 

@@ -1321,7 +1321,7 @@ workspace and its default filenames. Its settings:
 |---|---|---|
 | `walk_up` | `false` | also load instruction files from the workspace up to `repo_context.walk_up_root`, inclusive (home by default); a non-ancestor root scans only the workspace |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
-| `nested_traversal` | `false` | when the agent reads or lists a directory, tell it about that directory's instruction file |
+| `nested_traversal` | `false` | when the agent reads a file in, or lists, a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
 | `nested_inject` | `"pointer"` | what nested traversal adds: `"pointer"` (one line naming the file) or `"contents"` |
 
 Two global user-only `/set` keys control autoload boundaries, not plugin JSON fields:
