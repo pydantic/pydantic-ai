@@ -287,6 +287,7 @@ jobs:
           .github/scripts/test_triage_telemetry.py
           .github/scripts/test_feature_digest.py
           .github/scripts/test_agentic_workflow_guard.py
+          .github/scripts/test_weekly_ce_audit.py
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
