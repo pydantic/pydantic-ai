@@ -1,86 +1,75 @@
 # Plan: Vertex server deadline vs. client timeout (refs #11902)
 
-Draft plan for discussion before implementation, per CONTRIBUTING ("Propose a plan before building").
-Every mechanism below was verified against `main` @ `6f3585c` and the `google-genai` SDK source on 2026-10-31.
+Discussion-only plan; no runtime implementation is included.
+The original analysis used `main` at `6f3585c`. This revision corrects the timeout assumptions and
+records [the maintainer's direction](https://github.com/pydantic/pydantic-ai/issues/11902#issuecomment-6536168151).
+The maintainers will implement the fix themselves.
 
-## Verified mechanism chain
+## Verified mechanism
 
-1. `BaseGoogleProvider._build_http_options` pins `HttpOptions.timeout` from the client's read timeout:
-   `timeout_seconds = http_client.timeout.read or DEFAULT_HTTP_TIMEOUT` (`pydantic_ai_slim/pydantic_ai/providers/google.py:106`).
-   This pin is deliberate — without it `google-genai` passes `timeout=None` into httpx per request, which disables
-   the client's own timeout entirely (the SDK treats an explicit `None` as "no timeout", not "use the client default").
-2. The SDK turns that single value into **both** the local request timeout and the server deadline:
-   `_api_client.py` calls `populate_server_timeout_header(headers, timeout_in_seconds)`, which sets
-   `X-Server-Timeout: ceil(seconds)` unless the header is already present, and builds
-   `HttpRequest(..., timeout=timeout_in_seconds)`. There is no public way to send one without the other.
-3. Consequences for a user-supplied client:
-   - client built without `timeout=` → httpx default `read=5.0` → **every Vertex generation is aborted server-side
-     after 5 s** with a 504 `DEADLINE_EXCEEDED`, even though the caller never asked for a deadline;
-   - client built with `read=None` (no read timeout wanted) → falls back to `DEFAULT_HTTP_TIMEOUT` (600 s) as the
-     server deadline — also not what the caller asked for;
-   - a provider-owned client is fine: `_create_google_httpx2_client` uses a 20-minute timeout
-     (`providers/google.py:33-39`, Google's own long-decode recommendation).
-4. The 504 `DEADLINE_EXCEEDED` is classified as a provider fault. `ModelServerError` deliberately covers
-   "an HTTP 500, 502 or 504, or a gRPC INTERNAL or DEADLINE_EXCEEDED sent by the provider" (`exceptions.py`), and the
-   default `fallback_on` includes it — so a deadline the caller's own client imposed triggers model fallback.
-   Logfire works around this with its own checks (per the issue).
+1. `BaseGoogleProvider._build_http_options` pins `HttpOptions.timeout` from
+   `http_client.timeout.read or DEFAULT_HTTP_TIMEOUT` (`providers/google.py`). This preserves the
+   anti-hang fix: leaving the SDK timeout unset passes `timeout=None` to httpx for individual requests,
+   disabling the client's timeout rather than inheriting it.
+2. In the pinned `google-genai` 2.30.0, the SDK uses `HttpOptions.timeout` for both the local request
+   timeout and, by default, `X-Server-Timeout`. However, `populate_server_timeout_header` preserves an
+   already supplied `X-Server-Timeout` header. Independent values do not require an SDK change.
+3. These two limits have different meanings: an httpx read timeout limits the wait between received
+   chunks, while the server header requests a deadline for the whole request. Deriving the latter
+   from the former can also constrain streams with an explicit 600-second read timeout; this is
+   wider than detecting httpx's default five seconds.
+4. The current provider maps a default five-second client to a five-second header; `read=None`
+   becomes `DEFAULT_HTTP_TIMEOUT` (600 seconds). Provider-owned clients use a 20-minute timeout.
+   Header construction is verified offline. Whether Vertex or Gemini actually aborts a request,
+   and the precise response, still needs live confirmation. A local read timeout can fire first;
+   the original claim that every generation aborts server-side with a 504 was too strong.
+5. A returned 504 `DEADLINE_EXCEEDED` currently falls under `ModelServerError`. Changing that
+   classification to `ModelTimeoutError` alone would not suppress default fallback:
+   `FallbackModel` defaults to `(ModelAPIError,)`, which also includes `ModelTimeoutError` through
+   `ModelConnectionError`. A different fallback policy would be a separate behavior decision.
 
-## Two separable problems
+## Offline request verification
 
-- **P1 — the caller's client timeout becomes a server deadline.** Behavior bug, affects user-supplied clients only.
-- **P2 — `DEADLINE_EXCEEDED` attribution.** Today it is always a provider fault; when the deadline came from the
-  request itself it should read as a timeout, so fallback logic doesn't misfire.
+Executed on 2026-10-31 with the PR's locked `google-genai==2.30.0`, httpx 0.28.1, an actual SDK
+`aio.models.generate_content` call and `httpx.MockTransport`. The supplied client had a five-second
+timeout. The transport captured the outgoing header and request timeout extensions; no Google
+service or credentials were used.
 
-## Options
+| `HttpOptions.timeout` (ms) | Pre-set header | Observed `X-Server-Timeout` | Effective request read timeout |
+| --- | --- | --- | --- |
+| 5000 | absent | 5 | 5 seconds |
+| 1200000 | absent | 1200 | 1200 seconds |
+| 5000 | 1200 | 1200 | 5 seconds |
 
-### P1
+The second row disproves the original substitute-and-warn proposal's claim that replacing the SDK
+timeout preserves the caller's local five-second timeout. The third confirms the pre-set-header
+mechanism. These checks verify SDK request construction, not live server enforcement or elapsed time.
 
-- **A′. Substitute our default when the user's client has an untouched httpx default.** If the user-supplied client's
-  read timeout equals the httpx default (5.0 s) — or is `None` — use the provider-owned default for `HttpOptions.timeout`
-  and emit a one-time warning explaining the server-deadline side effect. Smallest diff, reversible, testable; the
-  caveat is that we cannot distinguish "default 5 s" from "explicitly chose 5 s", so those callers lose their 5 s
-  server deadline (they keep it locally) and get a warning telling them how to opt back in.
-- **B. Decouple local timeout from server deadline.** Only pin `HttpOptions.timeout` when we own the client; for
-  user-supplied clients, enforce their timeout at the transport layer (wrap the client so the read timeout is applied
-  locally while `HttpOptions.timeout` stays unset). Cleanest semantics — "a user-supplied client means the caller owns
-  timeouts" — but it is a bigger change and likely wants an upstream `google-genai` ask, since the SDK couples the two
-  values in `populate_server_timeout_header`.
-- **C. Explicit knob.** e.g. `GoogleProvider(..., server_deadline=...)` or an `HttpOptions` passthrough. Most honest
-  API, but adds public surface for something that arguably shouldn't exist by default. (Maintainer call.)
+## Maintainer direction
 
-### P2
+Per [Douwe's comment](https://github.com/pydantic/pydantic-ai/issues/11902#issuecomment-6536168151):
 
-- **D. Attribute the deadline where possible**, modeled on the xAI provider's existing approach:
-  `models/xai.py::_grpc_transport_error` maps a gRPC `DEADLINE_EXCEEDED` whose `details` match
-  `_GRPC_CLIENT_DEADLINE` to `ModelTimeoutError`, and leaves server-sent errors alone. For Vertex the response body
-  carries `DEADLINE_EXCEEDED` with the deadline duration, but the response does not echo *which* value produced it,
-  so attribution needs a rule (e.g. only when the request carried `X-Server-Timeout` derived from the client, which
-  requires tracking what we sent).
-- **Or keep P2 as-is for now.** After P1, a `DEADLINE_EXCEEDED` from a provider-owned client means a genuine
-  provider-side or 20-minute deadline, which the current `ModelServerError` classification handles correctly.
+- Keep pinning the local timeout to preserve the anti-hang behavior, and set the server deadline
+  separately. The proposed server value is likely Google's 20-minute long-decode figure, or the
+  read timeout if it is longer; the exact policy belongs to the implementation and its tests.
+- Warn about a supplied client with the default five-second timeout, without overriding it: an
+  explicit five-second choice is indistinguishable from the default.
+- Preserve the distinction between a locally raised `ModelTimeoutError` and a 504 received from
+  the server. Changing default fallback policy is not implied by that distinction.
 
-## Recommendation
+This supersedes the original recommendation to substitute `HttpOptions.timeout` and seek an
+upstream SDK change. No new public server-deadline parameter is proposed by this revision.
 
-A′ for P1 as the first step (small, testable, safe to revert), plus filing the upstream `google-genai` decoupling
-request that option B needs. Revisit P2 (option D) once A′ is in and there is real Vertex evidence to design the
-attribution rule against — guessing the rule without traffic data is how we'd end up misclassifying genuine provider
-outages.
+## Verification needed for the implementation
 
-## Open questions for maintainers
-
-1. Blast radius: the SDK sends `X-Server-Timeout` on every request through this client path — does the Gemini API
-   (developer AI Studio endpoint) honor it, or only Vertex? This decides whether P1 changes affect Gemini API users.
-2. Is "user-supplied client ⇒ the caller owns timeouts" the intended contract across providers? If yes, B is the
-   right end state; if not, C's knob is needed.
-3. For callers who set `read=None` (currently → 600 s server deadline): intended, or should they get no server
-   deadline at all?
-
-## Test plan (what I can verify locally)
-
-- Unit tests with a stubbed `google-genai` client capturing the `HttpOptions` we pass: provider-owned client → 20 min;
-  user client with default timeout → substituted default + warning (A′); user client with explicit `timeout=600` →
-  600 s preserved unchanged; user client with `read=None` → documented behavior from the open question.
-- If P2/D proceeds: mapping tests mirroring `models/xai.py`'s details-based discrimination, plus a regression that
-  genuine server 504s still classify as `ModelServerError`.
-- I do not have Vertex access: end-to-end header behavior and the 504 body shape come from the SDK source and the
-  issue report, and need confirmation from someone with a Vertex project.
+- Capture both outgoing headers and effective transport timeouts, rather than only `HttpOptions`.
+  Cover provider-owned clients and supplied clients with default, explicit five-second, 600-second,
+  longer-than-20-minute and `read=None` settings. Preserve the intentional finite timeout pin and
+  check existing Gemini timeout constraints before choosing defaults.
+- Check that streaming can continue beyond one read-timeout interval when chunks keep arriving,
+  subject to the separately selected server deadline.
+- Check local timeout classification and genuine server 504 classification separately. Do not
+  assert that either bypasses fallback without an explicit fallback-policy change and regression test.
+- Confirm live Vertex and Gemini API handling of `X-Server-Timeout` with someone who has access.
+  Server enforcement, deadline defaults, and real 504 response bodies are not established by this
+  offline probe. The maintainer has requested help obtaining this evidence.
