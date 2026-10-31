@@ -7,6 +7,7 @@ import logging
 
 import acp
 import pytest
+from acp import schema
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent
@@ -71,7 +72,9 @@ async def test_turn_persists_history_and_transcript() -> None:
     assert len(stored.messages) > 0  # the model exchange was persisted
     # The transcript is the user's prompt (recorded for replay, never sent live -- the client
     # renders its own prompt) followed by exactly what the client was shown this turn.
-    assert stored.updates == [acp.update_user_message_text('hi'), *client.updates]
+    # `usage_update` is fire-and-forget, never recorded in the transcript.
+    persisted_updates = [update for update in client.updates if not isinstance(update, schema.UsageUpdate)]
+    assert stored.updates == [acp.update_user_message_text('hi'), *persisted_updates]
 
 
 async def test_load_session_restores_history_and_replays_transcript() -> None:
@@ -82,7 +85,8 @@ async def test_load_session_restores_history_and_replays_transcript() -> None:
     await adapter.initialize(protocol_version=1)
     session = await adapter.new_session(cwd='/ws')
     await adapter.prompt(prompt=[acp.text_block('hi')], session_id=session.session_id)
-    shown = list(first.updates)
+    # `usage_update` is fire-and-forget, so the live client saw it but `session/load` does not replay it.
+    shown = [update for update in first.updates if not isinstance(update, schema.UsageUpdate)]
 
     # Reopen the session on a fresh connection, as an editor would after a restart.
     reopened = RecordingClient()
