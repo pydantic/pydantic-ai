@@ -253,7 +253,7 @@ def frame(tag: FramingTag | RegisteredTag, body: str, /, **attrs: str | None) ->
 
 
 def frame_tags(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> tuple[str, str]:
-    """The opening and closing tags of a [`frame`][pydantic_ai._framing.frame], for a body that isn't a string, such as a file."""
+    """The opening and closing tags of a [`frame`][pydantic_ai._framing.frame], for a non-string body like a file."""
     return open_tag(tag, **attrs), close_tag(tag)
 
 
@@ -292,7 +292,8 @@ def second_model_prompt() -> Generator[None]:
 
     A judge or summarizer gets the conversation it reports on as one flattened prompt, and its output is a verdict
     or a summary rather than a reply. Its requests get no lookalike notes and no announcement: a note would
-    describe the transcript's quoted content to a model that isn't talking to its authors. Pydantic AI Harness wraps its judge and summarizer runs in this.
+    describe the transcript's quoted content to a model that isn't talking to its authors. Pydantic AI Harness wraps
+    its judge and summarizer runs in this.
     """
     token = _in_second_model_prompt.set(True)
     try:
@@ -401,7 +402,7 @@ _lookalike_frame: re.Pattern[str] = _lookalike_pattern(_system_voice_tags)
 
 
 def add_system_voice_tag(name: str) -> None:
-    """Have text that opens the tag `name`, or its diff `<{name}_diff>`, count as a lookalike frame, as a `<system>` opener does.
+    """Count text that opens the tag `name` or its diff `<{name}_diff>` as a lookalike frame, like a `<system>` opener.
 
     The single source of the tags the lookalike check looks for: core's `system`, `context` and `context_diff`,
     plus the tag of any instruction or system-voice capability part that declares its own. Adding a tag twice is a
@@ -448,9 +449,9 @@ _CONFUSABLES: Final = str.maketrans(
 def _comparable(text: str) -> str:
     """`text` as a model reads it, for matching lookalike frames.
 
-    Entity-encoded `<`s and `>`s are decoded, compatibility forms folded (NFKC, which also turns a full-width `<` into `<`),
-    invisible format characters (Unicode category `Cf`, such as a zero-width space or joiner) dropped, and Cyrillic
-    and Greek look-alikes of the letters in the system-voice tags folded to Latin.
+    Entity-encoded `<`s and `>`s are decoded, compatibility forms folded (NFKC, which also turns a full-width `<` into
+    `<`), invisible format characters (Unicode category `Cf`, such as a zero-width space or joiner) dropped, and
+    Cyrillic and Greek look-alikes of the letters in the system-voice tags folded to Latin.
     """
     text = unicodedata.normalize('NFKC', _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text)))
     return ''.join(char for char in text if unicodedata.category(char) != 'Cf').translate(_CONFUSABLES)
