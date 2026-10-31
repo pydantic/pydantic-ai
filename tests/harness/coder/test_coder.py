@@ -115,6 +115,7 @@ def test_coder_members_and_parameters() -> None:
         'ClearToolResults',
         '_BoundToolOutputs',
         'RepairToolArguments',
+        '_ReportExhaustedRetries',
         '_DefaultCaching',
         '_SetToolStrict',
     ]
