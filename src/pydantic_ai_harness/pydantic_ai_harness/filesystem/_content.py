@@ -69,7 +69,7 @@ def is_binary(data: bytes, sample_size: int = 8192) -> bool:
 
 
 MAX_MEDIA_BYTES = 5_000_000
-"""Largest image or PDF `read_file` returns as file content.
+"""Largest file `read_file` returns as file content.
 
 File content bypasses the textual `max_read_chars` budget, and 5 MB is the
 strictest per-image limit among mainstream providers. A larger file gets the
@@ -81,17 +81,24 @@ _HEX_PREVIEW_BYTES = 64
 
 
 def sniff_media_type(data: bytes) -> str | None:
-    """The media type of an image or PDF, read from its leading bytes.
+    """The media type of a file `read_file` returns as itself, read from its leading bytes.
 
-    Only images and PDFs are returned as files: most models with file input take
-    them, while audio, video and office documents fail on several default
-    providers until a model can report which files it accepts. The bytes decide,
-    not the extension, so a misnamed file is not sent under the wrong media type.
+    Images, PDFs and common video formats are returned as files. A model that can't
+    take one gets a note in its place, or a description from `FileUnderstanding`,
+    rather than a failed request. Other formats stay described, because some models
+    whose profile admits the kind reject them: Gemini takes no Office documents or
+    Matroska, and OpenAI-compatible endpoints report audio input for models that
+    reject it. The bytes decide, not the extension, so a misnamed file is not sent
+    under the wrong media type.
 
     The image signatures duplicate core's `image_media_type_from_bytes`
     (`pydantic_ai/images/_media_type.py`), which is private and covers neither GIF
     nor PDF. Change both together until core offers a public helper to use here.
     """
+    return _image_or_pdf(data) or _video(data)
+
+
+def _image_or_pdf(data: bytes) -> str | None:
     if data.startswith(b'\x89PNG\r\n\x1a\n'):
         return 'image/png'
     if data.startswith(b'\xff\xd8\xff'):
@@ -102,6 +109,35 @@ def sniff_media_type(data: bytes) -> str | None:
         return 'image/webp'
     if data.startswith(b'%PDF-'):
         return 'application/pdf'
+    return None
+
+
+_MP4_VIDEO_BRANDS = frozenset(
+    {b'isom', b'iso2', b'iso3', b'iso4', b'iso5', b'iso6', b'mp41', b'mp42', b'avc1', b'M4V ', b'M4VH', b'M4VP'}
+    | {b'dash', b'mmp4', b'MSNV', b'f4v ', b'NDAS'}
+)
+"""`ftyp` brands of MP4 video."""
+
+
+def _video(data: bytes) -> str | None:
+    if data[4:8] == b'ftyp':
+        brand = data[8:12]
+        if brand == b'qt  ':
+            return 'video/quicktime'
+        if brand.startswith((b'3gp', b'3g2')):
+            return 'video/3gpp'
+        # Only known video brands: HEIF and AVIF photos, JPEG 2000, camera raw files and MPEG-4 audio share the
+        # `ftyp` box.
+        return 'video/mp4' if brand in _MP4_VIDEO_BRANDS else None
+    if data.startswith(b'\x1a\x45\xdf\xa3') and b'webm' in data[:64]:
+        # WebM's EBML header names it in its DocType, near the start; Matroska, which shares the header, isn't sent.
+        return 'video/webm'
+    if data.startswith(b'FLV\x01'):
+        return 'video/x-flv'
+    if data.startswith((b'\x00\x00\x01\xba', b'\x00\x00\x01\xb3')):
+        return 'video/mpeg'
+    if data.startswith(b'\x30\x26\xb2\x75\x8e\x66\xcf\x11\xa6\xd9\x00\xaa\x00\x62\xce\x6c'):
+        return 'video/x-ms-wmv'
     return None
 
 
