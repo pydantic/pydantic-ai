@@ -16,7 +16,7 @@ from pydantic_clai2.runtime import codex_sessions
 from pydantic_clai2.runtime.session import supports_local_workspace
 
 
-def _global_instruction_files() -> list[str]:
+def _global_instruction_files() -> list[Path]:
     """User-global instruction files, broadest first, where Claude Code and Codex keep them.
 
     Codex's is under `CODEX_HOME` when that is set, as Codex reads it. `~/.pydantic-ai/AGENTS.md` is the
@@ -24,9 +24,9 @@ def _global_instruction_files() -> list[str]:
     """
     home = Path.home()
     return [
-        str(home / '.claude' / 'CLAUDE.md'),
-        str(codex_sessions.home() / 'AGENTS.md'),
-        str(home / '.pydantic-ai' / 'AGENTS.md'),
+        home / '.claude' / 'CLAUDE.md',
+        codex_sessions.home() / 'AGENTS.md',
+        home / '.pydantic-ai' / 'AGENTS.md',
     ]
 
 

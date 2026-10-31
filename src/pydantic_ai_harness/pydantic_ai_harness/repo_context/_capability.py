@@ -188,7 +188,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     An entry of any kind counts, so a linked worktree's `.git` file marks its root like a `.git` directory.
     """
 
-    global_files: Sequence[str] = ()
+    global_files: Sequence[str | Path] = ()
     """Workspace paths of user-global instruction files, such as `/home/user/.codex/AGENTS.md`.
 
     They load before the walk-up, so they have the lowest precedence, and a missing one is skipped. A
@@ -218,7 +218,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         if isinstance(self.root_markers, str):
             raise UserError(f'`RepoContext.root_markers` takes a sequence of names, e.g. `({self.root_markers!r},)`.')
-        if isinstance(self.global_files, str):
+        if isinstance(self.global_files, str | Path):
             raise UserError(f'`RepoContext.global_files` takes a sequence of paths, e.g. `({self.global_files!r},)`.')
         for path in self.global_files:
             workspace_path(Path(path))
