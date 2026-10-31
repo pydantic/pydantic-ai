@@ -3,6 +3,7 @@
 import pickle
 import traceback
 from collections.abc import Callable
+from copy import copy, deepcopy
 from typing import Any
 
 import httpx2
@@ -34,16 +35,47 @@ from pydantic_ai.exceptions import (
     ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
+    SkipModelRequest,
+    SkipToolExecution,
+    SkipToolValidation,
     ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import RetryFeedbackPart, RetryInfo, ToolReturnPart
+from pydantic_ai.messages import ModelResponse, RetryFeedbackPart, RetryInfo, TextPart, ToolReturnPart
 
 from ._inline_snapshot import snapshot
 from .conftest import legacy_retry_prompt_part
+
+
+def pickle_exception(exc: Exception) -> Exception:
+    return pickle.loads(pickle.dumps(exc))
+
+
+@pytest.mark.parametrize(
+    'copy_exception',
+    [copy, deepcopy, pickle_exception],
+    ids=['copy', 'deepcopy', 'pickle'],
+)
+def test_skip_exceptions_round_trip(copy_exception: Callable[[Exception], Exception]):
+    """Test reconstruction directly: these exceptions are control flow, not provider responses."""
+    response = ModelResponse(parts=[TextPart('cached response')])
+    model_skip = copy_exception(SkipModelRequest(response))
+    assert isinstance(model_skip, SkipModelRequest)
+    assert model_skip.response == response
+    assert model_skip.args == ()
+
+    validation_skip = copy_exception(SkipToolValidation({'value': 1}))
+    assert isinstance(validation_skip, SkipToolValidation)
+    assert validation_skip.validated_args == {'value': 1}
+    assert validation_skip.args == ()
+
+    execution_skip = copy_exception(SkipToolExecution({'ok': True}))
+    assert isinstance(execution_skip, SkipToolExecution)
+    assert execution_skip.result == {'ok': True}
+    assert execution_skip.args == ()
 
 
 def test_tool_failed_pydantic_schema_accepts_instance() -> None:
