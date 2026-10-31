@@ -36,8 +36,10 @@ def escape_tool_result_body(text: str) -> str:
 
 
 def make_background_completion(text: str, task_id: str) -> TextContent:
-    """The completion as a frame the framework wrote, so the lookalike check leaves it alone."""
-    return framework_frame_text(text, metadata={'origin': _BACKGROUND_RESULT_ORIGIN, 'tool_call_id': task_id})
+    """The completion as a frame the framework wrote around the tool's output, which the lookalike check still reads."""
+    return framework_frame_text(
+        text, metadata={'origin': _BACKGROUND_RESULT_ORIGIN, 'tool_call_id': task_id}, author='tool'
+    )
 
 
 def get_background_completion(content: str | Sequence[UserContent] | None) -> TextContent | None:

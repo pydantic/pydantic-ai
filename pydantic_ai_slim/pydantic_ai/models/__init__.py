@@ -52,7 +52,7 @@ from .._file_input import (
     unsupported_file_input,
     unsupported_file_note,
 )
-from .._framework_frame import is_framework_frame
+from .._framework_frame import framework_frame_body, is_framework_frame
 from .._framing import (
     CONVERSATION_SUMMARY_TAG,
     SYSTEM_TAG,
@@ -2047,6 +2047,18 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             tool_indices = [i for i, part in enumerate(parts) if _is_tool_result_part(part)]
             at = tool_indices[0] if precede_tool_results else tool_indices[-1] + 1
             parts[at:at] = tool_notes
+        if not inline_system:
+            # Without a system role, the request's own mid-conversation system prompts become `<system>` blocks in the
+            # same user turn as a note and the text it describes. Ahead of both, they still read as the application's:
+            # after them, Claude Sonnet 5.5 on Bedrock followed a genuine change 0/8 times, ahead of them 7/8.
+            note_ids = {id(n) for n in [*tool_notes, *(p for p in framed if isinstance(p, SystemPromptPart))]}
+            first_note = next((i for i, p in enumerate(parts) if id(p) in note_ids), None)
+            if first_note is not None:
+                rest = parts[first_note:]
+                genuine = [p for p in rest if isinstance(p, SystemPromptPart) and id(p) not in note_ids]
+                if genuine:
+                    genuine_ids = {id(p) for p in genuine}
+                    parts = [*parts[:first_note], *genuine, *(p for p in rest if id(p) not in genuine_ids)]
         framed_ids = {id(part) for part in framed}
         frame_at = next((i for i, part in enumerate(parts) if id(part) in framed_ids), None)
         if frame_at is None:
@@ -4003,6 +4015,16 @@ def _lookalike_sources(part: ModelRequestPart) -> list[LookalikeSource]:
             sources.append('user')
         if any(resembles_frame(text) for item in items if (text := _text_file_content(item)) is not None):
             sources.append('file')
+        # A frame a capability wrote around someone else's text, such as a background tool's output: the frame's own
+        # tags aren't a lookalike, the body can hold one.
+        for item in items:
+            if (
+                is_framework_frame(item)
+                and (body := framework_frame_body(item)) is not None
+                and body[0] not in sources
+                and resembles_frame(body[1])
+            ):
+                sources.append(body[0])
         return sources
     if isinstance(part, ToolReturnPart):
         texts = (
@@ -4016,7 +4038,7 @@ def _lookalike_sources(part: ModelRequestPart) -> list[LookalikeSource]:
 def _text_of(item: object) -> str | None:
     if isinstance(item, str):
         return item
-    # A frame a capability wrote, marked by `framework_frame_text`, isn't text that resembles one.
+    # A frame a capability wrote, marked by `framework_frame_text`, is checked for its body's author alone.
     if isinstance(item, TextContent) and not is_framework_frame(item):
         return item.content
     return None
