@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from griffe import (
     Docstring,
     DocstringSectionKind,
+    DocstringSectionParameters,
     GoogleOptions,
     NumpyOptions,
     SphinxOptions,
@@ -57,9 +58,14 @@ def doc_descriptions(
     )
     sections = docstring.parse()
 
-    params = {}
-    if parameters := next((p for p in sections if p.kind == DocstringSectionKind.parameters), None):
-        params = {p.name.lstrip('*'): p.description for p in parameters.value}
+    # Google `Keyword Args:` and `Other Parameters:` sections, and numpy `Other Parameters`, parse to a subclass of
+    # the parameters section (see https://www.sphinx-doc.org/en/master/usage/extensions/napoleon.html#docstring-sections).
+    # A parameter described in more than one section keeps its first description.
+    params: dict[str, str] = {}
+    for section in sections:
+        if isinstance(section, DocstringSectionParameters):
+            for param in section.value:
+                params.setdefault(param.name.lstrip('*'), param.description)
 
     main_desc = ''
     if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
