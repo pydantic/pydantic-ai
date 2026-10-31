@@ -9,9 +9,9 @@ from pydantic_ai.messages import TextContent, UserContent
 
 # Interim, deliberately generic rule: a harness capability that tags what it adds, user-channel data or a system
 # prompt, with an `origin` under this prefix is covered by one check, without per-capability code. Today that is
-# `BackgroundTools` results, `TrajectoryJudge` feedback, `SubAgents` task reports, `Memory` snapshots and
-# `SystemReminders` reminders. The rule is temporary: once core provenance (`CapabilityPart`) lands, recognize that
-# instead of this metadata convention.
+# `BackgroundTools` results, `TrajectoryJudge` feedback, `SubAgents` task reports, `Memory` snapshots,
+# `SystemReminders` reminders and `RepoContext` nested notes. The rule is temporary: once core provenance
+# (`CapabilityPart`) lands, recognize that instead of this metadata convention.
 HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
 """The prefix of the `origin` metadata harness capabilities put on user-channel data and system prompts they add."""
 

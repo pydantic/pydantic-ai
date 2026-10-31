@@ -1,0 +1,5 @@
+{
+  "against": "v2.59.0",
+  "reason": "Harness 0.x: `GitHub.description`'s default text changes so it no longer says the tools can make changes when `read_only=True`; code that reads or passes `description` keeps working.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10815"
+}

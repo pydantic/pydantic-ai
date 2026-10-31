@@ -125,7 +125,7 @@ def test_coder_members_and_parameters() -> None:
     assert (shell.env, shell.denied_env_patterns) == (None, [])
     guidance = next(item for item in coder.capabilities if isinstance(item, Capability))
     instructions = str(guidance.get_instructions())
-    for text in ('Custom instructions', 'DRY', 'YAGNI', 'SOLID', 'Zen of Python'):
+    for text in ('Custom instructions', 'DRY', 'YAGNI', 'Zen of Python', "Match the surrounding code's style"):
         assert text in instructions
     delegation = next(item for item in coder.capabilities if isinstance(item, SubAgents))
     assert (delegation.include_self, delegation.agents, delegation.agent_folders) == (True, (), None)

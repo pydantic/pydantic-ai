@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, cast
 
 import pydantic_core
 from pydantic_core import core_schema
@@ -56,6 +56,7 @@ __all__ = (
     'ModelConnectionError',
     'TransportPhase',
     'ModelTimeoutError',
+    'RequestTimeoutSetting',
     'ModelContextWindowExceededError',
     'ModelRequestRejectedError',
     'ModelAuthenticationError',
@@ -747,6 +748,10 @@ TransportPhase = Literal['pool', 'connect', 'write', 'read']
 """The stage of a request at which a transport failure happened; see
 [`ModelConnectionError.phase`][pydantic_ai.exceptions.ModelConnectionError.phase]."""
 
+RequestTimeoutSetting: TypeAlias = Literal['request_timeout', 'first_event_timeout']
+"""The model setting whose timeout ran out; see
+[`ModelRequestTimeout.setting`][pydantic_ai.exceptions.ModelRequestTimeout.setting]."""
+
 
 class ModelConnectionError(ModelAPIError):
     """Raised when the request could not reach the provider or its response could not be read.
@@ -863,23 +868,50 @@ class ModelNotFoundError(ModelRequestRejectedError):
 
 
 class ModelRequestTimeout(ModelAPIError):
-    """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout].
+    """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout], or a streamed one produced no output within its [`ModelSettings['first_event_timeout']`][pydantic_ai.settings.ModelSettings.first_event_timeout].
 
-    The deadline is enforced by Pydantic AI around one request to one model, so it covers every attempt the
-    provider SDK and HTTP transport make, and reading a streamed response through its last chunk. Under a
-    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each model gets a deadline of its own, and its
+    The deadlines are enforced by Pydantic AI around one request to one model, so they cover every attempt the
+    provider SDK and HTTP transport make, and `request_timeout`'s covers reading a streamed response through its last
+    chunk. [`setting`][pydantic_ai.exceptions.ModelRequestTimeout.setting] says which one ran out. Under a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each model gets deadlines of its own, and its
     default `fallback_on` falls back on this error.
     """
 
     timeout: float
-    """The `request_timeout` that ran out, in seconds."""
+    """The timeout that ran out, in seconds."""
 
-    def __init__(self, model_name: str, timeout: float):
+    setting: RequestTimeoutSetting
+    """The model setting whose timeout ran out."""
+
+    def __init__(
+        self,
+        model_name: str,
+        timeout: float,
+        *,
+        setting: RequestTimeoutSetting = 'request_timeout',
+    ):
         self.timeout = timeout
-        super().__init__(model_name, f'Request to model {model_name!r} timed out after {timeout:g} seconds')
+        self.setting = setting
+        super().__init__(model_name, _request_timeout_message(model_name, timeout, setting))
 
     def __reduce__(self) -> tuple[Any, ...]:
         return self.__class__, (self.model_name, self.timeout), self.__getstate__()
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {**super().__getstate__(), 'setting': self.setting}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        super().__setstate__(state)
+        self.setting = state.get('setting', 'request_timeout')
+        self.message = _request_timeout_message(self.model_name, self.timeout, self.setting)
+        self.args = (self.message,)
+
+
+def _request_timeout_message(model_name: str, timeout: float, setting: RequestTimeoutSetting) -> str:
+    message = f'Request to model {model_name!r} timed out after {timeout:g} seconds'
+    if setting == 'first_event_timeout':
+        message += ' without producing any output'
+    return message
 
 
 class ModelHTTPError(ModelAPIError):
@@ -1309,7 +1341,10 @@ class UnsupportedSettingWarning(UserWarning):
     ignored, so the same settings work across models. This warning covers the ones whose absence changes what
     the request guarantees: `timeout`, `max_retries`, `stop_sequences`, `parallel_tool_calls=False` (when the
     request has function tools), `extra_headers` and `extra_body`. Each field's `Supported by:` list names the
-    models that honor it.
+    models that honor it. An OpenAI Responses model also emits it when
+    [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport] asks
+    for a WebSocket it can't open, such as on an unsupported setup or after a failed connection, and sends the
+    request over HTTP.
 
     It's emitted wherever the setting comes from: the run, the agent, a capability or the model's own `settings`. The
     `stop_sequences` of an MCP server's sampling request don't warn, since the server chose them, not you.
