@@ -385,12 +385,6 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11581"
     },
     {
-      "against": "v2.63.0",
-      "fingerprint": "5ff49f847ec611730c961f160251093b8dc4d1f52ca4fa6de53e5b0311709997",
-      "reason": "Adds `ModelFallback` (#11679) and `NativeCompaction` to `CAPABILITY_TYPES` so agent specs can declare them; every existing entry is unchanged. Against v2.63.0 the two additions are one change, so this replaces #11679's waiver for `ModelFallback` alone.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11581"
-    },
-    {
       "against": "v2.61.0",
       "fingerprint": "c2655ed50f60d9b53296c110ea2267134651aa29c6bfa49d4beb7ffcceede410",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `forks=forks`.",
