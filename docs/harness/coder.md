@@ -130,7 +130,7 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
    so a repeated correctable mistake does not end a long run.
 3. [`Shell`](shell.md)`(denied_commands=[], allow_interactive=True, default_timeout=270, tools=['shell'])`.
 4. [`RepoContext`](repo-context.md)`(walk_up='repo_root')`
-   for repository instructions: the `CLAUDE.md`/`AGENTS.md` files from the repository root down to the working directory
+   for repository instructions: the instruction file of each directory (`AGENTS.md`, else `CLAUDE.md`) from the repository root down to the working directory
    at run start, and those in subdirectories when the agent first reads or lists something under them. A
    subdirectory file that would take the conversation past `RepoContext`'s default budget of 32,000 characters of inlined
    instructions is surfaced as a pointer instead.
