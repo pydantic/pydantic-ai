@@ -62,7 +62,7 @@ To change effort between runs or steps, change the unified `thinking` setting (a
 
 ## Configure Prompt Caching Across Providers
 
-Add `Caching()` to every agent you build unless its requests are one-offs that are never repeated. Some models cache nothing unless the request asks them to: Anthropic (incl. Bedrock, Vertex and Foundry clients), Bedrock Claude and Nova, and OpenRouter's Anthropic routes. Without it, those agents pay full price for their instructions, tools and conversation on every request. OpenAI GPT-5.6+ and OpenRouter's Gemini 2.5+ routes cache implicitly and take explicit breakpoints on top: on GPT-5.6, cache options too; on OpenRouter's Gemini routes, one breakpoint on the system instructions only. Caching isn't on by default only because it changes cost. Use the `Caching` capability (or the unified `cache` model setting) rather than provider-specific settings like `anthropic_cache` or `bedrock_cache_*`.
+Add `Caching()` to every agent you build unless its requests are one-offs that are never repeated. Some models cache nothing unless the request asks them to: Anthropic (incl. Bedrock, Vertex and Foundry clients), Bedrock Claude and Nova, and OpenRouter's Anthropic routes. Without it, those agents pay full price for their instructions, tools and conversation on every request. OpenAI GPT-5.6+ and OpenRouter's Gemini 2.5+ routes cache implicitly and take explicit breakpoints (and on GPT-5.6, cache options) on top. Caching isn't on by default only because it changes cost. Use the `Caching` capability (or the unified `cache` model setting) rather than provider-specific settings like `anthropic_cache` or `bedrock_cache_*`.
 
 ```python
 from pydantic_ai import Agent
@@ -80,7 +80,7 @@ Accepted values (the same for `model_settings={'cache': ...}`):
 
 Cache writes cost more than uncached input (1.25x; 2x for Anthropic's 1-hour cache) while reads cost about 0.1x, so a 1.25x write breaks even after one read and Anthropic's 2x 1-hour write after two; one-shot requests only pay the premium.
 
-Provider-specific cache settings (`anthropic_cache*`, `bedrock_cache_*`, `openrouter_cache_*`, `openai_prompt_cache_options`, `openai_cache_instructions`) take precedence: if any is set, even to `False`, the unified value is ignored entirely. Providers that cache implicitly (OpenAI before GPT-5.6, Gemini, DeepSeek, xAI) ignore the setting. Explicit `CachePoint` markers in the message history still work alongside it, except on providers that ignore them (Google, OpenRouter's Gemini routes, and OpenAI before GPT-5.6). OpenRouter's Gemini routes also ignore `openrouter_cache_messages`.
+Provider-specific cache settings (`anthropic_cache*`, `bedrock_cache_*`, `openrouter_cache_*`, `openai_prompt_cache_options`, `openai_cache_instructions`) take precedence: if any is set, even to `False`, the unified value is ignored entirely. Providers that cache implicitly (OpenAI before GPT-5.6, Gemini, DeepSeek, xAI) ignore the setting. Explicit `CachePoint` markers in the message history still work alongside it, except on providers that ignore them (Google, and OpenAI before GPT-5.6).
 
 To debug a low cache hit rate:
 

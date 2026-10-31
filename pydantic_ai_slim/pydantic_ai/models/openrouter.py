@@ -250,6 +250,48 @@ _CACHE_SETTINGS_KEYS = (
 )
 
 
+def _move_trailing_cache_control(openai_messages: list[chat.ChatCompletionMessageParam]) -> None:
+    """Keep only the last conversation breakpoint, and move it off the end of the request and off tool results.
+
+    For profiles without `openrouter_supports_trailing_cache_control` (Gemini routes), where OpenRouter uses only the
+    last breakpoint across message content. A breakpoint on the final content part of the request makes OpenRouter's
+    Google Vertex endpoint bill the prompt twice, and one on a tool message isn't used, so the breakpoint goes on the
+    last part of the closest earlier user or assistant message. A breakpoint inside the final user message, with
+    content after it, stays where it is. System message breakpoints aren't touched.
+    """
+    carriers: list[tuple[int, int, dict[str, Any]]] = [
+        (message_index, part_index, part)
+        for message_index, message in enumerate(openai_messages)
+        if message['role'] not in ('system', 'developer') and isinstance(content := message.get('content'), list)
+        for part_index, part in enumerate(cast(list[dict[str, Any]], content))
+        if 'cache_control' in part
+    ]
+    if not carriers:
+        return
+    message_index, part_index, last_carrier = carriers[-1]
+    cache_control = last_carrier['cache_control']
+    for _, _, part in carriers:
+        del part['cache_control']
+
+    message = openai_messages[message_index]
+    is_request_end = (
+        message_index == len(openai_messages) - 1 and part_index == len(cast(list[Any], message['content'])) - 1
+    )
+    if message['role'] != 'tool' and not is_request_end:
+        last_carrier['cache_control'] = cache_control
+        return
+    for earlier in reversed(openai_messages[:message_index]):
+        content = earlier.get('content')
+        if earlier['role'] in ('user', 'assistant') and content:
+            if isinstance(content, str):
+                cast(dict[str, Any], earlier)['content'] = [
+                    {'type': 'text', 'text': content, 'cache_control': cache_control}
+                ]
+            else:
+                cast(dict[str, Any], content[-1])['cache_control'] = cache_control
+            return
+
+
 def _chat_message_block_count(message: chat.ChatCompletionMessageParam) -> int:
     """How many content blocks a mapped chat message becomes downstream: its content parts plus its tool calls."""
     content = message.get('content')
@@ -383,11 +425,14 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     in the final message (regardless of role), which is useful for Anthropic's prefix-based
     caching in multi-turn conversations. In tool-use flows, this may target a tool result
     message rather than a user message, which is correct for prefix caching.
-    Ignored for downstream providers that do not support explicit cache control on messages,
-    including Gemini: with a breakpoint on a later message, OpenRouter's Google Vertex endpoint bills
-    the cached prefix and then the same prefix again, so use `openrouter_cache_instructions` there.
+    Ignored for downstream providers that do not support explicit cache control.
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
-    TTL is only included for Anthropic models.
+    TTL is only included for Anthropic models; Gemini does not support explicit TTL.
+
+    Note: OpenRouter uses only the last breakpoint across normal message content for
+    Gemini caching, and on Gemini routes it goes on the closest user or assistant message
+    before the final one: a breakpoint at the very end of the request makes OpenRouter's
+    Google Vertex endpoint bill the prompt twice, and one on a tool result isn't used.
 
     See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
     """
@@ -834,19 +879,12 @@ class OpenRouterModel(OpenAIChatModel):
             supports_cache_control = self._resolved_profile.get('openrouter_supports_cache_control', False)
             return (
                 settings.get('openrouter_cache_instructions') if supports_cache_control else None,
-                settings.get('openrouter_cache_messages') if self._supports_message_cache_control else None,
+                settings.get('openrouter_cache_messages') if supports_cache_control else None,
                 settings.get('openrouter_cache_tool_definitions')
                 if self._resolved_profile.get('openrouter_supports_tool_cache', False)
                 else None,
             )
         return super()._effective_cache_settings(merged_settings)
-
-    @property
-    def _supports_message_cache_control(self) -> bool:
-        """Whether `cache_control` can go on conversation messages, not only on the system message."""
-        return self._resolved_profile.get('openrouter_supports_cache_control', False) and self._resolved_profile.get(
-            'openrouter_supports_message_cache_control', True
-        )
 
     def _build_cache_control(self, ttl: OpenRouterCacheTTL = '5m') -> dict[str, str]:
         """Build a `cache_control` dict for the downstream provider.
@@ -936,10 +974,10 @@ class OpenRouterModel(OpenAIChatModel):
         """Add `cache_control` to the last content part.
 
         Mirrors the Anthropic model's `_add_cache_control_to_last_param` behavior for
-        OpenRouter's Anthropic routes (Gemini routes take no message breakpoints). A `CachePoint`
-        that opens a user message has nothing in that message to attach to, so it goes on an empty
-        placeholder part that `_move_leading_cache_controls` moves onto the previous user message
-        once the whole request is mapped.
+        OpenRouter's Anthropic and Gemini providers. A `CachePoint` that opens a user message has
+        nothing in that message to attach to, so it goes on an empty placeholder part that
+        `_move_leading_cache_controls` moves onto the previous user message once the whole
+        request is mapped.
 
         See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
 
@@ -948,7 +986,7 @@ class OpenRouterModel(OpenAIChatModel):
             ttl: The cache time-to-live (`True` -> `'5m'`, or `'5m'`/`'1h'`).
                 Ignored for providers that don't support it.
         """
-        if not self._supports_message_cache_control:
+        if not self._resolved_profile.get('openrouter_supports_cache_control', False):
             return
 
         if not params:
@@ -1295,7 +1333,7 @@ class OpenRouterModel(OpenAIChatModel):
             openai_messages
             and model_settings
             and (cache_messages := model_settings.get('openrouter_cache_messages'))
-            and self._supports_message_cache_control
+            and self._resolved_profile.get('openrouter_supports_cache_control', False)
         ):
             # OpenRouter may route to Amazon Bedrock, whose lookback for the previous request's cache entry
             # spans only about 20 content blocks, so after a wide turn the end of the previous request gets a
@@ -1322,6 +1360,9 @@ class OpenRouterModel(OpenAIChatModel):
             self._add_cache_control_to_instructions(
                 openai_messages, messages, model_request_parameters, cache_instructions
             )
+
+        if not self._resolved_profile.get('openrouter_supports_trailing_cache_control', True):
+            _move_trailing_cache_control(openai_messages)
 
         has_tool_cache_point = bool(
             model_settings

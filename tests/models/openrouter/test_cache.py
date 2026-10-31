@@ -538,7 +538,7 @@ If you meant to share a document, data, or details, please paste it again and I'
 async def test_openrouter_cache_point_gemini_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
-    """A `CachePoint` in a user message is ignored on a Gemini route, where only the system message is cached."""
+    """Test CachePoint with Gemini model via OpenRouter using real API."""
     model = openrouter_model('google/gemini-2.5-flash')
     agent = Agent(model)
 
@@ -566,17 +566,13 @@ async def test_openrouter_cache_point_gemini_e2e(
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    TextPart(
-                        content='The repeated phrase "Here is some important context to cache" emphasizes the need to store this information for future reference.'
-                    )
-                ],
+                parts=[TextPart(content='The provided text repeatedly emphasizes the importance of caching context.')],
                 usage=RequestUsage(
-                    input_tokens=169,
-                    output_tokens=23,
+                    input_tokens=168,
+                    output_tokens=11,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.0001082'),
+                    cost=Decimal('0.0000779'),
                 ),
                 model_name='google/gemini-2.5-flash',
                 model_id='openrouter:google/gemini-2.5-flash',
@@ -585,16 +581,15 @@ async def test_openrouter_cache_point_gemini_e2e(
                 provider_url='https://openrouter.ai/api/v1',
                 provider_details={
                     'finish_reason': 'STOP',
-                    'downstream_provider': 'Google AI Studio',
-                    'cost': 0.0001082,
-                    'upstream_inference_cost': 0.0001082,
-                    'upstream_inference_prompt_cost': 5.07e-05,
-                    'upstream_inference_completions_cost': 5.75e-05,
+                    'downstream_provider': 'Google',
+                    'cost': 7.79e-05,
+                    'upstream_inference_cost': 7.79e-05,
+                    'upstream_inference_prompt_cost': 5.04e-05,
+                    'upstream_inference_completions_cost': 2.75e-05,
                     'is_byok': False,
-                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1793404234-NvYnwKtteaW9Xk9t0ivo',
+                provider_response_id='gen-1773009367-3zFFs0yQRvCe01Kda6ID',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -602,7 +597,12 @@ async def test_openrouter_cache_point_gemini_e2e(
         ]
     )
 
-    assert 'cache_control' not in json.dumps(single_request_body(vcr))
+    # Verify cache_control was in the request (without TTL for Gemini)
+    assert vcr is not None
+    request_body = single_request_body(vcr)
+    user_content = request_body['messages'][0]['content']
+    assert 'cache_control' in user_content[0]
+    assert user_content[0]['cache_control'] == {'type': 'ephemeral'}
 
 
 async def test_openrouter_cache_instructions_e2e(
@@ -910,17 +910,20 @@ async def test_openrouter_cache_instructions_gemini_real_api(
 async def test_openrouter_cache_gemini_does_not_double_prompt_tokens(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
-    """Unified `cache=True` on a Gemini route caches the instructions without billing the prompt twice.
+    """Unified `cache=True` on a Gemini route caches the conversation without billing the prompt twice.
 
-    With a `cache_control` on any message other than the system message, OpenRouter's Google Vertex endpoint
-    bills the cached prefix and then the same prefix again inline, doubling `prompt_tokens`. So only the system
-    message gets one.
+    With a `cache_control` on the final content part of the request, OpenRouter's Google Vertex endpoint bills the
+    cached prefix and then the same prefix again, doubling `prompt_tokens`. So the message breakpoint goes on the
+    closest earlier user or assistant message: none on the first request, the first answer on the second.
     """
     model = openrouter_model('google/gemini-3.5-flash-lite')
     instructions = (
-        'You are a specialized assistant that helps with distributed systems design. '
+        'You are a specialized assistant that helps with distributed systems operations. '
         'You have deep expertise in consensus protocols, CAP theorem, and eventual consistency. '
     ) * 250  # Above Gemini's minimum cacheable prompt size.
+    report = '\n'.join(
+        f'Incident {i}: node {i % 17} lost quorum for {i % 7 + 1} seconds during a leader election.' for i in range(200)
+    )
     agent = Agent(
         model,
         instructions=instructions,
@@ -931,19 +934,19 @@ async def test_openrouter_cache_gemini_does_not_double_prompt_tokens(
         ),
     )
 
-    result1 = await agent.run('Name one consensus protocol. Answer with the name only.')
-    result2 = await agent.run('Name another one. Answer with the name only.', message_history=result1.all_messages())
+    result1 = await agent.run(f'{report}\n\nWhich node lost quorum in incident 3? Answer with the number only.')
+    result2 = await agent.run('And in incident 4? Answer with the number only.', message_history=result1.all_messages())
 
     usage1, usage2 = result1.usage, result2.usage
-    assert (usage1.input_tokens, usage1.cache_write_tokens, usage1.cache_read_tokens) == snapshot((6827, 6817, 6817))
-    assert (usage2.input_tokens, usage2.cache_write_tokens, usage2.cache_read_tokens) == snapshot((6838, 0, 6817))
+    assert (usage1.input_tokens, usage1.cache_write_tokens, usage1.cache_read_tokens) == snapshot((11001, 6817, 6817))
+    assert (usage2.input_tokens, usage2.cache_write_tokens, usage2.cache_read_tokens) == snapshot((11014, 11003, 11003))
 
     # The role of each message carrying a breakpoint, per request.
     breakpoint_roles = [
         [message['role'] for message in request_json(request)['messages'] if 'cache_control' in json.dumps(message)]
         for request in vcr.requests
     ]
-    assert breakpoint_roles == snapshot([['system'], ['system']])
+    assert breakpoint_roles == snapshot([['system'], ['system', 'assistant']])
 
 
 async def test_openrouter_cache_streaming_e2e(
@@ -1154,6 +1157,70 @@ async def test_openrouter_cache_messages_marks_previous_request_after_wide_turn(
         0,
         len(mapped) - 1,
     ]
+
+
+def _gemini_breakpoints(mapped: list[Any]) -> list[tuple[str, str]]:
+    return [
+        (message['role'], part['text'])
+        for message in mapped
+        if isinstance(content := message.get('content'), list)
+        for part in cast(list[dict[str, Any]], content)
+        if 'cache_control' in part
+    ]
+
+
+async def test_openrouter_gemini_moves_the_message_breakpoint_off_the_request_end() -> None:
+    """On Gemini routes, the message breakpoint goes on the closest user or assistant message before the final one.
+
+    A breakpoint on the final content part of the request makes OpenRouter's Google Vertex endpoint bill the prompt
+    twice, and one on a tool result isn't used. OpenRouter uses only the last one, so earlier ones are dropped.
+    """
+    model = OpenRouterModel('google/gemini-3.8-flash', provider=OpenRouterProvider(api_key='test-key'))
+    settings = OpenRouterModelSettings(openrouter_cache_messages=True)
+    params = ModelRequestParameters()
+
+    first_turn: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Question one.')])]
+    mapped = await model._map_messages(first_turn, params, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert _gemini_breakpoints(mapped) == snapshot([])
+
+    second_turn: list[ModelMessage] = [
+        *first_turn,
+        ModelResponse(parts=[TextPart('Answer one.')]),
+        ModelRequest(parts=[UserPromptPart(content='Question two.')]),
+    ]
+    mapped = await model._map_messages(second_turn, params, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert _gemini_breakpoints(mapped) == snapshot([('assistant', 'Answer one.')])
+
+    calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
+    tool_turn: list[ModelMessage] = [
+        *second_turn,
+        ModelResponse(parts=calls),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in calls]),
+    ]
+    mapped = await model._map_messages(tool_turn, params, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert _gemini_breakpoints(mapped) == snapshot([('user', 'Question two.')])
+
+    multi_part: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Part one.', 'Part two.'])]),
+        *tool_turn[3:],
+    ]
+    mapped = await model._map_messages(multi_part, params, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert _gemini_breakpoints(mapped) == snapshot([('user', 'Part two.')])
+
+    # A `CachePoint` with content after it in the final message is kept; one at its end moves back.
+    inside: list[ModelMessage] = [
+        *second_turn[:2],
+        ModelRequest(parts=[UserPromptPart(content=['Document.', CachePoint(), 'Question two.'])]),
+    ]
+    mapped = await model._map_messages(inside, params)  # pyright: ignore[reportPrivateUsage]
+    assert _gemini_breakpoints(mapped) == snapshot([('user', 'Document.')])
+
+    at_end: list[ModelMessage] = [
+        *second_turn[:2],
+        ModelRequest(parts=[UserPromptPart(content=['Question two.', CachePoint()])]),
+    ]
+    mapped = await model._map_messages(at_end, params)  # pyright: ignore[reportPrivateUsage]
+    assert _gemini_breakpoints(mapped) == snapshot([('assistant', 'Answer one.')])
 
 
 def _done_mock_client() -> AsyncOpenAI:

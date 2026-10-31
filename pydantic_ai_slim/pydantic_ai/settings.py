@@ -667,8 +667,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock (Anthropic and Amazon Nova models only; as `bedrock_cache_instructions`,
       `bedrock_cache_tool_definitions` and `bedrock_cache_messages`)
     * OpenRouter (Anthropic and Gemini models only; as `openrouter_cache_instructions`,
-      `openrouter_cache_tool_definitions` and `openrouter_cache_messages`, which cache the
-      instructions only on Gemini)
+      `openrouter_cache_tool_definitions` and `openrouter_cache_messages`)
     * OpenAI (GPT-5.6 and later on the OpenAI API and the Azure OpenAI v1 API; as `openai_prompt_cache_options` and
       `openai_cache_instructions`)
     """
