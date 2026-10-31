@@ -15,6 +15,7 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -57,6 +58,7 @@ class VercelProvider(_OpenAISDKProvider):
             'openai': openai_model_profile,
             'vertex': google_model_profile,
             'xai': grok_model_profile,
+            'zai': zai_model_profile,
         }
 
         profile = None

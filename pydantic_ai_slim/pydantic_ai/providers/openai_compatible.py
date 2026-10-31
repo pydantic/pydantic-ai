@@ -19,6 +19,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -71,6 +72,7 @@ def _vendor_prefixed_model_profile(model_name: str) -> ModelProfile:
         'moonshotai': moonshotai_model_profile,
         'x-ai': grok_model_profile,
         'qwen': qwen_model_profile,
+        'zai-org': zai_model_profile,
     }
     profile = None
     if '/' in model_name:
