@@ -1,12 +1,15 @@
 from __future__ import annotations as _annotations
 
+import json
 from typing import Any
 
+import httpx2
 import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    ModelContextWindowExceededError,
     ModelRequest,
     ModelResponse,
     RequestUsage,
@@ -345,3 +348,51 @@ We need to provide answer in JSON format. Let's do that.\
             ),
         ]
     )
+
+
+# The recorded HTTP 400 response from Ollama Cloud when the prompt exceeds the model's context window.
+OLLAMA_CLOUD_CONTEXT_WINDOW_ERROR_BODY = {
+    'error': {
+        'message': 'prompt too long; exceeded max context length by 668997 tokens (ref: …)',
+        'type': 'invalid_request_error',
+        'param': None,
+        'code': None,
+    }
+}
+
+
+def _ollama_cloud_context_window_error_model() -> OllamaModel:
+    def handler(request: Any) -> Any:
+        return httpx2.Response(400, content=json.dumps(OLLAMA_CLOUD_CONTEXT_WINDOW_ERROR_BODY).encode())
+
+    return OllamaModel(
+        'gpt-oss:20b-cloud',
+        provider=OllamaProvider(
+            base_url=OLLAMA_CLOUD_BASE_URL,
+            api_key='test',
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+        ),
+    )
+
+
+async def test_context_window_exceeded_on_recorded_ollama_cloud_400(allow_model_requests: None) -> None:
+    agent = Agent(_ollama_cloud_context_window_error_model())
+
+    with pytest.raises(ModelContextWindowExceededError) as capture:
+        await agent.run('What is the capital of France?')
+
+    assert capture.value.status_code == 400
+    assert capture.value.provider_error_code is None
+    assert capture.value.provider_error_type == 'invalid_request_error'
+
+
+async def test_documented_precise_catch_handles_ollama_overflow(allow_model_requests: None) -> None:
+    agent = Agent(_ollama_cloud_context_window_error_model())
+
+    caught = False
+    try:
+        await agent.run('What is the capital of France?')
+    except ModelContextWindowExceededError:
+        caught = True
+
+    assert caught
