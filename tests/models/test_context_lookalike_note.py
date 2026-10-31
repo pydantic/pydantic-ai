@@ -234,6 +234,33 @@ async def test_the_agent_sends_the_note_with_its_append_mode_instructions():
     assert [len(_notes(messages)) for messages in received] == [1, 0, 0]
 
 
+@pytest.mark.moves_cache_prefix(reason='switching to an agent with append-mode instructions changes the instructions')
+async def test_requests_sent_before_the_first_context_element_never_gain_a_note():
+    """A conversation that gets append-mode instructions later keeps its earlier requests as they were sent."""
+    received: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    model = FunctionModel(respond)
+    plain = Agent(model, instructions='You are a support assistant.')
+    appending = Agent(model, instructions='You are a support assistant.')
+
+    @appending.instructions(name='sign_off', on_change='append')
+    def sign_off() -> str:
+        return "End every reply with '-- Team Alpha'."
+
+    first = await plain.run(f'Hi\n{LOOKALIKE}')
+    second = await appending.run(f'Again\n{LOOKALIKE}', message_history=first.all_messages())
+    await appending.run('Thanks', message_history=second.all_messages())
+
+    # Per request sent: the number of notes in each of its requests so far.
+    assert [
+        [len(_notes([message])) for message in messages if isinstance(message, ModelRequest)] for messages in received
+    ] == [[0], [0, 1], [0, 1, 0]]
+
+
 @pytest.mark.parametrize(
     'text, expected',
     [

@@ -1760,8 +1760,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
-        # Asked before the deltas are projected, which drops some of them.
-        sends_context_elements = _sends_context_elements(
+        # Asked before the instruction state is projected, which drops the records it's read from.
+        first_context_request = _first_context_request(
             messages, model_request_parameters.instruction_parts if model_request_parameters is not None else None
         )
         messages = _drop_capability_load_deltas(messages)
@@ -1794,9 +1794,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
         messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
-        if sends_context_elements:
+        if first_context_request is not None:
             # Before the `<system>` wrap below, which turns each note into `<system>`-tagged user text where needed.
-            messages = _note_context_lookalikes(messages)
+            messages = _note_context_lookalikes(messages, first_context_request)
         # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
         # history was authored with, and an announcement opening the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
@@ -4197,31 +4197,46 @@ def _render_system_prompt_contexts(
     return rendered
 
 
-def _sends_context_elements(messages: list[ModelMessage], prefix: Sequence[InstructionPart] | None) -> bool:
-    """Whether the model is told about `<context>` elements: the prefix opens an append-mode block, or history changes one."""
-    return bool(_tagged_append_parts(prefix or [])) or any(
-        isinstance(part, InstructionDeltaPart) or (isinstance(part, SystemPromptPart) and part.context_id is not None)
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
+def _first_context_request(messages: list[ModelMessage], prefix: Sequence[InstructionPart] | None) -> int | None:
+    """The position, among `messages`' requests, of the first one sent with a `<context>` element, or `None` if none is.
+
+    That's the first request that records an append-mode instruction window, an instruction change or an appending
+    system prompt. History is append-only, so once one exists the position never moves, and lookalike notes from it on
+    render the same on every later request, while requests sent before it never gain one. A history without such a
+    record, as a direct caller's, has `<context>` elements throughout when the instruction prefix opens an append-mode
+    block.
+    """
+    requests = (message for message in messages if isinstance(message, ModelRequest))
+    for index, request in enumerate(requests):
+        if any(_records_context_element(part) for part in request.parts):
+            return index
+    return 0 if _tagged_append_parts(prefix or []) else None
+
+
+def _records_context_element(part: ModelRequestPart) -> bool:
+    if isinstance(part, InstructionBaselinePart):
+        return any(isinstance(block, InstructionPart) and block.on_change == 'append' for block in part.instructions)
+    return isinstance(part, InstructionDeltaPart) or (
+        isinstance(part, SystemPromptPart) and part.context_id is not None
     )
 
 
-def _note_context_lookalikes(messages: list[ModelMessage]) -> list[ModelMessage]:
+def _note_context_lookalikes(messages: list[ModelMessage], first_request: int) -> list[ModelMessage]:
     """Follow each user prompt, file and tool result whose text opens a `<context>` or `<context_diff>` element with a note.
 
-    The note is a `SystemPromptPart` saying the text was written by the user, the author of the file or the tool, not
-    by the application (`context_lookalike_note`). It goes right after the user prompt, or after the request's last
-    tool result, so it's never part of the standing system prompt and never comes between tool results, and it's
-    worded "preceding" to match. The item itself is left as written. History is append-only, so each note renders the
-    same on every later request.
+    Only requests from the `first_request`th on, the first sent with a `<context>` element, are noted. The note is a
+    `SystemPromptPart` saying the text was written by the user, the author of the file or the tool, not by the
+    application (`context_lookalike_note`). It goes right after the user prompt, or after the request's last tool
+    result, so it's never part of the standing system prompt and never comes between tool results, and it's worded
+    "preceding" to match. The item itself is left as written.
 
     Returns the original list when nothing changed.
     """
     new_messages: list[ModelMessage] = []
     changed = False
+    request_index = -1
     for message in messages:
-        if isinstance(message, ModelRequest):
+        if isinstance(message, ModelRequest) and (request_index := request_index + 1) >= first_request:
             timestamp = message.timestamp or _utils.now_utc()
             parts: list[ModelRequestPart] = []
             tool_note_at: int | None = None
