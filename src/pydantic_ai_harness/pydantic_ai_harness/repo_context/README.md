@@ -172,7 +172,7 @@ RepoContext(
     walk_up=None,                   # None | 'repo_root' | 'all' -- how far above the working directory to look
     root_markers=('.git',),         # what marks the repository root for walk_up='repo_root'
     home_dir=None,                  # str | Path | None -- walk up to this workspace dir, inclusive
-    global_files=(),                # Sequence[str] -- user-global instruction files, loaded first
+    global_files=(),                # Sequence[str | Path] -- user-global instruction files, loaded first
     filenames=('AGENTS.md', 'CLAUDE.md'),  # one per directory: the first that exists
     autoload_instructions=True,     # Strategy 1
     expose_inventory_tool=False,    # Strategy 2
@@ -196,7 +196,7 @@ files once per run, so mid-run edits to those files are not reloaded.
 
 ## Upgrading
 
-`RepoContext()` now loads one instruction file per directory, `AGENTS.md` first and `CLAUDE.md` as the fallback, and surfaces nested instruction files by default, inlining up to 32,000 characters of their contents per conversation before surfacing the rest as pointers (`nested_max_chars=None` removes the cap). To keep the old behavior, pass `RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False)`; directories holding both files then load only `CLAUDE.md`, since one file per directory applies to any `filenames`. Durable runs started before the upgrade record fewer workspace calls than a new run makes, so let them finish or version the deployment first.
+`RepoContext()` now loads one instruction file per directory, `AGENTS.md` first and `CLAUDE.md` as the fallback, and surfaces nested instruction files by default, inlining up to 32,000 characters of their contents per conversation before surfacing the rest as pointers (`nested_max_chars=None` removes the cap). To get close to the old behavior, pass `RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False)`. It only approximates it: no setting loads both files from one directory any more, so a directory holding both loads only `CLAUDE.md`. Durable runs started before the upgrade record fewer workspace calls than a new run makes, so let them finish or version the deployment first.
 
 ## Further reading
 
