@@ -2301,9 +2301,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # Auto-detect: if thinking came from a custom field and from the same provider, use field mode
             # id='content' means it came from tags in content, not a custom field
             if include_method == 'auto':
-                # Check if thinking came from a custom field from the same provider
+                # An id is a native message field only when a custom field is configured and matches it, or,
+                # with no custom field configured, when it is one of the reasoning field names Chat APIs read
+                # (the same names the `_map_messages` backfill recognizes). Any other same-provider id, e.g.
+                # an `OpenAIResponsesModel` reasoning item id like `rs_...`, is not a field: render as tags.
                 custom_field = profile.get('openai_chat_thinking_field', None)
-                matches_custom_field = (not custom_field) or (item.id == custom_field)
+                if custom_field:
+                    matches_custom_field = item.id == custom_field
+                else:
+                    matches_custom_field = item.id in ('reasoning', 'reasoning_content')
 
                 if (
                     item.id
