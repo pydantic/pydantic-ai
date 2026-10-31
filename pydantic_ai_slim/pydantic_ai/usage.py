@@ -11,11 +11,17 @@ from typing import Annotated, Any, Literal, cast
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import SchemaSerializer, core_schema
+from typing_extensions import deprecated
 
 from . import _utils
 from ._gateway_cost import gateway_reported_cost
 from ._genai_prices import iter_provider_references
-from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning, UsageLimitUnavailableWarning
+from ._warnings import (
+    CostNotFoundWarning,
+    PydanticAIDeprecationWarning,
+    UsageExtractionFailedWarning,
+    UsageLimitUnavailableWarning,
+)
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -412,10 +418,11 @@ class RunUsage(UsageBase):
 
     This is what [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit] bounds. It can be
     lower than the number of requests sent to the provider: attempts a
-    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moved on from, the continuation requests that
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability moved on from, the continuation requests that
     complete a suspended response, and retries made by the provider SDK or HTTP transport aren't counted.
-    The tokens and cost of a response a `FallbackModel` rejected, and of continuation requests, are still added
-    to this usage. The attempts before a response are listed in its
+    The tokens and cost of a rejected response, and of continuation requests, are still added to this usage.
+    The attempts before a response are listed in its
     [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts].
     """
 
@@ -478,6 +485,18 @@ class RunUsage(UsageBase):
         new_usage.tool_calls = self.tool_calls - other.tool_calls
         new_usage.cost = self.cost - (other.cost or 0) if self.cost is not None and self.cost != other.cost else None
         return new_usage
+
+    @deprecated(
+        '`usage` is a property, not a method: use `.usage` instead of `.usage()`.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def __call__(self) -> RunUsage:
+        """Return this usage, so that V1-style `result.usage()` keeps working, with a deprecation warning.
+
+        Without this, the call raises `TypeError: 'RunUsage' object is not callable`, which code that wraps
+        its usage accounting in `except Exception` turns into silently zero usage.
+        """
+        return self
 
 
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:

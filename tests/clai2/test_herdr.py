@@ -280,7 +280,7 @@ async def test_context_percentage(recorded: RecordingClient) -> None:
     await loaded.dispatch(SessionEnd(reason='exit'))
 
 
-async def test_loader_enable_disable(tmp_path: Path, recorded: RecordingClient) -> None:
+async def test_loader_default_and_disable(tmp_path: Path, recorded: RecordingClient) -> None:
     shell = create_shell(
         Agent(TestModel()),
         deps=None,
@@ -293,9 +293,8 @@ async def test_loader_enable_disable(tmp_path: Path, recorded: RecordingClient) 
         builtin_plugins=[plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'herdr'],
     )
     await shell.loader.load_all()
-    assert recorded.reports == []
     try:
-        await shell.loader.command(['enable', 'herdr'])
+        assert ('pane.report_agent', {'state': 'idle', 'message': 'ready'}) in recorded.reports
         reference = next(params for method, params in recorded.reports if method == 'pane.report_agent_session')
         assert reference['resume_argv'] == [
             'clai2',
@@ -315,9 +314,30 @@ async def test_loader_enable_disable(tmp_path: Path, recorded: RecordingClient) 
         await shell.loader.close('exit')
 
 
-def test_default_is_opt_in() -> None:
+async def test_saved_disable_overrides_default(tmp_path: Path, recorded: RecordingClient) -> None:
     entry = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'herdr')
-    assert not entry.enabled
+    assert entry.enabled
+    store = SettingsStore(tmp_path / 'settings.db')
+    store.save_plugin(entry.model_copy(update={'enabled': False}))
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        settings=None,
+        project=ProjectSettings(),
+        console=Console(file=io.StringIO(), force_terminal=True),
+        store=SettingsStore(store.path),
+        builtin_plugins=[entry],
+    )
+    try:
+        await shell.loader.load_all()
+        assert recorded.reports == []
+        await shell.loader.command(['enable', 'herdr'])
+        assert ('pane.report_agent', {'state': 'idle', 'message': 'ready'}) in recorded.reports
+    finally:
+        await shell.loader.close('exit')
+    assert recorded.closed
 
 
 @dataclass(kw_only=True)

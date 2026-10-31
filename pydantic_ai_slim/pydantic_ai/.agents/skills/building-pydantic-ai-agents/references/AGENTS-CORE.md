@@ -197,6 +197,7 @@ Compaction or loss of the baseline starts a new prefix from current instructions
 Use a durable operation for instruction callbacks that read external state during durable execution.
 Deferred capabilities and realtime sessions do not support this update policy.
 Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
+A `@agent.system_prompt(dynamic=True)` function is re-run for each later run of a conversation and, by default, rewrites its part in history in place, which busts the prompt cache. Prefer instructions; when a system prompt is needed (other agents continue the history), use `@agent.system_prompt(on_change='append')` (which implies `dynamic=True`): a changed value is appended as a new `SystemPromptPart` sent as `<context id="system_prompt:<name>">`, where `<name>` (the function's `__name__`, or `name=`) is visible to the model. History ties the prompt to the function's `__qualname__`, so renaming or moving the function disconnects it from existing conversations, even with `name=`.
 The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
 So do MCP server instructions from `MCPToolset(..., include_instructions=True)`, keyed `toolset:<id>` (a URL toolset's `id` defaults to its hostname; durable execution needs an explicit one); stdio and in-process servers need an `id=` to append. Only enable `include_instructions` for servers you trust.
 
@@ -229,6 +230,8 @@ result = agent.run_sync('Find recent papers on AI safety', deps=UserContext(user
 ```
 
 Template strings are part of the spec flow, so route template-string questions here too.
+
+A spec has the same authority as the code that builds the agent: it picks the model, the capabilities, and the endpoints they connect to, such as an `MCP` server URL, `localhost` and private addresses included. Load specs only from trusted sources; if users supply them, check each spec's capabilities (`name` and `kwargs`, such as an `MCP` `url`) against what that user may use before building the agent.
 
 ## Choose or Configure Models
 
@@ -311,21 +314,24 @@ async def process(ctx: RunContext, count: int) -> str:
 
 ## Handle Provider Failures
 
-Use `FallbackModel` when the user wants automatic provider or model failover.
+Use the `ModelFallback` capability when the user wants automatic provider or model failover. The chain is the model selected for the step (the agent's, `run(model=...)`'s, or `SelectModel`'s), then the capability's models.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.capabilities import ModelFallback
 
-fallback = FallbackModel(
-    OpenAIChatModel('gpt-5.2'),
-    AnthropicModel('claude-sonnet-4-6'),
+agent = Agent(
+    'openai:gpt-6.1-sol',
+    name='fallback_agent',
+    capabilities=[ModelFallback('anthropic:claude-fable-5-1')],
 )
-
-agent = Agent(fallback, name='fallback_agent')
 ```
+
+`fallback_on` defaults to `ModelAPIError`; it also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass and native tool factory call (with the candidate as `ctx.model`), so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
+
+Each step restarts the chain from the step's model. Pass `sticky=True` to keep a conversation on the candidate it fell back to, which keeps that provider's prompt cache warm and stops retrying a failing primary every step. The agent records the answering model as each response's `model_id` and a fallback as its `failed_attempts`, so stickiness carries over to later runs continuing that history. Only a fallback makes a conversation sticky: a candidate picked with `run(model=...)` that answered without one doesn't. It only replaces the agent's default model, not `run(model=...)`, `override(model=...)` or `SelectModel`, and if the sticky candidate fails, the chain continues after it and wraps around.
+
+In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError], sticky: true}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
 
 Good defaults:
 
@@ -342,7 +348,7 @@ The answering response's `failed_attempts` lists the attempts the fallback moved
 cost limits, but not in the answering response's `usage`. Neither they nor failed attempts count towards
 `UsageLimits.request_limit`, which bounds the model responses the agent acts on, not requests sent to the provider.
 
-To react to a specific kind of failure regardless of provider, catch an error category rather than inspecting status codes or provider exceptions: `ModelRateLimitError` (with `retry_after`), `ModelQuotaExceededError` (exhausted quota or billing, only when the provider says so; waiting won't help), `ModelUnavailableError` and its `ModelOverloadedError` (only when the provider says overloaded, e.g. HTTP 529), `ModelServerError` (other 5xx), `ModelConnectionError` (and its `ModelTimeoutError`), or `ModelRequestRejectedError` (a 400/422 or other rejection that resending unchanged won't fix) and its `ModelAuthenticationError` (401/403, bad or unauthorized credentials), `ModelNotFoundError` (404, unknown model or resource) and `ModelContextWindowExceededError`. A specific category wins over the generic rejection: a 400 context overflow is a `ModelContextWindowExceededError`, and Anthropic's out-of-credits 400 is a `ModelQuotaExceededError`, not a rejection. A retry predicate can skip permanent failures with `isinstance(e, ModelRequestRejectedError | ModelQuotaExceededError)`. All are `ModelAPIError`s, so `FallbackModel` falls back on them by default; one that came with an HTTP status is also a `ModelHTTPError`, and a custom model can raise such a combined error with `ModelHTTPError.for_category(category, status_code=..., model_name=...)`. An error inside an already open stream gets the status the same error has before the stream opens, with `in_stream=True`, so errors don't depend on whether the request was streamed. Provider details are on `provider_error_code`, `provider_error_type`, and `body`; `retry_after` is on every `ModelAPIError`, `ModelHTTPError.provider_retry_hint` reads `x-should-retry`, and `ModelConnectionError.phase` (`'pool'`, `'connect'`, `'write'`, `'read'`) says whether the request may have reached the provider. Embedding models (`Embedder`) raise the same errors.
+To react to a specific kind of failure regardless of provider, catch an error category rather than inspecting status codes or provider exceptions: `ModelRateLimitError` (with `retry_after`), `ModelQuotaExceededError` (exhausted quota or billing, only when the provider says so; waiting won't help), `ModelUnavailableError` and its `ModelOverloadedError` (only when the provider says overloaded, e.g. HTTP 529), `ModelServerError` (other 5xx), `ModelConnectionError` (and its `ModelTimeoutError`), or `ModelRequestRejectedError` (a 400/422 or other rejection that resending unchanged won't fix) and its `ModelAuthenticationError` (401/403, bad or unauthorized credentials), `ModelNotFoundError` (404, unknown model or resource) and `ModelContextWindowExceededError`. A specific category wins over the generic rejection: a 400 context overflow is a `ModelContextWindowExceededError`, and Anthropic's out-of-credits 400 is a `ModelQuotaExceededError`, not a rejection. A retry predicate can skip permanent failures with `isinstance(e, ModelRequestRejectedError | ModelQuotaExceededError)`. All are `ModelAPIError`s, so `ModelFallback` and `FallbackModel` fall back on them by default; one that came with an HTTP status is also a `ModelHTTPError`, and a custom model can raise such a combined error with `ModelHTTPError.for_category(category, status_code=..., model_name=...)`. An error inside an already open stream gets the status the same error has before the stream opens, with `in_stream=True`, so errors don't depend on whether the request was streamed. Provider details are on `provider_error_code`, `provider_error_type`, and `body`; `retry_after` is on every `ModelAPIError`, `ModelHTTPError.provider_retry_hint` reads `x-should-retry`, and `ModelConnectionError.phase` (`'pool'`, `'connect'`, `'write'`, `'read'`) says whether the request may have reached the provider. Embedding models (`Embedder`) raise the same errors.
 
 When a completed model response omits usage, configured token or cost limits emit `UsageLimitUnavailableWarning` and return the result with known totals as lower bounds. Promote the warning to an error when the application must abort if a limit cannot be fully checked:
 
@@ -358,7 +364,15 @@ warnings.filterwarnings('error', category=UsageLimitUnavailableWarning)
 To bound how long one model can hold up the fallback, set `model_settings={'request_timeout': seconds}`. Unlike
 `timeout`, which the provider SDK applies to each attempt and re-arms on every retry, it is one deadline enforced by
 Pydantic AI over all attempts at a request to one model, and over reading a streamed response through its last chunk
-(consumer time included). Expiry raises `ModelRequestTimeout` (a `ModelAPIError`), which `FallbackModel` falls back on
-by default; each model it tries gets a fresh deadline. It applies to any model, with or without a fallback. Under
-Temporal, a plain model's deadline runs as a workflow timer that cancels the model activity; a `FallbackModel`'s
-per-model deadlines run inside the activity instead.
+(consumer time included). Expiry raises `ModelRequestTimeout` (a `ModelAPIError`), which `ModelFallback` and `FallbackModel` fall back on
+by default; each model they try gets a fresh deadline. It applies to any model, with or without a fallback. Under
+Temporal, a model's deadline runs as a workflow timer that cancels its model activity, including each model
+`ModelFallback` tries, as each attempt is an activity of its own; a `FallbackModel`'s per-model deadlines run inside
+its one activity instead.
+
+To fall back when a streamed response doesn't start in time, without cutting off a long response once it has, set
+`model_settings={'first_event_timeout': seconds}`. It bounds the wait from making a streamed request until its first
+event (a part starting or a delta, thinking included; OpenAI's `response.created` doesn't count), across SDK retries
+and the continuations of a paused or background response, and stops applying once that event arrives. Expiry raises
+`ModelRequestTimeout` with `setting='first_event_timeout'`, which `FallbackModel` and `ModelFallback` fall back on by
+default. With `request_timeout` also set, whichever passes first wins. It has no effect on non-streamed requests.

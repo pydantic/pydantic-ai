@@ -235,15 +235,35 @@ When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` 
 
 `dump_messages` also writes a `UIMessage` wherever a run produced [retry feedback that belongs to no tool call](../retries.md#feedback-that-belongs-to-no-tool-call), including for an agent with no configured `system_prompt` at all. Its `role` is the voice the model was shown the feedback in — `'user'` for a `'validation_error'` or `'model_retry'`, and `'system'` for `'no_output'` feedback in the framework's own words — and it holds the same text, with the [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] itself under a `retry_feedback` claim in the reserved `pydantic_ai` key of that text part's `providerMetadata` (not `UIMessage.metadata`). `load_messages` rebuilds the part from that claim alone, so a message the frontend wrote stays a plain [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. A [`ModelRequest`][pydantic_ai.messages.ModelRequest] that mixes system-voice parts with user content goes out as one `UIMessage` per run of same-role parts, in the order the parts were authored, so feedback authored after a `UserPromptPart` reloads after it and the request re-sends the same bytes. The request's metadata rides on its last `role='user'` message, or on its last message when it has none, and is applied once on reload.
 
-`UIMessage.metadata` is fully client-controlled, so `timestamp` is the only server-owned field that is round-tripped. The `__pydantic_ai__` namespace and fields such as `usage`, `model_name`, and `provider_*` are deliberately excluded — dumping them could leak infrastructure details, and restoring them would trust client-submitted history for values the server owns. Keep framework and provider state in trusted server-side storage instead. Broadening the round-trip behind an explicit user-controlled opt-in is tracked in [issue #5174](https://github.com/pydantic/pydantic-ai/issues/5174).
+`UIMessage.metadata` is fully client-controlled, so `timestamp` is the only server-owned field that is round-tripped. The `__pydantic_ai__` namespace and fields such as `usage`, `model_name`, and `provider_*` are deliberately excluded — dumping them could leak infrastructure details, and restoring them would trust client-submitted history for values the server owns. Keep framework and provider state in trusted server-side storage instead. The one exception is a response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system]: `dump_messages` writes it beside `provider_name` on each part from the response's provider (in its `providerMetadata`, or in the `data` of a compaction data part), and `load_messages` restores it on the response along with that `provider_name`, so signed and encrypted data such as thinking signatures is still sent only to the system that can verify it. The event stream doesn't emit it yet. Broadening the round-trip behind an explicit user-controlled opt-in is tracked in [issue #5174](https://github.com/pydantic/pydantic-ai/issues/5174).
 
 ## Trust model
 
 Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), workspace references ([`strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
 
+## Keeping the history on the server
+
+With [`manage_message_history='server'`](./overview.md#keeping-the-history-on-the-server), the adapter uses only the new turn from the messages `useChat` sends, so `useChat` can keep sending its whole history. To send only the last message instead, customize the request in `prepareSendMessagesRequest`. Keep the `messages` array: unlike the request in the AI SDK's own persistence guide, the adapter's request body requires it.
+
+```ts
+import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
+
+const { messages, sendMessage } = useChat({
+  transport: new DefaultChatTransport({
+    api: '/api/chat',
+    prepareSendMessagesRequest: ({ id, messages, trigger, messageId, body }) => ({
+      body: { ...body, id, trigger, messageId, messages: messages.slice(-1) },
+    }),
+  }),
+});
+```
+
+The last message is all a turn needs: the user's new or edited message, the user message a regenerate answers again, or the assistant message carrying a frontend tool's output or a [tool approval](#tool-approval). Assistant message ids don't matter here: `useChat` makes up its own unless you pass `server_message_id`, and the adapter only matches the user message ids, which the stored history keeps.
+
 ## Compaction
 
-[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when a frontend such as `useChat` holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (the [server-side persistence pattern](./overview.md#trust-model-for-client-submitted-messages)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
+[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when a frontend such as `useChat` holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (see [Keeping the history on the server](#keeping-the-history-on-the-server)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
 
 ## Structured content
 

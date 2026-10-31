@@ -88,7 +88,7 @@ _model_request_span_captures: ContextVar[
     tuple[tuple[ModelRequestContext, Callable[[ModelRequestContext], ModelRequestContext]], ...]
 ] = ContextVar('model_request_span_captures', default=())
 _model_response_span_captures: ContextVar[
-    tuple[tuple[ModelRequestContext, Callable[[ModelResponse, float | None], None]], ...]
+    tuple[tuple[ModelRequestContext, Callable[[ModelResponse | None, float | None], None]], ...]
 ] = ContextVar('model_response_span_captures', default=())
 
 
@@ -181,10 +181,14 @@ def capture_model_request_span_context(request_context: ModelRequestContext) -> 
 
 def capture_model_response_span_context(
     request_context: ModelRequestContext,
-    response: ModelResponse,
+    response: ModelResponse | None,
     time_to_first_chunk: float | None = None,
 ) -> None:
-    """Capture a response before an after hook can reject it when instrumentation is active."""
+    """Capture a response before an after hook can reject it when instrumentation is active.
+
+    `None` releases the captured response once a hook has moved the request on to another attempt
+    with `RetryModelRequest`: that response is recorded as a failed attempt with its own span.
+    """
     for owner, capture in _model_response_span_captures.get():
         if owner is request_context:
             capture(response, time_to_first_chunk)
@@ -192,7 +196,7 @@ def capture_model_response_span_context(
 
 @contextmanager
 def model_response_span_capture(
-    request_context: ModelRequestContext, capture: Callable[[ModelResponse, float | None], None]
+    request_context: ModelRequestContext, capture: Callable[[ModelResponse | None, float | None], None]
 ) -> Generator[None]:
     """Scope response capture to the active instrumentation wrapper."""
     token = _model_response_span_captures.set((*_model_response_span_captures.get(), (request_context, capture)))
@@ -219,6 +223,12 @@ class CachedMessageJson:
     """The serialized fragment (see `message_json_fragment`)."""
     mcp_url_ids: frozenset[str] = frozenset()
     """MCP names withheld from the serialized historical message fragment."""
+    request_scoped: bool = False
+    """Whether the message holds a request-scoped system prompt, whose fragment changes once its request
+    has been answered."""
+    answered: bool = False
+    """Whether the fragment marks the message's request-scoped system prompts as no longer visible (see
+    `message_json_fragment`)."""
 
 
 MessageJsonCache: TypeAlias = dict[int, CachedMessageJson]
@@ -362,15 +372,25 @@ def safe_to_json(value: object) -> bytes:
 
 
 def message_json_fragment(
-    settings: InstrumentationSettings, message: ModelMessage, mcp_url_ids: frozenset[str] = frozenset()
+    settings: InstrumentationSettings,
+    message: ModelMessage,
+    mcp_url_ids: frozenset[str] = frozenset(),
+    *,
+    answered: bool = False,
 ) -> bytes:
     """Serialize one message to its OTel JSON fragment: comma-joined objects without enclosing brackets.
 
     A single `ModelMessage` can map to multiple OTel `ChatMessage`s (a `ModelRequest` splits into
     system/user messages) or to none (an empty request), so the fragment is the whole serialized
     array with the outer `[` and `]` stripped — fragments then concatenate into a single array.
+    With `answered`, the message is from a request before the current one, so its request-scoped
+    system prompts are marked as no longer visible.
     """
-    return safe_to_json(settings.messages_to_otel_messages([message], mcp_url_ids=mcp_url_ids))[1:-1]
+    return safe_to_json(
+        settings._span_input_messages(  # pyright: ignore[reportPrivateUsage]
+            [message], mcp_url_ids=mcp_url_ids, current_request_start=1 if answered else 0
+        )
+    )[1:-1]
 
 
 def has_stale_message_json(
@@ -395,7 +415,7 @@ def has_stale_message_json(
         if (
             entry is not None
             and entry.parts is message.parts
-            and entry.fragment != message_json_fragment(settings, message, entry.mcp_url_ids)
+            and entry.fragment != message_json_fragment(settings, message, entry.mcp_url_ids, answered=entry.answered)
         ):
             return True
     return False
@@ -981,9 +1001,9 @@ def open_model_request_span(
                 nonlocal prepared_request_context
                 prepared, request_attributes = _prepare_model_request_span_context(settings, context)
 
-                # Preserve attributes set while the request ran, notably the concrete model selected
-                # by `FallbackModel`, while filling all request fields from the final context.
-                request_attributes.update(getattr(span, 'attributes', {}))
+                # Keep attributes set on the span since it opened, but describe the model this request
+                # is now made to: a hook can move it on to another model for a later attempt (#7018).
+                attributes.update(getattr(span, 'attributes', {}))
                 attributes.update(request_attributes)
                 span.set_attributes(request_attributes)
                 span.update_name(f'{operation} {attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]}')

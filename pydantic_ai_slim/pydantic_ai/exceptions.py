@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, cast
 
 import pydantic_core
 from pydantic_core import core_schema
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
         RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
         ToolReturnPart,
     )
+    from .models import KnownModelName, Model
     from .usage import RunUsage
 
 __all__ = (
@@ -33,6 +34,7 @@ __all__ = (
     'CallDeferred',
     'ApprovalRequired',
     'SkipModelRequest',
+    'RetryModelRequest',
     'SkipToolValidation',
     'SkipToolExecution',
     'UserError',
@@ -54,6 +56,7 @@ __all__ = (
     'ModelConnectionError',
     'TransportPhase',
     'ModelTimeoutError',
+    'RequestTimeoutSetting',
     'ModelContextWindowExceededError',
     'ModelRequestRejectedError',
     'ModelAuthenticationError',
@@ -219,6 +222,57 @@ class SkipModelRequest(Exception):
         super().__init__()
 
 
+class RetryModelRequest(Exception):
+    """Exception to raise in model request hooks to attempt the request again.
+
+    Raise from [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error]
+    to retry after a failed attempt, from
+    [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] to reject
+    a response the model did return, or from
+    [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] to send
+    the attempt to another model before anything is sent. In each case the agent stays on the same
+    request step: no retry prompt is added to the history, and the model never learns that an earlier
+    attempt happened. That is what distinguishes it from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry],
+    which asks the model itself to try again. `before_model_request` and `wrap_model_request` run before
+    any attempt, so raising it from them is a [`UserError`][pydantic_ai.exceptions.UserError].
+
+    Pass `model` to attempt a different model, or omit it to attempt the same one again:
+
+    ```python
+    from pydantic_ai import ModelResponse, RetryModelRequest, RunContext
+    from pydantic_ai.capabilities import AbstractCapability
+    from pydantic_ai.exceptions import ModelOverloadedError
+    from pydantic_ai.models import ModelRequestContext
+
+
+    class RetryOnOverload(AbstractCapability[None]):
+        async def on_model_request_error(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            if not isinstance(error, ModelOverloadedError):
+                raise error
+            if request_context.attempt == 1:
+                raise RetryModelRequest()  # the same model again
+            raise RetryModelRequest('anthropic:claude-fable-5-1')  # a different model
+    ```
+
+    Each attempt re-runs
+    [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
+    the model that is about to serve it, so preparation a capability does there for that model is
+    redone rather than inherited from the previous attempt, as are the model's own message preparation
+    and token counting.
+    `before_model_request` and `wrap_model_request` are *not* re-run: they belong to the request as a
+    whole, not to a single attempt.
+    """
+
+    model: Model | KnownModelName | str | None
+    """The model to attempt next, or `None` to attempt the current one again."""
+
+    def __init__(self, model: Model | KnownModelName | str | None = None):
+        self.model = model
+        super().__init__()
+
+
 class SkipToolValidation(Exception):
     """Exception to raise in before/wrap tool validate hooks to skip validation.
 
@@ -280,6 +334,9 @@ class AgentRunError(RuntimeError):
     def __str__(self) -> str:
         return self.message
 
+
+_ATTACHED_ATTR_PREFIX = '_pydantic_ai_'
+"""The prefix of the attributes Pydantic AI attaches to an exception it passes on."""
 
 _RUN_CANCELLED_ATTR = '_pydantic_ai_run_cancelled'
 
@@ -631,6 +688,10 @@ class ModelAPIError(AgentRunError):
             'provider_error_type': self.provider_error_type,
             'retry_after': self.retry_after,
             'in_stream': self.in_stream,
+            # What Pydantic AI attached to the error on its way, like the attempts a `FallbackModel` made before it
+            # or what a stream produced before it, so a durable engine that records the error by pickling it, like
+            # DBOS, raises it on replay as it was raised.
+            **{key: value for key, value in vars(self).items() if key.startswith(_ATTACHED_ATTR_PREFIX)},
         }
 
 
@@ -686,6 +747,10 @@ class ModelServerError(ModelAPIError):
 TransportPhase = Literal['pool', 'connect', 'write', 'read']
 """The stage of a request at which a transport failure happened; see
 [`ModelConnectionError.phase`][pydantic_ai.exceptions.ModelConnectionError.phase]."""
+
+RequestTimeoutSetting: TypeAlias = Literal['request_timeout', 'first_event_timeout']
+"""The model setting whose timeout ran out; see
+[`ModelRequestTimeout.setting`][pydantic_ai.exceptions.ModelRequestTimeout.setting]."""
 
 
 class ModelConnectionError(ModelAPIError):
@@ -803,23 +868,50 @@ class ModelNotFoundError(ModelRequestRejectedError):
 
 
 class ModelRequestTimeout(ModelAPIError):
-    """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout].
+    """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout], or a streamed one produced no output within its [`ModelSettings['first_event_timeout']`][pydantic_ai.settings.ModelSettings.first_event_timeout].
 
-    The deadline is enforced by Pydantic AI around one request to one model, so it covers every attempt the
-    provider SDK and HTTP transport make, and reading a streamed response through its last chunk. Under a
-    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each model gets a deadline of its own, and its
+    The deadlines are enforced by Pydantic AI around one request to one model, so they cover every attempt the
+    provider SDK and HTTP transport make, and `request_timeout`'s covers reading a streamed response through its last
+    chunk. [`setting`][pydantic_ai.exceptions.ModelRequestTimeout.setting] says which one ran out. Under a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each model gets deadlines of its own, and its
     default `fallback_on` falls back on this error.
     """
 
     timeout: float
-    """The `request_timeout` that ran out, in seconds."""
+    """The timeout that ran out, in seconds."""
 
-    def __init__(self, model_name: str, timeout: float):
+    setting: RequestTimeoutSetting
+    """The model setting whose timeout ran out."""
+
+    def __init__(
+        self,
+        model_name: str,
+        timeout: float,
+        *,
+        setting: RequestTimeoutSetting = 'request_timeout',
+    ):
         self.timeout = timeout
-        super().__init__(model_name, f'Request to model {model_name!r} timed out after {timeout:g} seconds')
+        self.setting = setting
+        super().__init__(model_name, _request_timeout_message(model_name, timeout, setting))
 
-    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
-        return self.__class__, (self.model_name, self.timeout)
+    def __reduce__(self) -> tuple[Any, ...]:
+        return self.__class__, (self.model_name, self.timeout), self.__getstate__()
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {**super().__getstate__(), 'setting': self.setting}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        super().__setstate__(state)
+        self.setting = state.get('setting', 'request_timeout')
+        self.message = _request_timeout_message(self.model_name, self.timeout, self.setting)
+        self.args = (self.message,)
+
+
+def _request_timeout_message(model_name: str, timeout: float, setting: RequestTimeoutSetting) -> str:
+    message = f'Request to model {model_name!r} timed out after {timeout:g} seconds'
+    if setting == 'first_event_timeout':
+        message += ' without producing any output'
+    return message
 
 
 class ModelHTTPError(ModelAPIError):
@@ -1129,12 +1221,14 @@ class FallbackExceptionGroup(ExceptionGroup[Any]):
     """A group of exceptions that can be raised when all fallback models fail."""
 
     attempts: Sequence[ModelRequestAttempt] = ()
-    """Every attempt the [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] made, in order.
+    """Every attempt the [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability made, in order.
 
     Unlike the grouped exceptions, this includes the usage of any response that was rejected by a
     `fallback_on` response handler, which the agent also adds to the run's
-    [`RunUsage`][pydantic_ai.usage.RunUsage]. Only set on the group a `FallbackModel` raised itself: it
-    doesn't survive a durable execution boundary, such as a Temporal activity.
+    [`RunUsage`][pydantic_ai.usage.RunUsage]. Only set on a group a `FallbackModel` or the agent raised
+    itself: it doesn't survive a durable execution boundary, such as a `FallbackModel`'s group leaving a
+    Temporal activity.
     """
 
 

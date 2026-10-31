@@ -103,6 +103,8 @@ A batch is also submitted early when the next request would take it past the pro
 
 A run that takes several batch round trips waits up to `max_wait`, plus the time until the next check, for each, on top of the provider's own time. Lower `max_poll_interval` when that adds up, at the cost of more status requests.
 
+To try another model once a request's error reaches the run, add [`ModelFallback`](capabilities/model-fallback.md): the request then goes into a batch on the next model in its chain. When a run resumed from history finds that the batch it was waiting on failed, it also moves on to the next model, rather than starting over with a new batch on the first.
+
 ### Sharing batches between agents
 
 Each `BatchModelRequests` instance collects its own batches. Add the same instance to several agents, or pass it to runs with `capabilities=`, and their requests share batches:
@@ -393,7 +395,7 @@ Each model request is batched with the model that serves it, however that model 
 
 Requests go into separate batches when the provider can't take them in one: when they use different credentials or endpoints, with OpenAI and Google when they use different models, and with Anthropic when they need different beta flags. Anthropic batches can mix models and settings otherwise. A batch is also split when it would exceed the provider's size limit, [`Model.batch_max_bytes`][pydantic_ai.models.Model.batch_max_bytes], and the provider's limit on requests per batch, [`Model.batch_max_requests`][pydantic_ai.models.Model.batch_max_requests], caps `max_requests`; each provider's page lists its limits. A request too large for any batch raises a `UserError` when it's made.
 
-Since a batch is submitted, checked and collected with one credential, batching refuses clients whose credential can vary or that it can't see: an OpenAI client with an API key callback or a workload identity, an HTTP client with an `auth` of its own, and per-request `extra_headers`. Configure the credential on the provider's client instead. Other settings that only apply to a single live request, such as a per-request `timeout` or `max_retries`, raise a `UserError` too; configure them on the provider's client. See each provider's page for its other limitations.
+Since a batch is submitted, checked and collected with one credential, batching refuses clients whose credential can vary or that it can't see: an OpenAI client with an API key callback or a workload identity, an HTTP client with an `auth` of its own, and per-request `extra_headers`. Configure the credential on the provider's client instead. Other settings that only apply to a single live request, such as a per-request `timeout`, raise a `UserError` too; configure them on the provider's client. [`max_retries`][pydantic_ai.settings.ModelSettings.max_retries] is ignored, as the provider runs a batched request itself and no SDK client retries it. See each provider's page for its other limitations.
 
 OpenAI stores batched responses by default, as it does other responses, so `openai_previous_response_id` works across batches; set `openai_store=False` to opt out.
 

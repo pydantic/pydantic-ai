@@ -11,6 +11,8 @@ Give an executor model a way to consult a separate advisor model before it answe
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Advisor gives the executor model an advisor tool. On the local path, calling advisor(prompt) runs a separate agent with the advisor model, and its answer comes back as the tool result. When the executor and advisor are both on Anthropic, or both on OpenRouter, the provider's native AdvisorTool runs the consultation inside the model request instead.](../img/harness/advisor.svg)
+
 ## Usage
 
 Pass the advisor model as the first argument. The model can be any model name or model instance accepted by Pydantic AI:

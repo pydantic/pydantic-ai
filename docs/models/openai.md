@@ -171,6 +171,11 @@ class BoundingBox(BaseModel):
     coordinates: Annotated[list[int], Field(min_length=4, max_length=4)]
 ```
 
+OpenAI also limits how deeply objects can nest in a strict schema and how many object properties it can have, and
+rejects a strict schema over [these limits](https://developers.openai.com/api/docs/guides/structured-outputs#objects-have-limitations-on-nesting-depth-and-size).
+With [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], inferred strictness falls back to non-strict mode
+for a tool or output schema over them, which OpenAI accepts, and an explicit `strict=True` is sent as is.
+
 ## Model settings
 
 You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:
@@ -197,7 +202,7 @@ OpenAI may serve a request on a different tier than the one requested, for examp
 
 ### Prompt caching
 
-OpenAI [caches prompts implicitly](https://developers.openai.com/api/docs/guides/prompt-caching#how-caching-works) for all supported models: no setting or marker is needed, and cache hits are reported through the normalized usage fields like [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens]. On GPT-5.6 and later, the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability) also configures explicit caching: `cache=True` sends `openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}` and turns on [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions] (described below) so separate conversations share the cached instructions. `'30m'` is the only TTL OpenAI accepts, so any requested retention snaps to it. Setting `openai_prompt_cache_options` or `openai_cache_instructions` yourself takes precedence over the unified setting. See [Caching](../capabilities/caching.md) for the cost trade-off, Pydantic AI's prefix-stability guarantees and how to monitor cache efficiency.
+OpenAI [caches prompts implicitly](https://developers.openai.com/api/docs/guides/prompt-caching#how-caching-works) for all supported models: no setting or marker is needed, and cache hits are reported through the normalized usage fields like [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens]. On GPT-5.6 and later, the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability) also configures explicit caching: `cache=True` sends `openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}` and turns on [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions] (described below) so separate conversations share the cached instructions. `'30m'` is the only TTL OpenAI accepts, so any requested retention snaps to it. Setting `openai_prompt_cache_options` or `openai_cache_instructions` yourself takes precedence over the unified setting. See [Caching](../capabilities/caching.md) for the cost trade-off, Pydantic AI's prefix-stability guarantees and how to monitor cache efficiency. The unified setting works the same way with the Azure OpenAI v1 API: see [Azure prompt caching](azure.md#prompt-caching).
 
 How long a cached prefix survives depends on the [retention policy](https://developers.openai.com/api/docs/guides/prompt-caching#cache-lifetime) in effect: `in_memory` typically keeps it for 5–10 minutes of inactivity, up to an hour, while `24h` can keep it for up to a day. On models before GPT-5.6, the unified setting adds nothing to the request, and the default retention follows your organization's data-retention configuration — `24h` without zero data retention, `in_memory` with it. [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] sets it per request:
 
@@ -268,7 +273,7 @@ On GPT-5.6 and later, OpenAI routes requests to the cache automatically, so you 
 
 When OpenAI reports prompt cache writes, Pydantic AI exposes them as [`result.usage.cache_write_tokens`][pydantic_ai.usage.RunUsage.cache_write_tokens]. Cache reads are available as [`result.usage.cache_read_tokens`][pydantic_ai.usage.RunUsage.cache_read_tokens]. For GPT-5.6 and later model families, OpenAI bills cache writes at 1.25 times the uncached input token rate.
 
-To help explain cache misses, Pydantic AI requests OpenAI's [prompt cache diagnostics](https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics) on GPT-5.6 and later models with the Responses API on the OpenAI API itself (not Azure, OpenRouter or other OpenAI-compatible providers): each request compares itself against the most recent OpenAI response in the message history, unless that response came from [message compaction](#message-compaction). The result is in the response's [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under the `'prompt_cache_diagnostics'` key, for example `{'type': 'cache_hit'}`, or `{'type': 'cache_miss', 'reason': 'model_changed', 'cache_missed_tokens': 4175, 'comparison_reusable_tokens': 4175}` when the prefix couldn't be reused. Diagnostics are free, don't affect caching, and work with `openai_store=False`. To leave them off, set [`openai_prompt_cache_diagnostics`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_diagnostics] to `False`.
+To help explain cache misses, Pydantic AI requests OpenAI's [prompt cache diagnostics](https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics) on GPT-5.6 and later models with the Responses API on the OpenAI API itself (not Azure, OpenRouter or other OpenAI-compatible providers): each request compares itself against the most recent OpenAI response in the message history. It skips the comparison when that response is a [standalone compaction response](#message-compaction), or when a later compatible encrypted compaction came from another provider or from an endpoint that doesn't share server state with this one. The result is in the response's [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under the `'prompt_cache_diagnostics'` key, for example `{'type': 'cache_hit'}`, or `{'type': 'cache_miss', 'reason': 'model_changed', 'cache_missed_tokens': 4175, 'comparison_reusable_tokens': 4175}` when the prefix couldn't be reused. Diagnostics are free, don't affect caching, and work with `openai_store=False`. To leave them off, set [`openai_prompt_cache_diagnostics`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_diagnostics] to `False`.
 
 ### Moderation
 
@@ -423,6 +428,8 @@ print(result.output)
 #> 1234
 ```
 
+An encrypted [`CompactionPart`][pydantic_ai.messages.CompactionPart] ends the response-ID chain, even with a concrete seed, when it was produced by [another compatible provider](#message-compaction) (such as the [Codex backend](openai-codex.md#continuing-on-the-openai-api)) or by an endpoint that doesn't share server state with this one. The next request sends the compaction item and later messages instead of continuing the older stored response. Inline compactions from an endpoint that shares server state remain chainable.
+
 Don't continue, through `openai_previous_response_id`, a response from a model before GPT-5.6 whose request named a revealed tool in [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice]: that request declares the tool in `tools` instead of its `additional_tools` item (see [Tool Choice](../tools-advanced.md#tool-choice)), so the tool isn't in the response's stored input.
 
 !!! note
@@ -487,7 +494,7 @@ agent = Agent(
 
 By default, `OpenAICompaction` runs in **stateful mode**: it configures OpenAI's server-side auto-compaction via the `context_management` field on the regular `/responses` request, and OpenAI triggers compaction whenever the input token count crosses a threshold it manages for you. This mode is compatible with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) and [`openai_conversation_id`](#using-durable-conversations).
 
-After compaction, subsequent requests send only the compacted window, from the latest compaction item onward. The Responses API processes and bills replayed items that precede a compaction item, so omitting them keeps the compacted context from growing again.
+After compaction, subsequent requests send only the compacted window, from the latest compaction item onward. The Responses API processes and bills replayed items that precede a compaction item, so omitting them keeps the compacted context from growing again. That includes a compaction item from the [Codex backend](openai-codex.md#continuing-on-the-openai-api) or the Pydantic AI Gateway, which share OpenAI's encryption keys, but not one from Azure OpenAI, which has its own: see [Sending history to another provider](../message-history.md#sending-history-to-another-provider).
 
 To override the threshold, pass [`token_threshold`][pydantic_ai.models.openai.OpenAICompaction]:
 
@@ -624,6 +631,10 @@ agent = Agent(model)
 ```
 
 Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI only through this API — `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` and `stop_sequences`. The Responses API accepts none of them, so they are dropped on the default `openai:` path.
+
+### Audio input {#audio-input}
+
+On Chat Completions, only OpenAI's audio models take audio input, such as `gpt-audio` and `gpt-4o-audio-preview`: the OpenAI models with `audio` in their name. With another OpenAI model, audio in the prompt raises an error, and audio a tool returns is replaced by a note saying the model can't read it. The Responses API takes no audio input. The rule applies to `OpenAIProvider`. OpenAI-compatible providers, including Azure, report audio input for every model, since their model names don't say which models take it. If you point `OpenAIProvider(base_url=...)` at another server that serves an audio model, such as vLLM with Voxtral, use [`OpenAICompatibleProvider`](compatible-apis.md#other-endpoints) for it, or pass `profile=OpenAIModelProfile(supports_audio_file_input=True)` to the model.
 
 ## Decisions API {#decisions-api}
 

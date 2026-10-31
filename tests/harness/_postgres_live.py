@@ -97,6 +97,8 @@ def derived_tables(prefix: str) -> list[str]:
         f'{prefix}_media',
         f'{prefix}_operations',
         f'{prefix}_metadata',
+        f'{prefix}_counters',
+        f'{prefix}_dedup',
     ]
 
 

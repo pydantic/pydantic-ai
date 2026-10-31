@@ -16,6 +16,7 @@ from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
+    CapabilityLoadDeltaPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -45,6 +46,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
+from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -52,6 +54,7 @@ from pydantic_ai_harness.compaction._receipts import (
     drain_receipts,
     is_receipt_part,
     open_receipt_scope,
+    record_receipt,
     reset_receipt_scope,
 )
 from pydantic_ai_harness.filesystem import READ_FILE_KIND
@@ -156,12 +159,11 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
         # builds one by hand and passes it as `message_history` still puts an instance here, and
         # this reads the history before the model translates it.
         return [str(part.content)]
-    # Control bookkeeping rather than message text: it records which tools became available, and
-    # the schemas themselves travel in the request's tool definitions. Those schemas are not free
-    # -- this estimator counts no tool definitions at all, so revealing tools mid-run costs
-    # context it does not see (tracked separately); skipping the part is not a claim that the
-    # reveal was free.
-    elif isinstance(part, ToolAvailabilityDeltaPart | ModelSettingsDeltaPart):
+    # Control bookkeeping rather than message text: it records which tools became available or capabilities were loaded,
+    # and the schemas themselves travel in the request's tool definitions. Those schemas are not free -- this estimator
+    # counts no tool definitions at all, so revealing tools mid-run costs context it does not see (tracked separately);
+    # skipping the part is not a claim that the reveal was free.
+    elif isinstance(part, ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart):
         return []
     elif isinstance(part, CompactionPart):
         # A summary the application wrote, sent as text.
@@ -657,6 +659,48 @@ async def compact_with_span(
     return compacted
 
 
+async def compact_if_smaller(
+    ctx: RunContext[AgentDepsT],
+    *,
+    strategy: str,
+    messages: list[ModelMessage],
+    compact: Callable[[], Awaitable[list[ModelMessage]]],
+    tokenizer: Callable[[str], int] | None = None,
+) -> list[ModelMessage] | None:
+    """Run *compact*, and return `None` when its result is not estimated smaller than *messages*.
+
+    Automatic compaction runs to make the request smaller, so a result that isn't is rejected: the
+    receipts the attempt recorded are discarded with it, and a `compact_messages` span with
+    `compaction.skipped='not_smaller'` records the attempt's estimated size. A result that is smaller,
+    or the unchanged history, is returned, and its receipts reach the enclosing `compact_with_span`.
+    """
+    token = open_receipt_scope()
+    try:
+        compacted = await compact()
+        receipts = drain_receipts()
+    finally:
+        reset_receipt_scope(token)
+    if _history_changed(messages, compacted):
+        tokens_before = estimate_token_count(messages, tokenizer)
+        tokens_after = estimate_token_count(compacted, tokenizer)
+        if tokens_after >= tokens_before:
+            with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+                span.set_attributes(
+                    {
+                        'compaction.strategy': strategy,
+                        'compaction.skipped': 'not_smaller',
+                        'compaction.messages_before': len(messages),
+                        'compaction.messages_after': len(compacted),
+                        'compaction.tokens_before': tokens_before,
+                        'compaction.tokens_after': tokens_after,
+                    }
+                )
+            return None
+    for receipt in receipts:
+        record_receipt(receipt)
+    return compacted
+
+
 # ---------------------------------------------------------------------------
 # Compaction strategy protocol
 # ---------------------------------------------------------------------------
@@ -864,14 +908,6 @@ def find_token_cutoff(
 # ---------------------------------------------------------------------------
 
 
-# Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel
-# with an `origin` under this prefix is covered by this one check, without per-capability code. Today that is
-# `BackgroundTools` results, `TrajectoryJudge` feedback, `SubAgents` task reports and `Memory` snapshots (older
-# `Memory` releases marked theirs with a plain string, also recognized). The rule is temporary: once core
-# provenance (`CapabilityPart`) lands, recognize that instead of this metadata convention.
-HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
-"""The prefix of the `origin` metadata harness capabilities put on content they add on the user channel."""
-
 _LEGACY_MEMORY_MARKER = 'pydantic-ai-harness.memory.v1'
 """The plain-string metadata older `Memory` releases put on a snapshot, alone or followed by `:<scope hash>`."""
 
@@ -885,11 +921,7 @@ def harness_data_origin(part: UserPromptPart) -> str | None:
     """
     # TODO: switch to the core provenance field once it exists.
     match part.content:
-        case [TextContent(metadata=metadata), *_] if (
-            is_str_dict(metadata)
-            and isinstance(origin := metadata.get('origin'), str)
-            and origin.startswith(HARNESS_ORIGIN_PREFIX)
-        ):
+        case [TextContent(metadata=metadata), *_] if (origin := harness_origin(metadata)) is not None:
             return origin
         case [item, *_] if _is_legacy_memory(item):
             return _LEGACY_MEMORY_MARKER

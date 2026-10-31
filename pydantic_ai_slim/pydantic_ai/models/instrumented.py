@@ -35,6 +35,7 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
     BaseToolReturnPart,
+    CapabilityLoadDeltaPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
@@ -49,11 +50,19 @@ from ..messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
+    _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
 from ..settings import ModelSettings
 from ..usage import UsageBase
-from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
+from . import (
+    KnownModelName,
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    StreamedResponse,
+    _current_request_start,  # pyright: ignore[reportPrivateUsage]
+)
 from .wrapper import WrapperModel
 
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
@@ -230,12 +239,7 @@ class InstrumentationSettings:
                 ]
                 message = replace(message, parts=projected_parts)
             if isinstance(message, ModelRequest):
-                # A baseline records what the request's instructions were and contributes nothing to a trace,
-                # so it's left out before grouping rather than becoming an empty system message.
-                request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]
-                for role, group in itertools.groupby(
-                    request_parts, key=functools.partial(_otel_message_role, version=self.version)
-                ):
+                for role, group in self._request_part_groups(message):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):
@@ -248,6 +252,69 @@ class InstrumentationSettings:
                     otel_message['finish_reason'] = message.finish_reason
                 result.append(otel_message)
         return result
+
+    def _request_part_groups(self, message: ModelRequest) -> list[tuple[_otel_messages.Role, list[ModelRequestPart]]]:
+        """The OTel messages a request's parts make: each one's role and the parts that go in it.
+
+        Shared by `messages_to_otel_messages` and `_span_input_messages`, which lines its result up with this.
+        """
+        # A baseline records what the request's instructions were and contributes nothing to a trace,
+        # so it's left out before grouping rather than becoming an empty system message.
+        request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]
+        return [
+            (role, list(group))
+            for role, group in itertools.groupby(
+                request_parts, key=functools.partial(_otel_message_role, version=self.version)
+            )
+        ]
+
+    def _span_input_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str], current_request_start: int
+    ) -> list[_otel_messages.ChatMessage]:
+        """`messages_to_otel_messages`, with the parts of request-scoped system prompts the model no longer sees marked.
+
+        A [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt in a message before
+        `current_request_start` was sent with an earlier request, so its part gets `visible: false`. The marker
+        is added to what `messages_to_otel_messages` returns, so an override of it still applies. Where the
+        result doesn't have the shape the default conversion gives, the parts can't be told apart and none are
+        marked.
+        """
+        otel_messages = self.messages_to_otel_messages(messages, mcp_url_ids=mcp_url_ids)
+        if not any(_holds_request_scoped_prompt(message) for message in messages[:current_request_start]):
+            return otel_messages
+        # For each OTel message the default conversion gives, which of its parts to mark, or `None` to leave it.
+        expected: list[list[bool] | None] = []
+        for index, message in enumerate(messages):
+            if not isinstance(message, ModelRequest):
+                expected.append(None)
+                continue
+            mark = index < current_request_start and _holds_request_scoped_prompt(message)
+            for _, group in self._request_part_groups(message):
+                # Only a message with a part to mark needs its OTel parts counted again; the rest just need their groups.
+                expected.append(
+                    [
+                        _is_request_scoped(part)
+                        for part in group
+                        if hasattr(part, 'otel_message_parts')
+                        for _ in part.otel_message_parts(self)
+                    ]
+                    if mark
+                    else None
+                )
+        if len(expected) != len(otel_messages) or any(
+            marks is not None
+            and (
+                len(marks) != len(otel_message['parts'])
+                or any(mark and part['type'] != 'text' for mark, part in zip(marks, otel_message['parts']))
+            )
+            for marks, otel_message in zip(expected, otel_messages)
+        ):
+            return otel_messages
+        for marks, otel_message in zip(expected, otel_messages):
+            for mark, part in zip(marks or (), otel_message['parts']):
+                if mark and part['type'] == 'text':
+                    part['visible'] = False
+        return otel_messages
 
     def _input_messages_json(
         self,
@@ -265,18 +332,37 @@ class InstrumentationSettings:
         Historical MCP names lack their original request provenance, so each cached fragment
         withholds those names without rescanning every part on subsequent requests.
         """
+        current_request_start = _current_request_start(input_messages)
         if message_json_cache is None:
             history_ids = mcp_telemetry_history_ids(input_messages, frozenset())
-            return safe_to_json(self.messages_to_otel_messages(input_messages, mcp_url_ids=history_ids))
+            return safe_to_json(
+                self._span_input_messages(
+                    input_messages, mcp_url_ids=history_ids, current_request_start=current_request_start
+                )
+            )
 
         fragments: list[bytes] = []
         fresh_entries: MessageJsonCache = {}
-        for message in input_messages:
+        for index, message in enumerate(input_messages):
+            answered = index < current_request_start
             entry = message_json_cache.get(id(message))
-            if entry is None or entry.parts is not message.parts:
+            # A fragment holding a request-scoped system prompt, cached while its request was current, is
+            # rebuilt once that request has been answered, so the prompt is marked as no longer visible.
+            if (
+                entry is None
+                or entry.parts is not message.parts
+                or (entry.request_scoped and entry.answered != answered)
+            ):
                 history_ids = mcp_telemetry_history_ids([message], frozenset())
+                request_scoped = _holds_request_scoped_prompt(message)
+                answered = answered and request_scoped
                 entry = CachedMessageJson(
-                    message, message.parts, message_json_fragment(self, message, history_ids), history_ids
+                    message,
+                    message.parts,
+                    message_json_fragment(self, message, history_ids, answered=answered),
+                    history_ids,
+                    request_scoped=request_scoped,
+                    answered=answered,
                 )
             fresh_entries[id(message)] = entry
             if entry.fragment:
@@ -444,6 +530,11 @@ class InstrumentedModel(WrapperModel):
                     )
 
 
+def _holds_request_scoped_prompt(message: ModelMessage) -> bool:
+    """Whether `message` is a request holding a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt."""
+    return isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)
+
+
 def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.Role:
     """The GenAI role of the message a request part belongs in.
 
@@ -465,16 +556,20 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     history after `prepare_messages` has already translated the part, except on a decision model,
     which is handed the part itself.
 
-    `ToolAvailabilityDeltaPart` gets `system` as the least-bad fit in a closed vocabulary, not as a
-    mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the set
-    of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is
-    no native channel, a `role='system'` entry carrying `tool_addition` blocks on Anthropic, a
-    roleless `additional_tools` item on OpenAI Responses, a tool-search exchange where schemas are
-    withheld. `tool` is the one role that would actively mislead, being paired with
-    `tool_call_response`.
+    `ToolAvailabilityDeltaPart`, like `CapabilityLoadDeltaPart`, gets `system` as the least-bad fit in a closed
+    vocabulary, not as a mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the
+    set of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is no native
+    channel, a `role='system'` entry carrying `tool_addition` blocks on Anthropic, a roleless `additional_tools` item on
+    OpenAI Responses, a tool-search exchange where schemas are withheld. `tool` is the one role that would actively
+    mislead, being paired with `tool_call_response`.
     """
     if isinstance(
-        part, SystemPromptPart | ToolAvailabilityDeltaPart | InstructionDeltaPart | ModelSettingsDeltaPart
+        part,
+        SystemPromptPart
+        | ToolAvailabilityDeltaPart
+        | CapabilityLoadDeltaPart
+        | InstructionDeltaPart
+        | ModelSettingsDeltaPart,
     ) or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part)):
         return 'system'
     # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`

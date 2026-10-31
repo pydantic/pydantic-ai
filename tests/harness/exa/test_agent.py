@@ -784,6 +784,13 @@ class TestAgentSpec:
     def test_from_spec_sets_a_distinct_id(self) -> None:
         assert ExaAgent[None].from_spec(effort='low', id='low_effort_agent').id == 'low_effort_agent'
 
+    def test_from_spec_sets_the_base_capability_fields(self) -> None:
+        """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+        definitions = AgentSpec.model_json_schema_with_capabilities([ExaAgent])['$defs']
+        assert {'id', 'description', 'defer_loading'} <= definitions['spec_params_ExaAgent']['properties'].keys()
+        capability = ExaAgent[None].from_spec(id='second', description='The second one.', defer_loading=True)
+        assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
+
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')
         spec = tmp_path / 'agent.yaml'

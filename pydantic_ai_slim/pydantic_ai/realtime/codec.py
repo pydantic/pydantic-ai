@@ -35,6 +35,7 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
+    SpeechTimestamp,
     SystemPromptPart,
     ToolCallPart,
     UserContent,
@@ -204,6 +205,21 @@ class OutputTranscript:
     Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
     as one cut off by a dropped connection or by closing the session.
     """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class OutputSpeechTimestamps:
+    """When pieces of the model's speech are heard in its audio, as the provider reports them."""
+
+    timestamps: list[SpeechTimestamp]
+    """The new timestamps, relative to the start of the spoken output item's audio."""
+    _: KW_ONLY
+    item_id: str | None = None
+    """Provider item ID for the spoken output, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -437,6 +453,7 @@ RealtimeCodecEvent = TypeAliasType(
     'RealtimeCodecEvent',
     AudioDelta
     | OutputTranscript
+    | OutputSpeechTimestamps
     | InputTranscript
     | ToolCall
     | ToolCallCancelled
@@ -693,6 +710,7 @@ __all__ = (
     # Codec events a connection yields.
     'AudioDelta',
     'OutputTranscript',
+    'OutputSpeechTimestamps',
     'InputTranscript',
     'ToolCall',
     'ToolResult',

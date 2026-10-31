@@ -14,12 +14,14 @@ from pydantic_ai.messages import (
     Citation,
     ForceDownloadMode,
     ModelMessage,
+    ModelResponse,
     ProviderDetailsDelta,
     TextPart,
     ToolReturnPart,
     WebCitationSource,
     tool_return_ta,
 )
+from pydantic_ai.ui._adapter import part_canonical_system
 from pydantic_ai.ui._utils import INTERNAL_METADATA_KEY, MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolApprovalRequestedPart,
@@ -51,6 +53,9 @@ __all__ = []
 
 TOOL_AVAILABILITY_DELTA_DATA_TYPE = 'data-tool-availability-delta'
 """Data chunk type for tool availability changes."""
+
+CAPABILITY_LOAD_DELTA_DATA_TYPE = 'data-capability-load-delta'
+"""Data chunk type for capabilities loaded from code."""
 
 MODEL_SETTINGS_DELTA_DATA_TYPE = 'data-model-settings-delta'
 """Data chunk type for changes to the thinking effort in effect."""
@@ -201,13 +206,14 @@ def _offset_raw_citation(citation: object, offset: int) -> object:
     return citation
 
 
-def dump_text_metadata(parts: Sequence[TextPart]) -> dict[str, Any] | None:
+def dump_text_metadata(parts: Sequence[TextPart], *, response: ModelResponse | None = None) -> dict[str, Any] | None:
     """Dump provider metadata for a UI text part holding one or more consecutive text parts.
 
     The UI text part loads back as one text part, so it keeps the first part's fields, as merged text always has, with
     every part's citations: ours with their anchors moved onto the merged text, and the provider's, which replay
     sends back, joined under `provider_details['citations']`. The provider name comes from a part with citations
     when the first part has none, since replay only sends back citations from the provider that produced them.
+    With the `response` the parts are in, its `canonical_system` rides along when it applies to that provider.
     """
     first = parts[0]
     provider_name = first.provider_name or next((part.provider_name for part in parts if part.citations), None)
@@ -228,6 +234,7 @@ def dump_text_metadata(parts: Sequence[TextPart]) -> dict[str, Any] | None:
         id=first.id,
         provider_name=provider_name,
         provider_details=provider_details,
+        canonical_system=part_canonical_system(response, provider_name) if response is not None else None,
         citations=dump_citations(merged_text_citations(parts)),
     )
 

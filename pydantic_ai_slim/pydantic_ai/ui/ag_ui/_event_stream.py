@@ -20,6 +20,7 @@ from ..._utils import now_utc
 from ..._uuid import uuid7
 from ...exceptions import RunCancelled
 from ...messages import (
+    CapabilityLoadDeltaEvent,
     CompactionPart,
     CustomEvent,
     EnqueuedMessagesEvent,
@@ -41,7 +42,13 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
-from .._adapter import compaction_payload, enqueued_messages_for_client, model_settings_delta_payload
+from .._adapter import (
+    capability_load_delta_payload,
+    compaction_payload,
+    enqueued_messages_for_client,
+    model_settings_delta_payload,
+    tool_availability_delta_payload,
+)
 from .._utils import MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
@@ -58,6 +65,7 @@ from ._lifecycle_1_0 import (
 from ._utils import (
     ACTIVITY_EVENTS_VERSION,
     BUILTIN_TOOL_CALL_ID_PREFIX,
+    CAPABILITY_LOAD_DELTA_ACTIVITY_TYPE,
     COMPACTION_ACTIVITY_TYPE,
     DEFAULT_AG_UI_VERSION,
     ENQUEUED_MESSAGES_ACTIVITY_TYPE,
@@ -478,6 +486,18 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         async for e in self._handle_tool_result(event.part):
             yield e
 
+    async def handle_capability_load_delta(self, event: CapabilityLoadDeltaEvent) -> AsyncIterator[BaseEvent]:
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        yield ActivitySnapshotEvent(
+            message_id=str(uuid4()),
+            activity_type=CAPABILITY_LOAD_DELTA_ACTIVITY_TYPE,
+            content=capability_load_delta_payload(event.part),
+        )
+
     async def handle_model_settings_delta(self, event: ModelSettingsDeltaEvent) -> AsyncIterator[BaseEvent]:
         if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
             return
@@ -500,7 +520,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         yield ActivitySnapshotEvent(
             message_id=str(uuid4()),
             activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
-            content={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+            content=tool_availability_delta_payload(part),
         )
 
     async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseEvent]:
