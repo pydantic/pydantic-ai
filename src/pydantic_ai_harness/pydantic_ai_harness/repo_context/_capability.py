@@ -338,16 +338,21 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         Files are enqueued shallowest first, so the most specific file is the latest one the model reads.
         """
         working_dir = await self._working_dir(ctx.workspace)
-        real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
+        real_working_dir: Path | None = None
         in_history = self._sync_surfaced_dirs(ctx.messages)
         for current in directories_up_to(directory, working_dir):
+            # Already surfaced, so it passed the check below then; skipping it first saves a `realpath`, which is a
+            # command round trip on shell-backed sandboxes.
+            if self._surfaced(str(current), in_history):
+                continue
             # The tool authorized the file or directory it touched, not every directory in its lexical path: a
             # symlinked directory there can take one of them, or the file's own parent, outside the project. So
             # each must resolve inside the working directory too.
-            if (confine_target or current != directory) and not Path(
-                await ctx.workspace.realpath(str(current))
-            ).is_relative_to(real_working_dir):
-                continue
+            if confine_target or current != directory:
+                if real_working_dir is None:
+                    real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
+                if not Path(await ctx.workspace.realpath(str(current))).is_relative_to(real_working_dir):
+                    continue
             await self._enqueue_directory(ctx, current, in_history)
 
     async def _enqueue_directory(self, ctx: RunContext[AgentDepsT], directory: Path, in_history: set[str]) -> None:
