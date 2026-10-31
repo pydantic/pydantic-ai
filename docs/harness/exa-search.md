@@ -488,6 +488,7 @@ polling runs inside the agent run's span.
 
 ## Further reading
 
+- [A research agent, three ways](https://pydantic.dev/articles/harness-exa) (Pydantic): from `WebSearch` to `ExaAgent` to a composed `ExaSearch` research loop
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Toolsets](../toolsets.md)
 - [Exa API documentation](https://docs.exa.ai)

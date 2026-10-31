@@ -1,0 +1,5 @@
+{
+  "against": "v2.63.0",
+  "reason": "`pydantic_ai.agent.RealtimeEvent` was only imported under `TYPE_CHECKING`, so importing it at runtime always raised `ImportError`; `RealtimeEvent` is still exported from `pydantic_ai.realtime`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10189"
+}
