@@ -59,7 +59,8 @@ def doc_descriptions(
     sections = docstring.parse()
 
     # Google `Keyword Args:` and `Other Parameters:` sections, and numpy `Other Parameters`, parse to a subclass of
-    # the parameters section. A parameter described in more than one section keeps its first description.
+    # the parameters section (see https://www.sphinx-doc.org/en/master/usage/extensions/napoleon.html#docstring-sections).
+    # A parameter described in more than one section keeps its first description.
     params: dict[str, str] = {}
     for section in sections:
         if isinstance(section, DocstringSectionParameters):
