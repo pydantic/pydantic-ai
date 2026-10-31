@@ -918,6 +918,25 @@ CCCCCCCCCC
             ]
         )
 
+    async def test_notes_queued_by_one_read_count_against_the_budget_before_reaching_history(
+        self, tmp_path: Path
+    ) -> None:
+        # One deep read enqueues `a/` and `a/b/` together, so `a/`'s note isn't in history yet when `a/b/` is weighed.
+        _write(tmp_path / 'a' / 'AGENTS.md', 'A' * 20)
+        _write(tmp_path / 'a' / 'b' / 'AGENTS.md', 'B' * 20)
+        _write(tmp_path / 'a' / 'b' / 'x.py', 'x')
+        result = await self._read_files(tmp_path, ['a/b/x.py'], nested_max_chars=30)
+        assert _repo_notes(result.all_messages()) == snapshot(
+            [
+                """\
+<context-file path="a/AGENTS.md">
+AAAAAAAAAAAAAAAAAAAA
+</context-file>\
+""",
+                '<context-file path="a/b/AGENTS.md" />',
+            ]
+        )
+
     async def test_budget_is_accepted_and_ignored_with_pointers(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
         _write(tmp_path / 'sub' / 'one.py', 'one')
