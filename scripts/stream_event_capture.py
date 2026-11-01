@@ -1,15 +1,19 @@
 """Capture the events each streamed model response emits, per test node, to prove a refactor keeps them.
 
-Run the capture once on the base commit and once on the branch, into separate empty directories, over the test
-files that reach the changed stream code, then compare the two:
+Copy this file out of the tree first, so the base commit, which may not have it, can load it too. Then run the
+capture once on the base commit and once on the branch, into separate new directories, over the same test files:
+those that reach the changed stream code, such as every file naming the changed model classes. Then compare:
 
-    STREAM_EVENT_CAPTURE_DIR=/tmp/base PYTHONPATH=scripts uv run pytest -p stream_event_capture <test files>
-    STREAM_EVENT_CAPTURE_DIR=/tmp/head PYTHONPATH=scripts uv run pytest -p stream_event_capture <test files>
-    uv run scripts/stream_event_capture.py /tmp/base /tmp/head
+    mkdir /tmp/plugin && cp scripts/stream_event_capture.py /tmp/plugin/
+    STREAM_EVENT_CAPTURE_DIR=/tmp/base PYTHONPATH=/tmp/plugin uv run pytest -p stream_event_capture <test files>
+    STREAM_EVENT_CAPTURE_DIR=/tmp/head PYTHONPATH=/tmp/plugin uv run pytest -p stream_event_capture <test files>
+    uv run /tmp/plugin/stream_event_capture.py /tmp/base /tmp/head
 
 As a pytest plugin, it records every event a `StreamedResponse`'s `_get_event_iterator` yields, then the response
-`get()` builds once that iterator is exhausted, or the error the iterator raised. Each stream is one JSON line,
-written per `pytest-xdist` worker when its test ends. Generated tool call ids, UUIDs, object addresses and
+`get()` builds once that iterator is exhausted, or the error the iterator raised. It hooks in through
+`StreamedResponse.__aiter__`, so a subclass that overrides `__aiter__` without calling it, like the continuation
+composite in `models/_continuation.py`, is recorded only through the streams it iterates. Each stream is one JSON
+line, written per `pytest-xdist` worker when its test ends. Generated tool call ids, UUIDs, object addresses and
 timestamps within a day of the capture are normalized, so two runs of the same code compare equal.
 
 The comparison lists the test nodes whose streams differ or that only one capture has, and exits non-zero if
@@ -50,6 +54,10 @@ def pytest_configure(config: pytest.Config) -> None:
     """Wrap each stream's `_get_event_iterator` when its iteration starts."""
     if not os.environ.get(CAPTURE_DIR_ENV):
         raise pytest.UsageError(f'Set `{CAPTURE_DIR_ENV}` to the directory the capture is written to.')
+    capture_dir = Path(os.environ[CAPTURE_DIR_ENV])
+    # Workers start once the controller has checked, and another worker may already have written by then.
+    if 'PYTEST_XDIST_WORKER' not in os.environ and any(capture_dir.glob('*.jsonl')):
+        raise pytest.UsageError(f'`{capture_dir}` already holds a capture; a second one would be appended to it.')
     original_aiter = StreamedResponse.__aiter__
 
     def recording_aiter(self: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
