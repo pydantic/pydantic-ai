@@ -21,6 +21,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -36,7 +37,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..._inline_snapshot import snapshot
 from ...cassette_utils import single_request_body
-from ...conftest import IsDatetime, IsStr, try_import
+from ...conftest import IsDatetime, IsStr, RequestCapture, try_import
 from ..mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
@@ -1468,4 +1469,108 @@ async def test_openrouter_cache_earlier_breakpoint_raised_to_later_longer_ttl_e2
             cost=Decimal('0.014374'),
             requests=1,
         )
+    )
+
+
+@pytest.mark.moves_cache_prefix(
+    reason=(
+        'the automatic message breakpoint moves to the newest message, so the system message loses its '
+        '`cache_control` in the next request; its text is unchanged, and the cache read is the same with or without it'
+    )
+)
+async def test_openrouter_cache_messages_breakpoint_on_trailing_system_message_real_api(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """On an Anthropic route, a breakpoint on a mid-conversation `system` message at the end of the request is cached.
+
+    The system prompt moves past the user prompt to the end of the request, where OpenRouter keeps it native, so the
+    automatic message breakpoint lands on it, and OpenRouter forwards it: the first request writes its whole prompt.
+    The next request reads all of it up to that system message (recorded: 4,438 of the 4,451 tokens written), where
+    an assistant turn now follows the message. Measured with raw requests, the read stops there whether or not the
+    message keeps its `cache_control` and whatever its content's shape.
+    """
+    model = OpenRouterModel(
+        'anthropic/claude-haiku-5.5',
+        provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
+    )
+    agent = Agent(
+        model,
+        instructions='You are a helpful assistant.',
+        model_settings=OpenRouterModelSettings(
+            openrouter_cache_messages=True,
+            openrouter_provider={'order': ['anthropic'], 'allow_fallbacks': False},
+        ),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Remember these notes. ' + 'The archive holds old ledgers. ' * 400)]),
+        ModelResponse(parts=[TextPart('Noted.')]),
+        ModelRequest(parts=[SystemPromptPart('Answer in one short sentence.')]),
+    ]
+
+    first = await agent.run('What does the archive hold?', message_history=history)
+    second = await agent.run('And what else?', message_history=first.all_messages())
+
+    first_body, _ = request_capture.bodies()
+    assert cast(list[Any], first_body['messages'])[-2:] == snapshot(
+        [
+            {'role': 'user', 'content': 'What does the archive hold?'},
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Answer in one short sentence.',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    }
+                ],
+            },
+        ]
+    )
+    assert first.usage.cache_write_tokens >= first.usage.input_tokens - 5
+    assert first.usage.cache_write_tokens - 20 < second.usage.cache_read_tokens < first.usage.cache_write_tokens
+
+
+async def test_openrouter_limit_cache_points_counts_mid_conversation_system_message_as_message_point(
+    allow_model_requests: None,
+) -> None:
+    """Over the limit, a breakpoint on a mid-conversation `system` message is a message point, newest kept first.
+
+    Only the leading system messages carry instruction points. A unit test because the claim is which breakpoints
+    survive the trim in the request body.
+    """
+    client = _done_mock_client()
+    model = OpenRouterModel('anthropic/claude-haiku-5.5', provider=OpenRouterProvider(openai_client=client))
+    agent = Agent(model, instructions='You are a helpful assistant.')
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'  # pragma: no cover
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(['Block one.', CachePoint(), 'Block two.', CachePoint(), 'Block three.'])]),
+        ModelResponse(parts=[TextPart('Noted.')]),
+        ModelRequest(parts=[SystemPromptPart('Answer in one short sentence.')]),
+    ]
+
+    await agent.run(
+        'Go on.',
+        message_history=history,
+        model_settings=OpenRouterModelSettings(
+            openrouter_cache_instructions=True,
+            openrouter_cache_tool_definitions=True,
+            openrouter_cache_messages=True,
+        ),
+    )
+
+    kwargs = get_mock_chat_completion_kwargs(client)[0]
+    assert [
+        (message['role'], [block.get('text') for block in message['content'] if 'cache_control' in block])
+        for message in kwargs['messages']
+        if isinstance(message['content'], list)
+    ] == snapshot(
+        [
+            ('system', ['You are a helpful assistant.']),
+            ('user', ['Block two.']),
+            ('system', ['Answer in one short sentence.']),
+        ]
     )

@@ -1,0 +1,524 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "12864"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-haiku-5.5
+        stream: false
+        messages:
+        - role: system
+          content: You are a helpful assistant.
+        - role: user
+          content: >-
+            Remember these notes. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers.
+        - role: assistant
+          content: Noted.
+        - role: user
+          content: What does the archive hold?
+        - role: system
+          content:
+          - type: text
+            text: Answer in one short sentence.
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        provider:
+          order:
+          - anthropic
+          allow_fallbacks: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793409371-D3vzRkrhWqW7tuYNRO6p
+        object: chat.completion
+        created: 1793409371
+        model: anthropic/claude-haiku-5.5
+        provider: Anthropic
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: The archive holds old ledgers.
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 4453
+          completion_tokens: 13
+          total_tokens: 4466
+          cost: 0.000563075
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 4451
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.000563075
+            upstream_inference_prompt_cost: 0.000556575
+            upstream_inference_completions_cost: 6.5e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-31T01:16:12.824424+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "12971"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-haiku-5.5
+        stream: false
+        messages:
+        - role: system
+          content: You are a helpful assistant.
+        - role: user
+          content: >-
+            Remember these notes. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive holds
+            old ledgers. The archive holds old ledgers. The archive holds old ledgers. The
+            archive holds old ledgers. The archive holds old ledgers. The archive holds old
+            ledgers. The archive holds old ledgers. The archive holds old ledgers. The archive
+            holds old ledgers. The archive holds old ledgers. The archive holds old ledgers.
+            The archive holds old ledgers.
+        - role: assistant
+          content: Noted.
+        - role: user
+          content: What does the archive hold?
+        - role: system
+          content: Answer in one short sentence.
+        - role: assistant
+          content: The archive holds old ledgers.
+        - role: user
+          content:
+          - type: text
+            text: And what else?
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        provider:
+          order:
+          - anthropic
+          allow_fallbacks: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793409372-U4KkyYuOz1LBL5eLFnfa
+        object: chat.completion
+        created: 1793409372
+        model: anthropic/claude-haiku-5.5
+        provider: Anthropic
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: Nothing else; the notes only say it holds old ledgers.
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.text
+              signature: >-
+                CAQS5AYKEAgTGAI4AUIIdGhpbmtpbmcSDApp+tmtaYcFEg8iphoMISkXmXN5Jmym2BJuIjBIhVUjxj8Pbyu4xoKOd0tgPvI/Ek7IySfmwl7Zl/e8CKJt+Zc1N77RVNAXc+D9ysMqgQbHfEQxt9+mYGMQ06ER8QguF4FDUhbUjjGqPalwoFrCBg/wsGUqhqHmPziY07gIUdOobSM7JKK9jrmFzP+dF2jL82uGZ8FOrQHaCHLqE/wxUW+kjZVHpHnViF1k7nU665Sqn0FOcZGknrMKimxcPvaXVcPz86UvRrKE6lkYIX56opYQTJgXWdW+vGxBvh8jv19mtgoQF5RapteVjVY/yaZxSuf8epjUvecgHrFPObZOzvNMUk0HRCBwIVptUTW1TVVUnlAnAASHP7j8fmH26FbHmOAmRan8uMeAMtRxiuvvKqw9fxwDvLwFKARKYnU6mIrzBk+iV/tA2k/ixTmIMeImQ/d2EsfDK4/T1xwQAWwVZi2onQFpR9GUY6xkF6braCSZ1+ORYJ/CJfj9hlnocYi27aapc3Kz+Hj3BIGZB59Cxq38AIHHtNovQvpBMrocX6FmrsNFuNiMnua0czgcYLyp+TFQZDiL+XMc+YUa05NPqRPY/NOLLayM8MR7Nm9PMkKFTGLBw9BoKXL2E8pxlxZOFx1lKPk1DNITJ7yWiAzTIjYCAGOjgmGmrP6ab439krz4GWmiyDs3qIXNfCB/F06uPG0mN/87AXUU/avWWLyo9cwkTByitzswTtwIqychyBmRE4taUc+OEo2Y6VRx9woCgVauGBiO6RnATPwNIMFLzz6ZaVRE7A1UTBD/Tfnj6DWUfsk4q8U7ceQT4a04SznzaI6GPHqUFA79pz+SDF7YIm3Wnvam0a2oMYGdbuMl8wOXbqAlLBMDYkjhD3LkLDF2Rjob8RkiVthe66teVBaRwqwNvoFqRvayg2d/0aHmH2/wEtEsrg8dG+hmtRChTdxeoAVUCH5IluFqhbZY22nQXaxDUNRI+4yxIMoOgc1C6MAeJ/BFby3xqHCp9v5Pm98RqJVlPXZe6lLIUMFTZs47S1oAy0sT1N8CAsdursvq4xWC67eVw1ms/6T22QlvpZq1LocUwcvCqPuZIdki3X++TJcCW/FHDfSvdqAzt3UScXa+GAE=.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1oYWlrdS01LjUtMjAyNjEwMDd8YW50aHJvcGljIn0
+              format: anthropic-claude-v1
+              index: 0
+        usage:
+          prompt_tokens: 4473
+          completion_tokens: 81
+          total_tokens: 4554
+          cost: 0.000089155
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 4438
+            cache_write_tokens: 31
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.000089155
+            upstream_inference_prompt_cost: 0.000048655
+            upstream_inference_completions_cost: 0.0000405
+          completion_tokens_details:
+            reasoning_tokens: 59
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-31T01:16:14.225991+00:00
