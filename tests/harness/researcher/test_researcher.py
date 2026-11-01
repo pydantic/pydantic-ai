@@ -1,5 +1,6 @@
 """Workspace-independent researcher configuration."""
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -19,3 +20,20 @@ async def test_researcher_with_local_store_needs_no_workspace(tmp_path: Path) ->
     # TestModel rejects native web tools, but only after the workspace preflight succeeds.
     with pytest.raises(UserError, match='TestModel does not support built-in tools'):
         await agent.run('research')
+
+
+class TestResearcherSpec:
+    def test_load_from_spec(self) -> None:
+        agent = Agent.from_spec({'model': 'test', 'capabilities': ['Researcher']}, custom_capability_types=[Researcher])
+
+        assert isinstance(agent.model, TestModel)
+
+    def test_load_from_spec_with_instructions(self) -> None:
+        agent = Agent.from_spec(
+            {'model': 'test', 'capabilities': [{'Researcher': {'instructions': 'Use the configured instructions.'}}]},
+            custom_capability_types=[Researcher],
+        )
+
+        instructions = agent.root_capability.get_instructions()
+        assert isinstance(instructions, Sequence)
+        assert 'Use the configured instructions.' in instructions

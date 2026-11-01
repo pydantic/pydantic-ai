@@ -148,6 +148,21 @@ async def test_no_workspace_fails_the_run_naming_coder() -> None:
     assert '- LocalWorkspace: .' in str(raised.value)
 
 
+class TestCoderSpec:
+    def test_load_from_spec(self) -> None:
+        agent = Agent.from_spec({'model': 'test', 'capabilities': ['Coder']}, custom_capability_types=[Coder])
+
+        assert isinstance(agent.model, TestModel)
+
+    def test_load_from_spec_without_sub_agents(self) -> None:
+        agent = Agent.from_spec(
+            {'model': 'test', 'capabilities': [{'Coder': {'sub_agents': False}}]},
+            custom_capability_types=[Coder],
+        )
+
+        assert not any(isinstance(capability, SubAgents) for capability in agent.root_capability.capabilities)
+
+
 CONTROL_TOOLS = {'list_tasks', 'message_task', 'answer_task', 'cancel_task'}
 CODER_TOOLS = {*FILE_TOOL_NAMES, 'shell', 'delegate_task', *CONTROL_TOOLS}
 

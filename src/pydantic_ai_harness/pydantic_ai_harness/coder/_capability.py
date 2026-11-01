@@ -130,6 +130,7 @@ def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
     return file_system
 
 
+@dataclass(init=False, repr=False, eq=False)
 class Coder(CombinedCapability[AgentDepsT]):
     """Autonomous coding with six tools, delegation, and context management, in the run's workspace.
 
