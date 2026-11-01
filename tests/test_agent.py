@@ -4587,6 +4587,9 @@ def test_failed_run_history_is_resumable():
         with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
             agent.run_sync('Hello')
 
+    response = messages[-2]
+    assert isinstance(response, ModelResponse)
+
     result = agent.run_sync('Never mind.', message_history=messages)
     assert result.output == 'success'
     assert seen_by_model[-1][-1] == snapshot(
@@ -4597,7 +4600,7 @@ def test_failed_run_history_is_resumable():
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_foobar',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=UTC),
+                    timestamp=response.timestamp,
                     outcome='interrupted',
                 ),
                 UserPromptPart(content='Never mind.', timestamp=IsNow(tz=UTC)),
