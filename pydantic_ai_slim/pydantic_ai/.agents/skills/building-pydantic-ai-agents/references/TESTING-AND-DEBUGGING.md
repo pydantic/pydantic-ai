@@ -110,6 +110,8 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-5.2', name='support_agent')
 ```
 
+To check which capabilities and toolsets a run actually used, read its run span's `pydantic_ai.capabilities` and `pydantic_ai.toolsets` attributes, keyed by class. Each capability's `active` field says whether it was in force, which shows whether the model loaded a deferred capability. Each model request span lists that step's active capability ids in `pydantic_ai.active_capabilities`. See [Capabilities and toolsets](https://pydantic.dev/docs/ai/integrations/logfire/#capabilities-and-toolsets).
+
 When omitted, the name is inferred from the variable the agent is assigned to and falls back to `'agent'` when it can't be (e.g. agents kept in a list or dict). A stable name pays off most when several agents run in one app and you need to tell their traces apart.
 
 Good uses:
