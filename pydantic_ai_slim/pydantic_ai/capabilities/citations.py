@@ -13,7 +13,9 @@ class Citations(AbstractCapability[Any]):
     """Asks for citations from providers that only cite when asked.
 
     Sets the [`citations`][pydantic_ai.settings.ModelSettings.citations] model setting. Providers that always cite,
-    such as for web search, don't need it.
+    such as OpenAI and Google for web search, don't need it. Anthropic returns web fetch results, and web search results
+    the model reads in code execution on models with the `20260209` web tools, without citations unless it's set. The
+    setting is only used when the output is text.
     """
 
     _: KW_ONLY

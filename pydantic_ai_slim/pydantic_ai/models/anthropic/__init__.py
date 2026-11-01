@@ -279,6 +279,7 @@ try:
         fetched_pages_from_history,
         map_citation_for_replay,
         map_citations,
+        route_cited_web_tools_direct,
         with_document_citations,
     )
     from ._compaction import (
@@ -318,6 +319,7 @@ try:
         map_tool_search_tool_result_block,
         map_web_fetch_tool_result_block,
         map_web_search_tool_result_block,
+        open_turn_has_code_execution,
         provisions_code_execution,
         text_editor_code_execution_tool_result_content_ta,
         web_search_tool_result_content_ta,
@@ -689,12 +691,16 @@ class AnthropicModelSettings(ModelSettings, total=False):
     `web_search_20260209` and `web_fetch_20260209` versions let the model call the tools from code
     execution, which gives it a server-side code execution sandbox to filter results in ("dynamic
     filtering") even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] is not
-    enabled. Results the model reads from code execution come back without citations.
+    enabled. Results the model reads from code execution come back without citations, so when a request
+    asks for citations, with [`Citations`][pydantic_ai.capabilities.Citations] and text output or, for
+    web fetch, [`WebFetchTool.enable_citations`][pydantic_ai.native_tools.WebFetchTool.enable_citations],
+    Pydantic AI sends `['direct']` on those versions of the cited tools, unless the request needs code
+    execution. See [Web Tool Callers](../models/anthropic.md#web-tool-callers).
 
     Set `['direct']` to have the model always call the web tools itself with no sandbox, which turns off
     dynamic filtering and makes the tools eligible for Zero Data Retention. A value set here is sent
-    on whichever web tool version the model uses. A code execution caller gives the model the sandbox
-    on any version. Anthropic rejects an empty list, `code_execution_20250825`, and a code execution
+    on whichever web tool version the model uses, and takes precedence over the citations default. A
+    code execution caller gives the model the sandbox on any version. Anthropic rejects an empty list, `code_execution_20250825`, and a code execution
     caller on models without programmatic tool calling, such as Claude Haiku 4.5.
     See [the Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
@@ -1225,15 +1231,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> ModelResponse:
         """Turn the response to a non-streaming `_messages_create` call into a `ModelResponse`."""
         response = check_json_response(self.model_name, response)
+        code_execution_in_open_turn = open_turn_has_code_execution(messages, self.system)
         if isinstance(response, BetaMessage):
             return self._process_response(
-                response, model_request_parameters, model_settings, fetched_pages_from_history(messages)
+                response,
+                model_request_parameters,
+                model_settings,
+                fetched_pages_from_history(messages),
+                code_execution_in_open_turn=code_execution_in_open_turn,
             )
         # The request was streamed behind the scenes, see `_messages_create`. `map_api_errors` maps a transport
         # error that breaks the stream off, both while it opens and while it's read.
         async with response.source:
             streamed_response = await self._process_streamed_response(
-                response, model_request_parameters, model_settings, fetched_pages_from_history(messages)
+                response,
+                model_request_parameters,
+                model_settings,
+                fetched_pages_from_history(messages),
+                code_execution_in_open_turn=code_execution_in_open_turn,
             )
             async for _ in streamed_response:
                 pass
@@ -1344,7 +1359,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = await self._messages_create(messages, True, model_settings, model_request_parameters)
         async with response.source:
             streamed_response = await self._process_streamed_response(
-                response, model_request_parameters, model_settings, fetched_pages_from_history(messages)
+                response,
+                model_request_parameters,
+                model_settings,
+                fetched_pages_from_history(messages),
+                code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
             )
             yield streamed_response
             mark_continuation_context_input_tokens(messages, streamed_response)
@@ -1684,7 +1703,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         revealed_tool_order = _revealed_deferred_tool_order(messages, model_request_parameters)
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
-        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
+        tools, mcp_servers, native_tool_betas = self._add_native_tools(
+            tools,
+            model_request_parameters,
+            model_settings,
+            code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
+        )
         _append_revealed_tool_params(tools, revealed_tool_order)
         if tools and all(tool.get('defer_loading') is True for tool in tools):
             raise UserError(
@@ -2060,7 +2084,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters)
         # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions left off
         # the count are the one thing that has to differ from the real request.
-        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
+        tools, mcp_servers, native_tool_betas = self._add_native_tools(
+            tools,
+            count_tokens_parameters,
+            model_settings,
+            code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
+        )
         _append_revealed_tool_params(tools, revealed_tool_order)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
@@ -2172,11 +2201,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
         history_fetched_pages: Sequence[tuple[str, str]] = (),
+        *,
+        code_execution_in_open_turn: bool = False,
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         builtin_tool_calls: dict[str, NativeToolCallPart] = {}
-        enabled_server_tool_names = self._get_enabled_server_tool_names(model_request_parameters, model_settings)
+        enabled_server_tool_names = self._get_enabled_server_tool_names(
+            model_request_parameters, model_settings, code_execution_in_open_turn
+        )
         server_tool_result_ids = {
             item.tool_use_id
             for item in response.content
@@ -2301,14 +2334,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return model_response
 
     def _get_enabled_server_tool_names(
-        self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: AnthropicModelSettings,
+        code_execution_in_open_turn: bool,
     ) -> frozenset[str]:
         """Wire names that may legitimately appear in a `server_tool_use` block for this request.
 
         Derived from the same `_add_native_tools` call that builds the request payload, so the
         filter can't drift from what is actually sent to the API.
         """
-        native_tools, _, _ = self._add_native_tools([], model_request_parameters, model_settings)
+        native_tools, _, _ = self._add_native_tools(
+            [], model_request_parameters, model_settings, code_execution_in_open_turn=code_execution_in_open_turn
+        )
         # `BetaMCPToolsetParam` is the only union member without a `name`, and `_add_native_tools`
         # never emits it into `tools` (MCP servers are returned separately).
         enabled_server_tool_names = {tool['name'] for tool in native_tools if 'name' in tool}  # pragma: no branch
@@ -2325,6 +2363,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
         history_fetched_pages: Sequence[tuple[str, str]] = (),
+        *,
+        code_execution_in_open_turn: bool = False,
     ) -> AnthropicStreamedResponse:
         first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -2346,7 +2386,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _provider_name=self._provider.name,
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
-            _enabled_server_tool_names=self._get_enabled_server_tool_names(model_request_parameters, model_settings),
+            _enabled_server_tool_names=self._get_enabled_server_tool_names(
+                model_request_parameters, model_settings, code_execution_in_open_turn
+            ),
             _history_fetched_pages=history_fetched_pages,
         )
         streamed_response.canonical_system = self._canonical_system_stamp
@@ -2440,6 +2482,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tools: list[BetaToolUnionParam],
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
+        *,
+        code_execution_in_open_turn: bool = False,
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
@@ -2512,12 +2556,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
 
-        # `extra_body['tools']` replaces these tools on the wire, so the setting isn't applied to them. That keeps
-        # `_get_enabled_server_tool_names`, which rebuilds the tools through this method, filtering as if it were unset.
+        # `extra_body['tools']` replaces these tools on the wire, so neither the setting nor citations change their
+        # callers. That keeps `_get_enabled_server_tool_names`, which rebuilds the tools through this method, filtering
+        # as if both were unset.
         extra_body = model_settings.get('extra_body')
-        if (allowed_callers := model_settings.get('anthropic_web_tools_allowed_callers')) is not None and not (
-            _is_str_mapping(extra_body) and 'tools' in extra_body
-        ):
+        if _is_str_mapping(extra_body) and 'tools' in extra_body:
+            return tools, mcp_servers, beta_features
+        if (allowed_callers := model_settings.get('anthropic_web_tools_allowed_callers')) is not None:
             for web_tool in tools:
                 match web_tool:
                     case {
@@ -2529,6 +2574,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         web_tool['allowed_callers'] = allowed_callers
                     case _:
                         pass
+        # A container set by the user is only accepted on a request with code execution.
+        elif not model_settings.get('anthropic_container'):
+            route_cited_web_tools_direct(
+                tools, citations_included(model_settings, model_request_parameters), code_execution_in_open_turn
+            )
         return tools, mcp_servers, beta_features
 
     def _tool_choice_declarations(
