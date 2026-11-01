@@ -1,0 +1,5 @@
+{
+  "against": "v2.64.0",
+  "reason": "Harness 0.x: nested instruction files are now inlined by default instead of named by a pointer, which the same benchmark found more reliable (99% against 95%). Pass `nested_inject='pointer'` to keep the old behavior.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+}

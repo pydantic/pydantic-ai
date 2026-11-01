@@ -1,0 +1,5 @@
+{
+  "against": "v2.64.0",
+  "reason": "Harness 0.x: `RepoContext` now loads one instruction file per directory, `AGENTS.md` first and `CLAUDE.md` as the fallback, as Codex does. Pass `filenames=('CLAUDE.md', 'AGENTS.md')` to prefer `CLAUDE.md`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11691"
+}

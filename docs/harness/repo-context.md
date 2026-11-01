@@ -11,7 +11,7 @@ description: "Load a repo's AGENTS.md and CLAUDE.md instruction files into a Pyd
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![RepoContext has three strategies. On by default, the walk-up loads AGENTS.md and CLAUDE.md from the working directory and each ancestor up to home_dir into the instructions, broadest first, once per run. Off by default, the inventory_agent_context tool reports where the .claude, .agents, .codex and .grok roots keep skills, agents and hooks. Off by default, nested traversal reacts to FileSystem reading or listing a directory, such as src/api, and queues a pointer to that directory's AGENTS.md before the next model request.](../img/harness/repo-context.svg)
+![RepoContext has three strategies. On by default, autoload puts one instruction file per directory, AGENTS.md or else CLAUDE.md, into the instructions: the working directory's, plus each ancestor's when walk_up is set, broadest first, once per run. Off by default, the inventory_agent_context tool reports where the .claude, .agents, .codex and .grok roots keep skills, agents and hooks. On by default, nested traversal reacts to FileSystem reading or listing a directory, such as src/api, and queues the contents of that directory's AGENTS.md before the next model request.](../img/harness/repo-context.svg)
 
 ## The problem
 
@@ -22,28 +22,36 @@ A repo accumulates CE for whatever coding assistant worked in it: instruction fi
 `RepoContext` bundles three strategies, each independently toggleable. Construct it with `RepoContext(...)` in an `Agent`'s `capabilities`, with a workspace attached to the run:
 
 ```python
-from pathlib import Path
-
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import RepoContext
 
 agent = Agent(
     '{{ anthropic:large }}',
-    capabilities=[LocalWorkspace('.'), RepoContext(home_dir=Path.home())],
+    capabilities=[LocalWorkspace('.'), RepoContext(walk_up='repo_root')],
 )
 
 result = agent.run_sync('Summarize the coding-assistant setup in this repo.')
 print(result.output)
 ```
 
-`RepoContext` reads from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), starting at its working directory. To point it at a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. `home_dir` and `asset_roots` are paths in the workspace: relative ones resolve from the working directory, and `~` is not expanded. A run without a workspace fails at its start.
+`RepoContext` reads from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), starting at its working directory. To point it at a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. `home_dir`, `global_files` and `asset_roots` are paths in the workspace: relative ones resolve from the working directory, and `~` is not expanded. A run without a workspace fails at its start.
 
-### 1. Walk-up instruction autoload (on by default)
+### 1. Instruction autoload (on by default)
 
-Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up to `home_dir` (inclusive). Precedence is ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by the path a symlink resolves to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors sharing identical content load once. Where the workspace can resolve symlinks, a symlinked file is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`. A file in an ancestor is labeled relative to the working directory, such as `../AGENTS.md`, not by its absolute path. Symlinks to instruction files outside the directory being scanned are skipped, including shared dotfiles in another directory.
+Loads the working directory's instruction file at run start. Each directory contributes one file: the first of `filenames` that exists there, `AGENTS.md` and then `CLAUDE.md` by default, as Codex picks one per directory. Pass `filenames=('CLAUDE.md', 'AGENTS.md')` to prefer `CLAUDE.md`. Where the workspace can resolve symlinks, a symlinked file is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`.
 
-When `home_dir` is `None` (the default), only the working directory is scanned -- no walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
+`walk_up` adds the working directory's ancestors:
+
+- `None` (the default) scans only the working directory.
+- `'repo_root'` walks up to the nearest directory, starting at the working directory, that contains one of `root_markers` (`('.git',)` by default), as Codex does. A `.git` file, as in a linked worktree, counts like a `.git` directory. When no such directory exists, only the working directory is scanned.
+- `'all'` walks every ancestor up to the filesystem root, as Claude Code does.
+
+`home_dir` also walks up, to that workspace directory inclusive, and with `walk_up='all'` it stops the walk there. It cannot be combined with `walk_up='repo_root'`. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
+
+`global_files` names user-global instruction files, such as `/home/user/.codex/AGENTS.md`. They load before the walk-up, so they come first and have the lowest precedence; a missing one is skipped, and one may be a symlink to anywhere, since it is the user's own.
+
+Precedence is global-first, then ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by content hash, so two ancestors (or a global file and a project file) with identical content load once. A file in an ancestor is labeled relative to the working directory, such as `../AGENTS.md`, not by its absolute path; a global file outside the working directory's ancestry is labeled by its absolute path.
 
 ### 2. Asset inventory (off by default)
 
@@ -54,14 +62,15 @@ Skill discovery goes at most eight directories deep.
 
 With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'s `read_file`, as long as every asset root is inside the working directory (the default roots are). The tool is marked with [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind (keep `FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet, [#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). The instructions name the asset roots and say to inspect them with file tools, or with the inventory tool when it's offered. They name no reader, so they're the same with or without `FileSystem` and stay static. The decision is made from `asset_roots`, not from `FileSystem`'s access rules: `denied_patterns` that cover the roots, or `allowed_patterns` that leave them out, still drop the inventory tool.
 
-### 3. Nested-on-traversal (off by default)
+### 3. Nested-on-traversal (on by default)
 
 When the model lists a directory or reads a file in it, surface the
-`CLAUDE.md`/`AGENTS.md` of that directory and of every directory between it and
+instruction file of that directory and of every directory between it and
 the working directory, shallowest first: reading `packages/foo/src/x.py` also
 surfaces `packages/foo/AGENTS.md`. This strategy subscribes to `FileReadEvent` and
 `DirectoryListedEvent`, so it receives normalized, containment-checked paths
-instead of inspecting raw tool arguments. It remains opt-in:
+instead of inspecting raw tool arguments. It is on by default, so with
+`FileSystem` on the agent nothing else is needed; this switches it to pointers:
 
 ```python
 from pydantic_ai import Agent
@@ -73,17 +82,18 @@ agent = Agent(
     capabilities=[
         LocalWorkspace('.'),
         FileSystem(),
-        RepoContext(
-            nested_traversal=True,
-            nested_inject='pointer',  # or 'contents'
-        ),
+        RepoContext(nested_inject='pointer'),
     ],
 )
 result = agent.run_sync('List the source directory.')
 ```
 
-`nested_inject='pointer'` (default) enqueues a one-line note pointing at the
-file; `'contents'` enqueues the file body. The note reaches message history
+`nested_inject='contents'` (default) enqueues the file body; `'pointer'`
+enqueues a one-line note pointing at the file. A
+[9-model benchmark](https://github.com/pydantic/pydantic-ai/issues/11683#issuecomment-6510271135)
+found the rule in a nested file followed in 99% of runs with `'contents'`, 95%
+with `'pointer'`, and 39% with nested traversal off. Pass
+`nested_traversal=False` to turn it off. The note reaches message history
 before the next model request. A directory counts as surfaced while its note
 is still in the conversation: a later run of the same conversation doesn't
 repeat it, and once compaction summarizes the note away, the next traversal
@@ -116,7 +126,7 @@ the same note twice.
 
 ## Trust
 
-Walk-up files become part of the agent's instructions, so the model gives them the same weight as the instructions you write yourself. That is what the strategy is for, and it means the working directory and `home_dir` should hold only instruction files you would put in your own instructions.
+Walk-up files become part of the agent's instructions, so the model gives them the same weight as the instructions you write yourself. That is what the strategy is for, and it means the working directory and every directory the walk-up reaches (`home_dir`, the repository root for `walk_up='repo_root'`, or every ancestor for `'all'`) and every `global_files` entry should hold only instruction files you would put in your own instructions.
 
 Nested files are different: the model chooses which directories to read, and those can include vendored code or a checkout someone else wrote. Their contents and paths reach the model as a user message, not as instructions. The `'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart` (a system message where the model supports one mid-conversation, and `<system>`-tagged user text otherwise), followed by the file's path as a user-message `<context-file path="..." />` tag.
 
@@ -133,13 +143,16 @@ Injecting file contents into the system prompt costs prompt-cache stability: a c
 
 ```python {test="skip"}
 RepoContext(
-    home_dir=None,                  # str | Path | None -- shallowest workspace dir to stop walk-up at, inclusive
-    filenames=('CLAUDE.md', 'AGENTS.md'),
+    walk_up=None,                   # None | 'repo_root' | 'all' -- how far above the working directory to look
+    root_markers=('.git',),         # what marks the repository root for walk_up='repo_root'
+    home_dir=None,                  # str | Path | None -- walk up to this workspace dir, inclusive
+    global_files=(),                # Sequence[str | Path] -- user-global instruction files, loaded first
+    filenames=('AGENTS.md', 'CLAUDE.md'),  # one per directory: the first that exists
     autoload_instructions=True,     # Strategy 1
     expose_inventory_tool=False,    # Strategy 2
     inventory_tool_name='inventory_agent_context',
-    nested_traversal=False,         # Strategy 3
-    nested_inject='pointer',        # 'pointer' | 'contents'
+    nested_traversal=True,          # Strategy 3
+    nested_inject='contents',       # 'contents' | 'pointer'
     traversal_tool_names=frozenset({'list_directory', 'read_file'}),  # deprecated fallback
     traversal_path_arg='path',                                       # deprecated fallback
     asset_roots=('.claude', '.agents', '.codex', '.grok'),
@@ -151,6 +164,10 @@ RepoContext(
 ## Scope
 
 `RepoContext` locates and loads CE; it does not parse skill/sub-agent frontmatter or hook bodies, and it does not modify assets. Strategy 1 reads its files once per run, so mid-run edits to those files are not reloaded.
+
+## Upgrading
+
+`RepoContext()` now loads one instruction file per directory, `AGENTS.md` first and `CLAUDE.md` as the fallback, and surfaces nested instruction files by default, inlining their contents. To get close to the old behavior, pass `RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False)`. It only approximates it: no setting loads both files from one directory any more, so a directory holding both loads only `CLAUDE.md`. Durable runs started before the upgrade record fewer workspace calls than a new run makes, so let them finish or version the deployment first.
 
 ## Further reading
 

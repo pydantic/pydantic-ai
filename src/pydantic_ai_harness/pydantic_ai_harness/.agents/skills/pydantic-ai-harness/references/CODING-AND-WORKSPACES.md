@@ -90,7 +90,9 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
-`repo_context=True`, `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
+`repo_context=True` (`RepoContext` walking up to the repository root and surfacing nested instruction
+files as the agent reads; pass a `RepoContext` to use it in place of the bundled one, whose settings it
+replaces entirely), `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
 is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`,
 `strict=False`.
 
@@ -99,10 +101,11 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
   capabilities such as approval gates), up to 3 levels deep.
 - **Lazy sandbox creation:** `RepoContext` reads the workspace at run start, which creates a sandbox
   before any tool call. `Coder(repo_context=False)` defers it (the instructions then stop naming the
-  working directory). Also use it when you bind your own `RepoContext`, or files load twice.
+  working directory). To use your own `RepoContext`, pass it as `repo_context=RepoContext(...)` rather than
+  binding it next to `Coder`, which would load the files twice; that also keeps the project note.
 - File tools stay in the working directory with `.git`, `.env*`, keys, and `secrets*` read-only; `shell`
   bypasses all of that. To change a bundled setting (hashes, allowlist, `list_directory`), compose
-  `FileSystem`/`Shell`/`RepoContext`/`SubAgents` yourself.
+  `FileSystem`/`Shell`/`SubAgents` yourself; `RepoContext` is configured through `repo_context=RepoContext(...)`.
 - **Prompt caching is on by default** (`cache=True`): a coding run resends the same tools and
   instructions plus a growing conversation on every request, so each request reads back the previous
   one's prefix. What it does per provider and what it costs:
@@ -514,26 +517,29 @@ every activity reattaches to that environment.
 
 ## RepoContext
 
-Loads `CLAUDE.md`/`AGENTS.md` into instructions at run start (stable within a run; a change between
-runs of a conversation is appended rather than rewritten). With `expose_inventory_tool=True` it
-exposes `inventory_agent_context()` (locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents,
-hooks), which is left out when `FileSystem` is on the agent and its asset roots are inside the working
-directory (the defaults are; `unless_tool_kind=READ_FILE_KIND`).
+Loads one instruction file per directory (the first of `filenames`, `AGENTS.md` then `CLAUDE.md`) into
+instructions at run start (stable within a run; a change between runs of a conversation is appended
+rather than rewritten). With `expose_inventory_tool=True` it exposes `inventory_agent_context()`
+(locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents, hooks), which is left out when
+`FileSystem` is on the agent and its asset roots are inside the working directory (the defaults are;
+`unless_tool_kind=READ_FILE_KIND`).
 
 ```python
 from pydantic_ai_harness import RepoContext
 
-RepoContext(home_dir='..', nested_traversal=True)  # walk up one level; follow traversal
+RepoContext(walk_up='repo_root')  # also load the ancestors up to the nearest `.git`
 ```
 
-`home_dir=None` (default) scans only the working directory; set it to walk up to that ancestor. It is
-a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserError`.
-`nested_traversal=True` surfaces the instruction files between the working directory and whatever
-`FileSystem` reads or lists, shallowest first, each directory once while its note is in the
-conversation (`nested_inject='pointer'` or `'contents'`), in the message tail so the cached prefix
-stays stable.
-With it on, the instructions also gain one static sentence: each instruction file applies to its
-subtree, the deeper file wins, and the user's direct instructions win over all of them.
+`walk_up=None` (the default) scans only the working directory; `'repo_root'` walks up to the nearest
+directory holding one of `root_markers` (`('.git',)`; `Coder` uses this); `'all'` walks every ancestor.
+`home_dir` walks up to that ancestor (and stops `'all'` there); it cannot be combined with
+`walk_up='repo_root'`. It is a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises
+`UserError`. `global_files` lists user-global instruction files, loaded first with the lowest precedence.
+`nested_traversal=True` (the default) surfaces the instruction files between the working directory and
+whatever `FileSystem` reads or lists, shallowest first, each directory once while its note is in the
+conversation (`nested_inject='contents'` by default, or `'pointer'`), in the message tail so the cached
+prefix stays stable. With it on, the instructions also gain one static sentence: each instruction file
+applies to its subtree, the deeper file wins, and the user's direct instructions win over all of them.
 
 ## Macroscope
 

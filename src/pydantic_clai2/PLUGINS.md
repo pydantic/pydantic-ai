@@ -1123,7 +1123,7 @@ settings using the former import paths are redirected to the new modules.
 |---|---|---|---|
 | `coder` | `pydantic_clai2.builtin_plugins.coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true, "agent_folders": ["agents"]}` | the file and shell tools, task delegation and disk agents, and Agent Skills with a `/command` each |
 | `ask_user` | `pydantic_clai2.builtin_plugins.ask_user_menu` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
-| `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
+| `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads the instruction files (`AGENTS.md`, else `CLAUDE.md`) of the launch directory and its ancestors, plus your user-global ones (`~/.claude/CLAUDE.md` and the like), into the instructions, and a subdirectory's as the agent works there |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `hooks` | `pydantic_clai2.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
@@ -1180,13 +1180,13 @@ saved copy of an entry that now has its own built-in under the same id, such as
 `/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
 with `ExaSearch` instead, say); `/plugins enable coder` brings the tools back;
 `/plugins remove coder` cannot forget a built-in, so it resets it to its
-defaults. `/plugins disable repo_context` stops the instruction file from being
+defaults. `/plugins disable repo_context` stops the instruction files from being
 read. To run a built-in with different options, add your own declaration under
 the same name and it takes the built-in's place:
 
 ```text
 /plugins add coder pydantic_clai2.builtin_plugins.coder '{"unrestricted_filesystem": false, "repo_context": false}'
-/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
+/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": false, "global_files": false}'
 ```
 
 Keep `"repo_context": false` on a replacement `coder`: `Coder` bundles its own
@@ -1315,14 +1315,26 @@ Saved settings that need features absent from this build use defaults; see
 [Settings that need a feature](#settings-that-need-a-feature-hostsettingsmodel-requires).
 
 `repo_context` wraps harness `RepoContext` with the launch directory as the
-workspace and its default filenames. Its settings:
+workspace and its default filenames: one instruction file per directory,
+`AGENTS.md` first and `CLAUDE.md` as the fallback. Its settings:
 
 | Key | Default | Does |
 |---|---|---|
-| `walk_up` | `false` | also load instruction files from every directory between the workspace and your home directory |
+| `walk_up` | `true` | also load instruction files from every directory above the workspace, up to the filesystem root, as Claude Code does |
+| `global_files` | `true` | also load your user-global instruction files, first and with the lowest precedence: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` (`$CODEX_HOME/AGENTS.md` when that is set), then `~/.pydantic-ai/AGENTS.md` |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
-| `nested_traversal` | `false` | when the agent reads a file in, or lists, a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
-| `nested_inject` | `"pointer"` | what nested traversal adds: `"pointer"` (one line naming the file) or `"contents"` |
+| `nested_traversal` | `true` | when the agent reads a file in, or lists, a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
+| `nested_inject` | `"contents"` | what nested traversal adds: `"contents"` (the file itself) or `"pointer"` (one line naming the file) |
+
+The global files load whenever CLAI runs, including when you use CLAI to run
+another agent, such as your company's: that agent then also sees your personal
+instructions. Set `global_files` to `false` in a declaration for that agent, or
+`/plugins disable repo_context`, to keep them out.
+
+The walk-up reads every directory above the workspace, up to `/`, not just the
+repository. A session started under a directory other users can write to, such
+as `/tmp/scratch`, also loads `/tmp/AGENTS.md`. Set `walk_up` to `false` when
+you work in such a place.
 
 A repository can declare plugins too, in `.clai/settings.json`; they show as
 `(project)` and rank just above the built-ins. They start off, because a

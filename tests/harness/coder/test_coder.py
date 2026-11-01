@@ -21,6 +21,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef
 from pydantic_ai_harness.coder import FILE_TOOL_NAMES, Coder, coder_agent
 from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.subagents import SubAgents, TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
@@ -103,6 +104,14 @@ def test_coder_unknown_export() -> None:
         pydantic_ai_harness.coder.__getattr__('missing')
 
 
+def test_coder_uses_a_given_repo_context_in_place_of_the_bundled_one() -> None:
+    mine = RepoContext[object](expose_inventory_tool=False)
+    coder = Coder[object](repo_context=mine)
+    names = [type(capability).__name__ for capability in coder.capabilities]
+    assert names.index('RepoContext') == 4
+    assert [capability for capability in coder.capabilities if isinstance(capability, RepoContext)] == [mine]
+
+
 def test_coder_members_and_parameters() -> None:
     coder = Coder(instructions='Custom instructions')
     assert [type(capability).__name__ for capability in coder.capabilities] == [
@@ -128,6 +137,8 @@ def test_coder_members_and_parameters() -> None:
     instructions = str(guidance.get_instructions())
     for text in ('Custom instructions', 'DRY', 'YAGNI', 'Zen of Python', "Match the surrounding code's style"):
         assert text in instructions
+    repo = next(item for item in coder.capabilities if isinstance(item, RepoContext))
+    assert repo == RepoContext[object](walk_up='repo_root')
     delegation = next(item for item in coder.capabilities if isinstance(item, SubAgents))
     assert (delegation.include_self, delegation.agents, delegation.agent_folders) == (True, (), None)
     limits = next(item for item in coder.capabilities if isinstance(item, ToolOutputLimits))
