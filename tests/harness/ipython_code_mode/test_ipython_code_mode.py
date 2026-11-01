@@ -96,8 +96,12 @@ class _KernelClock:
     """
 
     now: float = 0.0
+    racing: bool = False
+    """Whether each reading finds a second gone, so every deadline, the interrupt's grace included, soon passes."""
 
     def monotonic(self) -> float:
+        if self.racing:
+            self.now += 1
         return self.now
 
 
@@ -758,18 +762,38 @@ class TestIPythonCodeModeKernelLifecycle:
         )
         assert _returns((await agent.run('Run the code')).all_messages()) == [{}, 2]
 
-    async def test_code_that_ignores_the_interrupt_gets_a_new_kernel(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._INTERRUPT_GRACE_SECS', 0.2)
+    async def test_code_that_ignores_the_interrupt_gets_a_new_kernel(
+        self, kernel_clock: _KernelClock, tmp_path: Path
+    ) -> None:
+        # The cell opens and closes this pipe once it ignores interrupts, which is when the test lets its timeout pass:
+        # an interrupt that came sooner would stop it.
+        ignoring = tmp_path / 'ignoring'
+        os.mkfifo(ignoring)
+
+        async def pass_the_timeouts_once_ignoring() -> None:
+            await anyio.to_thread.run_sync(ignoring.read_bytes)
+            kernel_clock.racing = True
+
         async with IPythonKernel() as kernel:
-            (pid, retry, after) = await _run(
-                IPythonCodeMode(kernel=kernel, timeout=0.3),
-                "import os\nlost_on_restart = 'set'\nos.getpid()",
-                'import signal\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\nwhile True:\n    pass',
-                "'lost_on_restart' in dir()",
-            )
+            returns: list[Any] = []
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(pass_the_timeouts_once_ignoring)
+                try:
+                    returns = await _run(
+                        IPythonCodeMode(kernel=kernel, timeout=0.3),
+                        "import os\nlost_on_restart = 'set'\nos.getpid()",
+                        'import signal\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\n'
+                        f'open({str(ignoring)!r}, "w").close()\nwhile True:\n    pass',
+                    )
+                finally:
+                    # Ends a read still waiting, as a run that fails before that cell would leave it.
+                    os.close(os.open(ignoring, os.O_RDWR))
+            (pid, retry) = returns
             _assert_process_gone(pid)
+            # Without a timeout, which the racing clock would pass at once.
+            after = await _run(IPythonCodeMode(kernel=kernel, timeout=None), "'lost_on_restart' in dir()")
         assert retry.startswith('The code ran longer than the 0.3-second timeout and did not stop when interrupted')
-        assert after is False
+        assert after == [False]
 
     async def test_a_kernel_that_is_not_ipython_fails_to_start(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
