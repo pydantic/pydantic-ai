@@ -634,19 +634,23 @@ observability:
           Authorization: ${{ secrets.LOGFIRE_TOKEN }}
 ```
 
-The installer adds Logfire when that path is configured. The launcher instruments
-Pydantic AI and writes OTLP JSON trace payloads to the file without network export.
+When host OTLP observability is configured, the installer adds Logfire and the official
+OTLP file exporter. For standalone local-file export without host OTLP configuration,
+preinstall `logfire>=4.39.0` and `opentelemetry-exporter-otlp-json-file>=0.64b0` in a host
+workflow step. The agent-only export-path setting does not reach the host installer.
+The launcher instruments Pydantic AI and writes OTLP JSON trace payloads to the file without network export.
 Ended spans are flushed as they finish, including delegate and failed-request spans.
 The launcher attaches `TRACEPARENT` and preserves `OTEL_RESOURCE_ATTRIBUTES`, so
 the exported spans retain their workflow parentage and identity. A hard process kill
 can still lose spans that have not ended.
 
-Add an always-run host post-agent step that reads the file and sends each payload
-through the released `send_otlp_span.cjs` helper's `sendOTLPToAllEndpoints()` with
-`{ skipJSONL: true }`. Remove the file afterwards. The repository's
+Add an always-run host `post-steps` entry that sends each line unchanged to the
+configured collectors' `/v1/traces` endpoint using their host-held headers. Preserve
+long JSON-valued attributes and avoid artifact mirroring. Remove the file afterwards. The repository's
 [shared workflow configuration](https://github.com/pydantic/pydantic-ai/blob/main/.github/workflows/shared/engine-zai.md)
-contains that forwarding step. The helper uses the host's endpoint configuration and
-per-endpoint headers. Keep the private span file out of artifact uploads: HTTP and
+contains that forwarding step. It reads the released helper's endpoint configuration
+and per-endpoint headers, then sends the private payload without the infrastructure
+exporter's attribute truncation. Keep the private span file out of artifact uploads: HTTP and
 model instrumentation can contain content intended only for the telemetry backend.
 Do not mirror these payloads into gh-aw's uploaded `otel.jsonl`.
 

@@ -557,7 +557,7 @@ For authenticated terminal metadata, set `engine.env.PAI_RESULT_METADATA` to a t
 Keep its keys as strings and its values JSON-serializable; update the same dictionary during the run.
 Read the signed value from verified `agent-session.jsonl` under `session.result.data.metadata`.
 For Python tracing, set `engine.env.PAI_OTEL_EXPORT_PATH` to a writable shared file.
-Forward its OTLP JSON lines in host `post-steps` with `sendOTLPToAllEndpoints(..., {skipJSONL: true})`, then delete it.
+Forward its OTLP JSON lines in host `post-steps` without truncating attributes or mirroring content, then delete it.
 Keep that private file out of artifact uploads. OTLP credentials remain on the host; diagnostic spans do not authorize outputs.
 See the engine README's observability section for the complete contract and forwarding configuration.
 

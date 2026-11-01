@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +12,7 @@ import pytest
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
-from .test_engine_definition import CLAI2_SOURCE, launch, parse_log, proxy_env
+from .test_engine_definition import CLAI2_SOURCE, definition, launch, parse_log, proxy_env
 
 pytestmark = pytest.mark.subprocess(reason='executes the generated protected launcher and its real tracing exporter')
 
@@ -36,6 +37,37 @@ class _Resource(TypedDict):
 
 class _Payload(TypedDict):
     resourceSpans: list[_Resource]
+
+
+def test_host_installer_prepares_exporter_without_agent_only_environment(tmp_path: Path) -> None:
+    binaries = tmp_path / 'bin'
+    binaries.mkdir()
+    python = binaries / 'python3'
+    python.write_text('#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$INSTALL_LOG"\n')
+    python.chmod(0o755)
+    home = tmp_path / 'home'
+    cli = home / '.local/bin/clai2'
+    cli.parent.mkdir(parents=True)
+    cli.write_text('#!/bin/sh\nexit 0\n')
+    cli.chmod(0o755)
+    log = tmp_path / 'installer.log'
+    script = next(step.run for step in definition().pre_agent_steps if 'pip install' in step.run)
+    completed = subprocess.run(
+        ['bash', '-e', '-c', script],
+        env={
+            'PATH': str(binaries) + os.pathsep + os.environ['PATH'],
+            'HOME': str(home),
+            'INSTALL_LOG': str(log),
+            'GH_AW_ENGINE_VERSION': '0.64.0',
+            'OTEL_EXPORTER_OTLP_ENDPOINT': 'https://collector.invalid',
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert 'opentelemetry-exporter-otlp-json-file>=0.64b0' in log.read_text()
 
 
 def test_prewritten_noop_has_an_authenticated_terminal_record(tmp_path: Path) -> None:

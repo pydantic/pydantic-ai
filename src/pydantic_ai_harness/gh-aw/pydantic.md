@@ -17,10 +17,7 @@ pre-agent-steps:
       # Logfire 4.39.0 is pydantic-ai-slim's compatibility floor. Install it only
       # when direct or local-file telemetry is configured.
       if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}${PAI_OTEL_EXPORT_PATH:-}" ]; then
-        python3 -P -m pip install --quiet --user --disable-pip-version-check "logfire>=4.39.0"
-      fi
-      if [ -n "${PAI_OTEL_EXPORT_PATH:-}" ]; then
-        python3 -P -m pip install --quiet --user --disable-pip-version-check "opentelemetry-exporter-otlp-json-file>=0.64b0"
+        python3 -P -m pip install --quiet --user --disable-pip-version-check "logfire>=4.39.0" "opentelemetry-exporter-otlp-json-file>=0.64b0"
       fi
       "$HOME/.local/bin/clai2" --help
       python3 -P -c "from pydantic_ai_harness import Coder"
