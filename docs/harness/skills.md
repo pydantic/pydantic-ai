@@ -88,20 +88,60 @@ same on every run over the same files, so it stays in the cached prefix; a new
 or renamed skill appears in it on the next run. Without any skills, `Skills`
 adds no instructions and no `load_capability` tool.
 
-A run without a workspace fails at its start. To read skills from somewhere
-else, such as skills shipped with your application while the agent works in a
-sandbox, pass a workspace backend:
+A run without a workspace fails at its start, unless every library has its own
+`workspace=` backend, as in [Ship skills with your application](#ship-skills-with-your-application).
 
-```python
+## Ship skills with your application
+
+To load skills that ship inside your application, keep `Skills` and pass
+`workspace=` a `LocalWorkspaceBackend` rooted at your application's files.
+`Skills` then reads its libraries from that directory instead of the run's
+workspace, and discovers, validates, and selects `SKILL.md` packages the same
+way. The agent needs no workspace of its own:
+
+```python {test="skip"}
+from pathlib import Path
+
+from pydantic_ai import Agent
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Skills
 
-skills = Skills('skills', workspace=LocalWorkspaceBackend('/app'))
+APP_DIR = Path(__file__).parent  # contains skills/code-review/SKILL.md
+
+agent = Agent(
+    '{{ anthropic:large }}',
+    capabilities=[Skills('skills', workspace=LocalWorkspaceBackend(APP_DIR))],
+)
 ```
 
-`workspace=` takes a backend, not the `LocalWorkspace` capability. Under a
-durable engine such as Temporal, a `workspace=` backend is read in-process, not
-through the workflow.
+Relative library paths resolve against the backend's directory, so `'skills'`
+above is `APP_DIR / 'skills'`. `LocalWorkspaceBackend` takes a path on disk:
+build it from `Path(__file__)`, not from `importlib.resources.files()`, which
+returns a `Traversable` that is a real directory only when the package is
+installed unzipped.
+
+The model sees each skill's name and description in the catalog, and loading a
+skill returns its heading and `SKILL.md` body. The loaded instructions do not
+name the skill's directory, and `Skills` gives the model no tools, so the model
+cannot read a skill's `references/` or run its `scripts/` from here. For a skill
+whose bundled files the model should use, put its library in the run's
+workspace instead and give the agent file or shell tools there, such as
+`LocalWorkspace(APP_DIR)` with `FileSystem` or `Shell`; see
+[Bundled files](#bundled-files).
+
+The same backend works when the agent's own workspace is a sandbox: `Skills`
+reads the skills from your application's files, and the agent's tools act in the
+sandbox. `workspace=` takes a backend, not the `LocalWorkspace` capability.
+Under a durable engine such as Temporal, a `workspace=` backend is read
+in-process, not through the workflow.
+
+For instructions that are not `SKILL.md` packages in a directory, such as
+runbooks kept in a database or files in a custom format, skip `Skills` and
+define each one as a deferred `Capability`:
+[Loading skills from Markdown files](../capabilities/on-demand.md#loading-skills-from-markdown-files)
+shows a file loader, and
+[Loading runbooks from a database](../capabilities/on-demand.md#loading-runbooks-from-a-database)
+reads the instructions at run time.
 
 ## Choose which skills to expose
 
