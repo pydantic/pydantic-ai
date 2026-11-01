@@ -15,6 +15,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 
 try:
     from huggingface_hub import AsyncInferenceClient
@@ -69,6 +70,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             'meta-llama': meta_model_profile,
             'mistralai': mistral_model_profile,
             'moonshotai': moonshotai_model_profile,
+            'zai-org': zai_model_profile,
         }
 
         profile: ModelProfile | None = None

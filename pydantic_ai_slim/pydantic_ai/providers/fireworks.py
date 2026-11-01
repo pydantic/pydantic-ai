@@ -12,6 +12,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -51,13 +52,23 @@ class FireworksProvider(_OpenAISDKProvider):
             'deepseek': deepseek_model_profile,
             'mistral': mistral_model_profile,
             'gemma': google_model_profile,
+            'glm': zai_model_profile,
         }
 
         prefix = 'accounts/fireworks/models/'
 
         profile = None
-        if model_name.startswith(prefix):
+        matched = model_name.startswith(prefix)
+        if matched:
             model_name = model_name[len(prefix) :]
+        elif model_name.startswith('routers/glm-'):
+            # GLM-5.3 is also served through Fireworks routers, e.g. `routers/glm-5p3-fast`.
+            model_name = model_name.removeprefix('routers/')
+            matched = True
+        if matched:
+            if model_name.startswith('glm-'):
+                # Fireworks spells GLM-5.3 `glm-5p3`; normalize to the dotted spelling the Z.ai profile matches.
+                model_name = model_name.replace('-5p3', '-5.3')
             for provider, profile_func in prefix_to_profile.items():
                 if model_name.startswith(provider):
                     profile = profile_func(model_name)

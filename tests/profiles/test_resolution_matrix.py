@@ -105,6 +105,7 @@ with try_import() as openai_imports:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
     from pydantic_ai.providers.openrouter import (
         OpenRouterProvider,
         # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
@@ -868,6 +869,126 @@ def test_mistral_small_latest():
     profile = MistralProvider.model_profile('mistral-small-latest')
     assert _normalize(profile) == snapshot(
         {'tool_call_id_length': 9, 'supports_thinking': True, 'supports_inline_system_prompts': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_gateway_zai_glm_5_3_inline_defs():
+    """Issue-listed GLM-5.3 gateway routes resolve the Z.ai profile with inline-defs schema transformation."""
+    expected = snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'zai_supports_reasoning_effort': True,
+            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
+        }
+    )
+    assert _normalize(TogetherProvider.model_profile('zai-org/GLM-5.3')) == expected
+    assert _normalize(NebiusProvider.model_profile('zai-org/GLM-5.3')) == expected
+    assert _normalize(VercelProvider.model_profile('zai/glm-5.3')) == expected
+    assert _normalize(LiteLLMProvider.model_profile('zai-org/GLM-5.3')) == expected
+    assert _normalize(OpenAICompatibleProvider.model_profile('zai-org/GLM-5.3')) == expected
+
+    fireworks_expected = snapshot(
+        {
+            'supports_json_schema_output': True,
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'zai_supports_reasoning_effort': True,
+            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
+        }
+    )
+    assert _normalize(FireworksProvider.model_profile('accounts/fireworks/models/glm-5p3')) == fireworks_expected
+    assert _normalize(FireworksProvider.model_profile('routers/glm-5p3-fast')) == fireworks_expected
+
+    assert _normalize(OllamaProvider.model_profile('glm-5.3')) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_supports_strict_tool_definition': False,
+            'zai_supports_reasoning_effort': True,
+            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
+        }
+    )
+
+
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
+def test_huggingface_zai_glm_5_3_inline_defs():
+    """`zai-org/GLM-5.3` on Hugging Face resolves the Z.ai profile (was None) with inline-defs transformation."""
+    assert _normalize(HuggingFaceProvider.model_profile('zai-org/GLM-5.3')) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'supports_inline_system_prompts': True,
+            'zai_supports_reasoning_effort': True,
+            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
+        }
+    )
+
+
+@pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
+def test_mistral_zai_glm_5_3_flash_inline_defs():
+    """The `zai-glm-5-3` family match covers Flash with inline-defs transformation; unrelated ids are untouched."""
+    expected = snapshot(
+        {
+            'tool_call_id_length': 9,
+            'supports_inline_system_prompts': True,
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+        }
+    )
+    assert _normalize(MistralProvider.model_profile('zai-glm-5-3')) == expected
+    assert _normalize(MistralProvider.model_profile('zai-glm-5-3-flash')) == expected
+    assert _normalize(MistralProvider.model_profile('zai-glm-5-30')) == snapshot(
+        {'tool_call_id_length': 9, 'supports_inline_system_prompts': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_gateway_zai_glm_5_3_model_level_profile():
+    """A model-level `.profile` resolves the Z.ai glm-5.3 profile through its gateway provider."""
+    model = OpenAIChatModel('zai-org/GLM-5.3', provider=TogetherProvider(api_key='test'))
+    assert _normalize(model.profile) == snapshot(
+        {
+            'supports_audio_input': False,
+            'supports_image_input': True,
+            'supports_document_input': True,
+            'supported_document_media_types': frozenset(
+                {
+                    'application/msword',
+                    'application/pdf',
+                    'application/vnd.ms-excel',
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    'text/csv',
+                    'text/html',
+                    'text/markdown',
+                    'text/plain',
+                }
+            ),
+            'supports_audio_file_input': True,
+            'supports_video_input': False,
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_cache': False,
+            'supports_auto_cache': False,
+            'supported_cache_retentions': (),
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'forced_tool_choice_disables_thinking': False,
+            'supported_native_tools': frozenset(),
+            'context_window': None,
+            'tool_call_id_length': None,
+            'tool_deferral_mode': None,
+            'tool_addition_mode': None,
+            'zai_supports_reasoning_effort': True,
+            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
+        }
     )
 
 
