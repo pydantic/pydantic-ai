@@ -16,6 +16,7 @@ from anthropic.types.beta import (
     BetaCompactionBlock,
     BetaCompactionContentBlockDelta,
     BetaContentBlock,
+    BetaFallbackBlock,
     BetaInputJSONDelta,
     BetaMCPToolResultBlock,
     BetaMCPToolUseBlock,
@@ -255,6 +256,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                                 ),
                             ),
                         )
+                    elif isinstance(current_block, BetaFallbackBlock):
+                        pass
 
                 elif isinstance(event, BetaRawContentBlockDeltaEvent):
                     if event.index in ignored_server_tool_use_indices:

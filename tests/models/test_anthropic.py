@@ -161,6 +161,7 @@ with try_import() as imports_successful:
         BetaContentBlock,
         BetaDirectCaller,
         BetaDocumentBlock,
+        BetaFallbackBlock,
         BetaInputJSONDelta,
         BetaMemoryTool20250818CreateCommand,
         BetaMemoryTool20250818DeleteCommand,
@@ -847,6 +848,35 @@ def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> Bet
         type='message',
         usage=usage,
     )
+
+
+async def test_anthropic_server_side_fallback(allow_model_requests: None):
+    fallback_block = BetaFallbackBlock.model_validate(
+        {
+            'type': 'fallback',
+            'from': {'model': 'claude-fable-5-1'},
+            'to': {'model': 'claude-haiku-4-5'},
+            'trigger': {'type': 'refusal', 'category': 'cyber'},
+        }
+    )
+    c = completion_message(
+        [fallback_block, BetaTextBlock(text='world', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+    assert result.response.provider_details is not None
+    assert 'fallbacks' in result.response.provider_details
+    assert result.response.provider_details['fallbacks'][0]['to']['model'] == 'claude-haiku-4-5'
+
+    # reset index so mock responds again for round-trip check
+    mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
+    result2 = await agent.run('hello again', message_history=result.all_messages())
+    assert result2.output == 'world'
 
 
 async def test_sync_request_text_response(allow_model_requests: None):
