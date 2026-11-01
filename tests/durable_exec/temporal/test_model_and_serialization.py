@@ -61,7 +61,9 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelRateLimitError,
     ModelRequestRejectedError,
@@ -3747,6 +3749,16 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             ModelServerError('gpt-test', 'server_error: failed', in_stream=True), 'ModelAPIError', id='server'
         ),
         pytest.param(ModelAPIError('gpt-test', 'boom'), 'ModelAPIError', id='base'),
+        pytest.param(
+            ModelEmptyResponseError('gpt-test', 'Streamed response ended without content or tool calls'),
+            'UnexpectedModelBehavior',
+            id='empty-response',
+        ),
+        pytest.param(
+            ModelInvalidResponseError('gpt-test', 'Invalid response', body='<html>Bad gateway</html>'),
+            'UnexpectedModelBehavior',
+            id='invalid-response',
+        ),
         pytest.param(DecisionHandOff('decider', 'search', 0.4, 'handed off'), 'DecisionHandOff', id='other-subclass'),
     ],
 )
@@ -3759,6 +3771,7 @@ def test_a_categorized_error_keeps_the_type_temporal_retries_on(error: ModelAPIE
     assert raised.value.type == type_name
     rebuilt = _crossed(error)
     assert type(rebuilt) is type(error)
+    assert str(rebuilt) == str(error)
 
 
 def test_a_categorized_http_error_is_rebuilt_as_itself_not_its_category():

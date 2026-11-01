@@ -16,10 +16,10 @@ from ..exceptions import (
     ModelAPIError,
     ModelConnectionError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelTimeoutError,
     TransportPhase,
-    UnexpectedModelBehavior,
     UserError,
 )
 from ..messages import (
@@ -1112,7 +1112,7 @@ class XaiModel(Model[AsyncClient]):
         with _map_api_errors(self.model_name):
             first_item = await peekable_response.peek()
         if isinstance(first_item, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         first_response, _ = first_item
 

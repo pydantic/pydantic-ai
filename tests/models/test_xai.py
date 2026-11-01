@@ -65,7 +65,7 @@ from pydantic_ai import (
     WebSearchTool,
 )
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelEmptyResponseError, ModelHTTPError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CachePoint,
@@ -2446,7 +2446,7 @@ async def test_xai_stream_empty_response_raises(allow_model_requests: None):
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without content or tool calls'):
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
         async with agent.run_stream(''):
             pass
 

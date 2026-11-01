@@ -62,6 +62,8 @@ __all__ = (
     'ModelAuthenticationError',
     'ModelNotFoundError',
     'ModelRequestTimeout',
+    'ModelEmptyResponseError',
+    'ModelInvalidResponseError',
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
@@ -905,6 +907,52 @@ class ModelRequestTimeout(ModelAPIError):
         self.setting = state.get('setting', 'request_timeout')
         self.message = _request_timeout_message(self.model_name, self.timeout, self.setting)
         self.args = (self.message,)
+
+
+class _ModelResponseError(ModelAPIError, UnexpectedModelBehavior):
+    """A response the model layer couldn't use, which is a model error and, until v3, an `UnexpectedModelBehavior`."""
+
+    # TODO(v3): drop the `UnexpectedModelBehavior` base, which only keeps existing `except` clauses working.
+
+    body: object | None
+    """The response the provider sent, if available."""
+
+    def __init__(self, model_name: str, message: str, *, body: object | None = None):
+        super().__init__(model_name, message, body=body)
+        # `ModelAPIError.__init__` reaches `UnexpectedModelBehavior.__init__` on its way to `AgentRunError`, which
+        # resets `body` as it isn't passed along. It's the `ModelAPIError` field, which takes any body, not just a
+        # string.
+        self.body = body  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class ModelEmptyResponseError(_ModelResponseError):
+    """Raised when the provider answered a request successfully but sent no response in it.
+
+    For example a stream that ended before its first event, or a completion whose `choices` are empty. It's often a
+    transient glitch on the provider's side, so sending the request again, or to another model, may well succeed.
+
+    A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] and
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] fall back on it by default. These responses used to
+    raise a plain [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which this class still
+    subclasses so `except UnexpectedModelBehavior` keeps catching it.
+    """
+
+
+class ModelInvalidResponseError(_ModelResponseError):
+    """Raised when the provider answered a request successfully but its response couldn't be used.
+
+    For example a completion that doesn't match the API's schema, or a response the API doesn't allow, like an MCP
+    sampling result that's not from the assistant. Unlike a
+    [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError], sending the same request again
+    often gets the same response, but another model or provider may answer it.
+
+    A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] and
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] fall back on it by default. These responses used to
+    raise a plain [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which this class still
+    subclasses so `except UnexpectedModelBehavior` keeps catching it.
+    """
 
 
 def _request_timeout_message(model_name: str, timeout: float, setting: RequestTimeoutSetting) -> str:
