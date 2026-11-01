@@ -536,7 +536,7 @@ def wait_retry_after(
         fallback_strategy: Wait strategy to use when no Retry-After header is present
                           or parsing fails. Defaults to exponential backoff with max 60s.
         max_wait: Maximum time to wait in seconds, regardless of header value.
-                 Defaults to 300 (5 minutes).
+                 Also caps the fallback strategy. Defaults to 300 (5 minutes).
 
     Returns:
         A wait function that can be used with tenacity retry decorators.
@@ -600,6 +600,6 @@ def wait_retry_after(
                         pass
 
         # Use fallback strategy
-        return fallback_strategy(state)
+        return min(fallback_strategy(state), max_wait)
 
     return wait_func
