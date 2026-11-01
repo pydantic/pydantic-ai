@@ -2748,7 +2748,8 @@ async def test_task_timeout_validation(task_timeout: float):
         await dataset.evaluate(task, task_timeout=task_timeout)
 
 
-async def test_task_timeout_abandons_sync_task_thread():
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_task_timeout_abandons_sync_task_thread(anyio_backend: str, monkeypatch: pytest.MonkeyPatch):
     started = threading.Event()
     release = threading.Event()
     finished = threading.Event()
@@ -2761,17 +2762,30 @@ async def test_task_timeout_abandons_sync_task_thread():
         finally:
             finished.set()
 
+    # A deadline that passes before a worker thread picks the task up abandons a task that never ran, so the deadline
+    # passes only once the task is running: the test moves the event loop's clock past it rather than waiting for it.
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    offset = 0.0
+    monkeypatch.setattr(loop, 'time', lambda: real_time() + offset)
+
+    async def pass_deadline_once_started() -> None:
+        nonlocal offset
+        assert await anyio.to_thread.run_sync(started.wait, READINESS_WAIT_TIMEOUT)
+        offset += READINESS_WAIT_TIMEOUT
+
     dataset = Dataset[str, str, None](name='timeout', cases=[Case(inputs='input')])
     try:
-        report = await dataset.evaluate(task, task_timeout=0.01, progress=False)
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(pass_deadline_once_started)
+            report = await dataset.evaluate(task, task_timeout=READINESS_WAIT_TIMEOUT, progress=False)
 
-        # The deadline is enforced before the worker thread returns: it is abandoned, not awaited.
-        assert not finished.is_set()
-        assert report.failures[0].error_message == 'TimeoutError: Task timed out after 0.01s'
+            # The deadline is enforced before the worker thread returns: it is abandoned, not awaited.
+            assert not finished.is_set()
+            assert report.failures[0].error_message == 'TimeoutError: Task timed out after 10s'
     finally:
         release.set()
     assert await anyio.to_thread.run_sync(finished.wait, READINESS_WAIT_TIMEOUT)
-    assert started.is_set()
 
 
 def test_task_timeout_sync_task_within_deadline():

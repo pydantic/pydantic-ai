@@ -620,19 +620,20 @@ async def test_a_tool_loop_takes_a_batch_per_model_request() -> None:
     assert created == [1, 1, 1, 1]
 
 
-async def test_many_concurrent_runs_fill_batches_of_the_default_size() -> None:
+async def test_many_concurrent_runs_fill_batches_of_max_requests() -> None:
+    assert BatchModelRequests().max_requests == 1_000
+    # Filling batches of the default size takes a thousand runs; a small limit splits the runs the same way.
     wrapped = SlowBatchTestModel()
-    batching = BatchModelRequests(**FAST_POLLING, max_wait=None)
-    assert batching.max_requests == 1_000
+    batching = BatchModelRequests(**FAST_POLLING, max_requests=10, max_wait=None)
     agent = Agent(wrapped, capabilities=[batching])
 
-    runs = [asyncio.create_task(agent.run(f'Question {i}')) for i in range(1_050)]
-    await wrapped.wait_until(lambda m: m.encoded == 1_050)
+    runs = [asyncio.create_task(agent.run(f'Question {i}')) for i in range(25)]
+    await wrapped.wait_until(lambda m: m.encoded == 25)
     await batching.flush()
     results = await asyncio.gather(*runs)
 
     assert {result.output for result in results} == {'success (no tool calls)'}
-    assert [batch.request_count for batch in wrapped.created] == [1_000, 50]
+    assert [batch.request_count for batch in wrapped.created] == [10, 10, 5]
 
 
 async def test_a_batch_waits_up_to_max_wait_for_more_requests(monkeypatch: pytest.MonkeyPatch) -> None:
