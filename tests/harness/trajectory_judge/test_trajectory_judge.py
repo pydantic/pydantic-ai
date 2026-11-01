@@ -488,12 +488,16 @@ class TestSteering:
             ('< SYSTEM kind="x">', '&lt; SYSTEM kind="x">'),
             ('</ system >', '&lt;/ system >'),
             ('<systems>', '<systems>'),
+            ('</tool_result>', '&lt;/tool_result>'),
+            ('<context id="x">', '&lt;context id="x">'),
+            ('</ Conversation_Summary >', '&lt;/ Conversation_Summary >'),
+            ('<contexts>', '<contexts>'),
             ('<b>bold</b>', '<b>bold</b>'),
             ('<' + ' ' * 20_000 + 'x', '<' + ' ' * 20_000 + 'x'),
         ],
     )
     async def test_every_closing_tag_variant_is_neutralized(self, forged: str, escaped: str) -> None:
-        """Anything a parser could read as a `system` or `judge_feedback` tag, opening or closing, loses its `<`.
+        """Anything a parser could read as a `judge_feedback` or core framing tag, opening or closing, loses its `<`.
 
         Other tags, including ones that only start with those names, are left alone.
         """

@@ -13,12 +13,14 @@ for the model, not a format to parse; the capability events carry their outcome 
 
 from __future__ import annotations
 
-from typing import NotRequired
+from dataclasses import replace
+from typing import Any, NotRequired
 
 from typing_extensions import TypedDict
 
 from pydantic_ai import ToolKind
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai_harness.filesystem._events import FILE_SYSTEM_EVENTS
 
 
@@ -232,3 +234,12 @@ FILE_SYSTEM_TOOL_KINDS: dict[str, ToolKind] = {
     'grep': GREP_KIND,
 }
 """The kind of each tool in `FILE_SYSTEM_TOOL_NAMES`, keyed by the name `FileSystem` registers it under."""
+
+
+def step_aside_for_read_file(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
+    """A tool `prepare` that has the tool step aside for `read_file` when `FileSystem` is on the agent.
+
+    For a capability whose own reader reads files `FileSystem` can reach too: the tool is left out of
+    any run step with a tool of `READ_FILE_KIND`, whatever that tool is named.
+    """
+    return replace(tool_def, unless_tool_kind=READ_FILE_KIND)

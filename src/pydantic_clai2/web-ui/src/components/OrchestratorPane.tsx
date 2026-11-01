@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { api, openWorkspacePage, orchestrator } from '../api'
+import { api, orchestrator } from '../api'
 import { MOD } from '../platform'
 import type { OrchestratorView } from '../state'
 import { WorkspaceLinkContext } from '../workspaceLink'
@@ -15,19 +15,28 @@ interface Props {
   connected: boolean
   /** Shows the sidebar again when it is hidden. */
   onShowSidebar: (() => void) | null
+  /** Shows a live session, by its conversation ID, in place of the chat. */
+  onOpenSession: (id: string) => void
   onError: (message: string) => void
 }
 
 const CHAT = { send: orchestrator.send, interrupt: orchestrator.interrupt }
 
-/** The orchestrator chat: its own agent and conversation, which makes workspaces and runs their CLAIs for you. */
-export function OrchestratorPane({ view, model, connected, onShowSidebar, onError }: Props) {
+/** The orchestrator chat: its own agent and conversation, which makes workspaces and runs a session in each for you. */
+export function OrchestratorPane({ view, model, connected, onShowSidebar, onOpenSession, onError }: Props) {
   const { chat, enabled } = view
   const [enabling, setEnabling] = useState(false)
   // `Composer` leaves its draft to its owner.
   const [draft, setDraft] = useState('')
   const report = useCallback((error: unknown) => onError(error instanceof Error ? error.message : String(error)), [onError])
-  const openWorkspace = useCallback((id: string) => void openWorkspacePage(id).catch(report), [report])
+  const openWorkspace = useCallback(
+    (id: string) =>
+      void api
+        .openWorkspace(id)
+        .then((opened) => onOpenSession(opened.id))
+        .catch(report),
+    [onOpenSession, report],
+  )
 
   const enable = async () => {
     setEnabling(true)
@@ -76,7 +85,7 @@ export function OrchestratorPane({ view, model, connected, onShowSidebar, onErro
         )}
         <div className="topbar-title">
           <span className="title">Orchestrator</span>
-          <span className="workspace">Runs workspaces: checkouts with their own CLAI</span>
+          <span className="workspace">Runs workspaces: checkouts with a session of their own</span>
         </div>
         {enabled !== null && (
           <button
@@ -97,8 +106,8 @@ export function OrchestratorPane({ view, model, connected, onShowSidebar, onErro
           </span>
           <h1>The orchestrator runs workspaces</h1>
           <p className="hero-hint">
-            It makes checkouts of a repository, each with its own CLAI, gives their agents tasks, watches and steers them,
-            and reports back. It needs the workspaces plugin.
+            It makes checkouts of a repository, starts a session in each, gives their agents tasks, watches and steers
+            them, and reports back. It needs the workspaces plugin.
           </p>
           {enableButton}
         </div>
@@ -108,7 +117,7 @@ export function OrchestratorPane({ view, model, connected, onShowSidebar, onErro
           {questions}
           {composer}
           <p className="hero-hint">
-            It makes workspaces, gives each one's CLAI a task, and reports back. It asks before destroying one.
+            It makes workspaces, gives each one's session a task, and reports back. It asks before destroying one.
           </p>
         </div>
       ) : (

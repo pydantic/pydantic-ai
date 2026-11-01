@@ -13,6 +13,7 @@ import pytest
 
 import pydantic_ai_harness.modal_sandbox as modal_sandbox_package
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -598,3 +599,51 @@ def test_live_tier_with_empty_credentials_skips_unless_required(
 def test_empty_sandbox_id_is_rejected() -> None:
     with pytest.warns(HarnessDeprecationWarning), pytest.raises(UserError, match='empty string'):
         ModalSandbox(sandbox_id='')  # pyright: ignore[reportArgumentType]
+
+
+def test_a_non_string_sandbox_id_is_rejected() -> None:
+    # The deprecated argument is typed `Never`, so nothing static stops `sandbox_id=123` from becoming a ref.
+    with (
+        pytest.warns(HarnessDeprecationWarning),
+        pytest.raises(UserError, match='must be a string naming a Modal sandbox, got 123'),
+    ):
+        ModalSandbox(sandbox_id=123)  # pyright: ignore[reportArgumentType]
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    """A `modal.Image` annotation must not erase the whole schema entry."""
+    definitions = AgentSpec.model_json_schema_with_capabilities([ModalSandbox])['$defs']
+    assert sorted(definitions['spec_params_ModalSandbox']['properties']) == [
+        'app_name',
+        'create_app_if_missing',
+        'description',
+        'env',
+        'id',
+        'idle_timeout',
+        'image',
+        'sandbox_timeout',
+        'warn_if_no_tools',
+        'working_dir',
+    ]
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'modal',
+        'description': 'a sandbox',
+        'image': 'python:3.13-slim',
+        'app_name': 'app',
+        'create_app_if_missing': False,
+        'sandbox_timeout': 600,
+        'idle_timeout': 60,
+        'working_dir': '/work',
+        'env': {'A': '1'},
+        'warn_if_no_tools': False,
+    }
+    assert ModalSandbox[None].from_spec(**spec_fields) == ModalSandbox(**spec_fields)
+
+
+def test_from_spec_keeps_the_deprecated_arguments_working() -> None:
+    with pytest.warns(HarnessDeprecationWarning):
+        capability = ModalSandbox[None].from_spec(workdir='/work')
+    assert capability.working_dir == '/work'

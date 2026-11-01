@@ -3,7 +3,9 @@
 import asyncio
 import io
 import signal
+import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -24,9 +26,9 @@ from pydantic_clai2 import chat
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import HostEvent, TurnEnd, TurnStart
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.plugins import ForkEnd, ForkInfo, HostEvent, TurnEnd, TurnStart
 from pydantic_clai2.runtime.forks import USAGE, Forks, parse_fork_args
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
@@ -296,13 +298,21 @@ async def test_structured_output_prints_as_is() -> None:
 
 
 async def test_first_forks_on_a_new_database_all_run(tmp_path: Path) -> None:
-    for attempt in range(25):
-        model, output = Model(), io.StringIO()
-        shell = shell_for(tmp_path / str(attempt), model, output)
-        for prompt in ('one', 'two', 'three'):
-            await shell.commands.execute_async(f'/fork {prompt}')
-        await asyncio.gather(*(record.task for record in shell.forks.records))
-        assert [record.status for record in shell.forks.records] == ['done', 'done', 'done'], output.getvalue()
+    """Concurrent first connections to a brand-new store can fail on its WAL switch, so `/fork` opens it first."""
+    model, output = Model(), io.StringIO()
+    shell = shell_for(tmp_path, model, output)
+    conversations = shell.session.conversations
+    assert conversations is not None
+    assert not conversations.database.exists()
+    await shell.commands.execute_async('/fork one')
+    # The fork has not run yet, and the command has already switched the new store to WAL.
+    assert model.seen == {}
+    with closing(sqlite3.connect(f'{conversations.database.as_uri()}?mode=ro', uri=True)) as connection:
+        assert connection.execute('PRAGMA journal_mode').fetchone() == ('wal',)
+    for prompt in ('two', 'three'):
+        await shell.commands.execute_async(f'/fork {prompt}')
+    await asyncio.gather(*(record.task for record in shell.forks.records))
+    assert [record.status for record in shell.forks.records] == ['done', 'done', 'done'], output.getvalue()
 
 
 async def test_forks_fire_turn_hooks() -> None:
@@ -348,6 +358,21 @@ async def test_forks_fire_turn_hooks() -> None:
     # A refused fork still closes its turn, as a refused foreground turn does.
     assert ends['forbidden'].outcome == 'cancelled'
     assert ends['broken hook'].outcome == 'failed'
+    # Each fork that ran ends with `fork_end` too, after its `turn_end`, so a plugin such as `web` can show it.
+    fork_ends = {event.fork.id: event for event in events if isinstance(event, ForkEnd)}
+    assert [(fork_ends[n].fork.prompt, fork_ends[n].fork.status) for n in (1, 2, 3)] == [
+        ('rewritten', 'done'),
+        ('explode', 'failed'),
+        ('block', 'cancelled'),
+    ]
+    assert fork_ends[1].output == '**answer** to rewritten' and fork_ends[1].error is None
+    assert fork_ends[2].output is None and str(fork_ends[2].error) == 'provider down\nsecond line'
+    assert fork_ends[3].output is None and fork_ends[3].error is None
+    assert events.index(fork_ends[1]) == events.index(ends['rewritten']) + 1
+    assert forks.listing() == tuple(fork_ends[n].fork for n in (1, 2, 3))
+    assert forks.listing()[0] == ForkInfo(
+        id=1, model='agent default', prompt='rewritten', status='done', elapsed=done.elapsed or 0, session_id=None
+    )
     assert isinstance(ends['broken hook'].error, RuntimeError)
 
 

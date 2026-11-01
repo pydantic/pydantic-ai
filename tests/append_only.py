@@ -28,8 +28,8 @@ import importlib.util
 import inspect
 import json
 import sys
-from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Iterator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -37,6 +37,7 @@ from typing import Any, Literal, TypeGuard
 
 import httpx2
 import pytest
+from pydantic_core import to_json
 
 from pydantic_ai import Agent
 from pydantic_ai._utils import is_str_dict
@@ -45,13 +46,14 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
-    UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
@@ -112,6 +114,8 @@ def inject_clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
     still pass: route new time reads through `pydantic_ai._utils.now_utc`.
     """
     CLOCK.now = START
+    # Build the history schema first: built after the swap, it would see the clock's `datetime` subclass.
+    ModelMessagesTypeAdapter.validate_json(b'[]')
     for name, module in list(sys.modules.items()):
         if name.startswith('pydantic_ai') and getattr(module, 'datetime', None) is _real_datetime:
             monkeypatch.setattr(module, 'datetime', _ClockDatetime)
@@ -371,12 +375,27 @@ with try_import() as provider_imports_successful:
         pass
 
 
-def _model(provider: Provider, transport: _ScriptedTransport) -> _RecordsParameters:
+with try_import() as ui_imports_successful:
+    # Imported up front: the request models build their schemas on import, which the patched clock breaks.
+    from pydantic_ai.ui import UIAdapter
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+
+_DEFAULT_MODEL_NAMES: dict[Provider, str] = {
+    'anthropic': 'claude-opus-5-5',
+    'openai-responses': 'gpt-5.6-sol',
+    'openai-chat': 'gpt-5.6-sol',
+}
+
+
+def _model(provider: Provider, transport: _ScriptedTransport, model_name: str | None = None) -> _RecordsParameters:
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(transport.handle))
+    model_name = model_name or _DEFAULT_MODEL_NAMES[provider]
     if provider == 'anthropic':
-        return _RecordingAnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='x', http_client=client))
+        return _RecordingAnthropicModel(model_name, provider=AnthropicProvider(api_key='x', http_client=client))
     model_class = _RecordingResponsesModel if provider == 'openai-responses' else _RecordingChatModel
-    return model_class('gpt-5.6-sol', provider=OpenAIProvider(api_key='x', http_client=client))
+    return model_class(model_name, provider=OpenAIProvider(api_key='x', http_client=client))
 
 
 # --- The scenario -----------------------------------------------------------------------------------
@@ -396,8 +415,30 @@ class Scenario:
     configure: Callable[[Agent[Any, Any], Clock], None] | None = None
     check_ids: bool = True
     """Whether every instruction block must have an `id`: framework blocks must, a user's own needn't."""
+    turns: tuple[Turn, ...] | None = None
+    """The model's responses for both runs, in place of the default script: for conversations that retry."""
+    output_type: Any = str
+    serialize_history: bool = False
+    """Whether the second run continues from the first run's history after a JSON round trip, as an app that
+    stores its conversations would, and the replays from the second run's."""
+    replay_text: str = 'Nothing else.'
+    """The final answer of each replay, which the output type must accept."""
+    run_kwargs: Mapping[str, Any] = field(default_factory=dict[str, Any])
+    """Extra arguments for every run, such as the `conversation_id` a capability files work under."""
+    around: Callable[[], AbstractAsyncContextManager[Any]] | None = None
+    """A context every run happens in, such as the task owner background delegation needs."""
+    between_runs: Callable[[], Awaitable[None]] | None = None
+    """Awaited after the first run, before the second: for work that settles in between."""
+    model_names: Mapping[Provider, str] = field(default_factory=dict[Provider, str])
+    """The model to talk to per provider, in place of the default: for features only some models support."""
+    ui_adapter: Literal['vercel', 'agui'] | None = None
+    """Run every run through this protocol's UI adapter with `manage_message_history='server'`, passing the
+    stored history as `message_history` while the client sends its whole conversation back, as `useChat` and
+    `@ag-ui/client` do."""
 
     def script(self) -> list[Turn]:
+        if self.turns is not None:
+            return list(self.turns)
         first, second = (*self.state_calls, None, None)[:2]
         return [
             # The first run: two steps of tool calls, then the answer.
@@ -451,20 +492,42 @@ class ConversationResult:
                 dropped.append(part)
         return None if remaining else dropped
 
+    def resent_request_scoped_prompts(self) -> list[tuple[int, str]]:
+        """Request-scoped system prompts (#9711) the model can still see after the request they were for.
+
+        Each is written for one request, retried steps included. Most providers leave it out of the next
+        request. Anthropic sends it again marked `clear_at: next_user_message`, which the API honours, so there
+        it is still visible to a later request that has no user message after it.
+        """
+        if self.provider == 'anthropic':
+            return [
+                (index, text)
+                for index in range(1, len(self.conversation))
+                for text in _uncleared_system_messages(self.conversation[index - 1], self.conversation[index])
+            ]
+        resent: list[tuple[int, str]] = []
+        for index in range(1, len(self.sent)):
+            later = [
+                part for message in self.sent[index] if isinstance(message, ModelRequest) for part in message.parts
+            ]
+            resent += [
+                (index, part.content)
+                for message in self.sent[index - 1]
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, SystemPromptPart) and part.scope == 'request' and part in later
+            ]
+        return resent
+
     def record_kind(self, part: ModelRequestPart) -> RecordKind | None:
         """What framework record a dropped part is, from its structure, or `None` for real history.
 
-        A request-scoped `SystemPromptPart` (#9711) is sent for one request by design. A `UserPromptPart` that
-        the persisted history doesn't have was added to that one request only. Anything else is history the
-        model saw, so dropping or changing it is a rewrite.
+        A request-scoped `SystemPromptPart` (#9711) is sent for one request by design. Anything else is history
+        the model saw, so dropping or changing it is a rewrite: that includes a request-only user prompt, which
+        no shipped capability adds since `Planning` records its reminder (#11521).
         """
         if isinstance(part, SystemPromptPart) and part.scope == 'request':
             return 'request-scoped system prompt'
-        persisted = (p for message in self.history if isinstance(message, ModelRequest) for p in message.parts)
-        if isinstance(part, UserPromptPart) and part not in persisted:
-            # TODO: request-only user prompts carry no provenance of their own, so this can't tell which
-            # capability added one; core history-part provenance will let an allowance pin its origin.
-            return 'request-only user prompt'
         return None
 
     def changes(self) -> list[Change]:
@@ -510,38 +573,112 @@ class ConversationResult:
         ]
 
 
+def _client_messages(protocol: Literal['vercel', 'agui'], history: list[ModelMessage], prompt: str) -> bytes:
+    """The request body a client holding `history` sends for `prompt`: its whole conversation, as the clients do."""
+    new_id = f'user-{len(history)}'
+    if protocol == 'vercel':
+        messages = [*VercelAIAdapter.dump_messages(history)]
+        messages_json = [m.model_dump(mode='json', by_alias=True, exclude_none=True) for m in messages]
+        new = {'id': new_id, 'role': 'user', 'parts': [{'type': 'text', 'text': prompt}]}
+        return to_json({'trigger': 'submit-message', 'id': 'chat', 'messages': [*messages_json, new]})
+    messages_json = [
+        m.model_dump(mode='json', by_alias=True, exclude_none=True) for m in AGUIAdapter.dump_messages(history)
+    ]
+    new = {'id': new_id, 'role': 'user', 'content': prompt}
+    return to_json(
+        {
+            'threadId': 'chat',
+            'runId': new_id,
+            'state': {},
+            'messages': [*messages_json, new],
+            'tools': [],
+            'context': [],
+            'forwardedProps': None,
+        }
+    )
+
+
+async def _run_through_ui(
+    protocol: Literal['vercel', 'agui'],
+    agent: Agent[Any, Any],
+    prompt: str,
+    *,
+    message_history: list[ModelMessage] | None = None,
+    event_stream_handler: Any = None,
+    **kwargs: Any,
+) -> AgentRunResult[Any]:
+    """Run `agent` on `prompt` the way an endpoint that keeps the history on the server does.
+
+    An adapter run always streams, so `event_stream_handler` isn't needed.
+    """
+    body = _client_messages(protocol, message_history or [], prompt)
+    adapter: UIAdapter[Any, Any, Any, Any, Any] = (
+        VercelAIAdapter(agent, VercelAIAdapter.build_run_input(body), manage_message_history='server')
+        if protocol == 'vercel'
+        else AGUIAdapter(agent, AGUIAdapter.build_run_input(body), manage_message_history='server')
+    )
+    result: AgentRunResult[Any] | None = None
+    async for event in adapter.run_stream_native(message_history=message_history, **kwargs):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
+    assert result is not None
+    return result
+
+
 async def run_conversation(
     provider: Provider,
     capabilities: Sequence[AbstractCapability[Any]],
     scenario: Scenario,
     clock: Clock,
+    *,
+    model_name: str | None = None,
 ) -> ConversationResult:
+    """Run `scenario`, on `model_name` if given rather than the provider's default model."""
     transport = _ScriptedTransport(provider, clock, script=scenario.script())
-    model = _model(provider, transport)
+    model = _model(provider, transport, model_name or scenario.model_names.get(provider))
     agent = Agent(
         model,
         instructions='You are a helpful assistant.',
         toolsets=[FunctionToolset([look_up], id='look_up')],
         name='append-only',
         capabilities=list(capabilities),
+        output_type=scenario.output_type,
     )
     if scenario.configure is not None:
         scenario.configure(agent, clock)
 
-    first = await agent.run('What is the weather and the news?')
-    # Streamed, so a streamed continuation is checked against the requests a non-streamed run built.
-    second = await agent.run('And what else?', message_history=first.all_messages(), event_stream_handler=drain_events)
-    conversation = list(transport.sent)
-    parameters = list(model.recorded_parameters)
+    def stored(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if not scenario.serialize_history:
+            return messages
+        return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
 
-    history = second.all_messages()
-    replay_at = clock.now
-    replays: list[bytes] = []
-    for _ in range(2):
-        clock.now = replay_at
-        transport.script = [Turn(text='Nothing else.')]
-        await agent.run('Anything more?', message_history=history)
-        replays.append(transport.sent[-1])
+    async def run(prompt: str, **kwargs: Any) -> AgentRunResult[Any]:
+        if scenario.ui_adapter is None:
+            return await agent.run(prompt, **kwargs)
+        return await _run_through_ui(scenario.ui_adapter, agent, prompt, **kwargs)
+
+    async with scenario.around() if scenario.around is not None else nullcontext():
+        first = await run('What is the weather and the news?', **scenario.run_kwargs)
+        if scenario.between_runs is not None:
+            await scenario.between_runs()
+        # Streamed, so a streamed continuation is checked against the requests a non-streamed run built.
+        second = await run(
+            'And what else?',
+            message_history=stored(first.all_messages()),
+            event_stream_handler=drain_events,
+            **scenario.run_kwargs,
+        )
+        conversation = list(transport.sent)
+        parameters = list(model.recorded_parameters)
+
+        history = stored(second.all_messages())
+        replay_at = clock.now
+        replays: list[bytes] = []
+        for _ in range(2):
+            clock.now = replay_at
+            transport.script = [Turn(text=scenario.replay_text)]
+            await run('Anything more?', message_history=history, **scenario.run_kwargs)
+            replays.append(transport.sent[-1])
 
     assert len(parameters) == len(conversation)
     sent = model.recorded_messages[: len(conversation)]
@@ -623,14 +760,15 @@ def _is_list(value: Any) -> TypeGuard[list[Any]]:
 
 
 _CACHE_KEYED_SETTINGS: dict[Provider, tuple[str, ...]] = {
-    'anthropic': ('model', 'tool_choice', 'thinking'),
+    'anthropic': ('model', 'tool_choice', 'thinking', 'output_config'),
     'openai-responses': ('model', 'tool_choice', 'reasoning', 'prompt_cache_key'),
     'openai-chat': ('model', 'tool_choice', 'reasoning_effort', 'prompt_cache_key'),
 }
 """Top-level request fields that are part of the provider's cache key: changing one misses the cache like a prefix edit.
 
-Anthropic documents `tool_choice` and the thinking parameters as invalidating the message cache; OpenAI caches per
-model, per `prompt_cache_key` (requests are routed by it) and, as measured, per reasoning effort.
+Anthropic documents `tool_choice`, the thinking parameters and the request-level effort (`output_config.effort`) as
+invalidating the message cache; OpenAI caches per model, per `prompt_cache_key` (requests are routed by it) and, as
+measured, per reasoning effort.
 """
 
 
@@ -960,9 +1098,9 @@ class Exempt:
     reason: str
 
 
-Check = Literal['prefix', 'ids', 'determinism']
+Check = Literal['prefix', 'ids', 'determinism', 'request-scope']
 
-RecordKind = Literal['request-scoped system prompt', 'request-only user prompt']
+RecordKind = Literal['request-scoped system prompt']
 """A framework record a request carries for itself only, identified by structure (see `ConversationResult.record_kind`)."""
 
 
@@ -1055,12 +1193,36 @@ def _violations(
             'contributed instruction blocks without an `id`, so changes to them rewrite the prefix',
             [Violation('instructions', identity, f'{identity}: {text}') for identity, text in unaddressable.items()],
         )
+    if resent := result.resent_request_scoped_prompts():
+        violations['request-scope'] = (
+            'still showed request-scoped system prompts after the request they were for',
+            [
+                Violation('messages', 'system-prompt', f'request {index} still shows: {_shorten(text, 120)}')
+                for index, text in resent
+            ],
+        )
     if (differences := result.nondeterministic_projection()) is not None:
         violations['determinism'] = (
             'built the same request twice from the same history with different bytes',
             _change_violations(differences),
         )
     return violations
+
+
+def _uncleared_system_messages(earlier: bytes, later: bytes) -> list[str]:
+    """Anthropic `clear_at` system messages the earlier request already sent that the later one still shows.
+
+    Such a message is cleared at the next user message, so it stays visible when none comes after it.
+    """
+    sent_before = len(json.loads(earlier)['messages'])
+    messages = json.loads(later)['messages']
+    return [
+        json.dumps(message['content'])[:120]
+        for position, message in enumerate(messages[:sent_before])
+        if message.get('role') == 'system'
+        and message.get('clear_at') == 'next_user_message'
+        and not any(other.get('role') == 'user' for other in messages[position + 1 :])
+    ]
 
 
 def _tail_record_violations(result: ConversationResult, index: int, records: tuple[RecordKind, ...]) -> list[Violation]:

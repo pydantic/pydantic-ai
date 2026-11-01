@@ -33,6 +33,7 @@ from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, MODES_ON, WHEEL_ROWS
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
+from tests.conftest import no_leaked_tasks
 
 
 @asynccontextmanager
@@ -174,18 +175,17 @@ async def test_menu_suspension_preserves_draft_and_output() -> None:
 
 @pytest.mark.parametrize('menu', [False, True])
 async def test_outer_cancellation_releases_terminal_and_tasks(menu: bool) -> None:
-    before = asyncio.all_tasks()
-    with anyio.CancelScope() as scope:
-        async with editor() as (live, _, _):
-            if menu:
-                async with live.suspended():
+    with no_leaked_tasks():
+        with anyio.CancelScope() as scope:
+            async with editor() as (live, _, _):
+                if menu:
+                    async with live.suspended():
+                        scope.cancel()
+                        await anyio.sleep_forever()
+                else:
                     scope.cancel()
                     await anyio.sleep_forever()
-            else:
-                scope.cancel()
-                await anyio.sleep_forever()
-    assert scope.cancelled_caught
-    assert asyncio.all_tasks() <= before
+        assert scope.cancelled_caught
 
 
 @pytest.mark.parametrize('key', ['\x03', '\x1b'])
@@ -867,6 +867,42 @@ async def test_an_idle_editor_rebuilds_its_frame_once_a_second_not_ten_times(mon
         assert clock.run(live, until=5.25) == [5.25], 'a resize without SIGWINCH paints on the next tick'
         async with live.suspended():
             assert clock.run(live, until=7) == [], 'a menu owns the screen'
+
+
+async def test_an_idle_editor_sleeps_until_its_next_repaint_is_due() -> None:
+    clock = FrameClock()
+    forks: list[str] = []
+    async with editor(clock=clock, panel=lambda _: forks) as (live, _, _):
+        clock.now = 5
+        assert live.tick() == IDLE_REPAINT, 'it just repainted'
+        clock.now += 0.25
+        assert live.tick() == 0.75
+        live.feed('x')
+        assert live.tick() == IDLE_REPAINT, 'a key paints, which restarts the wait'
+        async with live.suspended():
+            clock.now += 3
+            assert live.tick() == IDLE_REPAINT, 'a menu owns the screen'
+        forks.append('FORK #1 running')
+        clock.now += IDLE_REPAINT
+        assert live.tick() == 0.1, 'forks animate'
+
+
+async def test_a_read_wakes_the_timed_repaint_to_animate_the_work_it_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FrameClock()
+    async with editor(clock=clock) as (live, _, _):
+        await anyio.wait_all_tasks_blocked()
+        delays: list[float] = []
+        tick = live.tick
+
+        def recorded() -> float:
+            delays.append(tick())
+            return delays[-1]
+
+        monkeypatch.setattr(live, 'tick', recorded)
+        live.submit('hi')
+        assert await live.read() == 'hi'
+        await anyio.wait_all_tasks_blocked()
+        assert delays == [0.1], 'the turn it starts shows its spinner at once'
 
 
 async def test_running_forks_animate_every_tick_until_a_second_after_they_settle(

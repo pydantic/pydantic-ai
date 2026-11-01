@@ -327,14 +327,19 @@ class OpenAICodexProvider(OAuthCredentialsProvider[OpenAICodexCredentials]):
         return _PROVIDER_NAME
 
     @property
+    def canonical_system(self) -> str:
+        # The Codex backend and the OpenAI API accept each other's encrypted reasoning and compaction items.
+        return 'openai'
+
+    @property
     def base_url(self) -> str:
         return _CODEX_BASE_URL
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        # Codex is OpenAI's own backend, so it inherits first-party flags kept out of the shared
-        # profile because compatible endpoints may not implement them. Its profile then layers
-        # only the narrower Codex wire dialect on top.
+        # Codex inherits selected first-party flags that compatible endpoints may not implement. Its schema
+        # transformer is an exception: OpenAIProvider's tuple and string-length handling has not been verified
+        # against the Codex backend, so Codex keeps the shared transformer while layering its wire dialect on top.
         return merge_profile(OpenAIProvider.model_profile(model_name), openai_codex_model_profile(model_name))
 
     def __init__(

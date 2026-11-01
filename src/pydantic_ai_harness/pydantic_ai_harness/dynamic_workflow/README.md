@@ -4,6 +4,8 @@ Let one agent coordinate a whole team of sub-agents by writing a small Python sc
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/dynamic_workflow/)
 
+![The orchestrator agent has one tool, run_workflow. Its model writes a Python script that runs in the Monty sandbox, where each sub-agent is an async function: the script runs reviewer twice in parallel with asyncio.gather, then passes both reports to summarizer. Each call is a separate sub-agent run with its own model loop. Only the script's final value, the summary, goes back to the orchestrator's next model request.](https://pydantic.dev/docs/ai/img/harness/dynamic-workflow.svg)
+
 ## The idea
 
 Say you have a few specialist agents. One reviews code. One summarizes findings. One writes the
@@ -166,9 +168,14 @@ reads them by subscript on its own.
 
 An `output_type` can include
 [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) so a top-level
-caller can approve tools and resume the run. A workflow script cannot do either, so the catalog
-leaves `DeferredToolRequests` out of the sub-agent's return type, and a sub-agent run that ends with
-it raises a `RuntimeError` in the script, like any other sub-agent failure.
+caller can approve tools and resume the run, or
+[`PendingModelResponse`](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits) so
+it can check on a model request the provider is still processing later. A workflow script cannot do
+either, so the catalog leaves both out of the sub-agent's return type, and a sub-agent run that ends
+with one raises a `RuntimeError` in the script, like any other sub-agent failure. A model request
+it left pending is cancelled, best effort: a
+[batch](https://pydantic.dev/docs/ai/core-concepts/batch/) is only cancelled once no other request in
+it is still waiting.
 
 ## A complete, runnable example
 
@@ -342,12 +349,10 @@ gives depends on `forward_usage`, which controls whether the whole tree shares o
 | `True` (default) | the parent's `usage` is shared across the tree | a tree-wide cap, checked against the shared counter. Under concurrent fan-out it is best-effort: several sub-agents can pass the check before any of them adds to the count. |
 | `False` | each sub-agent run counts on its own | per-run limits. A per-run `total_tokens_limit` of `T` with `max_agent_calls` of `N` bounds the tree to roughly `N * T` tokens. |
 
-> **Warning**
->
-> The `usage_limits` you pass to the parent `run()` is not forwarded into sub-agents. Core does not
-> expose that limit value to the capability, so it is re-checked only at the parent's own request
-> boundaries. If you want to bound sub-agents, set `sub_agent_usage_limits`. If you want an exact
-> ceiling on the number of runs, use `max_agent_calls`.
+Without `sub_agent_usage_limits`, sub-agents sharing the counter (`forward_usage=True`) run under
+the `usage_limits` you pass to the parent `run()`, so the parent's budget bounds the whole tree. With
+`forward_usage=False` they fall back to pydantic-ai's default `request_limit` of 50 per run. If you
+want an exact ceiling on the number of runs, use `max_agent_calls`.
 
 ### `resource_limits`: guarding the script itself
 
@@ -519,7 +524,7 @@ DynamicWorkflow(                  # all parameters are keyword-only
     max_retries=3,
     forward_usage=True,
     inherit_model=False,          # True -> sub-agents run with the parent run's resolved model
-    sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> pydantic-ai default
+    sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> parent run's limits when forwarding usage
     resource_limits=None,         # None -> backstop (256 MB, no time cap);
                                   # 'unlimited' -> sandbox limits off; a dict merges onto the backstop
     id=None,                      # required when defer_loading=True

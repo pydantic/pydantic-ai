@@ -176,7 +176,9 @@ async def test_a_timed_out_command_is_killed(client: AsyncSpritesClient) -> None
 
         assert 'DIAGNOSTIC' in exc_info.value.stdout
         assert str(exc_info.value) == 'Command timed out after 5 seconds'
-        check = await backend.run(['sh', '-c', 'sleep 3; kill -0 "$(cat "$1")"', 'sh', pid_file], timeout=60)
+        pid = (await backend.run(['cat', pid_file])).stdout.strip()
+        assert pid.isdigit()
+        check = await backend.run(['sh', '-c', 'sleep 3; kill -0 "$1"', 'sh', pid], timeout=60)
         assert check.exit_code != 0
 
 

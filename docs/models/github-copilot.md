@@ -160,10 +160,11 @@ Which ids surface their reasoning depends on the family. Copilot returns Anthrop
 
 The Claude ids also reason *adaptively*: the effort you set is a ceiling rather than an instruction, so Copilot may answer an easy question with no reasoning at any effort, and a `ThinkingPart` is not guaranteed on every response.
 
-`thinking` is forwarded as `reasoning_effort` and Copilot decides what it accepts, per model: ask for a level an id doesn't list and it answers `400 invalid_reasoning_effort` naming the levels it does. Three cases worth knowing:
+`thinking` is forwarded as `reasoning_effort` and Copilot decides what it accepts, per model: ask for a level an id doesn't list and it answers `400 invalid_reasoning_effort` naming the levels it does. Four cases worth knowing:
 
 - `thinking=False` becomes `reasoning_effort='none'`, which only some ids offer. The `claude-` and `gemini-` ids list `low` upwards and no `none`, so it `400`s there rather than silently doing nothing.
 - `thinking=True` becomes `reasoning_effort='medium'`, which `kimi-k3` does not list (its levels are `low`, `high`, `max`), so pick an explicit level for that one.
+- `thinking='max'` becomes `reasoning_effort='xhigh'`, which `kimi-k3` does not list either, so set `openai_reasoning_effort='max'` for it.
 - An id whose entry carries no `reasoning_effort` key at all, such as `claude-haiku-4.5`, rejects every value.
 
 ## Custom endpoints

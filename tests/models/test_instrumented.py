@@ -38,13 +38,15 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    _otel_messages,
 )
 from pydantic_ai._instrumentation import MessageJsonCache, has_stale_message_json
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import InstructionBaselinePart, InstructionPart
-from pydantic_ai.models import Model, ModelProfile, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models import Model, ModelProfile, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
@@ -52,6 +54,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
+from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 
 from .._inline_snapshot import snapshot, warns
 from ..conftest import IsDatetime, IsFloat, IsInt, IsStr, legacy_retry_prompt_part, try_import
@@ -216,6 +219,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -224,6 +228,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -554,6 +559,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -562,6 +568,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -650,6 +657,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -658,6 +666,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -753,6 +762,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -761,6 +771,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -1873,6 +1884,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -1881,6 +1893,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -2886,3 +2899,281 @@ async def test_wrapped_model_receives_unprepared_request():
         messages, None, params
     )
     assert seen[-1] == baseline, 'instrumentation changed the instructions the wrapped model received'
+
+
+def _reminder_agent(profile: ModelProfile, settings: InstrumentationSettings | None = None) -> Agent[None, str]:
+    """An agent that adds a request-scoped reminder to each of its three requests: two tool calls, then an answer."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls = sum(isinstance(message, ModelResponse) for message in messages)
+        if calls < 2:
+            return ModelResponse(
+                parts=[ToolCallPart('get_weather', {'city': ['Paris', 'Oslo'][calls]}, f'call_{calls}')]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    class Reminder(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.enqueue(SystemPromptPart(f'Reminder {ctx.run_step}.', scope='request'))
+            return request_context
+
+    agent = Agent(
+        FunctionModel(respond, profile=profile),
+        capabilities=[Reminder(), Instrumentation(settings=settings or InstrumentationSettings())],
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'{city}: 18C'
+
+    return agent
+
+
+def _chat_span_input_messages(capfire: CaptureLogfire) -> list[Any]:
+    return [
+        span['attributes']['gen_ai.input.messages']
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if 'gen_ai.input.messages' in span['attributes']
+    ]
+
+
+async def test_later_request_spans_mark_answered_request_scoped_prompts(capfire: CaptureLogfire):
+    """Where the API clears a request-scoped system prompt itself, every later request still sends it.
+
+    The span of the request that sent it renders it normally; every later span marks it `visible: false`,
+    since the model no longer sees it. The run's per-message JSON cache rebuilds the fragment once the
+    request has been answered.
+    """
+    profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
+
+    await _reminder_agent(profile).run('Weather in Paris, then Oslo?')
+
+    assert _chat_span_input_messages(capfire) == snapshot(
+        [
+            [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Weather in Paris, then Oslo?'}]},
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 1.'}]},
+            ],
+            [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Weather in Paris, then Oslo?'}]},
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 1.', 'visible': False}]},
+                {
+                    'role': 'assistant',
+                    'parts': [
+                        {'type': 'tool_call', 'id': 'call_0', 'name': 'get_weather', 'arguments': {'city': 'Paris'}}
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {'type': 'tool_call_response', 'id': 'call_0', 'name': 'get_weather', 'result': 'Paris: 18C'}
+                    ],
+                },
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 2.'}]},
+            ],
+            [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Weather in Paris, then Oslo?'}]},
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 1.', 'visible': False}]},
+                {
+                    'role': 'assistant',
+                    'parts': [
+                        {'type': 'tool_call', 'id': 'call_0', 'name': 'get_weather', 'arguments': {'city': 'Paris'}}
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {'type': 'tool_call_response', 'id': 'call_0', 'name': 'get_weather', 'result': 'Paris: 18C'}
+                    ],
+                },
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 2.', 'visible': False}]},
+                {
+                    'role': 'assistant',
+                    'parts': [
+                        {'type': 'tool_call', 'id': 'call_1', 'name': 'get_weather', 'arguments': {'city': 'Oslo'}}
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {'type': 'tool_call_response', 'id': 'call_1', 'name': 'get_weather', 'result': 'Oslo: 18C'}
+                    ],
+                },
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 3.'}]},
+            ],
+        ]
+    )
+
+
+async def test_answered_request_scoped_prompt_marker_without_content(capfire: CaptureLogfire):
+    """The marker carries no content, so it's recorded with `include_content=False` too."""
+    profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
+
+    await _reminder_agent(profile, InstrumentationSettings(include_content=False)).run('Weather in Paris, then Oslo?')
+
+    assert _chat_span_input_messages(capfire)[-1] == snapshot(
+        [
+            {'role': 'user', 'parts': [{'type': 'text'}]},
+            {'role': 'system', 'parts': [{'type': 'text', 'visible': False}]},
+            {'role': 'assistant', 'parts': [{'type': 'tool_call', 'id': 'call_0', 'name': 'get_weather'}]},
+            {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'call_0', 'name': 'get_weather'}]},
+            {'role': 'system', 'parts': [{'type': 'text', 'visible': False}]},
+            {'role': 'assistant', 'parts': [{'type': 'tool_call', 'id': 'call_1', 'name': 'get_weather'}]},
+            {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'call_1', 'name': 'get_weather'}]},
+            {'role': 'system', 'parts': [{'type': 'text'}]},
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
+async def test_answered_request_scoped_prompts_are_absent_from_later_spans(capfire: CaptureLogfire):
+    """Where the API can't clear a request-scoped system prompt, `prepare_messages` leaves it out of later requests.
+
+    The request spans record the prepared messages, so a later span doesn't list it at all.
+    """
+    await _reminder_agent(ModelProfile(supports_inline_system_prompts=True)).run('Weather in Paris, then Oslo?')
+
+    assert _chat_span_input_messages(capfire)[-1] == snapshot(
+        [
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Weather in Paris, then Oslo?'}]},
+            {
+                'role': 'assistant',
+                'parts': [{'type': 'tool_call', 'id': 'call_0', 'name': 'get_weather', 'arguments': {'city': 'Paris'}}],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'tool_call_response', 'id': 'call_0', 'name': 'get_weather', 'result': 'Paris: 18C'}
+                ],
+            },
+            {
+                'role': 'assistant',
+                'parts': [{'type': 'tool_call', 'id': 'call_1', 'name': 'get_weather', 'arguments': {'city': 'Oslo'}}],
+            },
+            {
+                'role': 'user',
+                'parts': [{'type': 'tool_call_response', 'id': 'call_1', 'name': 'get_weather', 'result': 'Oslo: 18C'}],
+            },
+            {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 3.'}]},
+        ]
+    )
+
+
+async def test_instrumented_model_marks_answered_request_scoped_prompts(capfire: CaptureLogfire):
+    """A request outside an agent run, serialized without the per-message cache, marks an answered prompt too."""
+    model = InstrumentedModel(
+        FunctionModel(
+            lambda messages, info: ModelResponse(parts=[TextPart('done')]),
+            profile=ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True),
+        ),
+        InstrumentationSettings(),
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Weather in Paris?'), SystemPromptPart('Reminder 1.', scope='request')]),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, 'call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_weather', 'Paris: 18C', 'call_1'),
+                SystemPromptPart('Reminder 2.', scope='request'),
+            ]
+        ),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    assert _chat_span_input_messages(capfire) == snapshot(
+        [
+            [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Weather in Paris?'}]},
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 1.', 'visible': False}]},
+                {
+                    'role': 'assistant',
+                    'parts': [
+                        {'type': 'tool_call', 'id': 'call_1', 'name': 'get_weather', 'arguments': {'city': 'Paris'}}
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {'type': 'tool_call_response', 'id': 'call_1', 'name': 'get_weather', 'result': 'Paris: 18C'}
+                    ],
+                },
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 2.'}]},
+            ]
+        ]
+    )
+
+
+class _UppercaseInstrumentationSettings(InstrumentationSettings):
+    """Upper-cases recorded text, the way an override can redact or rewrite what a trace records."""
+
+    def messages_to_otel_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+    ) -> list[_otel_messages.ChatMessage]:
+        otel_messages = super().messages_to_otel_messages(messages, mcp_url_ids=mcp_url_ids)
+        for otel_message in otel_messages:
+            for part in otel_message['parts']:
+                if part['type'] == 'text' and 'content' in part:
+                    part['content'] = part['content'].upper()
+        return otel_messages
+
+
+async def test_messages_to_otel_messages_override_applies_to_marked_spans(capfire: CaptureLogfire):
+    """An override of `messages_to_otel_messages` still shapes `gen_ai.input.messages`, and the marker is added to its result."""
+    profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
+
+    await _reminder_agent(profile, _UppercaseInstrumentationSettings()).run('Weather in Paris, then Oslo?')
+
+    assert [
+        [part for message in messages if message['role'] == 'system' for part in message['parts']]
+        for messages in _chat_span_input_messages(capfire)
+    ] == snapshot(
+        [
+            [{'type': 'text', 'content': 'REMINDER 1.'}],
+            [{'type': 'text', 'content': 'REMINDER 1.', 'visible': False}, {'type': 'text', 'content': 'REMINDER 2.'}],
+            [
+                {'type': 'text', 'content': 'REMINDER 1.', 'visible': False},
+                {'type': 'text', 'content': 'REMINDER 2.', 'visible': False},
+                {'type': 'text', 'content': 'REMINDER 3.'},
+            ],
+        ]
+    )
+
+
+async def test_answered_request_scoped_prompt_left_unmarked_when_an_override_reshapes_messages(
+    capfire: CaptureLogfire,
+):
+    """Where an override returns a different shape than the default conversion, no part can be attributed to the prompt."""
+
+    class DropUserMessages(InstrumentationSettings):
+        def messages_to_otel_messages(
+            self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+        ) -> list[_otel_messages.ChatMessage]:
+            otel_messages = super().messages_to_otel_messages(messages, mcp_url_ids=mcp_url_ids)
+            return [message for message in otel_messages if message['role'] != 'user']
+
+    model = InstrumentedModel(
+        FunctionModel(
+            lambda messages, info: ModelResponse(parts=[TextPart('done')]),
+            profile=ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True),
+        ),
+        DropUserMessages(),
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Weather in Paris?'), SystemPromptPart('Reminder 1.', scope='request')]),
+        ModelResponse(parts=[TextPart('Sunny.')]),
+        ModelRequest(parts=[UserPromptPart('And Oslo?')]),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    assert _chat_span_input_messages(capfire) == snapshot(
+        [
+            [
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 1.'}]},
+                {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Sunny.'}]},
+            ]
+        ]
+    )

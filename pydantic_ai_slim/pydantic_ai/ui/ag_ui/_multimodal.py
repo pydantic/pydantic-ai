@@ -6,8 +6,9 @@ ag-ui-protocol >= 0.1.15 is installed, so these imports will succeed.
 
 from __future__ import annotations
 
+import warnings
 from base64 import b64decode
-from typing import Any
+from typing import TYPE_CHECKING, Any, get_args
 
 from ag_ui.core import (
     AudioInputContent,
@@ -19,7 +20,33 @@ from ag_ui.core import (
 )
 
 from ..._utils import is_str_dict
-from ...messages import AudioUrl, BinaryContent, DocumentUrl, ForceDownloadMode, ImageUrl, VideoUrl
+from ...messages import (
+    AudioUrl,
+    BinaryContent,
+    DocumentUrl,
+    ForceDownloadMode,
+    ImageUrl,
+    UploadedFile,
+    UploadedFileProviderName,
+    VideoUrl,
+)
+
+if TYPE_CHECKING:
+    from ag_ui.core import FileSource
+else:
+    try:
+        from ag_ui.core import FileSource
+    except ImportError:  # pragma: lax no cover
+        # Only reachable on 0.1.15 to 0.1.22, which no CI lane installs.
+
+        class FileSource:
+            """Stub for SDKs without `FileSource`."""
+
+
+_UPLOADED_FILE_PROVIDERS: dict[str, UploadedFileProviderName] = {
+    name: name for name in get_args(UploadedFileProviderName)
+}
+"""Each provider name `UploadedFile` accepts, keyed by its string so a lookup narrows a client's value to the `Literal`."""
 
 AGUIContentTypes = ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent
 PydanticAIUrlType = ImageUrl | AudioUrl | VideoUrl | DocumentUrl
@@ -87,8 +114,11 @@ def binary_to_multimodal(
 
 def multimodal_input_to_content(
     part: AGUIContentTypes,
-) -> PydanticAIUrlType | BinaryContent:
-    """Convert a typed multimodal AG-UI input content back to a Pydantic AI content type."""
+) -> PydanticAIUrlType | BinaryContent | UploadedFile | None:
+    """Convert typed AG-UI content to Pydantic AI content.
+
+    Unknown `file` providers are skipped with a warning because their handles cannot be resolved.
+    """
     source = part.source
     # `metadata` is client-controlled and typed as `Any`; a non-`dict` value is ignored, and a
     # malformed (non-`dict`) `vendor_metadata` inside it is rejected by the validating constructors
@@ -106,5 +136,22 @@ def multimodal_input_to_content(
             force_download=force_download,
             vendor_metadata=vendor_metadata,
         )
-    else:
+    if isinstance(source, InputContentDataSource):
         return BinaryContent(data=b64decode(source.value), media_type=source.mime_type, vendor_metadata=vendor_metadata)
+    assert isinstance(source, FileSource)  # url, data and file are the only sources the SDK accepts
+    provider_name = _UPLOADED_FILE_PROVIDERS.get(source.provider) if source.provider is not None else None
+    if provider_name is None:
+        got = 'no provider' if source.provider is None else f'provider {source.provider!r}'
+        warnings.warn(
+            f'AG-UI file reference {source.value!r} ({got}) was dropped: only file references from providers '
+            f'{sorted(_UPLOADED_FILE_PROVIDERS)} can be sent to the model.',
+            UserWarning,
+            stacklevel=4,
+        )
+        return None
+    return UploadedFile(
+        file_id=source.value,
+        provider_name=provider_name,
+        media_type=source.mime_type,
+        vendor_metadata=vendor_metadata,
+    )

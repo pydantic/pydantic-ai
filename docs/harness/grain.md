@@ -11,6 +11,8 @@ description: Connect a Pydantic AI agent to Grain's hosted MCP server to search 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the Grain capability connects to Grain's hosted MCP server at api.grain.com/_/mcp with an OAuth access token, and the model sees the server's tools under the grain_ prefix. It connects when the run starts, even with defer_loading=True, so an invalid or expired token raises httpx.HTTPStatusError with status 401; return None from the auth function to give that run no Grain tools instead. read_only=True drops tools the server does not mark read-only.](../img/harness/grain.svg)
+
 ## Before you start
 
 Grain MCP works on every Grain plan. The deal and coaching tools need the Business or Enterprise plan.
@@ -47,7 +49,7 @@ Set `GRAIN_ACCESS_TOKEN` to a Grain access token, or pass `auth=` a token. On yo
 | Not set, `None`, or `''` | `GRAIN_ACCESS_TOKEN`. If that is not set either, creating the agent raises an error. |
 | An access token | That token, for every run. |
 | `'oauth'` | The account you sign in to through the browser. This only works on your own machine. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Grain tools. A function never uses `GRAIN_ACCESS_TOKEN`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no Grain tools. A function never uses `GRAIN_ACCESS_TOKEN`, and must not return `'oauth'`. |
 
 A fixed token or `GRAIN_ACCESS_TOKEN` suits a script or an agent on your own machine, where every run is the same account.
 
@@ -74,13 +76,25 @@ agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Grain(auth=gr
 
 The function runs once per run, so each run connects with the token from its own deps.
 
-Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Grain" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Grain" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, put it in the deps, or load it in an async `auth` function.
 
 With durable execution such as Temporal, read the token from the run's deps, not a global: the function may run in another process.
 
 Grain connects when the run starts, even with `defer_loading=True`. If the token is invalid or expired, the run raises an `httpx.HTTPStatusError` with status 401, so return `None` from the function when you know the token is no longer valid.
 
-The capability's `id` defaults to `grain`, so `defer_loading=True` works without one. To use two Grain accounts in one agent, give each `Grain` its own `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same. Two that share an `id` but differ raise an error.
+The capability's `id` defaults to `grain`, so `defer_loading=True` works without one. To use two Grain accounts in one agent, give each `Grain` its own `id` and `tool_prefix`. Two that share an `id` but differ raise an error.
+
+## Tool names
+
+The agent sees each of the server's tools under the `grain_` prefix, as in `grain_<tool>`, so they don't collide with other tools on the agent. Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names the server gives them.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](../toolsets.md) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
+
+## Upgrading
+
+`Grain` used to give the agent the server's tool names unprefixed. They now reach the agent as `grain_<tool>`. Code that refers to them by name, such as a `filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs the new names. A rule that no longer matches stops applying, so an approval rule or guardrail that named an old tool lets its calls through without approval or checks until you update it. Pass `tool_prefix=None` to keep the old names. If you wrapped `Grain` in [PrefixTools](../capabilities/prefix-tools.md) to avoid collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses it recorded, and their tool calls use the old names, so a run started before the change that calls a `Grain` tool after it no longer replays. Activity and step names come from the capability's `id`, which is unchanged. Let those runs finish, keep `tool_prefix=None` until they have, or deploy the change with [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) or a new DBOS application version.
 
 ## Tool selection and approval
 

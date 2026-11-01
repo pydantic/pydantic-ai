@@ -91,6 +91,17 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 `trace_include_content`) is in `src/pydantic_ai_harness/agent_docs/capability-authoring.md`
 "Telemetry".
 
+## Framing tags
+
+A capability that writes a tag into prompt text, such as `<memory>`, `<judge_feedback>` or
+`<task_output>`, registers it once at module level with `pydantic_ai.framing.register_tag()` and
+renders it with `pydantic_ai.framing.wrap()`. Registering is what makes core's own data frames, such as a
+`<tool_result>`, neutralize the tag, so a tool result can't close the capability's frame. Use
+`neutralize_tags()` for untrusted text placed inside a frame some other way. Do not hand-roll an escaper:
+escaping only a frame's own closing tag leaves its opener and the `<system>` voice tag free to forge
+structure. Tag names are lowercase snake_case. See
+<https://pydantic.dev/docs/ai/capabilities/custom/#framing-data-in-prompt-text>.
+
 ## Coding standards
 
 - Python 3.11+ (Pyright and Ruff targets)
@@ -103,6 +114,13 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 - no typecasting (`as` in TypeScript, `cast()` in Python) -- use type narrowing instead
 - prefer the most generic input types possible (reduce dependency chains)
 - don't add comments that restate what the code does
+- capabilities that add to or edit message history, instructions or tools follow core's
+  `agent_docs/message-history-and-caching.md`: history is append-only, content goes in the channel
+  matching who wrote it, framework records are found by type or metadata, never by their text, and
+  any tag a capability wraps around content follows that guide's tag rules (`snake_case` names,
+  escaping every opening and closing spelling of every registered framing tag, through
+  `pydantic_ai.framing.wrap()`/`neutralize_tags()` with the tag registered (see "Framing tags"), never
+  a hand-rolled escaper, attributes, no preambles)
 
 ## Writing style
 
@@ -141,6 +159,12 @@ uv run --no-sync pytest -p no:cacheprovider tests/harness/<capability>
 CI runs the repository-wide typecheck, test, and combined coverage gates.
 Do not run repository-wide Pyright, pytest, or coverage locally.
 If CI reports a coverage gap, run coverage only for the flagged file or focused test.
+
+The durable-exec contract manifest (`scripts/durable_exec_contract.json`) records the core
+definitions the Harness durable engines (`absurd`, `aws_lambda`, `pgtask`, `render`) depend on, and
+harness-only PRs run `tests/durable_exec/test_durable_exec_contract_manifest.py`, which fails when
+an engine change leaves it stale: see
+[Core changes that engines depend on](../../pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md#core-changes-that-engines-depend-on).
 
 ### Workspace and Python versions
 

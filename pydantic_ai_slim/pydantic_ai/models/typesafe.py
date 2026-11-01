@@ -258,6 +258,9 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
             raise _model_errors.connection_error(
                 self._model_name, str(e), e, timeout=isinstance(e, TypeSafeAPITimeoutError)
             ) from e
+        except httpx2.HTTPStatusError as e:
+            # A retrying transport raises this for a status it gave up on, and the TypeSafe SDK lets it through.
+            raise _model_errors.transport_status_error(self._model_name, e.response) from e
         except (TypeSafeError, ValidationError) as e:
             # What is left is the SDK refusing to send what it was given, such as an `extra_body` that will
             # not encode as JSON or a question it will not build. That is the caller's to fix, not the model's.

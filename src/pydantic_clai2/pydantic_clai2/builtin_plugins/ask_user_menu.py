@@ -33,6 +33,7 @@ from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, TranscriptKey, question_input
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.rendering import prompt_line
 from pydantic_clai2.ui.rendering.tool_output import tool_header
 
 
@@ -63,10 +64,11 @@ class QuestionMenu:
         """Show the available actions without a separate Space-key convention."""
         if self.editing_custom:
             return 'Enter submits - Esc back - Ctrl-C decline'
+        move = 'Up/Down or Tab/Shift+Tab move'
         if self.cursor == self.other:
-            return 'Up/Down move - type your answer - Esc decline'
+            return f'{move} - type your answer - Esc decline'
         action = 'toggle; Done submits' if self.question.multi_select else 'select'
-        return f'Up/Down move - number/Enter {action} - Esc decline'
+        return f'{move} - number/Enter {action} - Esc decline'
 
     @property
     def other(self) -> int:
@@ -97,8 +99,8 @@ class QuestionMenu:
             return None
         count = len(self.question.options)
         rows = self.other + 1
-        if key in ('up', 'down', 'tab'):
-            self.cursor = (self.cursor + (-1 if key == 'up' else 1)) % rows
+        if key in ('up', 'down', 'tab', 'backtab'):
+            self.cursor = (self.cursor + (-1 if key in ('up', 'backtab') else 1)) % rows
         elif key == 'enter' or key in tuple(str(i) for i in range(1, rows + 1)):
             if key != 'enter':
                 self.cursor = int(key) - 1
@@ -146,8 +148,9 @@ class QuestionMenu:
                 focus = len(lines)
             for line_index, line in enumerate(_wrap(choice, width=width - 2)):
                 prefix = '> ' if index == self.cursor and line_index == 0 else '  '
-                role = theme.ACCENT if index == self.cursor else theme.INFO
-                lines.append(theme.sgr(role) + truncate(prefix + line, width) + '\x1b[0m')
+                row = truncate(prefix + line, width)
+                # Unhighlighted choices keep the terminal's foreground, readable on light and dark backgrounds alike.
+                lines.append(theme.sgr(theme.ACCENT) + row + '\x1b[0m' if index == self.cursor else row)
         visible = max(1, budget - 2 - len(question))
         start = min(focus, max(0, len(lines) - visible))
         title = truncate(self.title, width)
@@ -175,10 +178,10 @@ class QuestionMenu:
         try:
             with raw_mode():
                 while True:
-                    surface.paint(self.frame(width=console.width, height=console.height))
+                    surface.paint(self.frame(width=console.width, height=console.height), select_pinned=True)
                     key = key_source()
                     if isinstance(key, TranscriptKey):
-                        # Reading back through or copying the transcript must not answer or edit the question.
+                        # Scrolling the transcript or copying painted text must not answer or edit the question.
                         surface.transcript_key(key.key, key.data)
                         continue
                     if key == 'ctrl-c' or (key == 'escape' and not self.editing_custom):
@@ -282,8 +285,12 @@ def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
             text.append('\n')
         text.append('● ', style=theme.color(theme.MUTED))
         text.append(answer.header, style=theme.color(theme.ACCENT))
-        value = answer.custom_answer if answer.custom_answer is not None else ', '.join(answer.selected)
-        text.append(f': {value}', style=theme.color(theme.MUTED))
+        if answer.custom_answer is not None:
+            # A typed answer is the user's own words, so it reads like a prompt they typed, not muted output.
+            text.append(':\n', style=theme.color(theme.MUTED))
+            text.append_text(prompt_line(answer.custom_answer))
+        else:
+            text.append(f': {", ".join(answer.selected)}', style=theme.color(theme.MUTED))
     return text
 
 

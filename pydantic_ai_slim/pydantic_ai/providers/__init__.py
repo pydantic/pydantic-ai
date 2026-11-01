@@ -10,7 +10,8 @@ import functools
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self
+from urllib.parse import urlsplit
 
 import anyio
 from typing_extensions import TypeVar
@@ -38,6 +39,22 @@ def missing_api_key_error(message: str) -> UserError:
     dead-ends the getting-started experience.
     """
     return UserError(f'{message} {_KEYLESS_HINT}')
+
+
+_DEFAULT_PORTS = {'http': 80, 'https': 443}
+
+
+def _normalized_url(url: str) -> str:
+    """`url` with a lowercase scheme and host, an explicit default port and no trailing `/`, for comparing endpoints."""
+    try:
+        parts = urlsplit(url.strip())
+        port = parts.port or _DEFAULT_PORTS.get(parts.scheme.lower())
+    except ValueError:  # a malformed stored URL, such as an unclosed IPv6 bracket or an out-of-range port
+        return url
+    scheme = parts.scheme.lower()
+    netloc = f'{parts.hostname or ""}:{port}' if port else parts.hostname or ''
+    query = f'?{parts.query}' if parts.query else ''
+    return f'{scheme}://{netloc}{parts.path.rstrip("/")}{query}'
 
 
 class Provider(ABC, Generic[InterfaceClient]):
@@ -81,6 +98,57 @@ class Provider(ABC, Generic[InterfaceClient]):
         raise NotImplementedError()
 
     @property
+    def canonical_system(self) -> str:
+        """The system whose keys and format verify the stateless signed or encrypted data this provider returns.
+
+        That data is encrypted reasoning, thinking and thought signatures, redacted thinking and OpenAI
+        compaction items. A model sends it back only to a provider whose `canonical_system` matches, or
+        lists it in [`compatible_systems`][pydantic_ai.providers.Provider.compatible_systems]; other
+        providers get the fallback each model uses for foreign data, such as thinking rendered as text.
+        Server-side state, such as response, item and container IDs, is judged by endpoint instead: see
+        [`shares_server_state_with`][pydantic_ai.providers.Provider.shares_server_state_with].
+
+        Defaults to `name`. Built-in providers return a fixed value, so a subclass that only changes
+        `name` (one that authenticates differently against the same API, say) keeps sharing data with the
+        provider it extends. `OpenAIProvider` is the exception: a subclass with its own `name` is assumed
+        to talk to another service, and gets that name. Override this when your provider returns data
+        another provider's keys verify, like a transparent proxy.
+        """
+        return self.name
+
+    _canonical_system_follows_client: ClassVar[bool] = False
+    """Whether `canonical_system` depends on the client the provider was created with, not only on `name`.
+
+    Responses then always record their canonical system, so one name covering two systems (`google` on the Gemini
+    API or Google Cloud, `openai` on OpenAI or Azure) is never ambiguous in new history.
+    """
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        """Other canonical systems whose stateless signed or encrypted data this provider also verifies.
+
+        One-way: listing a system here sends its data to this provider, not this provider's data to it.
+        See [`canonical_system`][pydantic_ai.providers.Provider.canonical_system]. Empty by default.
+        """
+        return frozenset()
+
+    def shares_server_state_with(self, provider_url: str) -> bool:
+        """Whether this provider can look up server-side state created at the endpoint `provider_url`.
+
+        Server-side state is what the API stores and refers to by ID: stored responses (`previous_response_id`),
+        output items, conversations and code execution containers. A model sends those IDs back only when the
+        response that holds them has this provider's [`name`][pydantic_ai.providers.Provider.name] and this method
+        accepts the response's [`provider_url`][pydantic_ai.messages.ModelResponse.provider_url]; a response
+        without a `provider_url` is accepted by name alone. Other content in the response, such as text and
+        client tool calls, is sent either way.
+
+        Defaults to comparing `provider_url` with [`base_url`][pydantic_ai.providers.Provider.base_url], ignoring
+        the case of the scheme and host, a default port and a trailing `/`. Override this when two URLs reach the
+        same stored state, like a proxy alias for the API.
+        """
+        return _normalized_url(provider_url) == _normalized_url(self.base_url)
+
+    @property
     def model_id_namespace(self) -> str:
         """The namespace used to fully qualify model IDs routed through this provider."""
         return self._model_id_namespace or self.name
@@ -101,6 +169,13 @@ class Provider(ABC, Generic[InterfaceClient]):
     def model_profile(model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
+
+    def _configured_model_profile(self, model_name: str) -> ModelProfile | None:
+        """The model profile for the named model as this provider instance is configured, which models use.
+
+        `model_profile`, unless a provider takes a profile when it's created, like `OpenAICompatibleProvider`.
+        """
+        return self.model_profile(model_name)
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile | None:
@@ -182,7 +257,7 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         provider = normalize_gateway_provider(provider)
 
-    if provider in ('openai', 'openai-chat', 'openai-responses'):
+    if provider in ('openai', 'openai-chat', 'openai-responses', 'openai-decisions'):
         from .openai import OpenAIProvider
 
         return OpenAIProvider
@@ -194,10 +269,6 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .openai_chatgpt import OpenAIChatGPTProvider
 
         return OpenAIChatGPTProvider
-    elif provider == 'openai-decisions':
-        from .openai_decisions import OpenAIDecisionsProvider
-
-        return OpenAIDecisionsProvider
     elif provider == 'deepseek':
         from .deepseek import DeepSeekProvider
 

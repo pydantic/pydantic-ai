@@ -4,6 +4,8 @@ Let an agent read and send Slack messages, browse channels, and work with canvas
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![Inside your agent, the Slack capability connects to Slack's hosted MCP server at mcp.slack.com/mcp with a Slack user token (xoxp-); bot tokens (xoxb-) are not accepted. The model sees the server's tool names unchanged, such as slack_send_message, and messages it posts appear as that user. Your auth function returns the token for each run.](https://pydantic.dev/docs/ai/img/harness/slack.svg)
+
 ## Install and connect
 
 uv:
@@ -37,7 +39,7 @@ print(result.output)
 | --- | --- |
 | Not set, `None`, or `''` | `SLACK_USER_TOKEN`. If that is not set either, creating the agent raises an error. |
 | A token | That token, for every run. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Slack tools. A function never uses `SLACK_USER_TOKEN`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no Slack tools. A function never uses `SLACK_USER_TOKEN`, and must not return `'oauth'`. |
 
 A fixed token or `SLACK_USER_TOKEN` suits a script or an agent on your own machine, where every run is the same Slack user.
 
@@ -64,7 +66,7 @@ agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Slack(auth=sla
 
 Each run connects as its own user, so concurrent runs never share an account.
 
-Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Slack" button that signs them in to your Slack app with OAuth and saves their user token (`xoxp-`) to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Slack" button that signs them in to your Slack app with OAuth and saves their user token (`xoxp-`) to their account. Before each run, put it in the deps, or load it in an async `auth` function.
 
 When users differ in more than their credential, such as giving some users read-only access, build the whole capability for each run with a [dynamic capability](https://pydantic.dev/docs/ai/capabilities/custom/#dynamically-building-a-capability):
 
@@ -91,13 +93,19 @@ def slack(ctx: RunContext[Deps]) -> Slack[Deps] | None:
 agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[DynamicCapability(slack, id='slack')])
 ```
 
-With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `slack`, so `defer_loading=True` works without one. To add more than one `Slack` to an agent, give each a distinct `id` and wrap them in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since their tool names are the same; two that share an `id` but differ raise an error.
+With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `slack`, so `defer_loading=True` works without one. To add more than one `Slack` to an agent, give each a distinct `id` and `tool_prefix`; two that share an `id` but differ raise an error.
 
 ## Provider settings
 
 Slack's hosted MCP server takes user tokens (`xoxp-`), not bot tokens (`xoxb-`). Register a Slack app and grant its user-token scopes as Slack's MCP documentation describes.
 
 The tools act as the token's user, so messages the agent posts and canvases it edits appear as that user. This capability gives an agent Slack tools; it does not receive Slack messages or start runs from them.
+
+## Tool names
+
+`Slack` has no default prefix, unlike most hosted MCP capabilities: the server's tool names already start with the service, as in `slack_send_message`, so a default prefix would repeat it (`slack_slack_send_message`). The agent sees the names as they are. Set `tool_prefix` to put a prefix and `_` in front of them, for example `tool_prefix='work'` gives `work_slack_send_message`.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
 
 ## Tool selection and approval
 
@@ -124,6 +132,6 @@ Handle the approval requests with the [deferred tools workflow](https://pydantic
 
 Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` and `include_instructions` still apply. `include_instructions=False` stops the server's own instructions from reaching the agent.
 
-A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections whose tool names overlap, give them distinct `id`s and add [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/).
+A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections, give each a distinct `id` and `tool_prefix`.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/slack/)

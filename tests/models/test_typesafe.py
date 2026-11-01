@@ -2484,7 +2484,12 @@ async def test_history_from_another_model(allow_model_requests: None):
         ),
         ModelRequest(parts=[ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_2')]),
         ModelResponse(parts=[TextPart('Rain.'), CompactionPart(content=None)]),
-        ModelRequest(parts=[RetryFeedbackPart('Say more.', retry=RetryInfo(cause='model_retry'))]),
+        ModelRequest(
+            parts=[
+                RetryFeedbackPart('Say more.', retry=RetryInfo(cause='model_retry')),
+                CompactionPart(content='The user asked twice.'),
+            ]
+        ),
         ModelResponse(parts=[TextPart('It is raining.'), CompactionPart(content='Weather was discussed.')]),
     ]
     agent = Agent(mock_model(record), output_type=bool, instructions='Was the user told the weather?')
@@ -2509,6 +2514,7 @@ Say more.
 </retry_feedback>\
 """
                 },
+                {'summary': 'The user asked twice.'},
                 {'assistant': 'It is raining.'},
                 {'summary': 'Weather was discussed.'},
             ],
@@ -2858,6 +2864,25 @@ async def test_connection_error(allow_model_requests: None):
     with pytest.raises(ModelConnectionError, match='refused') as exc_info:
         await Agent(model, output_type=bool, instructions='Is this fine?').run('anything')
     assert not isinstance(exc_info.value, ModelTimeoutError)
+
+    agent = Agent(FallbackModel(model, TestModel()), output_type=bool, instructions='Is this fine?')
+    result = await agent.run('anything')
+    assert result.response.model_name == 'test'
+
+
+async def test_transport_status_error(allow_model_requests: None):
+    """A status a retrying transport gave up on is raised as `ModelHTTPError`, which `FallbackModel` falls back on."""
+
+    def gave_up(request: httpx2.Request) -> httpx2.Response:
+        response = httpx2.Response(503, request=request)
+        raise httpx2.HTTPStatusError('Server error 503', request=request, response=response)
+
+    model = mock_model(gave_up)
+
+    with pytest.raises(ModelUnavailableError) as exc_info:
+        await Agent(model, output_type=bool, instructions='Is this fine?').run('anything')
+    assert isinstance(exc_info.value, ModelHTTPError)
+    assert exc_info.value.status_code == 503
 
     agent = Agent(FallbackModel(model, TestModel()), output_type=bool, instructions='Is this fine?')
     result = await agent.run('anything')

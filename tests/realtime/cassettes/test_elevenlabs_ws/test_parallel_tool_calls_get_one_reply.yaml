@@ -1,0 +1,1274 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: ''
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_6001m5g746njf5c8zyswwt2s025z
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000001
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: Use get_weather for every city asked about, in parallel. Answer
+        in one short sentence.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: semantic_vad
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+      tools:
+      - type: function
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up the current weather for a city.
+      model: eleven_realtime_v1_mini
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    conversation:
+      id: conv_6001m5g746njf5c8zyswwt2s025z
+      object: realtime.conversation
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000002
+- kind: message
+  direction: received
+  at: 1.076
+  data:
+    type: session.updated
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: Use get_weather for every city asked about, in parallel. Answer
+        in one short sentence.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools:
+      - type: function
+        name: get_weather
+        description: Look up the current weather for a city.
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_6001m5g746njf5c8zyswwt2s025z
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000003
+- kind: message
+  direction: sent
+  at: 1.076
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in Paris and in Berlin? Check both at once.
+- kind: message
+  direction: sent
+  at: 1.077
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 1.149
+  data:
+    type: conversation.item.added
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in Paris and in Berlin? Check both at once.
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000004
+- kind: message
+  direction: received
+  at: 1.149
+  data:
+    type: conversation.item.done
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in Paris and in Berlin? Check both at once.
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000005
+- kind: message
+  direction: received
+  at: 1.599
+  data:
+    type: response.created
+    response:
+      id: resp_7701m5g7488aez8b77yzdrz716pn
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_6001m5g746njf5c8zyswwt2s025z
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000006
+- kind: message
+  direction: received
+  at: 1.599
+  data:
+    type: response.output_item.added
+    response_id: resp_7701m5g7488aez8b77yzdrz716pn
+    output_index: 0
+    item:
+      id: item_0901m5g7488bev0bpaps0xv6jrj9
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      name: get_weather
+      call_id: chatcmpl-tool-93c885a3aaa851c3
+      arguments: ''
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000007
+- kind: message
+  direction: received
+  at: 1.599
+  data:
+    type: conversation.item.added
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_0901m5g7488bev0bpaps0xv6jrj9
+      type: function_call
+      role: null
+      content: null
+      call_id: chatcmpl-tool-93c885a3aaa851c3
+      name: get_weather
+      arguments: ''
+      output: null
+      status: in_progress
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000008
+- kind: message
+  direction: received
+  at: 1.599
+  data:
+    type: response.function_call_arguments.delta
+    response_id: resp_7701m5g7488aez8b77yzdrz716pn
+    item_id: item_0901m5g7488bev0bpaps0xv6jrj9
+    output_index: 0
+    call_id: chatcmpl-tool-93c885a3aaa851c3
+    delta: '{"city": "Paris"}'
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000009
+- kind: message
+  direction: received
+  at: 1.599
+  data:
+    type: response.function_call_arguments.done
+    response_id: resp_7701m5g7488aez8b77yzdrz716pn
+    item_id: item_0901m5g7488bev0bpaps0xv6jrj9
+    output_index: 0
+    call_id: chatcmpl-tool-93c885a3aaa851c3
+    name: get_weather
+    arguments: '{"city": "Paris"}'
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000010
+- kind: message
+  direction: received
+  at: 1.6
+  data:
+    type: conversation.item.done
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_0901m5g7488bev0bpaps0xv6jrj9
+      type: function_call
+      role: null
+      content: null
+      call_id: chatcmpl-tool-93c885a3aaa851c3
+      name: get_weather
+      arguments: '{"city": "Paris"}'
+      output: null
+      status: completed
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000011
+- kind: message
+  direction: received
+  at: 1.6
+  data:
+    type: response.output_item.done
+    response_id: resp_7701m5g7488aez8b77yzdrz716pn
+    output_index: 0
+    item:
+      id: item_0901m5g7488bev0bpaps0xv6jrj9
+      object: realtime.item
+      type: function_call
+      status: completed
+      name: get_weather
+      call_id: chatcmpl-tool-93c885a3aaa851c3
+      arguments: '{"city": "Paris"}'
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000012
+- kind: message
+  direction: received
+  at: 1.6
+  data:
+    type: response.done
+    response:
+      id: resp_7701m5g7488aez8b77yzdrz716pn
+      object: realtime.response
+      status: completed
+      conversation_id: conv_6001m5g746njf5c8zyswwt2s025z
+      output:
+      - id: item_0901m5g7488bev0bpaps0xv6jrj9
+        object: realtime.item
+        type: function_call
+        status: completed
+        name: get_weather
+        call_id: chatcmpl-tool-93c885a3aaa851c3
+        arguments: '{"city": "Paris"}'
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000013
+- kind: message
+  direction: received
+  at: 1.6
+  data:
+    type: rate_limits.updated
+    rate_limits: []
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000014
+- kind: message
+  direction: received
+  at: 1.6
+  data:
+    type: response.created
+    response:
+      id: resp_0101m5g7488cecb8rdgah7fa27x0
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_6001m5g746njf5c8zyswwt2s025z
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000015
+- kind: message
+  direction: received
+  at: 1.6
+  data:
+    type: response.output_item.added
+    response_id: resp_0101m5g7488cecb8rdgah7fa27x0
+    output_index: 0
+    item:
+      id: item_0601m5g7488depf9xjrag8xpaygp
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      name: get_weather
+      call_id: chatcmpl-tool-9ca75c7325a318a0
+      arguments: ''
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000016
+- kind: message
+  direction: received
+  at: 1.601
+  data:
+    type: conversation.item.added
+    previous_item_id: item_0901m5g7488bev0bpaps0xv6jrj9
+    item:
+      id: item_0601m5g7488depf9xjrag8xpaygp
+      type: function_call
+      role: null
+      content: null
+      call_id: chatcmpl-tool-9ca75c7325a318a0
+      name: get_weather
+      arguments: ''
+      output: null
+      status: in_progress
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000017
+- kind: message
+  direction: received
+  at: 1.601
+  data:
+    type: response.function_call_arguments.delta
+    response_id: resp_0101m5g7488cecb8rdgah7fa27x0
+    item_id: item_0601m5g7488depf9xjrag8xpaygp
+    output_index: 0
+    call_id: chatcmpl-tool-9ca75c7325a318a0
+    delta: '{"city": "Berlin"}'
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000018
+- kind: message
+  direction: received
+  at: 1.601
+  data:
+    type: response.function_call_arguments.done
+    response_id: resp_0101m5g7488cecb8rdgah7fa27x0
+    item_id: item_0601m5g7488depf9xjrag8xpaygp
+    output_index: 0
+    call_id: chatcmpl-tool-9ca75c7325a318a0
+    name: get_weather
+    arguments: '{"city": "Berlin"}'
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000019
+- kind: message
+  direction: received
+  at: 1.601
+  data:
+    type: conversation.item.done
+    previous_item_id: item_0901m5g7488bev0bpaps0xv6jrj9
+    item:
+      id: item_0601m5g7488depf9xjrag8xpaygp
+      type: function_call
+      role: null
+      content: null
+      call_id: chatcmpl-tool-9ca75c7325a318a0
+      name: get_weather
+      arguments: '{"city": "Berlin"}'
+      output: null
+      status: completed
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000020
+- kind: message
+  direction: received
+  at: 1.601
+  data:
+    type: response.output_item.done
+    response_id: resp_0101m5g7488cecb8rdgah7fa27x0
+    output_index: 0
+    item:
+      id: item_0601m5g7488depf9xjrag8xpaygp
+      object: realtime.item
+      type: function_call
+      status: completed
+      name: get_weather
+      call_id: chatcmpl-tool-9ca75c7325a318a0
+      arguments: '{"city": "Berlin"}'
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000021
+- kind: message
+  direction: received
+  at: 1.601
+  data:
+    type: response.done
+    response:
+      id: resp_0101m5g7488cecb8rdgah7fa27x0
+      object: realtime.response
+      status: completed
+      conversation_id: conv_6001m5g746njf5c8zyswwt2s025z
+      output:
+      - id: item_0601m5g7488depf9xjrag8xpaygp
+        object: realtime.item
+        type: function_call
+        status: completed
+        name: get_weather
+        call_id: chatcmpl-tool-9ca75c7325a318a0
+        arguments: '{"city": "Berlin"}'
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000022
+- kind: message
+  direction: received
+  at: 1.601
+  data:
+    type: rate_limits.updated
+    rate_limits: []
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000023
+- kind: message
+  direction: sent
+  at: 1.602
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: chatcmpl-tool-93c885a3aaa851c3
+      output: It is foggy and 12 degrees in Paris.
+- kind: message
+  direction: sent
+  at: 1.602
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.1
+    response:
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: sent
+  at: 1.602
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: chatcmpl-tool-9ca75c7325a318a0
+      output: It is foggy and 12 degrees in Berlin.
+- kind: message
+  direction: received
+  at: 1.674
+  data:
+    type: conversation.item.added
+    previous_item_id: item_0601m5g7488depf9xjrag8xpaygp
+    item:
+      id: msg_000001
+      type: function_call_output
+      role: null
+      content: null
+      call_id: chatcmpl-tool-93c885a3aaa851c3
+      name: null
+      arguments: null
+      output: It is foggy and 12 degrees in Paris.
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000024
+- kind: message
+  direction: received
+  at: 1.674
+  data:
+    type: conversation.item.done
+    previous_item_id: item_0601m5g7488depf9xjrag8xpaygp
+    item:
+      id: msg_000001
+      type: function_call_output
+      role: null
+      content: null
+      call_id: chatcmpl-tool-93c885a3aaa851c3
+      name: null
+      arguments: null
+      output: It is foggy and 12 degrees in Paris.
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000025
+- kind: message
+  direction: received
+  at: 1.676
+  data:
+    type: conversation.item.added
+    previous_item_id: msg_000001
+    item:
+      id: msg_000002
+      type: function_call_output
+      role: null
+      content: null
+      call_id: chatcmpl-tool-9ca75c7325a318a0
+      name: null
+      arguments: null
+      output: It is foggy and 12 degrees in Berlin.
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000026
+- kind: message
+  direction: received
+  at: 1.676
+  data:
+    type: conversation.item.done
+    previous_item_id: msg_000001
+    item:
+      id: msg_000002
+      type: function_call_output
+      role: null
+      content: null
+      call_id: chatcmpl-tool-9ca75c7325a318a0
+      name: null
+      arguments: null
+      output: It is foggy and 12 degrees in Berlin.
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000027
+- kind: message
+  direction: received
+  at: 1.86
+  data:
+    type: response.created
+    response:
+      id: resp_7401m5g748gff7xs404kcrxcyafa
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_6001m5g746njf5c8zyswwt2s025z
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000028
+- kind: message
+  direction: received
+  at: 1.86
+  data:
+    type: response.output_item.added
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    output_index: 0
+    item:
+      id: item_6101m5g748ggfhebb6v7y2sxms2j
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000029
+- kind: message
+  direction: received
+  at: 1.86
+  data:
+    type: conversation.item.added
+    previous_item_id: msg_000002
+    item:
+      id: item_6101m5g748ggfhebb6v7y2sxms2j
+      type: message
+      role: assistant
+      content: []
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: in_progress
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000030
+- kind: message
+  direction: received
+  at: 1.86
+  data:
+    type: response.content_part.added
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: null
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000031
+- kind: message
+  direction: received
+  at: 1.86
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: The weather in Paris is foggy with a temperature of
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000032
+- kind: message
+  direction: received
+  at: 1.902
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: ' twelve degrees, and the same goes for Berlin,'
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000033
+- kind: message
+  direction: received
+  at: 1.953
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: ' which is also foggy and at twelve degrees.'
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000034
+- kind: message
+  direction: received
+  at: 2.05
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: AQD+////AQACAAMABAAEAAMAAwADAAQABAAEAAMABAAE
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000035
+- kind: message
+  direction: received
+  at: 2.064
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: Ou5n7dLtzuu96zTw/fNg+o8AowCo+tf2FvEr8H/0KfgE
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000036
+- kind: message
+  direction: received
+  at: 2.088
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: bvs0/QMBDQE6AqUDqQT/CL4JFgyTCcUIywkmCu8KMwri
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000037
+- kind: message
+  direction: received
+  at: 2.135
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: TQLTAaIBe//V+zz9zgHtAcD9lvhY9pn1kvQb7vjpX+q1
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000038
+- kind: message
+  direction: received
+  at: 2.237
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: PQBbAHYAmADKAO8ACwEdASgBIAEtASsBPwE/AWUBjAG+
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000039
+- kind: message
+  direction: received
+  at: 2.404
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: DP5qBZ3/6/uO/tP8qgDQ+isD7AARAFEDt/oe/ooDrP2q
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000040
+- kind: message
+  direction: received
+  at: 2.441
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: x/Nw9Fb2W/fD+Kv4efhc+I34YPns+gf7O/r09hvzTe/w
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000041
+- kind: message
+  direction: received
+  at: 2.904
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: 4QGtAZsBoAFtATwBRQFKAQgB5wD4AOMA1gDTANYAqQBx
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000042
+- kind: message
+  direction: received
+  at: 2.966
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: Vv/y/pH+N/7W/Xf9Ef2r/E788fuc+0D76vqX+kX69/mv
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000043
+- kind: message
+  direction: received
+  at: 2.991
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: mwdoBlgGZQaPBnUFUAQJBDcClgEMASUBLP9T/zH+CP5s
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000044
+- kind: message
+  direction: received
+  at: 2.995
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: hvtLAtIGpQPT/5wBYf75AMgC9Qc0BEX77/tFAvz8e/vW
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000045
+- kind: message
+  direction: received
+  at: 3.056
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: Uv1f/cv7svpr+rn3NvUE9QTzePBn8FPw9vBy8dL0Rfme
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000046
+- kind: message
+  direction: received
+  at: 3.154
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: XQkPBhwD+ABp+W/6c/vR/JH4gfbF/AT8Bf3+/pUBWP0+
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000047
+- kind: message
+  direction: received
+  at: 3.295
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: Ufif9wH3gPb89Y/1P/Xr9KX0afQl9Orzt/OR813zLvPw
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000048
+- kind: message
+  direction: received
+  at: 3.313
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: KgB3AP7//v8NAO7/DgDk/8X/0v+YAMsA4wDbAFcAwP8A
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000049
+- kind: message
+  direction: received
+  at: 3.428
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    delta: N/Sy+Ej3APk/AZUE4QabCpUMnAvFDUoOdAfpAtkD1AY4
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000050
+- kind: message
+  direction: received
+  at: 10.603
+  data:
+    type: response.output_audio.done
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000051
+- kind: message
+  direction: received
+  at: 10.603
+  data:
+    type: response.output_audio_transcript.done
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    transcript: The weather in Paris is foggy with a temperature of twelve degrees,
+      and the same goes for Berlin, which is also foggy and at twelve degrees.
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000052
+- kind: message
+  direction: received
+  at: 10.603
+  data:
+    type: response.content_part.done
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: The weather in Paris is foggy with a temperature of twelve degrees,
+        and the same goes for Berlin, which is also foggy and at twelve degrees.
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000053
+- kind: message
+  direction: received
+  at: 10.604
+  data:
+    type: conversation.item.done
+    previous_item_id: msg_000002
+    item:
+      id: item_6101m5g748ggfhebb6v7y2sxms2j
+      type: message
+      role: assistant
+      content:
+      - type: output_audio
+        text: null
+        audio: ''
+        transcript: The weather in Paris is foggy with a temperature of twelve degrees,
+          and the same goes for Berlin, which is also foggy and at twelve degrees.
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000054
+- kind: message
+  direction: received
+  at: 10.604
+  data:
+    type: response.output_item.done
+    response_id: resp_7401m5g748gff7xs404kcrxcyafa
+    output_index: 0
+    item:
+      id: item_6101m5g748ggfhebb6v7y2sxms2j
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        audio: ''
+        transcript: The weather in Paris is foggy with a temperature of twelve degrees,
+          and the same goes for Berlin, which is also foggy and at twelve degrees.
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000055
+- kind: message
+  direction: received
+  at: 10.604
+  data:
+    type: response.done
+    response:
+      id: resp_7401m5g748gff7xs404kcrxcyafa
+      object: realtime.response
+      status: completed
+      conversation_id: conv_6001m5g746njf5c8zyswwt2s025z
+      output:
+      - id: item_6101m5g748ggfhebb6v7y2sxms2j
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_audio
+          audio: ''
+          transcript: The weather in Paris is foggy with a temperature of twelve degrees,
+            and the same goes for Berlin, which is also foggy and at twelve degrees.
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000056
+- kind: message
+  direction: sent
+  at: 10.604
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.3
+    item:
+      id: pydantic_ai_item_3
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is two plus two?
+- kind: message
+  direction: sent
+  at: 10.604
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.3
+    response:
+      metadata:
+        pydantic_ai_inputs: '3'
+- kind: message
+  direction: received
+  at: 10.604
+  data:
+    type: rate_limits.updated
+    rate_limits: []
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000057
+- kind: message
+  direction: received
+  at: 10.677
+  data:
+    type: conversation.item.added
+    previous_item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    item:
+      id: pydantic_ai_item_3
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is two plus two?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000058
+- kind: message
+  direction: received
+  at: 10.677
+  data:
+    type: conversation.item.done
+    previous_item_id: item_6101m5g748ggfhebb6v7y2sxms2j
+    item:
+      id: pydantic_ai_item_3
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is two plus two?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000059
+- kind: message
+  direction: received
+  at: 10.842
+  data:
+    type: response.created
+    response:
+      id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_6001m5g746njf5c8zyswwt2s025z
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000060
+- kind: message
+  direction: received
+  at: 10.842
+  data:
+    type: response.output_item.added
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    output_index: 0
+    item:
+      id: item_3101m5g74h96ek8vrj3k49c6mpgt
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000061
+- kind: message
+  direction: received
+  at: 10.842
+  data:
+    type: conversation.item.added
+    previous_item_id: pydantic_ai_item_3
+    item:
+      id: item_3101m5g74h96ek8vrj3k49c6mpgt
+      type: message
+      role: assistant
+      content: []
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: in_progress
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000062
+- kind: message
+  direction: received
+  at: 10.842
+  data:
+    type: response.content_part.added
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    item_id: item_3101m5g74h96ek8vrj3k49c6mpgt
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: null
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000063
+- kind: message
+  direction: received
+  at: 10.842
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    item_id: item_3101m5g74h96ek8vrj3k49c6mpgt
+    output_index: 0
+    content_index: 0
+    delta: Two plus two equals four.
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000064
+- kind: message
+  direction: received
+  at: 10.917
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    item_id: item_3101m5g74h96ek8vrj3k49c6mpgt
+    output_index: 0
+    content_index: 0
+    delta: AQABAAEAAAABAAAAAQAAAAAAAQAAAAEAAAABAAAAAAAA
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000065
+- kind: message
+  direction: received
+  at: 10.948
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    item_id: item_3101m5g74h96ek8vrj3k49c6mpgt
+    output_index: 0
+    content_index: 0
+    delta: WQCKHVf3eP0s/cP1Exh/AJwJOAHL85gGZ/u1FB0GvwNv
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000066
+- kind: message
+  direction: received
+  at: 10.955
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    item_id: item_3101m5g74h96ek8vrj3k49c6mpgt
+    output_index: 0
+    content_index: 0
+    delta: Avj09Sfynu317JruRO466kro7ekZ6ubqQunM6L/r3et6
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000067
+- kind: message
+  direction: received
+  at: 10.984
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    item_id: item_3101m5g74h96ek8vrj3k49c6mpgt
+    output_index: 0
+    content_index: 0
+    delta: nAB0A8sFYQMtAqAAqP5w/Vr//v9W/zL+Hf4a/ab8Xf93
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000068
+- kind: message
+  direction: received
+  at: 11.141
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    item_id: item_3101m5g74h96ek8vrj3k49c6mpgt
+    output_index: 0
+    content_index: 0
+    delta: qv2mBOAEOgOv/sX7Nf05ADkERQKo/gD+xwB0ASn/JgEP
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000069
+- kind: message
+  direction: received
+  at: 11.242
+  data:
+    type: response.output_audio.delta
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    item_id: item_3101m5g74h96ek8vrj3k49c6mpgt
+    output_index: 0
+    content_index: 0
+    delta: 8vYn/I0DcAzqDtEKNAZEAjECWAawCZgIrgZTCDcLVg2U
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000070
+- kind: message
+  direction: received
+  at: 13.337
+  data:
+    type: response.output_audio.done
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    item_id: item_3101m5g74h96ek8vrj3k49c6mpgt
+    output_index: 0
+    content_index: 0
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000071
+- kind: message
+  direction: received
+  at: 13.337
+  data:
+    type: response.output_audio_transcript.done
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    item_id: item_3101m5g74h96ek8vrj3k49c6mpgt
+    output_index: 0
+    content_index: 0
+    transcript: Two plus two equals four.
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000072
+- kind: message
+  direction: received
+  at: 13.337
+  data:
+    type: response.content_part.done
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    item_id: item_3101m5g74h96ek8vrj3k49c6mpgt
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: Two plus two equals four.
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000073
+- kind: message
+  direction: received
+  at: 13.337
+  data:
+    type: conversation.item.done
+    previous_item_id: pydantic_ai_item_3
+    item:
+      id: item_3101m5g74h96ek8vrj3k49c6mpgt
+      type: message
+      role: assistant
+      content:
+      - type: output_audio
+        text: null
+        audio: ''
+        transcript: Two plus two equals four.
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000074
+- kind: message
+  direction: received
+  at: 13.337
+  data:
+    type: response.output_item.done
+    response_id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+    output_index: 0
+    item:
+      id: item_3101m5g74h96ek8vrj3k49c6mpgt
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        audio: ''
+        transcript: Two plus two equals four.
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000075
+- kind: message
+  direction: received
+  at: 13.337
+  data:
+    type: response.done
+    response:
+      id: resp_7501m5g74h95fmf8p3dxxb9qryqm
+      object: realtime.response
+      status: completed
+      conversation_id: conv_6001m5g746njf5c8zyswwt2s025z
+      output:
+      - id: item_3101m5g74h96ek8vrj3k49c6mpgt
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_audio
+          audio: ''
+          transcript: Two plus two equals four.
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_6001m5g746njf5c8zyswwt2s025z_000076

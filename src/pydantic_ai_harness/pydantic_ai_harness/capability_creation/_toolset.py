@@ -5,14 +5,13 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-import anyio
 import anyio.to_thread
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
-from pydantic_ai_harness.capability_creation._store import AuthoredCapability, CapabilityStore
+from pydantic_ai_harness.capability_creation._store import AuthoredCapability, CapabilityStore, rejected_module_file
 
 
 @dataclass(frozen=True)
@@ -33,7 +32,9 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
     """
 
     # The store is synchronous disk I/O (and imports the authored module), so each tool runs it
-    # in a worker thread rather than on the event loop.
+    # in a worker thread rather than on the event loop. The store serializes its own updates, so
+    # a cancelled call stops waiting for the thread instead of blocking until the authored code
+    # returns; the thread finishes the update on its own.
     def __init__(
         self,
         store: CapabilityStore,
@@ -44,9 +45,6 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         super().__init__(id=id)
         self._store = store
         self._operations = operations
-        # Parallel tool calls would otherwise overlap the manifest's read-modify-write cycles
-        # (losing an update) and the import's process-global `sys.dont_write_bytecode` toggle.
-        self._store_lock = anyio.Lock()
         self.add_function(
             self.author_capability,
             name='author_capability',
@@ -64,23 +62,28 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         run; whether a later run loads it depends on how this agent is set up.
 
         Args:
-            name: Identifier for the capability. Lowercase letters, digits, and
-                underscores, starting with a letter. Reusing a name replaces the
-                previous capability of that name.
+            name: Identifier for the capability. At most 64 lowercase letters, digits,
+                and underscores, starting with a letter. Reusing a name replaces the
+                previous capability of that name once the new code passes validation.
             code: Complete Python source defining one `AbstractCapability` subclass.
         """
         try:
-            async with self._store_lock:
-                if self._operations is not None:
-                    record = raise_retry(await self._operations.write(name, code))
-                else:
-                    record = await anyio.to_thread.run_sync(self._store.write, name, code)
+            if self._operations is not None:
+                record = raise_retry(await self._operations.write(name, code))
+            else:
+                record = await anyio.to_thread.run_sync(self._store.write, name, code, abandon_on_cancel=True)
         except ValueError as exc:
             raise ModelRetry(str(exc)) from exc
         if record.last_error is not None:
+            # `CapabilityStore.write` saves rejected code elsewhere when it keeps a previous version.
+            kept = (
+                f'The previous version of {name!r} is unchanged.\n'
+                if record.module_file == rejected_module_file(name)
+                else ''
+            )
             return (
-                f'Capability {name!r} was written but failed validation: {record.last_error}\n'
-                f'Fix the code and call author_capability again with the same name.'
+                f'Capability {name!r} failed validation: {record.last_error}\n{kept}'
+                'Fix the code and call author_capability again with the same name.'
             )
         return (
             f'Capability {name!r} ({record.class_name}) authored, validated and saved. It does not take effect '
@@ -92,7 +95,7 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         if self._operations is not None:
             records = await self._operations.list_all()
         else:
-            records = await anyio.to_thread.run_sync(self._store.list_all)
+            records = await anyio.to_thread.run_sync(self._store.list_all, abandon_on_cancel=True)
         if not records:
             return 'No capabilities authored yet.'
         lines: list[str] = []
@@ -108,11 +111,10 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         Args:
             name: Name of the capability to disable.
         """
-        async with self._store_lock:
-            if self._operations is not None:
-                found = await self._operations.disable(name)
-            else:
-                found = await anyio.to_thread.run_sync(self._store.disable, name)
+        if self._operations is not None:
+            found = await self._operations.disable(name)
+        else:
+            found = await anyio.to_thread.run_sync(self._store.disable, name, abandon_on_cancel=True)
         if found:
             return f'Capability {name!r} disabled; it is skipped when this agent loads its authored capabilities.'
         return f'No authored capability named {name!r}.'

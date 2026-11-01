@@ -98,6 +98,7 @@ def test_assistant_text():
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
+                model_id='MCP:mcp-sampling',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -139,6 +140,7 @@ def test_assistant_text_history():
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
+                model_id='MCP:mcp-sampling',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -153,6 +155,7 @@ def test_assistant_text_history():
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
+                model_id='MCP:mcp-sampling',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -350,6 +353,17 @@ def test_framework_tool_history():
                 ],
             },
             {'role': 'user', 'content': {'type': 'text', 'text': 'Continue'}},
+            {
+                'role': 'user',
+                'content': {
+                    'type': 'text',
+                    'text': """\
+<system><context id="capability:forecast">
+This context has been withdrawn, and the withdrawal stays in effect until replaced again.
+</context></system>\
+""",
+                },
+            },
         ]
     )
 
