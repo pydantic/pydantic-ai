@@ -164,6 +164,7 @@ with try_import() as openai_available:
         ResponseToolSearchOutputItem,
     )
     from openai.types.responses.file_search_tool import FileSearchTool
+    from openai.types.responses.namespace_tool import NamespaceTool, ToolFunction
 
     from pydantic_ai.models.openai import (
         OpenAIResponsesModel,
@@ -3883,6 +3884,39 @@ def test_openai_map_tool_search_call_unit():
     )
     mixed = _build_tool_search_return_part('call_mix', mixed_output, 'openai')
     assert mixed.content == {'discovered_tools': [{'name': 'real'}]}
+
+    # Deferred tools may arrive wrapped in a NamespaceTool (name == tool name).
+    # Skipping the wrapper used to record discovered_tools=[] and break replay.
+    namespaced_output = ResponseToolSearchOutputItem(
+        id='tso_ns',
+        call_id='call_ns',
+        execution='server',
+        status='completed',
+        tools=[
+            NamespaceTool(
+                type='namespace',
+                name='github-integration_execute_command',
+                description='deferred GitHub execute_command',
+                tools=[
+                    ToolFunction(
+                        type='function',
+                        name='github-integration_execute_command',
+                        description='deferred GitHub execute_command',
+                        parameters={'type': 'object', 'properties': {}},
+                    )
+                ],
+            ),
+            FunctionTool(name='note', description='', parameters={}, strict=False, type='function'),
+        ],
+        type='tool_search_output',
+    )
+    namespaced = _build_tool_search_return_part('call_ns', namespaced_output, 'openai')
+    assert namespaced.content == {
+        'discovered_tools': [
+            {'name': 'github-integration_execute_command'},
+            {'name': 'note'},
+        ]
+    }
 
 
 @pytest.mark.parametrize('call_id', [None, 'call_1'], ids=['null-id', 'explicit-id'])
