@@ -101,7 +101,7 @@ def _infer_docstring_style(doc: str) -> DocstringStyle:
 # See https://github.com/mkdocstrings/griffe/issues/329#issuecomment-2425017804
 _docstring_style_patterns: list[tuple[str, list[str], DocstringStyle]] = [
     (
-        r'\n[ \t]*:{0}([ \t]+\w+)*:([ \t]+.+)?\n',
+        r'^[ \t]*:{0}([ \t]+\w+)*:([ \t]+.+)?$',
         [
             'param',
             'parameter',
