@@ -2997,6 +2997,12 @@ SerializedInstructionId: TypeAlias = Annotated[
 InstructionChangePolicy: TypeAlias = Literal['rewrite', 'append']
 """How changes to an instruction block are delivered; see [`InstructionPart.on_change`][pydantic_ai.messages.InstructionPart.on_change]."""
 
+InstructionSupersession: TypeAlias = Literal['withdrawn', 'replaced']
+"""How a later [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] supersedes an earlier statement of a block.
+
+See [`ModelProfile.mark_superseded_instructions_in_place`][pydantic_ai.profiles.ModelProfile.mark_superseded_instructions_in_place].
+"""
+
 
 @dataclass(repr=False)
 class InstructionPart:
@@ -3116,7 +3122,13 @@ class InstructionDeltaPart:
     part_kind: Literal['instruction-delta'] = 'instruction-delta'
     """Part type identifier, used as a discriminator for deserialization."""
 
-    def render(self, *, inline_system: bool = True, previous: str | None = None) -> str:
+    def render(
+        self,
+        *,
+        inline_system: bool = True,
+        previous: str | None = None,
+        superseded: InstructionSupersession | None = None,
+    ) -> str:
         """Render this change as a `<context>` element that replaces the block's earlier one.
 
         A replacement is rendered as a `<context_diff>` element instead, holding a unified diff against
@@ -3129,15 +3141,20 @@ class InstructionDeltaPart:
                 `<system>`-tagged user text, and a withdrawal says that it stays in effect. Defaults to
                 `True` for callers with no model to ask, such as token estimates and search.
             previous: The block's text as the model last received it, if known.
+            superseded: How a later change to the block supersedes this one, if one does and the receiving
+                model's profile sets `mark_superseded_instructions_in_place`. The replacement text is then
+                followed, inside its element, by a note saying so. A withdrawal has no text to mark, so it
+                ignores this.
         """
         if self.content is not None:
-            full = _context_element(self.id, self.content)
+            note = _supersession_note(superseded)
+            full = _context_element(self.id, self.content, note=note)
             if (
                 previous is not None
                 and self.base_hash is not None
                 and _instruction_text_hash(previous) == self.base_hash
             ):
-                diff = _context_diff_element(self.id, previous, self.content)
+                diff = _context_diff_element(self.id, previous, self.content, note=note)
                 if len(diff) < len(full):
                     return diff
             return full
@@ -3162,13 +3179,30 @@ def _withdrawal_text(*, inline_system: bool) -> str:
     return 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
 
 
-def _context_element(instruction_id: InstructionId | str | None, content: str) -> str:
+_SUPERSESSION_NOTES: dict[InstructionSupersession, str] = {
+    'withdrawn': '[Withdrawn later in this conversation: no longer applies.]',
+    'replaced': '[Replaced later in this conversation by a newer element with the same id.]',
+}
+"""The note that ends a superseded statement's element on a model that marks superseded instructions in place."""
+
+
+def _supersession_note(superseded: InstructionSupersession | None) -> str | None:
+    return _SUPERSESSION_NOTES[superseded] if superseded is not None else None
+
+
+def _with_note(body: str, note: str | None) -> str:
+    """An element's body, followed on its own line by the supersession note, if any."""
+    return f'\n{body}\n{note}\n' if note is not None else f'\n{body}\n'
+
+
+def _context_element(instruction_id: InstructionId | str | None, content: str, *, note: str | None = None) -> str:
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
 
     `wrap` neutralizes every framing tag in the text, including `</system>`: the element is itself
-    `<system>`-wrapped on a model without mid-conversation system messages.
+    `<system>`-wrapped on a model without mid-conversation system messages. A `note` saying a later statement
+    supersedes this one goes inside the element, after the text.
     """
-    return wrap(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
+    return wrap(CONTEXT_TAG, _with_note(content, note), id=_id_attribute(instruction_id))
 
 
 def _id_attribute(instruction_id: InstructionId | str | None) -> str | None:
@@ -3176,12 +3210,14 @@ def _id_attribute(instruction_id: InstructionId | str | None) -> str | None:
     return str(instruction_id) if instruction_id is not None else None
 
 
-def _context_diff_element(instruction_id: InstructionId | None, previous: str, content: str) -> str:
+def _context_diff_element(
+    instruction_id: InstructionId | None, previous: str, content: str, *, note: str | None = None
+) -> str:
     """Tag a unified diff from a block's previous text to its new text with the block's id."""
     diff = '\n'.join(
         difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
     )
-    return wrap(CONTEXT_DIFF_TAG, f'\n{diff}\n', id=_id_attribute(instruction_id))
+    return wrap(CONTEXT_DIFF_TAG, _with_note(diff, note), id=_id_attribute(instruction_id))
 
 
 _SUPERSESSION_SENTENCE = (
@@ -3205,7 +3241,9 @@ def _tagged_append_parts(parts: Sequence[InstructionPart]) -> list[int]:
     return [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
 
 
-def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPart]:  # pyright: ignore[reportUnusedFunction]
+def _render_append_parts(  # pyright: ignore[reportUnusedFunction]
+    parts: Sequence[InstructionPart], superseded: Mapping[str, InstructionSupersession] | None = None
+) -> list[InstructionPart]:
     """Render the prefix's append-mode blocks as tagged `<context>` elements, followed once by how later ones apply.
 
     Each addressable append-mode part is wrapped in a `<context id>` element. The last of them is followed by
@@ -3215,6 +3253,9 @@ def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPa
     written: agent history never holds an unaddressable append-mode part (it is downgraded to `'rewrite'` with
     a warning), but a `before_model_request` hook or a direct caller can still supply one.
 
+    A block whose id is in `superseded`, which a model that marks superseded instructions in place passes, ends
+    its element with a note saying a later change withdrew or replaced it.
+
     History stores only the content, so each model renders its own prefix, and renders it identically on
     every request.
     """
@@ -3222,7 +3263,8 @@ def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPa
     rendered = list(parts)
     for index in tagged:
         part = parts[index]
-        content = _context_element(part.id, part.content)
+        note = _supersession_note((superseded or {}).get(str(part.id)))
+        content = _context_element(part.id, part.content, note=note)
         if index == tagged[-1]:
             content = f'{content}\n{_SUPERSESSION_SENTENCE}'
         rendered[index] = replace(part, content=content)

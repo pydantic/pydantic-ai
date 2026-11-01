@@ -105,6 +105,7 @@ from ._instructions import (
     instruction_window,
     loaded_part_capability_id,
     recorded_prefix,
+    superseded_instructions,
     update_instruction_history,
     update_loaded_instruction_history,
 )
@@ -3309,7 +3310,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not resuming:
             # Normalize consecutive trailing requests for model adapters without changing stored history.
             messages = _clean_message_history(list(messages), repair_last_response=True)
-            model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
+            model_request_parameters = _with_outgoing_instruction_state(
+                _with_outgoing_reveal_state(model_request_parameters, messages), messages
+            )
             request_context.model_request_parameters = model_request_parameters
             prepared = model.prepare_messages(messages, model_request_parameters)
             # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
@@ -3377,7 +3380,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # The step-start check in `_prepare_request` ran before this request's tokens were counted.
                 ctx.deps.usage_limits.check_before_request(usage)
         else:
-            model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, list(messages))
+            model_request_parameters = _with_outgoing_instruction_state(
+                _with_outgoing_reveal_state(model_request_parameters, list(messages)), messages
+            )
             request_context.model_request_parameters = model_request_parameters
             if _has_instruction_state(messages):
                 # Projection can split a foreign native tool-search exchange into a trailing
@@ -4682,6 +4687,17 @@ def _record_model_settings_changes(
     for request in requests:
         request.parts = [*request.parts, delta]
     ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
+
+
+def _with_outgoing_instruction_state(
+    parameters: models.ModelRequestParameters, messages: Sequence[_messages.ModelMessage]
+) -> models.ModelRequestParameters:
+    """Record which of the request's appending instruction blocks a change in the outgoing history supersedes.
+
+    A model whose profile marks superseded instructions in place renders the prefix from this, and its history from
+    the same messages, so the two agree.
+    """
+    return replace(parameters, superseded_instructions=superseded_instructions(messages, parameters.instruction_parts))
 
 
 def _with_outgoing_reveal_state(
