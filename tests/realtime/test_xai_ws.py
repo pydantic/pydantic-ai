@@ -31,6 +31,7 @@ from pydantic_ai.messages import (
     RealtimeSessionErrorEvent,
     SpeechPart,
     SpeechPartDelta,
+    SpeechTimestamp,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -131,6 +132,77 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
             cost=Decimal('0.001333333333333333333333333333'),
             requests=1,
         )
+    )
+
+
+async def test_speech_timestamps_time_each_segment(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
+    """With `output_speech_timestamps`, Grok Voice's speech is timed per transcript delta, as segments.
+
+    Each delta says where it starts in its item's audio, so a segment ends where the next one starts, and the last
+    where the item's audio does. They stream as their ends become known, and the same list is recorded on the part.
+    """
+    provider, cassette = xai_ws_cassette
+    model = XaiRealtimeModel(MODEL, provider=provider, settings=XaiRealtimeModelSettings(output_speech_timestamps=True))
+    agent = Agent(instructions='Answer in two sentences.')
+
+    streamed: list[SpeechTimestamp] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Tell me about the history of the bicycle.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+                if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
+                    streamed.extend(event.delta.timestamps or ())
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    # Nothing to ask for on the wire: xAI times every transcript delta.
+    [session_update] = sent_frames_containing(cassette, 'Answer in two sentences.')
+    assert session_update['session'].keys() == {'instructions', 'turn_detection', 'audio'}
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    [part] = response.parts
+    assert isinstance(part, SpeechPart)
+    assert part.timestamps == streamed
+    # The segments are the transcript's deltas, so together they make up the whole transcript.
+    assert ''.join(timestamp.text for timestamp in part.timestamps or ()) == part.transcript
+    assert part.timestamps == snapshot(
+        [
+            SpeechTimestamp(
+                text='The bicycle evolved from early 1800s', start_ms=0, duration_ms=2240, granularity='segment'
+            ),
+            SpeechTimestamp(
+                text=' German and French designs like the Draisine, a wooden',
+                start_ms=2240,
+                duration_ms=3200,
+                granularity='segment',
+            ),
+            SpeechTimestamp(
+                text=' running machine, into pedal-powered versions in the 1860s with the',
+                start_ms=5440,
+                duration_ms=3840,
+                granularity='segment',
+            ),
+            SpeechTimestamp(text=' boneshaker.', start_ms=9280, duration_ms=1280, granularity='segment'),
+            SpeechTimestamp(
+                text=' By the 1880s the safety bicycle with equal-sized wheels and',
+                start_ms=10560,
+                duration_ms=3520,
+                granularity='segment',
+            ),
+            SpeechTimestamp(
+                text=' a chain drive made cycling practical and popular, and in the 1900s',
+                start_ms=14080,
+                duration_ms=4480,
+                granularity='segment',
+            ),
+            SpeechTimestamp(
+                text=' derailleurs and lighter materials turned it into the machine we know',
+                start_ms=18560,
+                duration_ms=3200,
+                granularity='segment',
+            ),
+            SpeechTimestamp(text=' today.', start_ms=21760, duration_ms=941, granularity='segment'),
+        ]
     )
 
 
@@ -622,7 +694,7 @@ def test_profile_allow_seeding() -> None:
         supports_tool_return_schema=False,
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,
-        output_speech_timestamp_granularity=None,
+        output_speech_timestamp_granularity='segment',
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=False,
