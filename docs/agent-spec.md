@@ -147,7 +147,6 @@ The [`AgentSpec`][pydantic_ai.agent.AgentSpec] model represents the full spec st
 | `retries` | `int \| AgentRetries \| None` | Retry budgets for [tools](tools-advanced.md#tool-retries) and [output validation](output.md#output-validator-functions). Pass an integer to use the same budget for both, or [`AgentRetries`][pydantic_ai.agent.AgentRetries] to configure them separately. |
 | `end_strategy` | `EndStrategy` | When to stop (`'early'`, `'graceful'`, or `'exhaustive'`) |
 | `tool_timeout` | `float \| None` | Default [tool](tools.md) timeout in seconds |
-| `instrument` | `bool \| None` | Enable [Logfire](logfire.md) instrumentation |
 | `metadata` | `dict \| None` | Agent [metadata](agent.md#run-metadata) |
 
 ### `deps_schema`
