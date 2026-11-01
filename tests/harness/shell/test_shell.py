@@ -25,8 +25,16 @@ import sniffio
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
+from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -572,6 +580,93 @@ class TestDurableJob:
         ):
             await toolset.start_command(ctx, command)
         assert (shell_dir / 'side-effects.txt').read_text().splitlines() == ['one']
+
+
+def _calling_agent(tool: str, commands: Sequence[str], tool_call_id: str) -> Agent[None, str]:
+    """An agent whose model calls `tool` once per response, with each of `commands` in turn, then finishes."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        made = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+        if made >= len(commands):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart(tool, {'command': commands[made]}, tool_call_id=tool_call_id)])
+
+    return Agent(FunctionModel(respond), capabilities=[Shell(denied_commands=[], tools=[tool])])
+
+
+def _tool_returns(messages: Sequence[ModelMessage]) -> list[str]:
+    return [str(part.content) for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+
+
+class TestToolCallIdentity:
+    """A launching call finds the job it started whenever it runs again, and a different call never does."""
+
+    @pytest.mark.parametrize('tool', ['shell', 'start_command'])
+    async def test_a_continued_conversation_attaches_to_the_interrupted_call(self, shell_dir: Path, tool: str) -> None:
+        agent = _calling_agent(tool, ['echo ran >> count'], 'call-1')
+        workspace = LocalWorkspaceBackend(shell_dir)
+        first = await agent.run('go', workspace=workspace)
+        # A process that died after launching the command left a history ending in the response that made the call.
+        # Continuing it is a new run, which makes the call again.
+        saved = ModelMessagesTypeAdapter.dump_json(first.all_messages()[:2])
+        interrupted = ModelMessagesTypeAdapter.validate_json(saved)
+        assert isinstance(interrupted[-1], ModelResponse)
+        continued = await agent.run(message_history=interrupted, workspace=workspace)
+        assert _tool_returns(continued.new_messages()) == _tool_returns(first.new_messages())
+
+    @pytest.mark.parametrize(
+        'tool_call_id',
+        [
+            'call_0',
+            pytest.param(
+                '',
+                marks=pytest.mark.moves_cache_prefix(
+                    reason='an empty tool call ID is rendered as a new generated ID in each request'
+                ),
+            ),
+        ],
+    )
+    @pytest.mark.parametrize(
+        'commands',
+        [('echo first >> log', 'echo second >> log'), ('echo again >> log', 'echo again >> log')],
+        ids=['different commands', 'same command'],
+    )
+    async def test_an_id_repeated_in_a_later_response_is_another_call(
+        self, shell_dir: Path, tool_call_id: str, commands: tuple[str, str]
+    ) -> None:
+        await _calling_agent('shell', commands, tool_call_id).run('go', workspace=LocalWorkspaceBackend(shell_dir))
+        assert (shell_dir / 'log').read_text().splitlines() == [command.split()[1] for command in commands]
+
+    async def test_an_id_repeated_within_one_response_for_another_command_is_another_call(
+        self, shell_dir: Path
+    ) -> None:
+        # Core runs the calls on either side of an output call as separate batches, so an ID can repeat between them.
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('shell', {'command': 'echo first >> log'}, tool_call_id='call_0'),
+                    ToolCallPart('final_result', {'response': True}, tool_call_id='call_1'),
+                    ToolCallPart('shell', {'command': 'echo second >> log'}, tool_call_id='call_0'),
+                ]
+            )
+
+        agent = Agent(
+            FunctionModel(respond), output_type=bool, capabilities=[Shell(denied_commands=[], tools=['shell'])]
+        )
+        assert (await agent.run('go', workspace=LocalWorkspaceBackend(shell_dir))).output is True
+        assert (shell_dir / 'log').read_text().splitlines() == ['first', 'second']
+
+    async def test_without_the_history_the_run_step_tells_calls_apart(self, shell_dir: Path) -> None:
+        # A run context rebuilt in a durable unit, such as a Temporal activity, carries no history.
+        toolset = _shell_toolset(shell_dir)
+
+        def ctx(run_step: int) -> DurableRunContext[None]:
+            workspace = Workspace(LocalWorkspaceBackend(shell_dir))
+            return DurableRunContext(None, run_id='run', tool_call_id='call_0', run_step=run_step, workspace=workspace)
+
+        first = await toolset.start_command(ctx(1), 'true')
+        assert await toolset.start_command(ctx(1), 'true') == first
+        assert await toolset.start_command(ctx(2), 'true') != first
 
 
 class TestDurableCwd:
