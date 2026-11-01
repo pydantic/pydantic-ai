@@ -58,6 +58,7 @@ def pytest_configure(config: pytest.Config) -> None:
     # Workers start once the controller has checked, and another worker may already have written by then.
     if 'PYTEST_XDIST_WORKER' not in os.environ and any(capture_dir.glob('*.jsonl')):
         raise pytest.UsageError(f'`{capture_dir}` already holds a capture; a second one would be appended to it.')
+    capture_dir.mkdir(parents=True, exist_ok=True)
     original_aiter = StreamedResponse.__aiter__
 
     def recording_aiter(self: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
