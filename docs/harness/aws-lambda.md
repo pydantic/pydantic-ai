@@ -136,8 +136,8 @@ loop's grace period and can overlap the next warm invocation. At the end of the 
 cleanup is cancelled again, and the retired loop stops a few event-loop iterations later; on Python
 3.11 it first waits for jobs already submitted to its default executor to finish. A cleanup that
 suppresses that cancellation, or is still awaiting something by then, is left unfinished. A cleanup
-that cancels every task on its loop also cancels the retirement's own cleanup; the retired loop then
-stops at the deadline without cancelling anything. Do not share mutable module-global
+that cancels every task on its loop is not cancelled again: the retired loop stops at the deadline
+whether or not that cleanup has finished. Do not share mutable module-global
 state between the agent run and the handler. An external side effect from cleanup, such as writing
 to a store, releasing a shared lock, or emitting a metric, can also land during a later invocation.
 Loop-bound resources are isolated: the next invocation gets a fresh loop, so the abandoned cleanup
