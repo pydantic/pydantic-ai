@@ -132,9 +132,7 @@ class ImageGenerationSubagentTool:
             result = await agent.run(prompt)
         except UnexpectedModelBehavior as e:
             # `ContentFilterError` is an `UnexpectedModelBehavior`, so a moderation block becomes a
-            # retry prompt too. Nothing the subagent raises escapes the tool call, which is what
-            # keeps a durable engine from retrying the tool activity against an error class its
-            # non-retryable list doesn't name.
+            # retry prompt too, and the outer model gets to rephrase the prompt rather than the run failing.
             raise ModelRetry(str(e)) from e
         return result.output
 
