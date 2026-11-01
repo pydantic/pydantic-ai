@@ -189,7 +189,7 @@ These come from running Jev behind Pydantic AI, not from TypeSafe.
 
 ## Files
 
-Jev reads text only. To ask about a document, image or video, add the [File Understanding](../capabilities/file-understanding.md) capability with a model that can read it, and Jev gets a description in the file's place:
+Jev reads text and [images](#images). To ask about a document, audio file or video, add the [File Understanding](../capabilities/file-understanding.md) capability with a model that can read it, and Jev gets a description in the file's place:
 
 ```python
 from enum import StrEnum
@@ -215,6 +215,8 @@ result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
 print(result.output.value)
 #> animals
 ```
+
+The capability leaves images as they are, since Jev reads them, so an image outside the [image limits](#images) is refused rather than described.
 
 ## `provider` argument
 
