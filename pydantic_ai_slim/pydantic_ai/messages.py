@@ -732,7 +732,11 @@ class StructuredContent(TextContent):
             # history fail to load once a later release adds its tag to the framework's own.
             return
         if self.tag is not None:
-            if error := model_visible_name_error(self.tag, what='`StructuredContent.tag`', legacy=True):
+            if error := model_visible_name_error(
+                self.tag,
+                what='`StructuredContent.tag`',
+                legacy_stacklevel=3,  # user -> `__init__` -> here
+            ):
                 raise ValueError(error)
             if self.tag in _FRAMING_TAG_NAMES:
                 raise ValueError(
@@ -2708,7 +2712,7 @@ class RetryFeedbackPart:
         and carries nothing the model wrote.
 
         The content goes in the fence exactly as written. What `prepare_messages` adds around this is the
-        voice, not the wording: the part type it goes into, the `<system>` tagging a provider without a
+        voice, not the wording: the part type it goes into, and the `<system>` tagging a provider without a
         mid-conversation system message needs.
         """
         content = _retry_feedback_text(self)

@@ -274,8 +274,9 @@ def test_structured_content_rejects_a_tag_outside_the_vocabulary(tag: str):
 
 @pytest.mark.parametrize('tag', ['_private', 'ui__state', 'ui_state_'])
 def test_structured_content_takes_a_legacy_tag_with_a_deprecation_warning(tag: str):
-    with pytest.warns(PydanticAIDeprecationWarning, match='must be lowercase snake_case'):
+    with pytest.warns(PydanticAIDeprecationWarning, match='must be lowercase snake_case') as warned:
         assert StructuredContent({}, tag=tag, format='json').content == f'<{tag}>{{}}</{tag}>'
+    assert [w.filename for w in warned] == [__file__]
 
 
 @pytest.mark.parametrize('tag', ['system', 'tool_result', 'context', 'retry_feedback'])

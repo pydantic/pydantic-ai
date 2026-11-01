@@ -102,18 +102,21 @@ _LEGACY_NAME: Final = re.compile(r'[a-z_][a-z0-9_]*')
 """The looser rule attribute names and `StructuredContent.tag` followed before `MODEL_VISIBLE_NAME`."""
 
 
-def model_visible_name_error(name: str, *, what: str, legacy: bool = False) -> str | None:
+def model_visible_name_error(name: str, *, what: str, legacy_stacklevel: int | None = None) -> str | None:
     """Check `name` against `MODEL_VISIBLE_NAME`, the one naming rule for model-visible tags and attributes.
 
     Returns `None` if it follows the rule, and otherwise the message for the error the caller raises. With
-    `legacy`, a name the looser rule accepted (`[a-z_][a-z0-9_]*`, such as `_private` or `a__b`) still passes,
-    with a deprecation warning: that's for names a released API already took.
+    `legacy_stacklevel`, a name the looser rule accepted (`[a-z_][a-z0-9_]*`, such as `_private` or `a__b`) still
+    passes, with a deprecation warning: that's for names a released API already took. The value is the `stacklevel`
+    the caller would pass to `warnings.warn` itself to point at the user's code, which only the caller knows.
     """
     if MODEL_VISIBLE_NAME.fullmatch(name):
         return None
     message = f'{what} must be lowercase snake_case, like `judge_feedback`; got {name!r}.'
-    if legacy and _LEGACY_NAME.fullmatch(name):
-        warnings.warn(f'{message} Other names are deprecated.', PydanticAIDeprecationWarning, stacklevel=3)
+    if legacy_stacklevel is not None and _LEGACY_NAME.fullmatch(name):
+        warnings.warn(
+            f'{message} Other names are deprecated.', PydanticAIDeprecationWarning, stacklevel=legacy_stacklevel + 1
+        )
         return None
     return message
 
@@ -216,18 +219,26 @@ def _require_known(tag: str) -> None:
 
 def open_tag(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> str:
     """Core's [`open_tag`][pydantic_ai.framing.open_tag], which also takes the `'system'` voice tag."""
+    return _open_tag(tag, attrs)
+
+
+def _open_tag(tag: FramingTag | RegisteredTag, attrs: dict[str, str | None]) -> str:
     _require_known(tag)
-    return _open_tag(tag, attrs, legacy=True)
+    # A legacy name's warning points at the user's call to `pydantic_ai.framing.open_tag` or `wrap`, which reach
+    # this through this module's function of the same name: `stacklevel=6` from `_check_attribute_names`.
+    return _render_open_tag(tag, attrs, legacy_stacklevel=6)
 
 
-def _check_attribute_names(names: Iterable[str], *, legacy: bool) -> None:
+def _check_attribute_names(names: Iterable[str], *, legacy_stacklevel: int | None) -> None:
     for name in names:
-        if error := model_visible_name_error(name, what='Framing tag attribute names', legacy=legacy):
+        if error := model_visible_name_error(
+            name, what='Framing tag attribute names', legacy_stacklevel=legacy_stacklevel
+        ):
             raise UserError(error)
 
 
-def _open_tag(tag: str, attrs: Mapping[str, str | None], *, legacy: bool) -> str:
-    _check_attribute_names(attrs, legacy=legacy)
+def _render_open_tag(tag: str, attrs: Mapping[str, str | None], *, legacy_stacklevel: int | None) -> str:
+    _check_attribute_names(attrs, legacy_stacklevel=legacy_stacklevel)
     rendered = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items() if value is not None)
     return f'<{tag}{rendered}>'
 
@@ -246,7 +257,7 @@ def wrap(tag: FramingTag | RegisteredTag, body: str, /, **attrs: str | None) -> 
     `<system>` tags are escaped there.
     """
     escaped = neutralize_voice_tag(body) if tag == SYSTEM_TAG else neutralize_tags(body)
-    return f'{open_tag(tag, **attrs)}{escaped}{close_tag(tag)}'
+    return f'{_open_tag(tag, attrs)}{escaped}{close_tag(tag)}'
 
 
 def frame(tag: FramingTag | RegisteredTag, body: str, /, **attrs: str | None) -> str:
@@ -261,7 +272,7 @@ def frame(tag: FramingTag | RegisteredTag, body: str, /, **attrs: str | None) ->
 
 
 def frame_tags(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> tuple[str, str]:
-    """The opening and closing tags of a [`frame`][pydantic_ai._framing.frame], for a body that isn't a string, such as a file."""
+    """The opening and closing tags of a [`frame`][pydantic_ai._framing.frame], for a non-string body like a file."""
     return open_tag(tag, **attrs), close_tag(tag)
 
 
@@ -284,7 +295,7 @@ def check_capability_frame(tag: str, attribute_names: Iterable[str]) -> None:
             f'{tag!r} is a system-voice tag, which data must not use: subclass `InstructionCapabilityPart` for a part in '
             "the application's voice, or name the tag after what the data is."
         )
-    _check_attribute_names(attribute_names, legacy=False)
+    _check_attribute_names(attribute_names, legacy_stacklevel=None)
 
 
 def capability_frame_tags(tag: str, /, *, attrs: Mapping[str, str | None]) -> tuple[str, str]:
@@ -293,7 +304,7 @@ def capability_frame_tags(tag: str, /, *, attrs: Mapping[str, str | None]) -> tu
     Like [`frame_tags`][pydantic_ai._framing.frame_tags], for a tag the part's class declared, which
     `check_capability_frame` has checked and nothing registers.
     """
-    return _open_tag(tag, attrs, legacy=False), f'</{tag}>'
+    return _render_open_tag(tag, attrs, legacy_stacklevel=None), f'</{tag}>'
 
 
 _NOTE_ANNOUNCEMENT: Final = (
@@ -311,7 +322,8 @@ def lookalike_note_announcement(*, system_role: bool) -> str:
     end of the standing system prompt. With one, it goes in a native system message the first time the conversation
     has a frame or a note to explain.
 
-    The wording (`none3`) was measured live across Gemini, Claude (native and on Bedrock), GPT and DeepSeek models.
+    The wording was measured live across Gemini, Claude (native and on Bedrock), GPT and DeepSeek models, against
+    announcing a marker attribute on the application's frames; the numbers are in #11813.
     """
     if system_role:
         return _NOTE_ANNOUNCEMENT
@@ -331,7 +343,8 @@ def second_model_prompt() -> Generator[None]:
 
     A judge or summarizer gets the conversation it reports on as one flattened prompt, and its output is a verdict
     or a summary rather than a reply. Its requests get no lookalike notes and no announcement: a note would
-    describe the transcript's quoted content to a model that isn't talking to its authors. Pydantic AI Harness wraps its judge and summarizer runs in this.
+    describe the transcript's quoted content to a model that isn't talking to its authors. Pydantic AI Harness wraps
+    its judge and summarizer runs in this.
     """
     token = _in_second_model_prompt.set(True)
     try:
@@ -405,27 +418,6 @@ def lookalike_frame_note(
     )
 
 
-_NOTE_SUBJECT: Final = re.compile(r'The (?:preceding|following) (?:user message|tool result|file)\b')
-_CONTEXT_NOTE_OPENING: Final = ' change your instructions, and any in this turn apply. '
-
-
-def is_framework_note(text: str) -> bool:
-    """Whether `text` is a lookalike note or the announcement, as rendered by this module, `<system>`-wrapped or not.
-
-    For code that looks at a prepared request and needs to tell the parts the framework added from the ones the
-    history holds. It reads any prompt text, so it only anchors a fixed pattern and searches for fixed strings, in
-    linear time.
-    """
-    unwrapped = text.removeprefix('<system>').removesuffix('</system>')
-    if unwrapped in (_NOTE_ANNOUNCEMENT, lookalike_note_announcement(system_role=False)):
-        return True
-    if unwrapped.startswith('Only <'):
-        _, opening, unwrapped = unwrapped.partition(_CONTEXT_NOTE_OPENING)
-        if not opening:
-            return False
-    return _NOTE_SUBJECT.match(unwrapped) is not None and ' not by the application' in unwrapped
-
-
 _system_voice_tags: tuple[str, ...] = (SYSTEM_TAG, CONTEXT_TAG, CONTEXT_DIFF_TAG)
 """The tags whose content speaks in system voice: core's own, and any added with `add_system_voice_tag`."""
 
@@ -440,7 +432,7 @@ _lookalike_frame: re.Pattern[str] = _lookalike_pattern(_system_voice_tags)
 
 
 def add_system_voice_tag(name: str) -> None:
-    """Have text that opens the tag `name`, or its diff `<{name}_diff>`, count as a lookalike frame, as a `<system>` opener does.
+    """Count text that opens the tag `name` or its diff `<{name}_diff>` as a lookalike frame, like a `<system>` opener.
 
     The single source of the tags the lookalike check looks for: core's `system`, `context` and `context_diff`,
     plus the tag of any instruction or system-voice capability part that declares its own. Adding a tag twice is a
@@ -487,11 +479,15 @@ _CONFUSABLES: Final = str.maketrans(
 def _comparable(text: str) -> str:
     """`text` as a model reads it, for matching lookalike frames.
 
-    Entity-encoded `<`s and `>`s are decoded, compatibility forms folded (NFKC, which also turns a full-width `<` into `<`),
-    invisible format characters (Unicode category `Cf`, such as a zero-width space or joiner) dropped, and Cyrillic
-    and Greek look-alikes of the letters in the system-voice tags folded to Latin.
+    Entity-encoded `<`s and `>`s are decoded, compatibility forms folded (NFKC, which also turns a full-width `<` into
+    `<`), invisible format characters (Unicode category `Cf`, such as a zero-width space or joiner) dropped, and
+    Cyrillic and Greek look-alikes of the letters in the system-voice tags folded to Latin.
     """
-    text = unicodedata.normalize('NFKC', _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text)))
+    text = _ENTITY_CLOSER.sub('>', _ENTITY_OPENER.sub('<', text))
+    if text.isascii():
+        # Every history item is checked on every request, so skip the per-character passes where they change nothing.
+        return text
+    text = unicodedata.normalize('NFKC', text)
     return ''.join(char for char in text if unicodedata.category(char) != 'Cf').translate(_CONFUSABLES)
 
 

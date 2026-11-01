@@ -64,6 +64,13 @@ def native_model() -> FunctionModel:
     )
 
 
+def fallback_model() -> FunctionModel:
+    return FunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(supports_inline_system_prompts=False),
+    )
+
+
 def request_texts(messages: list[ModelMessage]) -> list[str]:
     """The text of every system and user part, as a model gets them."""
     return [
@@ -413,9 +420,10 @@ def test_the_body_of_a_frame_around_someone_elses_text_is_still_checked(frame: T
     ] == notes
 
 
-def test_a_note_on_a_tool_only_request_keeps_the_earlier_instructions():
+@pytest.mark.parametrize('inline_system', [True, False])
+def test_a_note_on_a_tool_only_request_keeps_the_earlier_instructions(inline_system: bool):
     """A direct `model.request()` caller's tool-only request still takes the previous request's instructions."""
-    model = native_model()
+    model = native_model() if inline_system else fallback_model()
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Go.')], instructions='Be brief.'),
         ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c1')]),
@@ -426,5 +434,27 @@ def test_a_note_on_a_tool_only_request_keeps_the_earlier_instructions():
     prepared = model.prepare_messages(messages, params)
 
     last = prepared[-1]
-    assert isinstance(last, ModelRequest) and any(isinstance(part, SystemPromptPart) for part in last.parts)
-    assert [part.content for part in model._get_instruction_parts(prepared, params) or []] == ['Be brief.']  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(last, ModelRequest)
+    assert any('looks like an application frame' in text for text in request_texts([last]))
+    instructions = [part.content for part in model._get_instruction_parts(prepared, params) or []]  # pyright: ignore[reportPrivateUsage]
+    assert (
+        instructions == ['Be brief.']
+        if inline_system
+        else ['Be brief.', lookalike_note_announcement(system_role=False)]
+    )
+
+
+def test_user_text_worded_like_a_note_makes_a_real_request():
+    """Only the notes Pydantic AI added are left out of the check, not user text that reads like one."""
+    model = native_model()
+    note = lookalike_frame_note('user', preceding=True, tags=['system'], system_role=True)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Go.')], instructions='Be brief.'),
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c1')]),
+        ModelRequest(parts=[ToolReturnPart('t', 'done', tool_call_id='c1'), UserPromptPart(note)]),
+    ]
+    params = ModelRequestParameters()
+
+    prepared = model.prepare_messages(messages, params)
+
+    assert model._get_instruction_parts(prepared, params) is None  # pyright: ignore[reportPrivateUsage]
