@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, or `SmolSandbox` / `BoxLiteSandbox` / `DockerSandbox` for a microVM or container on this machine. Core workspace semantics (refs, `workspace=`
+`SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, `KubernetesSandbox` for a pod on your own cluster, or `SmolSandbox` / `BoxLiteSandbox` / `DockerSandbox` for a microVM or container on this machine. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -381,6 +381,21 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   what the child prints later.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
+
+### KubernetesSandbox
+
+`KubernetesSandbox(*, warm_pool, namespace='default', connection='port-forward', sandbox_timeout=86_400,
+working_dir=None, env=None)` (backend `KubernetesSandboxBackend`, extra `[kubernetes]`) claims a pod from a
+[kubernetes-sigs/agent-sandbox](https://agent-sandbox.sigs.k8s.io) `SandboxWarmPool` on first use. Credentials
+are your kubeconfig (or the pod's service account in the cluster); `'port-forward'` also needs `kubectl`.
+
+- The pool's `SandboxTemplate` must run sandboxd; commands run in that container, so its image decides the
+  tools. Commands start in sandboxd's root directory (`/workspace` by default).
+- The ref is `WorkspaceRef(provider='kubernetes', id='<namespace>/<claim name>')`. Runs never delete the claim;
+  `sandbox_timeout` does, or `await KubernetesSandbox(warm_pool=...).destroy(ref)` (quiet if gone).
+- From inside the cluster use `connection='in-cluster-pod-ip'` or `'in-cluster-service'`; the template's
+  NetworkPolicy must admit the agent on ports 8080 and 9090. Port-forward does not work on gVisor or Kata.
+- File operations go through the sandbox's shell.
 
 ### SmolSandbox
 

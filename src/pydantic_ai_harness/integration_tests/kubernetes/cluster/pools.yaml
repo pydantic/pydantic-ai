@@ -1,0 +1,139 @@
+# The warm pools `test_live_cluster.py` claims from, in the `default` namespace. `up.sh` substitutes
+# the image name. The first is the docs page's `python-pool`, so its examples run as written.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: python
+spec:
+  # agent-sandbox's default policy admits only its router. An in-cluster connection comes straight
+  # to sandboxd, so admit it on sandboxd's ports, as the docs tell users to; CI connects from the
+  # host over a route, from outside the pod network. Egress stays open.
+  networkPolicy:
+    ingress:
+      - from: [{ipBlock: {cidr: 0.0.0.0/0}}]
+        ports: [{port: 8080}, {port: 9090}]
+    egress: [{}]
+  podTemplate:
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1000
+      containers:
+        - name: sandboxd
+          image: SANDBOXD_IMAGE
+          imagePullPolicy: Never
+          args: [--root-dir=/workspace, --rest-port=8080, --grpc-port=9090]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}
+          ports:
+            - containerPort: 8080
+            - containerPort: 9090
+          readinessProbe:
+            httpGet: {path: /v1/health, port: 8080}
+            periodSeconds: 1
+          volumeMounts:
+            - {name: workspace, mountPath: /workspace}
+      volumes:
+        - {name: workspace, emptyDir: {}}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: python-pool
+spec:
+  replicas: 2
+  sandboxTemplateRef:
+    name: python
+---
+# sandboxd on other ports, reachable only through a connection config that names them.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: sandboxd-other-ports
+spec:
+  # agent-sandbox's default policy admits only its router. An in-cluster connection comes straight
+  # to sandboxd, so admit it on sandboxd's ports, as the docs tell users to; CI connects from the
+  # host over a route, from outside the pod network. Egress stays open.
+  networkPolicy:
+    ingress:
+      - from: [{ipBlock: {cidr: 0.0.0.0/0}}]
+        ports: [{port: 8181}, {port: 9191}]
+    egress: [{}]
+  podTemplate:
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1000
+      containers:
+        - name: sandboxd
+          image: SANDBOXD_IMAGE
+          imagePullPolicy: Never
+          args: [--root-dir=/workspace, --rest-port=8181, --grpc-port=9191]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}
+          ports:
+            - containerPort: 8181
+            - containerPort: 9191
+          readinessProbe:
+            httpGet: {path: /v1/health, port: 8181}
+            periodSeconds: 1
+          volumeMounts:
+            - {name: workspace, mountPath: /workspace}
+      volumes:
+        - {name: workspace, emptyDir: {}}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: sandboxd-other-ports
+spec:
+  replicas: 1
+  sandboxTemplateRef:
+    name: sandboxd-other-ports
+---
+# A sandbox that never becomes Ready, so a claim on it stays pending until it is deleted.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: never-ready
+spec:
+  podTemplate:
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: sandboxd
+          image: SANDBOXD_IMAGE
+          imagePullPolicy: Never
+          args: [--root-dir=/workspace, --rest-port=8080, --grpc-port=9090]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+          readinessProbe:
+            httpGet: {path: /never, port: 8080}
+          volumeMounts:
+            - {name: workspace, mountPath: /workspace}
+      volumes:
+        - {name: workspace, emptyDir: {}}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: never-ready
+spec:
+  replicas: 0
+  sandboxTemplateRef:
+    name: never-ready

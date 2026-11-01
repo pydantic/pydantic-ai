@@ -187,6 +187,21 @@ def command_argv(command: WorkspaceCommand, shell: bool) -> list[str]:
     return list(command)
 
 
+# Run as `sh -c EXEC_SCRIPT sh <argv>` by providers whose exec API leaves stdin open or reports a
+# program it cannot start as an error. `sh` resolves the program on `PATH` and exits 127 when it is
+# missing and 126 when it cannot run, as the protocol asks; `exec` keeps the argv literal and
+# replaces the shell with the program, with stdin at EOF. BusyBox and bash read a program named like
+# `-c` as an option of `exec`, and dash's `exec` takes no `--`, so such a name is resolved to its
+# path first.
+EXEC_SCRIPT = """p=$1
+shift
+case $p in
+-*/*) p=./$p ;;
+-*) q=$(command -v -- "$p") || { printf 'sh: %s: not found\\n' "$p" >&2; exit 127; }; p=$q ;;
+esac
+exec "$p" "$@" </dev/null"""
+
+
 def check_env_types(env: Mapping[str, str] | None) -> None:
     """Raise `TypeError` unless `env` is `None` or maps strings to strings."""
     if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):

@@ -62,6 +62,11 @@ logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ major }}.{{ minor }}.{
 render = ["render>=1.2.0"]
 modal = ["modal>=1.5.2"]
 e2b = ["e2b>=2.48.0"]
+# 1.0.6 is the first release whose async client reaches sandboxd (port-forward or in-cluster) over a `grpc.aio` channel.
+# Not its `grpc` extra: that needs protobuf 7, which `xai-sdk` (the `xai` extra) still excludes, so the backend
+# encodes the few sandboxd messages it sends itself and needs only `grpcio`. Capped below 2: the backend calls the
+# connector's `connect()` and `invalidate_sandboxd_transport()`, which the SDK does not document as public.
+kubernetes = ["k8s-agent-sandbox[async]>=1.0.6,<2", "grpcio>=1.83.0"]
 sprites = ["sprites-py>=0.7.0,<0.8"]
 # boxd's SDK is on 0.x, where a minor release can change the API, so cap per minor. 0.2.20 added
 # `machines.fs` and an `AuthenticationError` that means only refused or missing credentials.
