@@ -256,7 +256,7 @@ Shell(tools=['shell'], default_timeout=270)  # persistent commands
 ```
 
 Tool arguments: `run_command(command, timeout_seconds=None)`, `start_command(command)`,
-`check_command(command_id)`, `stop_command(command_id)`; `shell(command, mode='foreground', timeout=None)`.
+`check_command(command_id, wait_seconds=0)`, `stop_command(command_id)`; `shell(command, mode='foreground', timeout=None)`.
 
 Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `shutdown`, `reboot`,
 `halt`, `poweroff`, `init`), `denied_operators`, `default_timeout=30.0`, `max_output_chars=50_000`
@@ -275,6 +275,8 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 - Background commands **outlive the run**; a later run on the same workspace can check or stop them.
   Clean up with `stop_command` or your own code. They need `mv` and `base64` in the workspace, and
   `setsid` for process-group stops.
+- `check_command(command_id, wait_seconds=N)` waits up to N seconds (at most 270) for the command to exit
+  instead of polling; a wait that times out or is cancelled leaves the command running.
 - `persist_cwd` does not apply to `shell`. A read-only workspace gets no Shell tools.
 
 ## Sandbox workspaces
@@ -506,7 +508,7 @@ every activity reattaches to that environment.
 | Live tool events | File-change request and write events only | Yes | Yes |
 | `delegate_task` | To `self` only | Yes | Yes |
 
-- Temporal activities get 60 s; `run_command` and `shell` get 300 s. Longer `run_command` timeouts need
+- Temporal activities get 60 s; `run_command`, `check_command`, and `shell` get 300 s. Longer `run_command` timeouts need
   `SetToolMetadata(tools=['run_command'], temporal=ActivityConfig(start_to_close_timeout=...))`; for
   longer work use `start_command` or `shell(mode='background')`. Approval listeners re-run on replay.
 - A worker dying between sandbox creation and ref recording leaves an orphan sandbox. Adding or

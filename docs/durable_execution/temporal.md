@@ -283,8 +283,9 @@ the folders at run start adds a toolset at run time, which Temporal refuses, so 
 
 #### Command timeouts {#harness-command-timeouts}
 
-An activity has 60 seconds by default. `run_command` and `shell` get 300 seconds, which covers the `shell`
-tool's 270-second foreground wait. A `run_command` given a longer timeout, through
+An activity has 60 seconds by default. `run_command`, `check_command`, and `shell` get 300 seconds, which
+covers the 270-second wait of the `shell` tool's foreground mode and of `check_command`'s `wait_seconds`.
+A `run_command` given a longer timeout, through
 `Shell(default_timeout=...)` or the model's `timeout_seconds`, needs a longer activity. Set it with
 `SetToolMetadata` in the agent's capabilities:
 

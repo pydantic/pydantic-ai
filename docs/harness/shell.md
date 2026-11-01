@@ -73,13 +73,14 @@ commands, so `Shell` offers no tools for that run.
 |---|---|
 | `run_command` | Run a command synchronously and return labelled stdout/stderr plus exit code. Honors a per-call or default timeout. |
 | `start_command` | Launch a long-running command (server, watcher) in the background; returns an ID. |
-| `check_command` | Report the status and accumulated output of a background command. |
+| `check_command` | Report the status and accumulated output of a background command, optionally waiting for it to finish. |
 | `stop_command` | Terminate a background command and return its final output. |
 | `shell` | Opt-in: run a command in `foreground` (wait up to `timeout`, then hand back the still-running process) or `background` mode. Returns the PID and the paths of its output log and JSON status file. |
 
 `run_command` accepts an optional `timeout_seconds` argument that overrides
 `default_timeout` for a single call. `check_command` and `stop_command` take the
-`command_id` string returned by `start_command`.
+`command_id` string returned by `start_command`; `check_command` also takes an
+optional `wait_seconds`, described under Background processes.
 
 Output is labelled with `[stdout]` / `[stderr]` markers and an `[exit code: N]`
 line on non-zero exit. When it exceeds `max_output_chars` the **tail** is kept
@@ -223,6 +224,17 @@ the working directory, which is git-ignored. Use `check_command(command_id)` to
 poll and `stop_command(command_id)` to terminate and collect final output: the
 whole process group gets `SIGTERM`, then `SIGKILL` after a grace period. A
 command stopped by `SIGTERM` reports `[exit code: 143]`.
+
+`check_command` takes an optional `wait_seconds` from `0` to `270`, the same cap
+as the `shell` tool's foreground wait. The default `0` checks once. A positive
+value waits on the same command until it exits or the wait ends, then returns
+its status and recent output. A command that has already exited returns at once.
+A wait that times out or is cancelled ends only the observation: the command
+keeps running and its output files stay available to later checks. If another
+call stops the command during the wait, the call reports the final status if it
+sees it before the command's files are removed, and the unknown-ID error
+otherwise. Waiting adds no telemetry spans of its own; core already traces the
+tool call.
 
 A background command is not tied to the run: a conversation spans several
 runs, so a later run on the same workspace can check or stop it by its ID. It
@@ -391,7 +403,7 @@ workspace capability in Python).
 
 ## Durable execution
 
-`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`; the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](../durable_execution/temporal.md#harness-command-timeouts) to raise it.
+`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`; the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command`, `check_command`, and `shell`; see [command timeouts](../durable_execution/temporal.md#harness-command-timeouts) to raise it.
 
 ## Further reading
 
