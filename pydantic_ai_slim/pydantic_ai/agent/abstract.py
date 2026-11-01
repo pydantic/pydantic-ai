@@ -625,73 +625,80 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         event_stream_handler = event_stream_handler or self.event_stream_handler
 
-        async with self.iter(
-            user_prompt=user_prompt,
-            output_type=output_type,
-            conversation=conversation,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            run_id=run_id,
-            model=model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            cancellation_token=cancellation_token,
-            timeout=timeout,
-            usage=usage,
-            metadata=metadata,
-            retries=retries,
-            toolsets=toolsets,
-            capabilities=capabilities,
-            workspace=workspace,
-            spec=spec,
-        ) as agent_run:
-            # Drive via next() so capability hooks fire for each node. `next()` already streams a
-            # node when a capability's `wrap_run_event_stream` needs its events; a `run()`-level
-            # `event_stream_handler` needs the stream handed to it as well, which takes a custom
-            # step function. Either way, streaming happens AFTER before_node_run (which may
-            # replace the node) and INSIDE wrap_node_run.
-            _stream_step: (
-                Callable[
-                    [_agent_graph.AgentNode[AgentDepsT, Any]],
-                    Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
-                ]
-                | None
-            ) = None
-            if (_handler := event_stream_handler) is not None:
+        agent_run = node = _stream_step = None
+        try:
+            async with self.iter(
+                user_prompt=user_prompt,
+                output_type=output_type,
+                conversation=conversation,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                model=model,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                cancellation_token=cancellation_token,
+                timeout=timeout,
+                usage=usage,
+                metadata=metadata,
+                retries=retries,
+                toolsets=toolsets,
+                capabilities=capabilities,
+                workspace=workspace,
+                spec=spec,
+            ) as agent_run:
+                # Drive via next() so capability hooks fire for each node. `next()` already streams a
+                # node when a capability's `wrap_run_event_stream` needs its events; a `run()`-level
+                # `event_stream_handler` needs the stream handed to it as well, which takes a custom
+                # step function. Either way, streaming happens AFTER before_node_run (which may
+                # replace the node) and INSIDE wrap_node_run.
+                _stream_step: (
+                    Callable[
+                        [_agent_graph.AgentNode[AgentDepsT, Any]],
+                        Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+                    ]
+                    | None
+                ) = None
+                if (_handler := event_stream_handler) is not None:
 
-                async def _stream_and_advance(
-                    n: _agent_graph.AgentNode[AgentDepsT, Any],
-                ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-                    if self.is_model_request_node(n) or self.is_call_tools_node(n):
-                        # `node.stream()` applies the capability chain, so the handler sees the same
-                        # events a capability's `wrap_run_event_stream` yields.
-                        async with n.stream(agent_run.ctx) as stream:
-                            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-                            await _handler(run_ctx, stream)
-                            # If the handler returns normally, drain whatever it left unconsumed so the
-                            # node can finish through any stream wrappers. Cancellation paths interrupt
-                            # the handler and do not reach this drain.
-                            async for _ in stream:
-                                pass
-                    return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
+                    async def _stream_and_advance(
+                        n: _agent_graph.AgentNode[AgentDepsT, Any],
+                    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+                        assert agent_run is not None
+                        if self.is_model_request_node(n) or self.is_call_tools_node(n):
+                            # `node.stream()` applies the capability chain, so the handler sees the same
+                            # events a capability's `wrap_run_event_stream` yields.
+                            async with n.stream(agent_run.ctx) as stream:
+                                run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+                                await _handler(run_ctx, stream)
+                                # If the handler returns normally, drain whatever it left unconsumed so the
+                                # node can finish through any stream wrappers. Cancellation paths interrupt
+                                # the handler and do not reach this drain.
+                                async for _ in stream:
+                                    pass
+                        return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
 
-                _stream_step = _stream_and_advance
+                    _stream_step = _stream_and_advance
 
-            node = agent_run.next_node
-            while not isinstance(node, End):
-                # Handle wrap_run short-circuit: result is already available, skip the graph.
-                if agent_run.result is not None:
-                    break
-                if _stream_step is not None:
-                    node = await agent_run._run_node_with_hooks(node, _stream_step)  # pyright: ignore[reportPrivateUsage]
-                else:
-                    node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
+                node = agent_run.next_node
+                while not isinstance(node, End):
+                    # Handle wrap_run short-circuit: result is already available, skip the graph.
+                    if agent_run.result is not None:
+                        break
+                    if _stream_step is not None:
+                        node = await agent_run._run_node_with_hooks(node, _stream_step)  # pyright: ignore[reportPrivateUsage]
+                    else:
+                        node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
 
-        assert agent_run.result is not None, 'The graph run did not finish properly'
-        return agent_run.result
+            assert agent_run.result is not None, 'The graph run did not finish properly'
+            return agent_run.result
+        except BaseException:
+            # Context exit can recover a body error; drop run references only after an unrecovered failure.
+            del agent_run, node, _stream_step
+            raise
 
     @overload
     def run_sync(

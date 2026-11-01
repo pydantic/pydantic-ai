@@ -165,6 +165,40 @@ async def test_external_cancellation_keeps_completed_tool_result(
     _assert_interrupted_fast_result(messages[-1])
 
 
+@pytest.mark.parametrize('message', [None, '', 'stop tools'])
+async def test_tool_cancellation_preserves_sibling_cancellation_message(message: str | None) -> None:
+    tool_started = asyncio.Event()
+    cancellation_args: list[tuple[object, ...]] = []
+    error = asyncio.CancelledError() if message is None else asyncio.CancelledError(message)
+
+    def call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('cancel_tool', {}), ToolCallPart('tool', {})])
+
+    agent = Agent(FunctionModel(call_tools))
+
+    @agent.tool_plain
+    async def cancel_tool() -> None:
+        await asyncio.wait_for(tool_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+        raise error
+
+    @agent.tool_plain
+    async def tool() -> None:
+        tool_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError as e:
+            cancellation_args.append(e.args)
+            raise
+
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        await agent.run('go')
+
+    expected_args = () if message is None else (message,)
+    assert exc_info.value is error
+    assert exc_info.value.args == expected_args
+    assert cancellation_args == [expected_args]
+
+
 async def test_parallel_ordered_sibling_exception_does_not_emit_later_result_event() -> None:
     """Keeping the completed return doesn't add a result event: ordered settlement stops at the first exception."""
     agent, _ = _parallel_sibling_tools_agent(raise_first=True)
