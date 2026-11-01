@@ -19,7 +19,7 @@ const save = (name, value) => fs.writeFileSync(path.join(evidence, name), JSON.s
   const captured = readProtectedCommandOutput(process.env.GH_AW_AGENT_OUTPUT);
   // Run the actual host forwarding step on spans produced inside the native
   // sandbox. Only the network destination is replaced; private content is not saved.
-  const shared = fs.readFileSync(path.join(__dirname, '../../workflows/shared/engine-zai.md'), 'utf8');
+  const shared = fs.readFileSync(process.env.PYDANTIC_AI_WORKFLOW_ENGINE_SOURCE, 'utf8');
   const forwardBody = shared.split('      script: |\n')[1].split('\nsafe-outputs:')[0]
     .split('\n').map(line => line.replace(/^ {8}/, '')).join('\n');
   const forward = new (Object.getPrototypeOf(async function () {}).constructor)('require', 'process', 'fetch', 'core', forwardBody);

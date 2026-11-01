@@ -238,6 +238,9 @@ def run_case(
             'GH_AW_SECRET_NAMES': 'CAPTURE_FIXTURE_SECRET',
             'SECRET_CAPTURE_FIXTURE_SECRET': FIXTURE_SECRET,
             'RUNNER_TEMP': str(work / 'runner'),
+            'PYDANTIC_AI_WORKFLOW_ENGINE_SOURCE': str(
+                Path(__file__).resolve().parents[1] / 'workflows/shared/engine-zai.md'
+            ),
         }
         execute(
             [
