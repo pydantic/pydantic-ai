@@ -1447,12 +1447,14 @@ thinking, tool calls and results, shell output, diffs), but not a background `/f
 it fires the turn moments too: the page shows a fork's answer, or why it failed, once it ends,
 from `on_fork_end`. Command results come from `on_command_end`, with `/usage` as a card of its
 figures and `/forks` as a card of its table (`LiveSession.forks`), and history from each
-session's `conversation`. The sidebar lists `host.sessions`, the store `/resume` uses, grouped as
-`/resume` groups them: by repository, then by checkout, with a session from a removed worktree
-under its repository by the checkout saved with it (`ConversationSummary.checkout`), archived ones
-left out unless its archive button is on (`GET /api/sessions?include_archived=true`;
-`POST /api/sessions/ID/archive` and `/unarchive`, and `POST /api/sessions/archive` for a
-worktree's sessions at once).
+session's `conversation`.
+The sidebar lists `host.sessions`, the store `/resume` uses. `GET /api/sessions` answers them
+grouped as `/resume` groups them: by repository, then by checkout, with a session from a removed
+worktree under its repository by the checkout saved with it (`ConversationSummary.checkout`). The
+page lists them by project, or all together, in the order they were created
+(`ConversationSummary.created_at`). Archived ones are left out except in its Archived view
+(`GET /api/sessions?include_archived=true`; `POST /api/sessions/ID/archive` and `/unarchive`, and
+`POST /api/sessions/archive` for a branch's or project's sessions at once).
 
 Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
 `host.live.open`), even while other sessions run turns: it is resumed in a session of its own, in
@@ -2918,21 +2920,22 @@ prompt the keyboard does:
   for command names (with their descriptions), their arguments, and `@` paths. As in the
   editor, they are computed in a worker thread, at most 100 of them, and none when a completer
   fails.
-- `self.host.sessions` is the saved conversations `/resume` lists, or `None` without
-  session persistence: `listing(query=..., archived=False)`, `saved(ID)` for one with its history,
-  `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
-  refuses the current conversation and one running in another CLAI. `archive(ID)` hides a session
-  from `listing` and `/resume` without deleting anything, refusing the same two, and returns its
+- `self.host.sessions` is the saved conversations `/resume` lists, or `None` without session
+  persistence: `listing(query=..., archived=False)`, `saved(ID)` for one with its history,
+  `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which refuses
+  the current conversation and one running in another CLAI. `archive(ID)` hides a session from
+  `listing` and `/resume` without deleting anything, refusing the same two, and returns its
   `ConversationSummary` (with `archived_at` set); `unarchive(ID)` lists it again, and so do
   resuming it (not `--fork-session`) and a new turn in it. `listing(archived=True)` lists only
-  archived sessions, and `archived=None` both. As in `/resume`, a fork gets its own copy of the session's
-  Monty state, and a deleted session's state is deleted with it. Like opening `/resume`, `listing`
-  queues the newest untitled sessions for background naming, which calls the
-  naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
-  while a turn runs, unlike background naming. `follows_workspace` says whether `/resume ID`
-  moves the session into the directory it was saved in (its `host.workspace`; the process's working
-  directory never changes), as under `clai2 --web`, rather than
-  refusing a session saved elsewhere.
+  archived sessions, and `archived=None` both. `listing(order_by='created_at')` lists the most
+  recently created instead of the most recently active, as the web sidebar does. As in `/resume`,
+  a fork gets its own copy of the session's Monty state, and a deleted session's state is deleted
+  with it. Like opening `/resume`, `listing` queues the newest untitled sessions for background
+  naming, which calls the naming model. Renaming the current conversation fires
+  `on_conversation_changed` at once, even while a turn runs, unlike background naming.
+  `follows_workspace` says whether `/resume ID` moves the session into the directory it was saved
+  in (its `host.workspace`; the process's working directory never changes), as under
+  `clai2 --web`, rather than refusing a session saved elsewhere.
 - `self.host.plugins` is what `/plugins` manages, or `None` on a host built outside the loader:
   `listing()` returns a `PluginInfo` per plugin (name, description, origin, source, status, error,
   what it provides, whether it has its own settings menu, and, while it is on, its settings model and

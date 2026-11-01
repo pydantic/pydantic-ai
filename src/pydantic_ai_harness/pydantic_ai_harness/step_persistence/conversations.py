@@ -11,7 +11,7 @@ import sys
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PureWindowsPath
 from typing import Literal
 from uuid import uuid4
@@ -48,6 +48,10 @@ class GitCheckout:
     """The checked-out branch, or a label for a detached checkout."""
 
 
+ConversationOrder = Literal['updated_at', 'created_at']
+"""How `SqliteConversationStore.listing` orders conversations: by last activity, or by creation."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class ConversationSummary:
     """Browser metadata. Naming and archiving do not change activity or content revision."""
@@ -58,6 +62,12 @@ class ConversationSummary:
     checkout: GitCheckout | None = None
     """The Git checkout `workspace` was in when saved; `None` outside Git or when the application records none."""
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime | None = None
+    """When the conversation was first saved, which saving more content keeps; `None` until then.
+
+    A conversation saved before this field existed reads `None` until its next save, which sets it to the
+    conversation's previous `updated_at`.
+    """
     revision: int = 0
     title: str = 'New session'
     subtitle: str = ''
@@ -85,11 +95,17 @@ class ConversationSummary:
     """
 
 
+_CLOCK_SLACK = timedelta(seconds=2)
+"""How much later than a save its own process may seem to start: Linux times processes in whole seconds and ticks."""
+
+
 def ensure_inactive(summary: ConversationSummary) -> None:
     """Local SQLite sessions cannot be resumed while their recorded process is running.
 
-    PID reuse is conservatively treated as busy. This is not a distributed lease;
-    do not share this database between hosts.
+    On Linux, a process that started after the conversation was last saved reuses the recorded PID, so the
+    conversation is not busy; elsewhere PID reuse is conservatively treated as busy. Linux times a start from
+    the current wall clock, so a forward clock jump larger than the owner's age at its last save makes a running
+    conversation read as not busy. This is not a distributed lease; do not share this database between hosts.
     """
     if summary.outcome != 'running' or summary.owner_pid is None:
         return
@@ -107,9 +123,43 @@ def ensure_inactive(summary: ConversationSummary) -> None:
         if not any(len(row) > 1 and row[1] == str(summary.owner_pid) for row in csv.reader(result.stdout.splitlines())):
             return
     else:
+        started = _process_started(summary.owner_pid)
+        # A naive time, as an application may save, is taken as UTC, as the store's own times are.
+        saved = summary.updated_at if summary.updated_at.tzinfo else summary.updated_at.replace(tzinfo=UTC)
+        if started is not None and started > saved + _CLOCK_SLACK:
+            return
         ensure_posix_inactive(pid=summary.owner_pid)
         return
     raise ConversationConflict(f'Session is busy in process {summary.owner_pid}.')
+
+
+_CREATED = "coalesce(json_extract(metadata, '$.created_at'), json_extract(metadata, '$.updated_at'))"
+"""A conversation's creation time, or its last activity when saved before `created_at` existed.
+
+Both come from the metadata, so both are in its one timestamp format and compare as text.
+"""
+
+_ORDERS: dict[ConversationOrder, str] = {'updated_at': 'updated_at', 'created_at': _CREATED}
+"""The SQL each `listing(order_by=...)` sorts by."""
+
+
+def _process_started(pid: int) -> datetime | None:
+    """When process `pid` started, from Linux's `/proc`; `None` elsewhere or when it cannot be read."""
+    if sys.platform != 'linux':  # pragma: no cover
+        return None
+    try:
+        stat = Path(f'/proc/{pid}/stat').read_text(encoding='utf-8', errors='replace')
+        boot = next(
+            int(line.split()[1])
+            for line in Path('/proc/stat').read_text(encoding='utf-8').splitlines()
+            if line.startswith('btime ')
+        )
+    except (OSError, StopIteration):
+        return None
+    # The command name, in parentheses, may hold spaces and parentheses of its own, so the fields after it start at
+    # the last `)`; `starttime` is the 22nd field, the 20th after it.
+    ticks = int(stat.rpartition(')')[2].split()[19])
+    return datetime.fromtimestamp(boot + ticks / os.sysconf('SC_CLK_TCK'), UTC)
 
 
 def ensure_posix_inactive(*, pid: int) -> None:
@@ -184,6 +234,8 @@ class SqliteConversationStore:
             )
             # `updated_at` is stored after the transcript, so ordering by it without an index reads every transcript.
             conn.execute('CREATE INDEX IF NOT EXISTS conversations_updated_at ON conversations (updated_at DESC, id)')
+            # As `listing(order_by='created_at')` sorts, so it reads no more of the table than the default order does.
+            conn.execute(f'CREATE INDEX IF NOT EXISTS conversations_created_at ON conversations ({_CREATED} DESC, id)')
             with conn:
                 yield conn
         finally:
@@ -217,6 +269,7 @@ class SqliteConversationStore:
             if row is None:
                 if expected != 0:
                     raise ConversationConflict('Session was deleted. Start a new session before saving.')
+                summary = replace(summary, created_at=summary.created_at or summary.updated_at)
                 conn.execute(
                     'INSERT INTO conversations VALUES (?, ?, ?, ?, ?, ?)',
                     (
@@ -244,6 +297,7 @@ class SqliteConversationStore:
                 named_revision=prior.named_revision,
                 naming_tokens=prior.naming_tokens,
                 archived_at=None,
+                created_at=prior.created_at or prior.updated_at,
             )
             conn.execute(
                 'UPDATE conversations SET revision=?, metadata=?, messages=?, search_text=?, updated_at=? WHERE id=?',
@@ -279,18 +333,27 @@ class SqliteConversationStore:
         offset: int = 0,
         archived: bool | None = None,
         forked_from: str | None = None,
+        order_by: ConversationOrder = 'updated_at',
     ) -> list[ConversationSummary]:
         """Page summaries without loading transcripts. Search includes title, tags and conversation text.
 
         `archived=False` leaves archived conversations out, `True` lists only those, and `None` lists both.
-        `forked_from` lists only conversations whose `forked_from` is that ID.
+        `forked_from` lists only conversations whose `forked_from` is that ID. Pages are newest first by last
+        activity, or with `order_by='created_at'` by creation, so a page holds the same conversations however
+        recently each was active; one saved before `created_at` existed sorts by its last activity.
         """
         if limit < 1 or offset < 0:
             raise ValueError('limit must be positive and offset nonnegative')
-        return await run_sync(self._listing, query, limit, offset, archived, forked_from)
+        return await run_sync(self._listing, query, limit, offset, archived, forked_from, order_by)
 
     def _listing(
-        self, query: str, limit: int, offset: int, archived: bool | None, forked_from: str | None
+        self,
+        query: str,
+        limit: int,
+        offset: int,
+        archived: bool | None,
+        forked_from: str | None,
+        order_by: ConversationOrder,
     ) -> list[ConversationSummary]:
         # Every row matches an empty query, and searching reads each transcript, so only a real query searches.
         search = 'instr(casefold(search_text || metadata), casefold(?)) > 0 AND ' if query else ''
@@ -299,7 +362,7 @@ class SqliteConversationStore:
             rows = conn.execute(
                 f'SELECT metadata FROM conversations WHERE {search}{fork}'
                 "(? IS NULL OR (json_extract(metadata, '$.archived_at') IS NOT NULL) = ?) "
-                'ORDER BY updated_at DESC, id LIMIT ? OFFSET ?',
+                f'ORDER BY {_ORDERS[order_by]} DESC, id LIMIT ? OFFSET ?',
                 (
                     *([query] if query else []),
                     *([forked_from] if forked_from is not None else []),

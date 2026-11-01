@@ -50,7 +50,7 @@ async def test_commit_push_and_open_a_pull_request_from_the_header(
     await page.goto(f'{git_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Git Repo', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Git Repo')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     chip = page.locator('.topbar .git-chip')
     await expect(chip).to_have_text('feature3 changed, 0 ahead')
 
@@ -137,7 +137,7 @@ async def test_commit_push_and_open_a_pull_request_from_the_header(
 async def test_unchecking_a_file_marks_the_drafted_message_stale(page: Page, git_ui: GitUI) -> None:
     await page.goto(f'{git_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Git Repo', exact=True).click()
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     await page.locator('.topbar .git-chip').click()
     dialog = page.get_by_role('dialog', name='Git')
     message = dialog.get_by_role('textbox', name='Commit message')
