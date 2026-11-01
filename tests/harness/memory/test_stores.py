@@ -713,6 +713,46 @@ async def test_sqlite_store_supports_caller_owned_connection() -> None:
         connection.close()
 
 
+@pytest.mark.parametrize('encoding', ['UTF-8', 'UTF-16le', 'UTF-16be'])
+@pytest.mark.parametrize('content', ['', '\x00match', 'aé€😀\x00match', '😀' * 5 + '\x00match', 'match\x00'])
+async def test_sqlite_store_reads_nul_and_unicode_content(encoding: str, content: str) -> None:
+    connection = sqlite3.connect(':memory:', check_same_thread=False)
+    try:
+        connection.execute(f"PRAGMA encoding = '{encoding}'")
+        store = SqliteMemoryStore(connection=connection)
+        await store.write('main.md', content, expected_version=None)
+
+        for max_chars in sorted({1, 2, 3, max(1, len(content) - 1), len(content) + 1, max(1, len(content))}):
+            file = await store.read('main.md', max_chars=max_chars)
+            assert file is not None
+            assert file.content == content[:max_chars]
+            assert file.truncated is (len(content) > max_chars)
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize('encoding', ['UTF-8', 'UTF-16le', 'UTF-16be'])
+@pytest.mark.parametrize('max_file_chars', [1, 7, 8, 9])
+async def test_sqlite_store_searches_nul_and_unicode_content(encoding: str, max_file_chars: int) -> None:
+    connection = sqlite3.connect(':memory:', check_same_thread=False)
+    try:
+        connection.execute(f"PRAGMA encoding = '{encoding}'")
+        store = SqliteMemoryStore(connection=connection)
+        content = 'é😀\x00match'
+        await store.write('main/notes.md', content, expected_version=None)
+        await store.write('main/empty.md', '', expected_version=None)
+
+        result = await store.search(
+            'main/', 'match', limit=10, max_files=10, max_chars=100, max_file_chars=max_file_chars
+        )
+
+        assert [match.path for match in result.matches] == (['main/notes.md'] if max_file_chars >= len(content) else [])
+        assert result.scanned == 2
+        assert result.truncated is (len(content) > max_file_chars)
+    finally:
+        connection.close()
+
+
 async def test_sqlite_store_does_not_commit_a_caller_owned_transaction(tmp_path: Path) -> None:
     database = tmp_path / 'caller-owned.sqlite3'
     connection = sqlite3.connect(database, check_same_thread=False)
