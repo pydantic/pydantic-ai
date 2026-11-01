@@ -153,6 +153,10 @@ def main() -> None:
                 )
                 emit_annotation('notice', finding, message)
                 continue
+            if is_field_description_change(finding.message):
+                message = f'{finding.symbol}: `Field` description changed. Description changes need no waiver.'
+                emit_annotation('notice', finding, message)
+                continue
             waiver = waivers.get(finding.fingerprint)
             if waiver is None or waiver.against != args.against:
                 failed = True
@@ -312,6 +316,29 @@ def _literal_members(value: str) -> tuple[tuple[str, ...], set[str]] | None:
         else:
             shape.append(ast.dump(arm))
     return (alias_name, *sorted(shape)), members
+
+
+def is_field_description_change(message: str) -> bool:
+    """Whether a value change changes nothing but the `description` keyword of a `Field(...)` call."""
+    _, _, values = message.partition(_ATTRIBUTE_VALUE_CHANGED)
+    # Griffe prints `<old> -> <new>`. A split inside a description leaves a side that doesn't parse.
+    for separator in re.finditer(' -> ', values):
+        try:
+            old = _field_without_description(values[: separator.start()])
+            new = _field_without_description(values[separator.end() :])
+        except SyntaxError:
+            continue
+        return old is not None and old == new
+    return False
+
+
+def _field_without_description(value: str) -> str | None:
+    """The dump of a `Field(...)` call without its `description` keyword, or `None` for any other value."""
+    node = ast.parse(value, mode='eval').body
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'Field'):
+        return None
+    node.keywords = [keyword for keyword in node.keywords if keyword.arg != 'description']
+    return ast.dump(node)
 
 
 def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
