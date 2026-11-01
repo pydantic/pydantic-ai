@@ -62,11 +62,7 @@ _LOOP_START_TIMEOUT_SECONDS = 5.0
 _RETIRED_LOOP_GRACE_SECONDS = 5.0
 """Maximum extra time a retired loop gets to finish cancellation cleanup.
 
-Whatever is still running at the deadline is cancelled, and the loop stops a few event-loop
-iterations later, whether or not that cleanup has finished by then. If user code already cancelled
-the retirement's own cleanup, the loop instead stops at the deadline without cancelling anything. On
-Python 3.11, cancelling the default executor's shutdown joins its thread, so the loop first waits for
-jobs already submitted to that executor.
+See `_AgentLoop.retire` for what happens at the deadline.
 """
 
 _LOOP_LIVENESS_POLL_SECONDS = 5.0
