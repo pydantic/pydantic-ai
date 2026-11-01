@@ -767,24 +767,48 @@ class WebService:
 
     async def archive(self, conversation_id: str, *, archived: bool) -> None:
         """Archive a session, hiding it from the sidebar, or unarchive it."""
-        catalog = self.catalog
-        await (catalog.archive(conversation_id) if archived else catalog.unarchive(conversation_id))
+        await (self._archive(conversation_id) if archived else self.catalog.unarchive(conversation_id))
         self.hub.publish(SessionsChanged())
 
     async def archive_all(self, ids: Sequence[str]) -> None:
         """Archive several sessions, such as a worktree's; any refused are named once the others are archived."""
-        catalog = self.catalog
         unique = list(dict.fromkeys(ids))
         refused: list[str] = []
         for conversation_id in unique:
             try:
-                await catalog.archive(conversation_id)
+                await self._archive(conversation_id)
             except (LookupError, ValueError) as exc:
                 refused.append(f'{conversation_id!r}: {exc}')
         if len(refused) < len(unique):
             self.hub.publish(SessionsChanged())
         if refused:
             raise ValueError(f'Archived {len(unique) - len(refused)} of {len(unique)} sessions. ' + ' '.join(refused))
+
+    async def _archive(self, conversation_id: str) -> None:
+        """Archive a session; one live here closes first while it is idle and no browser shows it.
+
+        One that is shown or busy, a background `/fork` or delegated task included, stays live, so the catalog
+        refuses it, as it does the current one.
+        """
+        catalog = self.catalog
+        holder = next((channel for channel in self.channels() if channel.id == conversation_id), None)
+        if (
+            holder is not None
+            and conversation_id != self.host.session_id
+            and not holder.session.watchers
+            and self._state(holder) == 'idle'
+            and not _working_in_background(holder.session)
+        ):
+            await self.live.close(holder.session.id)
+        await catalog.archive(conversation_id)
+
+
+def _working_in_background(session: LiveSession) -> bool:
+    """Whether a background `/fork` or a delegated task of `session` runs, which closing the session would cancel."""
+    tasks = session.tasks
+    return any(fork.status == 'running' for fork in session.forks) or (
+        tasks is not None and any(task.status == 'running' for task in tasks.listing())
+    )
 
 
 def continuable(workspace: str, *, here: str, follows: bool) -> bool:
