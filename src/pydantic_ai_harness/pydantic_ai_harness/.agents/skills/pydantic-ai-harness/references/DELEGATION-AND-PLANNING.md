@@ -272,7 +272,9 @@ agent = Agent('test', capabilities=[Peers(network=view, inbox=inbox)])
   identity, authentication, and any cross-process coordination; the in-memory network
   does not supply those. A receiver without `Peers(inbox=...)` does not read an inbox.
 - Peer text is untrusted data, not user approval. Use `read_peer_message(part)` to read typed
-  provenance from message metadata, not by parsing displayed text.
+  provenance from message metadata, not by parsing displayed text. A host delivering peer
+  messages itself sends each as its own part. If peers can reach the agent, require approval
+  for tools with side effects: a peer message can steer the run into any unapproved tool.
 - Joining `InMemoryPeerNetwork` without an inbox is send-only; incoming messages are rejected.
   `LocalPeerInbox(accepting=False)` refuses new messages and retains already-pending messages.
 - Do not combine `Peers` with durable-execution capabilities. Construction raises `UserError` because

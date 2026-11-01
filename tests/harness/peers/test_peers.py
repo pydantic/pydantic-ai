@@ -1013,6 +1013,23 @@ class TestPeers:
         assert from_other.message_id != first.message_id
         assert [item.id for item in await inbox.pending()] == [first.message_id, from_other.message_id]
 
+    async def test_acknowledged_ids_stop_a_late_retry_within_the_bound(self, tmp_path: Path) -> None:
+        path = tmp_path / 'inbox.json'
+        inbox = LocalPeerInbox(path=path, max_pending=1)
+        network = InMemoryPeerNetwork()
+        network.join(handle='target', inbox=inbox)
+        sender = network.join(handle='sender')
+        target = (await sender.peers())[0]
+        first = await sender.send(target.id, 'one', key='k1')
+        await delivered_parts(inbox)
+        assert await sender.send(target.id, 'one', key='k1') == replace(first, status='delivered', pending=0)
+        reloaded = LocalPeerInbox(path=path, max_pending=1)
+        assert (await reloaded.receive(message(id=first.message_id))).status == 'delivered'
+        assert await reloaded.pending() == []
+        await sender.send(target.id, 'two', key='k2')
+        await delivered_parts(inbox)
+        assert await sender.send(target.id, 'one', key='k1') == replace(first, status='queued', pending=1)
+
     async def test_host_inbox_receives_through_the_inbox_protocol(self) -> None:
         class HostInbox:
             def __init__(self) -> None:
@@ -1054,6 +1071,9 @@ class TestPeers:
             network.join(handle='a')
         with pytest.raises(LookupError, match='No peer'):
             await sender.send('missing', 'hello', key='hello')
+
+    def test_is_not_spec_serializable(self) -> None:
+        assert Peers.get_serialization_name() is None
 
     def test_invalid_provenance_metadata_is_not_a_message(self) -> None:
         assert (

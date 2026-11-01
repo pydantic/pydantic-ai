@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from anyio import Lock
@@ -20,14 +21,24 @@ from pydantic_ai_harness.peers._types import (
     PeerMessage,
 )
 
-_MESSAGES = TypeAdapter(list[PeerMessage])
+
+@dataclass(kw_only=True)
+class _SavedInbox:
+    messages: list[PeerMessage] = field(default_factory=list[PeerMessage])
+    acknowledged: list[str] = field(default_factory=list[str])
+    """IDs of the most recently acknowledged messages, oldest first, so a retried send is not delivered again."""
+
+
+_SAVED = TypeAdapter(_SavedInbox)
 
 
 class LocalPeerInbox(PeerInbox):
     """Incoming peer messages, in memory or in an atomically replaced JSON file.
 
     Bind one inbox to one recipient. The application supplies a path scoped to that recipient;
-    its directory is private to the user. An idle inbox never starts an agent run. Once the inbox
+    its directory is private to the user. An idle inbox never starts an agent run. It remembers the
+    IDs of its last `max_pending` acknowledged messages, so a retried send of one of them is not
+    delivered again. Once the inbox
     is bound to `Peers`, leave `take`, `acknowledge` and `release` to it: a run ID the host claims
     with `take` holds the inbox until it is released.
     """
@@ -50,6 +61,7 @@ class LocalPeerInbox(PeerInbox):
         self._max_message_bytes = max_message_bytes
         self.accepting = accepting
         self._messages: dict[str, PeerMessage] = {}
+        self._acknowledged: list[str] = []
         self._loaded = False
         self._lock = Lock()
         self._reader: str | None = None
@@ -65,16 +77,17 @@ class LocalPeerInbox(PeerInbox):
             return
         if self._path is not None:
             try:
-                saved = await run_sync(self._path.read_bytes)
+                saved = _SAVED.validate_json(await run_sync(self._path.read_bytes))
             except FileNotFoundError:
-                saved = b'[]'
-            self._messages = {message.id: message for message in _MESSAGES.validate_json(saved)}
+                saved = _SavedInbox()
+            self._messages = {message.id: message for message in saved.messages}
+            self._acknowledged = saved.acknowledged
         self._loaded = True
 
-    async def _save(self, messages: dict[str, PeerMessage]) -> None:
+    async def _save(self, messages: dict[str, PeerMessage], acknowledged: list[str]) -> None:
         if self._path is None:
             return
-        data = _MESSAGES.dump_json(list(messages.values()))
+        data = _SAVED.dump_json(_SavedInbox(messages=list(messages.values()), acknowledged=acknowledged))
         await run_sync(self._write, self._path, data)
 
     @staticmethod
@@ -93,6 +106,8 @@ class LocalPeerInbox(PeerInbox):
         """Accept once by message id; refuse oversized messages or a full or disabled inbox."""
         async with self._lock:
             await self._load()
+            if message.id in self._acknowledged:
+                return PeerDelivery(message_id=message.id, status='delivered', pending=len(self._messages))
             if message.id in self._messages:
                 return PeerDelivery(message_id=message.id, status=self._status, pending=len(self._messages))
             reason = (
@@ -107,7 +122,7 @@ class LocalPeerInbox(PeerInbox):
             if reason:
                 return PeerDelivery(message_id=message.id, status='refused', reason=reason, pending=len(self._messages))
             updated = {**self._messages, message.id: message}
-            await self._save(updated)
+            await self._save(updated, self._acknowledged)
             self._messages = updated
             return PeerDelivery(message_id=message.id, status=self._status, pending=len(self._messages))
 
@@ -134,14 +149,16 @@ class LocalPeerInbox(PeerInbox):
             return taken
 
     async def acknowledge(self, message_id: str) -> None:
-        """Remove a message once it entered the conversation history."""
+        """Remove a message once it entered the conversation history, and remember its ID."""
         async with self._lock:
             if message_id not in self._messages:
                 return
             updated = self._messages.copy()
             del updated[message_id]
-            await self._save(updated)
+            acknowledged = [*self._acknowledged, message_id][-self._max_pending :]
+            await self._save(updated, acknowledged)
             self._messages = updated
+            self._acknowledged = acknowledged
             self._taken.discard(message_id)
 
     async def release(self, run_id: str) -> None:

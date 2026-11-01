@@ -56,6 +56,11 @@ class Peers(AbstractCapability[AgentDepsT]):
         """Two networks under one id must agree: merging recipients would widen the agent's access."""
         return one_per_id(capabilities)
 
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        """Not spec-serializable: the capability holds a live network and inbox."""
+        return None
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, object]) -> AbstractCapability[AgentDepsT]:
         """Reject durable execution: the engine records neither inbox reads nor sends, so a replay could diverge."""
         siblings: list[AbstractCapability[AgentDepsT]] = []
