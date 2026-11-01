@@ -24,7 +24,7 @@ with try_import() as imports_successful:
     import openai
 
     from pydantic_ai import Agent
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.stav import StavProvider
 
 
@@ -110,6 +110,52 @@ async def test_stav_region_sent_on_the_wire(allow_model_requests: None, region: 
 
     assert result.output == 'Paris'
     assert runs_in == [expected]
+
+
+def test_stav_responses_model_by_name(env: TestEnv):
+    env.set('STAV_API_KEY', 'api-key')
+    env.remove('STAV_BASE_URL')
+    model = OpenAIResponsesModel('openai/gpt-5-mini', provider='stav')
+    assert model.system == 'stav'
+    assert model.base_url == 'https://api.stav.ai/v1/'
+
+
+async def test_stav_responses_region_sent_on_the_wire(allow_model_requests: None):
+    """A Responses API request goes to Stav's `/v1/responses` with the region header.
+
+    Not a VCR test: the claim is about the request path and a header, which a mock transport observes directly.
+    """
+    seen: list[tuple[str, str | None]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append((request.url.path, request.headers.get('X-Stav-Runs-In')))
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'resp-1',
+                'object': 'response',
+                'created_at': 0,
+                'model': 'openai/gpt-5-mini',
+                'status': 'completed',
+                'output': [
+                    {
+                        'id': 'msg-1',
+                        'type': 'message',
+                        'role': 'assistant',
+                        'status': 'completed',
+                        'content': [{'type': 'output_text', 'text': 'Paris', 'annotations': []}],
+                    }
+                ],
+            },
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = StavProvider(api_key='api-key', region='eea', http_client=http_client)
+        agent = Agent(OpenAIResponsesModel('openai/gpt-5-mini', provider=provider))
+        result = await agent.run('What is the capital of France?')
+
+    assert result.output == 'Paris'
+    assert seen == [('/v1/responses', 'eea')]
 
 
 def test_stav_provider_region_country_code():

@@ -302,6 +302,23 @@ print(result.output)
 
 Set `STAV_BASE_URL` or pass `base_url` to point the provider at another Stav endpoint.
 
+Stav also serves the Responses API, so you can use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with the same provider. Models whose upstream has its own Responses API, such as OpenAI's, are passed through to it; Stav translates other models onto Chat Completions and lists any request parameters it had to drop in the `X-Stav-Dropped-Params` response header. Unlike OpenAI, Stav doesn't store responses unless you set [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store].
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.stav import StavProvider
+
+model = OpenAIResponsesModel(
+    'openai/gpt-5-mini',
+    provider=StavProvider(api_key='your-stav-api-key', region='eea'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
 ## Together AI
 
 Go to [Together.ai](https://www.together.ai/) and create an API key in your account settings.

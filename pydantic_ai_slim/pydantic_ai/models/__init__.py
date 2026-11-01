@@ -256,6 +256,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'openrouter',
         'ovhcloud',
         'sambanova',
+        'stav',
         'together',
     ],
 )
