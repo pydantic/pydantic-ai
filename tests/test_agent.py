@@ -3799,6 +3799,45 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prom
         agent.run_sync(user_prompt='New question', message_history=message_history)
 
 
+def test_run_with_history_ending_on_request_that_leaves_tool_calls_unanswered():
+    """Test that a new prompt raises when the trailing request answered only some of the calls.
+
+    A paused conversation whose inline handler resolved part of the batch (see
+    `pydantic_ai.capabilities.HandleDeferredToolCalls`) ends on such a request: the calls it left
+    pending can still be answered by resuming the run or with `deferred_tool_results`, so a new
+    prompt must not abandon them. A trailing request that answered every call is unaffected.
+    """
+
+    def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='Final response')])
+
+    agent = Agent(FunctionModel(simple_response))
+
+    answered = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_a')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='test_tool', content='a', tool_call_id='call_a')]),
+    ]
+    # Every call is answered, so the conversation can take a new prompt.
+    assert agent.run_sync(user_prompt='New question', message_history=answered).output == 'Final response'
+
+    partially_answered = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_a'),
+                ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_b'),
+            ]
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='test_tool', content='a', tool_call_id='call_a')]),
+    ]
+    with pytest.raises(
+        UserError,
+        match=re.escape('Cannot provide a new user prompt when the message history contains unprocessed tool calls.'),
+    ):
+        agent.run_sync(user_prompt='New question', message_history=partially_answered)
+
+
 def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_prompt():
     def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
