@@ -620,6 +620,7 @@ async def test_a_tool_loop_takes_a_batch_per_model_request() -> None:
     assert created == [1, 1, 1, 1]
 
 
+@pytest.mark.usefixtures('young_gc')
 async def test_many_concurrent_runs_fill_batches_of_the_default_size() -> None:
     wrapped = SlowBatchTestModel()
     batching = BatchModelRequests(**FAST_POLLING, max_wait=None)
