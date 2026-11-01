@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
 from pydantic_ai.agent import AbstractAgent, AgentRunResult
@@ -425,6 +426,75 @@ async def test_capability_operation_is_direct_outside_durable_context() -> None:
     assert events == []
     assert built_models == []
     assert not any('__capability__' in name for name, _ in durability.calls)
+
+
+@pytest.mark.parametrize('map_failure', [False, True])
+async def test_capability_operation_serialization_failure_mapping(map_failure: bool) -> None:
+    class TerminalFailure(Exception):
+        pass
+
+    serialization_errors: list[Exception] = []
+    backend_errors: list[Exception] = []
+
+    def serialization_failure(exc: Exception) -> TerminalFailure:
+        serialization_errors.append(exc)
+        return TerminalFailure(str(exc))
+
+    class SerializationBackend(_RecordingBackend):
+        async def execute(
+            self,
+            *,
+            operation_id: DurableOperationId,
+            name: str,
+            body: Callable[[], Awaitable[object]],
+            cache_key: tuple[object, ...],
+            config: object,
+        ) -> object:
+            try:
+                return await super().execute(
+                    operation_id=operation_id, name=name, body=body, cache_key=cache_key, config=config
+                )
+            except Exception as exc:
+                backend_errors.append(exc)
+                raise
+
+    class SerializationDurability(RecordingDurability):
+        engine_spec = replace(
+            RecordingDurability.engine_spec,
+            serialization_failure=serialization_failure if map_failure else None,
+        )
+
+        def get_durable_operation_backend(self) -> SerializationBackend:
+            return SerializationBackend(self)
+
+    class NonSerializableCapability(AbstractCapability[None]):
+        id = 'non_serializable'
+
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await self.read(ctx=ctx)
+
+        @durable_operation('read')
+        async def read(self, ctx: RunContext[None]) -> object:
+            return object()
+
+    agent = Agent(
+        TestModel(),
+        deps_type=type(None),
+        name='serialization_failure',
+        capabilities=[NonSerializableCapability(), SerializationDurability()],
+    )
+    expected_error = TerminalFailure if map_failure else PydanticSerializationError
+    with pytest.raises(expected_error, match='Unable to serialize unknown type') as exc_info:
+        await agent.run('test')
+
+    assert len(backend_errors) == 1
+    assert backend_errors[0] is exc_info.value
+    if map_failure:
+        assert len(serialization_errors) == 1
+        assert isinstance(serialization_errors[0], PydanticSerializationError)
+        assert exc_info.value.__cause__ is serialization_errors[0]
+    else:
+        assert serialization_errors == []
 
 
 async def test_capability_operation_model_id_swap_resolves_and_manages_model() -> None:
