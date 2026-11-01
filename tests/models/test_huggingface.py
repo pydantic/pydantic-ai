@@ -41,6 +41,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import PartDeltaEvent, PartStartEvent
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -1322,6 +1323,98 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
             ),
         ]
     )
+
+
+def reasoning_chunk(text: str, finish_reason: FinishReason | None = None) -> ChatCompletionStreamOutput:
+    return chunk([ChatCompletionStreamOutputDelta(reasoning=text, role='assistant')], finish_reason=finish_reason)
+
+
+async def test_hf_model_reasoning_field_thinking_part(allow_model_requests: None):
+    mock_client = MockHuggingFace.create_mock(
+        completion_message(
+            ChatCompletionOutputMessage(content='42', reasoning='I computed it', role='assistant'),
+            usage=ChatCompletionOutputUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+        )
+    )
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == '42'
+    assert result.all_messages()[-1].parts == [ThinkingPart(content='I computed it'), TextPart(content='42')]
+
+
+async def test_hf_model_reasoning_field_thinking_part_iter(allow_model_requests: None):
+    stream = [reasoning_chunk('I computed it'), text_chunk('42', finish_reason='stop')]
+    mock_client = MockHuggingFace.create_stream_mock(stream)
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(m)
+
+    part_events: list[PartStartEvent | PartDeltaEvent] = []
+    result: AgentRunResult[str] | None = None
+    async with agent.run_stream_events(user_prompt='Hello') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
+            elif isinstance(event, PartStartEvent | PartDeltaEvent):
+                part_events.append(event)
+
+    assert result is not None
+    assert result.output == '42'
+    assert result.all_messages()[-1].parts == [ThinkingPart(content='I computed it'), TextPart(content='42')]
+    assert [event.part if isinstance(event, PartStartEvent) else event.delta for event in part_events] == snapshot(
+        [ThinkingPart(content='I computed it'), TextPart(content='42')]
+    )
+
+
+async def test_hf_model_reasoning_field_and_think_tags_both_surfaces(allow_model_requests: None):
+    mock_client = MockHuggingFace.create_mock(
+        completion_message(
+            ChatCompletionOutputMessage(content='<think>hmm</think>42', reasoning='I computed it', role='assistant'),
+            usage=ChatCompletionOutputUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+        )
+    )
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == '42'
+    assert result.all_messages()[-1].parts == [
+        ThinkingPart(content='I computed it'),
+        ThinkingPart(content='hmm'),
+        TextPart(content='42'),
+    ]
+
+
+async def test_hf_model_reasoning_field_thinking_part_round_trip(allow_model_requests: None):
+    mock_client = MockHuggingFace.create_mock(
+        [
+            completion_message(
+                ChatCompletionOutputMessage(content='42', reasoning='I computed it', role='assistant'),
+                usage=ChatCompletionOutputUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            ),
+            completion_message(
+                ChatCompletionOutputMessage(content='43', role='assistant'),
+                usage=ChatCompletionOutputUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            ),
+        ]
+    )
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == '42'
+
+    second_result = await agent.run('And again?', message_history=result.all_messages())
+    assert second_result.output == '43'
+
+    assistant_messages = [
+        message
+        for message in get_mock_chat_completion_kwargs(mock_client)[1]['messages']
+        if message['role'] == 'assistant'
+    ]
+    assert len(assistant_messages) == 1
+    assert assistant_messages[0]['content'] == '<think>\nI computed it\n</think>\n\n42'
 
 
 async def test_cache_point_filtering():
