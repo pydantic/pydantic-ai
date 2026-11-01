@@ -63,9 +63,10 @@ _RETIRED_LOOP_GRACE_SECONDS = 5.0
 """Maximum extra time a retired loop gets to finish cancellation cleanup.
 
 Whatever is still running at the deadline is cancelled, and the loop stops a few event-loop
-iterations later, whether or not that cleanup has finished by then. On Python 3.11, cancelling the
-default executor's shutdown joins its thread, so the loop first waits for jobs already submitted to
-that executor.
+iterations later, whether or not that cleanup has finished by then. If user code already cancelled
+the retirement's own cleanup, the loop instead stops at the deadline without cancelling anything. On
+Python 3.11, cancelling the default executor's shutdown joins its thread, so the loop first waits for
+jobs already submitted to that executor.
 """
 
 _LOOP_LIVENESS_POLL_SECONDS = 5.0
@@ -159,8 +160,9 @@ class _AgentLoop:
         soon as cleanup finishes. At the grace deadline, whatever is still running is cancelled and
         the loop stops a few iterations later (on Python 3.11, once jobs already submitted to its
         default executor finish); a cleanup that suppresses the cancellation, or is still awaiting
-        something by then, is left unfinished. The loop's own thread closes it after
-        `run_forever()` exits.
+        something by then, is left unfinished. If user code cancels this method's own cleanup, as
+        one that cancels every task on the loop does, the loop just stops at the deadline. The
+        loop's own thread closes it after `run_forever()` exits.
         """
         with self._lock:
             if self._loop is not loop:
@@ -201,7 +203,7 @@ class _AgentLoop:
             cleaning = loop.create_task(clean_up())
             # Stopping at the deadline itself would end the loop before `clean_up` wakes from its
             # timed-out waits to cancel them, leaving it and the abandoned task pending on a closed
-            # loop. Its waits end at the deadline, so stop once it has finished, or at once if user
+            # loop. Instead, at the deadline, stop once `clean_up` has finished, or right then if user
             # code already cancelled it along with every other task on the loop.
             loop.call_at(deadline, lambda: cleaning.add_done_callback(lambda _: loop.stop()))
 
