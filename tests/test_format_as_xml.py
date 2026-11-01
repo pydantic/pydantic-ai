@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Self
+from typing import Any, Literal, Self
 from uuid import UUID
 
 import pytest
@@ -717,3 +717,99 @@ def test_model_with_non_primitive_types():
 <age>123.45</age>
 <uuid>123e4567-e89b-12d3-a456-426614174000</uuid>\
 """)
+
+
+@pytest.mark.parametrize('include_field_info', [False, True, 'once'])
+def test_excluded_self_reference(include_field_info: bool | Literal['once']):
+    """An excluded self-reference must not recurse forever in the metadata walk.
+
+    `model_dump(mode='json')` drops a `Field(exclude=True)` field, so a self-reference stored there
+    never reaches the value walk; the metadata walk reads the live object graph and previously did,
+    raising `RecursionError`. It must skip the excluded field just as the dump does.
+    """
+
+    class Item(BaseModel):
+        name: str
+        hidden: Self | None = Field(default=None, exclude=True)
+
+    item = Item(name='visible')
+    item.hidden = item
+
+    assert format_as_xml(item, include_field_info=include_field_info) == '<name>visible</name>'
+
+
+def test_excluded_self_reference_in_nested_model():
+    """An excluded cycle nested inside another model is skipped, not recursed."""
+
+    class Inner(BaseModel):
+        val: str
+        back: Inner | None = Field(default=None, exclude=True)
+
+    class Outer(BaseModel):
+        title: str
+        inner: Inner
+
+    outer = Outer(title='t', inner=Inner(val='v'))
+    outer.inner.back = outer.inner
+
+    assert format_as_xml(outer) == '<title>t</title>\n<inner>\n  <val>v</val>\n</inner>'
+
+
+def test_computed_field_self_reference_reports_value_error():
+    """A cyclic `computed_field` surfaces the same `ValueError` as `model_dump`, not a bare `RecursionError`.
+
+    `model_dump(mode='json')` detects the cycle and raises `ValueError('Circular reference detected')`;
+    the metadata walk must not recurse into it first, which would mask that error behind a `RecursionError`.
+    """
+
+    class Node(BaseModel):
+        label: str
+
+        @computed_field
+        @property
+        def child(self) -> Node:
+            return self
+
+    with pytest.raises(ValueError, match='Circular reference detected'):
+        format_as_xml(Node(label='x'))
+
+
+def test_cyclic_dataclass_reports_value_error():
+    """A cyclic dataclass surfaces the same `ValueError` as a cyclic BaseModel, not `RecursionError`.
+
+    `_to_xml` used to build a dataclass body with `asdict`, which recurses to full depth in a single
+    call and raises a bare `RecursionError` on a cycle. Shallow conversion lets the value walk detect
+    the cycle and raise the `ValueError('Circular reference detected')` that `model_dump` produces.
+    """
+
+    @dataclass
+    class Node:
+        name: str
+        next: Node | None = None
+
+    a = Node('a')
+    b = Node('b', next=a)
+    a.next = b
+
+    with pytest.raises(ValueError, match='Circular reference detected'):
+        format_as_xml(a)
+
+
+def test_shared_dataclass_reference_not_treated_as_cycle():
+    """A dataclass reachable through two separate paths is emitted twice, not mistaken for a cycle."""
+
+    @dataclass
+    class Child:
+        val: str
+
+    @dataclass
+    class Parent:
+        left: Child
+        right: Child
+
+    child = Child('shared')
+    parent = Parent(left=child, right=child)
+
+    assert format_as_xml(parent) == (
+        '<left>\n  <val>shared</val>\n</left>\n<right>\n  <val>shared</val>\n</right>'
+    )
