@@ -729,15 +729,15 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     ) -> str | list[str | BinaryContent]:
         """Read a file in `workspace` directly, outside an agent run.
 
-        An image or PDF comes back as its header followed by a `BinaryContent`;
-        everything else is text.
+        An image, PDF or video, recognized by its leading bytes, comes back as its header
+        followed by a `BinaryContent`; everything else is text.
         """
         return await self._read_file(await self._scope(workspace), None, path, offset=offset, limit=limit)
 
     async def _read_file_tool(
         self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 0, limit: int | None = None
     ) -> str | list[str | BinaryContent]:
-        """Read a text file with line numbers, or view an image or PDF.
+        """Read a text file with line numbers, or view an image, PDF or video.
 
         Args:
             ctx: The current agent run context.
@@ -746,9 +746,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             limit: Maximum number of lines to return; defaults to, and is capped at, the configured read limit.
 
         Returns:
-            File content with line numbers, plus metadata header. An image or PDF
-            is returned as the file itself; other binary files as their size,
-            media type and leading bytes in hex.
+            File content with line numbers, plus metadata header. An image, PDF or video
+            is returned as the file itself; other binary files as their size, media type
+            and leading bytes in hex.
         """
         return await self._read_file(
             await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, offset=offset, limit=limit
@@ -802,7 +802,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     def _read_binary(
         self, path: str, raw: bytes, media_type: str | None, content_hash: str
     ) -> str | list[str | BinaryContent]:
-        """An image or PDF as file content when it fits `MAX_MEDIA_BYTES`, anything else described in text."""
+        """A recognized file as file content when it fits `MAX_MEDIA_BYTES`, anything else described in text."""
         hash_suffix = f' | hash:{content_hash}' if self._content_hashes else ''
         shown_type = media_type or mimetypes.guess_type(path)[0] or 'application/octet-stream'
         header = f'[{self._path_label(path)} | {shown_type} | {len(raw)} bytes{hash_suffix}]\n'
