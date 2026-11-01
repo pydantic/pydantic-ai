@@ -91,6 +91,8 @@ print(result.output)
 
 The supported document formats vary by model.
 
+With [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], control the document [detail level](https://developers.openai.com/api/docs/guides/file-inputs) by passing `vendor_metadata={'detail': 'low'}` (or `'high'`) to the [`DocumentUrl`][pydantic_ai.DocumentUrl], [`BinaryContent`][pydantic_ai.BinaryContent] or [`UploadedFile`][pydantic_ai.messages.UploadedFile]; when unset, OpenAI applies its default, `'auto'`.
+
 You can also use [`BinaryContent`][pydantic_ai.BinaryContent] to pass document data directly:
 
 ```py {title="binary_content_input.py" test="skip" lint="skip"}
