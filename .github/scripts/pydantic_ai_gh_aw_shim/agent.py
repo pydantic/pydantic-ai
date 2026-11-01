@@ -34,6 +34,8 @@ from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from . import cli
 from .shared import reset_context_state
 
+result_metadata: dict[str, object] = {}
+
 
 @dataclass
 class WorkflowPolicy(AbstractCapability[object]):
@@ -56,6 +58,7 @@ class WorkflowPolicy(AbstractCapability[object]):
 
     async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         reset_context_state()
+        result_metadata.clear()
         budget = cli.run_timeout_secs()
         cli.run_deadline = time.monotonic() + budget
         cap = cli.wall_clock_caps.set((*cli.wall_clock_caps.get(), lambda: self.timed_out))
@@ -103,8 +106,9 @@ class WorkflowPolicy(AbstractCapability[object]):
             }
             if error is not None and not isinstance(error, asyncio.CancelledError):
                 health['failure'] = cli.failure_details(error)
-            # The health monitor consumes this DTO from agent-stdio.log. The public
-            # engine independently owns canonical session events and merged usage.
+            result_metadata['provider_health'] = health
+            # Retain the legacy launcher's DTO; protected capture authenticates the
+            # same value through PAI_RESULT_METADATA in the canonical terminal record.
             print(json.dumps({'type': 'result', 'provider_health': health}), file=sys.stderr, flush=True)
             logfire.info(
                 'Workflow finished',
@@ -177,7 +181,7 @@ def build_agent() -> Agent[None, str]:
 
 agent = build_agent()
 
-if os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'):
+if os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT') or os.environ.get('PAI_OTEL_EXPORT_PATH'):
     # As `cli.configure_observability`: request bodies would repeat each `chat` span's input messages.
     logfire.instrument_httpx(capture_headers=True, capture_response_body=True)
     logfire.instrument_mcp()

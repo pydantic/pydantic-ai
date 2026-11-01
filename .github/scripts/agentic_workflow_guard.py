@@ -579,6 +579,8 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
             ('XDG_CONFIG_HOME', '/tmp/gh-aw/clai2-config', 'isolated CLAI settings for the workflow budgets'),
             ('PYTHONPATH', '/tmp/gh-aw/workflow-python', 'the staged workflow-policy import path'),
             ('PAI_AGENT', 'pydantic_ai_gh_aw_shim.agent:agent', 'the repository workflow policy'),
+            ('PAI_RESULT_METADATA', 'pydantic_ai_gh_aw_shim.agent:result_metadata', 'authenticated workflow metadata'),
+            ('PAI_OTEL_EXPORT_PATH', '/tmp/gh-aw/pydantic-ai-private-otel.jsonl', 'credential-free workflow tracing'),
             ('GH_AW_PROTECTED_SESSION_CAPTURE', '1', 'native protected session capture'),
         ):
             if str(env.get(name)) != expected:

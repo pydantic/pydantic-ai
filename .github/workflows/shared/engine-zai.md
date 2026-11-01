@@ -23,7 +23,7 @@
 #   imports:
 #     - shared/engine-zai.md
 imports:
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@80a13916fbdac4891828aaeaa532da3b9785b203
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@5f462569c2b7467e070c7f6c82d5e92bda50fffe
 runtimes:
   uv: {}
 # Keep existing configurable budgets. AWF also has a fixed 10,000-credit cap.
@@ -54,6 +54,8 @@ engine:
     ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
     PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
+    PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
+    PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
     PYTHONPATH: /tmp/gh-aw/workflow-python
     XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
     GITHUB_WORKFLOW: ${{ github.workflow }}
@@ -68,6 +70,33 @@ engine:
   concurrency:
     group: "gh-aw-pydantic-ai-${{ github.workflow }}"
     queue: max
+post-steps:
+  - name: Forward private workflow spans from the host
+    if: always()
+    continue-on-error: true
+    uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+    with:
+      script: |
+        const fs = require('fs');
+        const path = require('path');
+        const { parseOTLPEndpoints, sendOTLPToAllEndpoints } = require(path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions', 'send_otlp_span.cjs'));
+        // Diagnostic input only. It cannot supply health decisions or canonical usage.
+        // Keep content-bearing spans out of otel.jsonl and uploaded agent artifacts.
+        const source = '/tmp/gh-aw/pydantic-ai-private-otel.jsonl';
+        if (!fs.existsSync(source)) return;
+        const descriptor = fs.openSync(source, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+        try {
+          if (!fs.fstatSync(descriptor).isFile()) throw new Error('Workflow telemetry must be a regular file');
+          const endpoints = parseOTLPEndpoints();
+          for (const line of fs.readFileSync(descriptor, 'utf8').split('\n').filter(Boolean)) {
+            const payload = JSON.parse(line);
+            if (!Array.isArray(payload.resourceSpans)) throw new Error('Invalid workflow span payload');
+            await sendOTLPToAllEndpoints(endpoints, payload, { skipJSONL: true });
+          }
+        } finally {
+          fs.closeSync(descriptor);
+          fs.unlinkSync(source);
+        }
 safe-outputs:
   threat-detection:
     # Detection has an independent budget and uses the same verified model pricing.

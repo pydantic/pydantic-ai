@@ -15,6 +15,15 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 # This module is a deterministic acceptance fixture, loaded through PAI_AGENT.
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 agent = Agent(name='native-recorder-acceptance')
+result_metadata: dict[str, object] = {
+    'provider_health': {
+        'workflow': 'native-recorder-acceptance',
+        'task_key': 'native-capture',
+        'trigger_event': 'workflow_dispatch',
+        'run_attempt': 1,
+        **({'failure': {'kind': 'rate_limit', 'http_status': 429}} if os.environ.get('FIXTURE_FAILURE') == '1' else {}),
+    }
+}
 _request_count = 0
 _probe_failed = False
 

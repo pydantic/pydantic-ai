@@ -203,6 +203,12 @@ async def test_attention_request_limit_is_enforced_and_reported(
     result = health.parse_run_result(artifact)
     assert result is not None
     assert result.failure == health.Failure('request_limit', None, None)
+    canonical = tmp_path / 'agent-session.jsonl'
+    canonical.write_text(
+        json.dumps({'type': 'session.result', 'data': {'status': 'failure', 'metadata': workflow.result_metadata}})
+        + '\n'
+    )
+    assert health.parse_run_result(canonical) == result
 
 
 async def test_request_limit_after_safe_output_preserves_success(
@@ -328,6 +334,12 @@ async def test_deadline_reports_time_limit_without_waiting(
     result = health.parse_run_result(artifact)
     assert result is not None
     assert result.failure == health.Failure('time_limit', None, None)
+    canonical = tmp_path / 'agent-session.jsonl'
+    canonical.write_text(
+        json.dumps({'type': 'session.result', 'data': {'status': 'failure', 'metadata': workflow.result_metadata}})
+        + '\n'
+    )
+    assert health.parse_run_result(canonical) == result
 
 
 @pytest.fixture

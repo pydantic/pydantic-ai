@@ -774,6 +774,8 @@ jobs:
           -- /bin/bash -c 'exec node /tmp/gh-aw/actions/pydantic-ai_harness.cjs clai2'
         env:
           PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
+          PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
+          PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
           PAI_MODEL: anthropic/${{ vars.GH_AW_MODEL }}
           ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
           XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
@@ -805,6 +807,16 @@ def test_compiled_runner_contract_requires_protected_capture(tmp_path: Path, var
     violations = check_compiled_runner_contract(lock)
     assert [violation.check for violation in violations] == ['compiled-runner-contract']
     assert 'native protected session capture' in violations[0].message
+
+
+@pytest.mark.parametrize('variable', ['PAI_RESULT_METADATA', 'PAI_OTEL_EXPORT_PATH'])
+def test_compiled_runner_contract_requires_policy_observability(tmp_path: Path, variable: str):
+    """Compiling must retain the policy's authenticated outcome and private span path."""
+    workflow = yaml.safe_load(_PUBLIC_ENGINE_LOCK)
+    del workflow['jobs']['agent']['steps'][0]['env'][variable]
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    violations = check_compiled_runner_contract(lock)
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
 
 
 @pytest.mark.parametrize('pythonpath', [None, '/tmp/other-policy'])

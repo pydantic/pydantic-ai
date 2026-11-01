@@ -779,7 +779,16 @@ def _failure_from(value: object) -> Failure | None:
 
 def _run_result_from(value: object) -> RunResult | None:
     data = _mapping(value)
-    if data is None or data.get('type') != 'result':
+    if data is None:
+        return None
+    if data.get('type') == 'session.result':
+        terminal = _mapping(data.get('data'))
+        if terminal is None:
+            return None
+        data = _mapping(terminal.get('metadata'))
+        if data is None:
+            return None
+    elif data.get('type') != 'result':
         return None
     data = _mapping(data.get('provider_health'))
     if data is None:
@@ -828,14 +837,19 @@ def parse_run_result(path: Path, expected_attempt: int | None = None) -> RunResu
     """Return one unambiguous terminal record from downloaded agent artifacts."""
     if not path.exists():
         return None
-    if path.is_file() and path.name != 'agent-stdio.log':
+    if path.is_file() and path.name not in ('agent-stdio.log', 'agent-session.jsonl'):
         return None
     if path.is_dir():
-        eligible = sorted(
-            file
-            for file in path.rglob('agent-stdio.log')
+        directories = {
+            file.parent
+            for file in path.rglob('*')
             if file.is_file()
+            and file.name in ('agent-stdio.log', 'agent-session.jsonl')
             and (file.parent.name == 'agent' or re.fullmatch(r'[0-9a-fA-F]{8,64}-agent', file.parent.name) is not None)
+        }
+        eligible = sorted(
+            directory / ('agent-session.jsonl' if (directory / 'agent-session.jsonl').is_file() else 'agent-stdio.log')
+            for directory in directories
         )
         if expected_attempt is None:
             if len(eligible) != 1:

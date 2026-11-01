@@ -82,6 +82,10 @@ async function main() {
         assert.equal(transfer.parserFailed, false);
         requireRegularTree(staging);
         assert(fs.existsSync(path.join(staging, 'agent-session.jsonl')), 'verified canonical session missing after download');
+        const terminal = parseEventLines(fs.readFileSync(path.join(staging, 'agent-session.jsonl'), 'utf8')).at(-1);
+        assert.equal(terminal.type, 'session.result');
+        assert.equal(terminal.data.metadata.provider_health.task_key, 'native-capture');
+        assert.equal(terminal.data.metadata.provider_health.failure?.kind, scenario === 'failure' ? 'rate_limit' : undefined);
       }
       const sidecarReceipt = JSON.parse(fs.readFileSync(path.join(input, scenario, 'untrusted-sidecars.json'), 'utf8'));
       const expectedNativeExit = cases.find(([name]) => name === scenario)[1];
