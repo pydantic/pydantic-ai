@@ -18,6 +18,7 @@ from dirty_equals import HasRepr, IsNumber, IsOneOf
 from pydantic import BaseModel, TypeAdapter
 
 from .._inline_snapshot import snapshot
+from ..clock_utils import LONG_TIMEOUT, Clock
 from ..conftest import IsStr, try_import
 from .utils import render_table
 
@@ -2762,23 +2763,19 @@ async def test_task_timeout_abandons_sync_task_thread(anyio_backend: str, monkey
         finally:
             finished.set()
 
-    # A deadline that passes before a worker thread picks the task up abandons a task that never ran, so the deadline
-    # passes only once the task is running: the test moves the event loop's clock past it rather than waiting for it.
-    loop = asyncio.get_running_loop()
-    real_time = loop.time
-    offset = 0.0
-    monkeypatch.setattr(loop, 'time', lambda: real_time() + offset)
+    # A deadline that passes before a worker thread picks the task up abandons a task that never ran.
+    clock = Clock()
+    clock.install(monkeypatch)
 
     async def pass_deadline_once_started() -> None:
-        nonlocal offset
         assert await anyio.to_thread.run_sync(started.wait, READINESS_WAIT_TIMEOUT)
-        offset += READINESS_WAIT_TIMEOUT
+        clock.advance()
 
     dataset = Dataset[str, str, None](name='timeout', cases=[Case(inputs='input')])
     try:
         async with anyio.create_task_group() as tg:
             tg.start_soon(pass_deadline_once_started)
-            report = await dataset.evaluate(task, task_timeout=READINESS_WAIT_TIMEOUT, progress=False)
+            report = await dataset.evaluate(task, task_timeout=LONG_TIMEOUT, progress=False)
 
             # The deadline is enforced before the worker thread returns: it is abandoned, not awaited.
             assert not finished.is_set()
