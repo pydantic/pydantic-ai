@@ -47,6 +47,7 @@ from pydantic_ai_harness import (
     ManagedPrompt,
     Ordinal,
     OutputGuardrail,
+    Peers,
     PostHog,
     Pylon,
     RelevanceCompaction,
@@ -70,6 +71,7 @@ from pydantic_ai_harness.github import GitHub
 from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
+from pydantic_ai_harness.peers import InMemoryPeerNetwork
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
@@ -255,6 +257,7 @@ FIXTURES: dict[str, Fixture] = {
     'Advisor': lambda _: Advisor(TestModel()),
     'ApprovalReviewer': lambda _: ApprovalReviewer(TestModel(), question='Is this safe?'),
     'AskUser': lambda _: AskUser(answerer=None),
+    'Peers': lambda _: Peers(network=InMemoryPeerNetwork().join(handle='self')),
     'BubblewrapSandbox': lambda tmp_path: BubblewrapSandbox(LocalWorkspace(tmp_path)),
     'CapabilityCreation': lambda tmp_path: [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)],
     'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
