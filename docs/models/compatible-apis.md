@@ -104,6 +104,23 @@ Use [`NativeOutput`][pydantic_ai.output.NativeOutput] for Fireworks' schema-cons
 Fireworks enforces the schema through its OpenAI-compatible `response_format` parameter.
 As the [Fireworks structured output documentation](https://docs.fireworks.ai/structured-responses/structured-response-formatting) describes, `pattern` enforcement is best-effort: unsupported regex constructs, such as lookahead and lookbehind, are ignored, leaving the field as an unconstrained string. Pydantic AI still validates the output, so a value that doesn't match the pattern triggers an output retry.
 
+## Gisoo
+
+[Gisoo](https://gisoo.pro) is a prepaid relay with an OpenAI-compatible Chat Completions API that serves models from several developers. Create an API key in your Gisoo account, then use [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] with `https://gisoo.pro/api/v1` as the `base_url`, or set the `OPENAI_BASE_URL` and `OPENAI_API_KEY` environment variables. The available model names are listed in the [Gisoo documentation](https://gisoo.pro/docs/models).
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'claude-opus-5-5',
+    provider=OpenAIProvider(base_url='https://gisoo.pro/api/v1', api_key='your-gisoo-api-key'),
+)
+agent = Agent(model)
+...
+```
+
 ## Heroku AI
 
 To use [Heroku AI](https://www.heroku.com/ai), first create an API key.
