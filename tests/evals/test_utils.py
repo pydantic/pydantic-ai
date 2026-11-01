@@ -154,6 +154,7 @@ def test_get_unwrapped_function_name_partial_callable_instance(wrapped: bool):
 
         task = wrapped_task
 
+    assert task(3) == 5
     assert get_unwrapped_function_name(task) == (
         'test_get_unwrapped_function_name_partial_callable_instance.<locals>.CallableClass.__call__'
     )
