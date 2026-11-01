@@ -29,7 +29,20 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from random import random
 from types import TracebackType
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Never, Self, TypeVar, assert_never, cast, get_args, overload
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    Never,
+    Self,
+    TypeAlias,
+    TypeVar,
+    assert_never,
+    cast,
+    get_args,
+    overload,
+)
 
 import anyio
 import httpx2
@@ -229,6 +242,7 @@ try:
     from openai.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
     from openai.types.chat.completion_create_params import (
         Moderation,
+        PromptCacheOptions as ChatPromptCacheOptions,
         WebSearchOptions,
         WebSearchOptionsUserLocation,
         WebSearchOptionsUserLocationApproximate,
@@ -911,14 +925,21 @@ class _ResponsesCreateParams(TypedDict):
     moderation: Moderation | Omit
 
 
+_OpenAIPromptCacheTTL: TypeAlias = Literal['30m', '12h']
+"""The prompt cache TTLs OpenAI accepts on GPT-5.6 and later."""
+
+
 class OpenAIPromptCacheOptions(TypedDict, total=False):
     """Options for OpenAI prompt caching on GPT-5.6 models."""
 
     mode: Literal['implicit', 'explicit']
     """Whether OpenAI may create an implicit cache breakpoint. Defaults to `implicit`."""
 
-    ttl: Literal['30m']
-    """The minimum lifetime for cache breakpoints. Defaults to `30m`, the only currently supported value."""
+    ttl: Literal['30m', '12h']
+    """The minimum lifetime for cache breakpoints. Defaults to `30m`.
+
+    `12h` is accepted only by the Responses API; Chat Completions rejects it with a 400.
+    """
 
 
 class _OpenAIPromptCacheBreakpoint(TypedDict):
@@ -1437,13 +1458,15 @@ independent of the GPT-5.6 cache options, so it combines with the unified settin
 def _openai_effective_cache_settings(settings: OpenAIChatModelSettings) -> tuple[CacheSetting | None, ...]:
     """The cache settings that take effect when any of `_CACHE_SETTINGS_KEYS` is present.
 
-    The implicit breakpoint (`mode='implicit'`, the default) caches at the 30-minute TTL, as does an
-    instruction breakpoint; with `mode='explicit'` and no instruction breakpoint, only `CachePoint`s cache.
+    The implicit breakpoint (`mode='implicit'`, the default) caches at the request-wide `ttl` (30 minutes by
+    default), as does an instruction breakpoint; with `mode='explicit'` and no instruction breakpoint, only
+    `CachePoint`s cache.
     """
     options = settings.get('openai_prompt_cache_options') or {}
+    ttl = options.get('ttl', '30m')
     return (
-        '30m' if options.get('mode', 'implicit') == 'implicit' else None,
-        '30m' if settings.get('openai_cache_instructions') else None,
+        ttl if options.get('mode', 'implicit') == 'implicit' else None,
+        ttl if settings.get('openai_cache_instructions') else None,
     )
 
 
@@ -1467,19 +1490,23 @@ def _translate_openai_cache(
     ):
         return model_settings
     translated = cast(OpenAIChatModelSettings, {**(model_settings or {})})
-    # `'30m'` is the only TTL OpenAI accepts, so every retention snaps to it.
-    _, messages = split_cache_setting(params.cache)
+    # The retention has been snapped to the profile's `supported_cache_retentions`, which OpenAI's TTLs make up.
+    retention, messages = split_cache_setting(params.cache)
+    ttl: _OpenAIPromptCacheTTL = '12h' if retention == '12h' else '30m'
     translated['openai_prompt_cache_options'] = (
-        {'mode': 'implicit', 'ttl': '30m'} if messages else _PREFIX_ONLY_CACHE_OPTIONS
+        {'mode': 'implicit', 'ttl': ttl} if messages else _PREFIX_ONLY_CACHE_OPTIONS[ttl]
     )
     translated['openai_cache_instructions'] = True
     return translated
 
 
-_PREFIX_ONLY_CACHE_OPTIONS: OpenAIPromptCacheOptions = {'mode': 'explicit', 'ttl': '30m'}
-"""The prompt cache options the unified `cache` setting maps `messages=False` to.
+_PREFIX_ONLY_CACHE_OPTIONS: dict[_OpenAIPromptCacheTTL, OpenAIPromptCacheOptions] = {
+    '30m': {'mode': 'explicit', 'ttl': '30m'},
+    '12h': {'mode': 'explicit', 'ttl': '12h'},
+}
+"""The prompt cache options the unified `cache` setting maps `messages=False` to, per TTL.
 
-Never mutated: `_keep_implicit_cache_without_breakpoints` checks for this exact object, so that options a
+Never mutated: `_keep_implicit_cache_without_breakpoints` checks for these exact objects, so that options a
 caller set with the same values, which take precedence over the unified setting, are left alone.
 """
 
@@ -1511,10 +1538,13 @@ def _keep_implicit_cache_without_breakpoints(
     instead. Checking the mapped request rather than repeating those gates keeps the two from drifting.
     Mutates `settings`.
     """
-    if settings.get('openai_prompt_cache_options') is _PREFIX_ONLY_CACHE_OPTIONS and not _has_prompt_cache_breakpoint(
-        items
+    options = settings.get('openai_prompt_cache_options')
+    if (
+        options is not None
+        and any(options is prefix_only for prefix_only in _PREFIX_ONLY_CACHE_OPTIONS.values())
+        and not _has_prompt_cache_breakpoint(items)
     ):
-        settings['openai_prompt_cache_options'] = {'mode': 'implicit', 'ttl': '30m'}
+        settings['openai_prompt_cache_options'] = {'mode': 'implicit', 'ttl': options.get('ttl', '30m')}
 
 
 def _resolve_legacy_cache_retention(
@@ -1611,6 +1641,20 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 '`OpenAIResponsesModel` or the `openai:` prefix.'
             )
         return super()._no_batch_api_message()
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Leave the `'12h'` cache retention out of `supported_cache_retentions`, before the user's `profile=` applies.
+
+        Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6
+        and GPT-6.1 model), while the Responses API on the same models accepts it, and the providers declare their
+        tiers per model rather than per API.
+        """
+        retentions = profile.get('supported_cache_retentions', ())
+        if '12h' not in retentions:
+            return profile
+        return merge_profile(
+            profile, ModelProfile(supported_cache_retentions=tuple(tier for tier in retentions if tier != '12h'))
+        )
 
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
@@ -1866,7 +1910,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     verbosity=model_settings.get('openai_text_verbosity', OMIT),
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                     prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
-                    prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
+                    # Passed through as given: Chat Completions rejects a `'12h'` TTL with a 400, and the unified
+                    # `cache` setting never sends one here (see `_instance_profile_defaults`).
+                    prompt_cache_options=cast(
+                        'ChatPromptCacheOptions | Omit', model_settings.get('openai_prompt_cache_options', OMIT)
+                    ),
                     extra_headers=extra_headers,
                     extra_body=self._thinking_false_extra_body(model_settings, model_request_parameters),
                 )
@@ -4713,7 +4761,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         comparison_response_id = self._prompt_cache_comparison_response_id(messages, model_settings)
         if cache_options is not None or comparison_response_id is not None:
             prompt_cache_options = (
-                ResponsesPromptCacheOptions(**cache_options)
+                # The SDK's `ttl` type only lists `'30m'`, but the Responses API also accepts `'12h'`.
+                cast(ResponsesPromptCacheOptions, {**cache_options})
                 if cache_options is not None
                 else ResponsesPromptCacheOptions()
             )
