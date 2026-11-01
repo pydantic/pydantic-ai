@@ -15,9 +15,9 @@ pre-agent-steps:
       # GITHUB_COPILOT_INTEGRATION_ID below requires 2.59.
       python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0" "cryptography>=48.0.1"
       # Logfire 4.39.0 is pydantic-ai-slim's compatibility floor. Install it only
-      # when gh-aw supplies an OTLP endpoint, so other runs pay no installation cost.
-      if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
-        python3 -P -m pip install --quiet --user --disable-pip-version-check "logfire>=4.39.0"
+      # when direct or local-file telemetry is configured.
+      if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}${PAI_OTEL_EXPORT_PATH:-}" ]; then
+        python3 -P -m pip install --quiet --user --disable-pip-version-check "logfire>=4.39.0" "opentelemetry-exporter-otlp-json-file>=0.64b0"
       fi
       "$HOME/.local/bin/clai2" --help
       python3 -P -c "from pydantic_ai_harness import Coder"
@@ -340,7 +340,7 @@ engine:
                   elif isinstance(event.part, ThinkingPart):
                       _emit('assistant.reasoning', {'content': event.part.content})
 
-          def finish(self, exit_code: int) -> None:
+          def finish(self, exit_code: int, metadata: dict[str, object] | None = None) -> None:
               global _finished
               if _finished:
                   return
@@ -360,6 +360,8 @@ engine:
                   if _usage.cache_write_tokens or _usage.cache_read_tokens:
                       usage['input_tokens_include_cache'] = True
               result: dict[str, object] = {'status': 'success' if exit_code == 0 else 'failure', 'sourceType': 'pydantic-ai'}
+              if metadata is not None:
+                  result['metadata'] = _json_value(metadata)
               if usage is not None:
                   result['usage'] = usage
               _emit('session.result', result)
@@ -423,15 +425,25 @@ engine:
       import gh_aw_recording
 
       target, prompt_file, *cli_args = sys.argv[1:]
+      if os.environ.pop('GH_AW_PREWRITTEN_NOOP', '') == '1':
+          gh_aw_recording.write_event({
+              'type': 'session.result',
+              'data': {'status': 'success', 'sourceType': 'pydantic-ai'},
+              'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+          })
+          raise SystemExit(0)
       module, separator, attribute = target.rpartition(':')
       original_stdout = sys.stdout
       stdout_sink = open(os.devnull, 'w')
       sys.stdout = stdout_sink
       exit_code = 0
       agent_module = None
+      telemetry_enabled = False
+      metadata = None
       try:
           importlib.import_module('pydantic_clai2')
-          if os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'):
+          telemetry_path = os.environ.get('PAI_OTEL_EXPORT_PATH')
+          if telemetry_path or os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'):
               import atexit
               import tempfile
               import logfire
@@ -440,14 +452,28 @@ engine:
               # before this private directory is removed.
               logfire_dir = tempfile.TemporaryDirectory(prefix='gh-aw-logfire-', dir='/tmp')
               atexit.register(logfire_dir.cleanup)
+              processors = None
+              if telemetry_path:
+                  from opentelemetry.exporter.otlp.json.file import FileSpanExporter
+                  from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+                  telemetry_fd = os.open(
+                      telemetry_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, 'O_NOFOLLOW', 0), 0o600
+                  )
+                  telemetry_output = os.fdopen(telemetry_fd, 'w', encoding='utf-8')
+                  atexit.register(telemetry_output.close)
+                  processors = [SimpleSpanProcessor(FileSpanExporter(stream=telemetry_output))]
               logfire.configure(
-                  send_to_logfire='if-token-present',
+                  send_to_logfire=False if telemetry_path else 'if-token-present',
+                  additional_span_processors=processors,
+                  metrics=False if telemetry_path else None,
                   console=False,
                   distributed_tracing=True,
                   config_dir=logfire_dir.name,
                   data_dir=logfire_dir.name,
               )
               logfire.instrument_pydantic_ai()
+              telemetry_enabled = True
               traceparent = os.environ.get('TRACEPARENT')
               if traceparent:
                   from opentelemetry.context import attach
@@ -463,6 +489,14 @@ engine:
 
           if not isinstance(loaded, Agent):
               raise TypeError(f'{target} is {type(loaded).__name__}, not pydantic_ai.Agent')
+          metadata_target = os.environ.get('PAI_RESULT_METADATA')
+          if metadata_target:
+              metadata_module, metadata_separator, metadata_attribute = metadata_target.rpartition(':')
+              if not metadata_separator:
+                  raise ValueError('PAI_RESULT_METADATA expects MODULE:ATTRIBUTE')
+              metadata = getattr(importlib.import_module(metadata_module), metadata_attribute)
+              if not isinstance(metadata, dict) or not all(isinstance(key, str) for key in metadata):
+                  raise TypeError('PAI_RESULT_METADATA must refer to a dictionary with string keys')
           # Read in-process: workflow context can exceed the OS argv limit.
           sys.argv = ['clai2', *cli_args, '-p', Path(prompt_file).read_text(encoding='utf-8')]
           runpy.run_module('pydantic_clai2', run_name='__main__', alter_sys=True)
@@ -478,11 +512,13 @@ engine:
       finally:
           sys.stdout = original_stdout
           try:
+              if telemetry_enabled:
+                  logfire.force_flush()
               result_emitted = False
               try:
                   recorder = getattr(agent_module, '_recorder', None)
                   if recorder is not None:
-                      recorder.finish(exit_code)
+                      recorder.finish(exit_code, metadata)
                       result_emitted = True
               except Exception as exc:
                   print(f'[pydantic-ai] Unable to finish session recording: {exc}', file=sys.stderr)
@@ -492,6 +528,8 @@ engine:
                       'data': {'status': 'success' if exit_code == 0 else 'failure', 'sourceType': 'pydantic-ai'},
                       'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
                   }
+                  if metadata is not None:
+                      event['data']['metadata'] = metadata
                   try:
                       gh_aw_recording.write_event(event)
                   except Exception as exc:
@@ -523,13 +561,12 @@ engine:
         });
         if (hasNoop) {
           log(`skipping the engine: an earlier step wrote a noop to ${safeOutputs}`);
-          return;
         }
 
         const workspace = process.env.GITHUB_WORKSPACE;
-        if (!workspace) throw new Error("GITHUB_WORKSPACE is required");
+        if (!hasNoop && !workspace) throw new Error("GITHUB_WORKSPACE is required");
         const promptFile = process.env.GH_AW_PROMPT;
-        if (!promptFile) throw new Error("GH_AW_PROMPT is required");
+        if (!hasNoop && !promptFile) throw new Error("GH_AW_PROMPT is required");
         if (process.env.GH_AW_PROTECTED_SESSION_CAPTURE !== "1") {
           throw new Error(
             "This Pydantic AI engine requires a gh-aw runtime with protected session capture; " +
@@ -599,6 +636,11 @@ engine:
         // The wrapper adds the checkout only when resolving an imported PAI_AGENT,
         // after trusted framework packages have loaded.
         env.PYTHONPATH = [moduleDir, process.env.PYTHONPATH || ""].filter(Boolean).join(":");
+        if (hasNoop) {
+          env.GH_AW_PREWRITTEN_NOOP = "1";
+          process.execve(python, [python, "-P", "-c", LAUNCHER, agentTarget, promptFile || ""], env);
+          return;
+        }
         if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
           // Traces-only backends return 404 noise for metrics and logs. A workflow
           // can override either default when its backend accepts those signals.

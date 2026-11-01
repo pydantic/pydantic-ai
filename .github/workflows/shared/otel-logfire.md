@@ -23,4 +23,12 @@ observability:
     headers:
       Authorization: ${{ secrets.LOGFIRE_TOKEN }}
     if-missing: warn
+network:
+  allowed:
+    - logfire-api.pydantic.dev
+    - logfire-eu.pydantic.dev
+    - logfire-us.pydantic.dev
+    - logfire-api.pydantic.info
+    - logfire-eu.pydantic.info
+    - logfire-us.pydantic.info
 ---

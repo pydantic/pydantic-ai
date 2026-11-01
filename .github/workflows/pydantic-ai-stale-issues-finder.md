@@ -1,7 +1,7 @@
 ---
 emoji: "🔍"
 name: "Pydantic AI Stale Issues Finder"
-description: "Find open issues that are likely already resolved, obsolete, or tied to deprecated features, and file a report issue. Runs on the Pydantic AI gh-aw shim; the task prompt is iterable from a Logfire managed variable."
+description: "Find open issues that are likely already resolved, obsolete, or tied to deprecated features, and file a report issue. Runs on the public Pydantic AI CLAI 2 engine; the task prompt is iterable from a Logfire managed variable."
 # Weekly on Monday: gh-aw scatters the run and auto-adds workflow_dispatch.
 # Adjust to 'daily' or another weekly schedule to change frequency.
 on:
@@ -32,36 +32,8 @@ network:
     # ANTHROPIC_BASE_URL is a compile-time literal (below) so gh-aw already
     # auto-allowlists the host; this explicit entry is a harmless safety net.
     - api.z.ai
-# We register as the built-in `claude` engine and only override `command`, so
-# gh-aw runs its full Claude proxy + credential-injection machinery for us.
-# ANTHROPIC_BASE_URL MUST be a compile-time literal (not a ${{ vars.* }}
-# expression): gh-aw derives the api-proxy target host AND the
-# `--anthropic-api-base-path` from its parsed URL path at compile time. With a
-# vars expression the path can't be parsed, so the proxy drops the `/api/anthropic`
-# prefix and the upstream returns 404. Only ANTHROPIC_API_KEY stays a secret
-# (injected by the AWF api-proxy, excluded from the agent container). Z.AI Coding Plan
-# exposes an Anthropic-compatible API at https://api.z.ai/api/anthropic.
-runtimes:
-  uv: {}
 engine:
-  id: claude
-  # Pulled from the repo's `vars.GH_AW_MODEL` (set out-of-band).
-  # gh-aw compiles this into the engine command's `--model <name>` argv,
-  # which the harness reads via `args.model`.
-  model: ${{ vars.GH_AW_MODEL }}
-  # The checked-out workspace is mounted no-exec in the AWF sandbox, so a
-  # pre-step stages a launcher in gh-aw's exec-able /tmp/gh-aw/bin that runs
-  # `uv run --script` against the workspace harness.
-  command: /tmp/gh-aw/bin/pydantic-ai-runner-launch
-  env:
-    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
-    GITHUB_WORKFLOW: ${{ github.workflow }}
-    PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
-    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
-    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
-    # The custom shim is stateless, so an outer retry repeats the whole task.
-    GH_AW_HARNESS_MAX_RETRIES: "0"
+  model: anthropic/${{ vars.GH_AW_MODEL }}
 tools:
   github:
     mode: gh-proxy
@@ -90,17 +62,6 @@ safe-outputs:
     expires: 7d
     # Note: elastic uses 2d with twice-weekly schedule. Adjust 'expires'
     # and the schedule together if you change run frequency.
-  threat-detection:
-    # Detection's separate AWF config does not inherit the model pricing below.
-    max-ai-credits: -1
-    # Detection uses the stateful Claude CLI, so it retains normal recovery.
-    engine:
-      id: claude
-      model: ${{ vars.GH_AW_MODEL }}
-      env:
-        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
-        GH_AW_HARNESS_MAX_RETRIES: "3"
 timeout-minutes: 60
 env:
   # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
@@ -109,13 +70,6 @@ env:
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "60"
-# Fallback pricing in dollars per 1M tokens, read only if an AI-credits budget is ever
-# active — it is not, and no `models.providers` entry accompanies it. See
-# `shared/engine-zai.md` for why pricing the configured model there can stop the agent.
-models:
-  default-ai-credits-pricing:
-    input: 0.6
-    output: 2.4
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
@@ -125,41 +79,21 @@ imports:
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
+  - shared/engine-zai.md
   - shared/provider-health.md
-pre-steps:
-  # Setting engine.command makes gh-aw skip ALL engine installation steps,
-  # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
-  # own installer (the same call it makes for non-custom-command jobs).
-  - name: Install AWF firewall binary (skipped by custom engine.command)
-    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.44
-
 pre-agent-steps:
-  # Stage the committed launcher script at gh-aw's exec-able
-  # /tmp/gh-aw/bin/ path. Runs in pre-agent-steps (not pre-steps) because
-  # gh-aw's repository checkout happens between pre-steps and
-  # pre-agent-steps, and this step reads from .github/scripts/ in the
-  # workspace.
-  - name: Stage Pydantic AI gh-aw shim launcher
-    run: |
-      mkdir -p /tmp/gh-aw/bin
-      install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
-  # Install ripgrep and expose uv+rg inside the AWF chroot.
-  # AWF auto-merges /opt/hostedtoolcache/**/bin into the container PATH
-  # and also reads $GITHUB_PATH entries added before the engine step.
+  - name: Install repository workflow policy
+    run: bash .github/scripts/stage-gh-aw-agent.sh
   - name: Install tools for AWF sandbox (ripgrep)
     run: bash .github/scripts/install-sandbox-tools.sh
-  # Warm the harness's uv script environment on the OPEN network so the
-  # firewalled agent reuses a warm cache (non-fatal on failure).
-  - name: Pre-warm Pydantic AI gh-aw shim uv environment
-    run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
   # Fetch all open issues before the AWF firewall blocks gh CLI access.
   # The script writes one JSON file per issue and pre-groups issues into
   # batch folders for subagent fan-out.
   - name: Prescan open issues and build batch folders
     env:
       GH_TOKEN: ${{ github.token }}
-      # One file per issue under /tmp/gh-aw/agent/issues/all.
-      # Batches under /tmp/gh-aw/agent/issues/batches/batch-XXX.
+      # One file per issue under $GITHUB_WORKSPACE/.github/.issue-context/issues/all.
+      # Batches under $GITHUB_WORKSPACE/.github/.issue-context/issues/batches/batch-XXX.
       BATCH_SIZE: 25
       ISSUE_LIMIT: 1000
     run: |

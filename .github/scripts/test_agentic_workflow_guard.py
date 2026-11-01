@@ -8,12 +8,16 @@ shapes. The final test asserts the live repository is clean.
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import TypeAdapter
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -42,6 +46,7 @@ from agentic_workflow_guard import (
     check_provider_health_wiring,
     check_safe_output_job_max,
     check_timeout_declared,
+    compiled_awf_configs,
     run_checks,
 )
 
@@ -58,6 +63,77 @@ def test_ci_review_compiled_membership_admits_installed_app_without_widening_rol
         'GH_AW_REQUIRED_ROLES': 'admin,maintainer,write',
         'GH_AW_ALLOWED_BOTS': 'pydantic-docs',
     }
+
+
+@pytest.mark.parametrize(
+    'body,commit_id,expected',
+    [
+        ('<!-- gh-aw-workflow-call-id: pydantic/pydantic-ai/pydantic-ai-pr-review -->', 'current-head', 1),
+        ('[gh-aw-workflow-call-id]: # "pydantic%2Fpydantic-ai%2Fpydantic-ai-pr-review"', 'current-head', 1),
+        ('<!-- gh-aw-workflow-call-id: pydantic/pydantic-ai/pydantic-ai-ui-security-review -->', 'current-head', 0),
+        ('[gh-aw-workflow-call-id]: # "pydantic%2Fpydantic-ai%2Fpydantic-ai-ui-security-review"', 'current-head', 0),
+        ('<!-- gh-aw-workflow-call-id: pydantic/pydantic-ai/pydantic-ai-pr-review -->', 'older-head', 0),
+        ('[gh-aw-workflow-call-id]: # "pydantic%2Fpydantic-ai%2Fpydantic-ai-pr-review"', 'older-head', 0),
+        ('No findings.', 'current-head', 0),
+        (None, 'current-head', 0),
+    ],
+)
+def test_ci_review_deduplicates_both_footer_formats(body: str | None, commit_id: str, expected: int):
+    lock = yaml.safe_load((WORKFLOWS_DIR / 'pydantic-ai-pr-review.lock.yml').read_text(encoding='utf-8'))
+    gate = next(step for step in lock['jobs']['eligibility']['steps'] if step.get('id') == 'gate')
+    query = re.search(
+        r"""jq --arg sha "\$HEAD_SHA" --arg caller "\$REVIEW_CALL_ID" '(.+?)'\)""", gate['run'], re.DOTALL
+    )
+    assert query is not None
+    caller = gate['env']['REVIEW_CALL_ID'].replace('${{ github.repository }}', 'pydantic/pydantic-ai')
+    # `$REVIEWS`: every page of reviews, already flattened by `jq 'add // []'`.
+    reviews: list[dict[str, object]] = [
+        {'commit_id': commit_id, 'body': body, 'user': {'login': 'github-actions[bot]'}},
+        {'commit_id': 'current-head', 'body': 'Another review from the same bot.'},
+    ]
+    # Exercise the compiled jq program with its production interpreter.
+    result = subprocess.run(
+        ['jq', '--arg', 'sha', 'current-head', '--arg', 'caller', caller, query.group(1)],
+        input=json.dumps(reviews),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert int(result.stdout) == expected
+
+
+def test_ci_review_stale_preflight_writes_noop_before_safe_outputs_setup(tmp_path: Path):
+    """The host preflight runs before safe-output setup, outside the model/VCR path."""
+    lock = yaml.safe_load((WORKFLOWS_DIR / 'pydantic-ai-pr-review.lock.yml').read_text(encoding='utf-8'))
+    steps = lock['jobs']['agent']['steps']
+    preflight = next(step for step in steps if step.get('name') == 'Skip a PR that closed or moved on while queued')
+    prepare = next(step for step in steps if step.get('name') == 'Prepare Safe Outputs Directories')
+    safe_outputs = tmp_path / 'gh-aw' / 'safeoutputs' / 'outputs.jsonl'
+    assert not safe_outputs.parent.exists()
+
+    gh = tmp_path / 'gh'
+    gh.write_text('#!/bin/sh\nprintf "closed at new-head\\n"\n', encoding='utf-8')
+    gh.chmod(0o755)
+    search_path = os.environ['PATH']
+    env: dict[str, str] = {
+        **os.environ,
+        'PATH': f'{tmp_path}:{search_path}',
+        'RUNNER_TEMP': str(tmp_path),
+        'SAFE_OUTPUTS': str(safe_outputs),
+        'PR': 'repos/pydantic/pydantic-ai/pulls/10450',
+        'HEAD_SHA': 'old-head',
+        'GITHUB_STEP_SUMMARY': str(tmp_path / 'summary.md'),
+    }
+    result = subprocess.run(['bash', '-c', preflight['run']], env=env, text=True, capture_output=True, check=True)
+    assert safe_outputs.exists(), result.stdout + result.stderr
+    original = safe_outputs.read_bytes()
+    assert json.loads(original) == {
+        'type': 'noop',
+        'message': 'Not reviewing old-head: the PR is now closed at new-head.',
+    }
+
+    subprocess.run(['bash', '-c', prepare['run']], env=env, check=True)
+    assert safe_outputs.read_bytes() == original
 
 
 def _write(path: Path, text: str) -> Path:
@@ -343,15 +419,18 @@ prompt
 # --- prompt paths (the review-context defect, #6766 F3) ----------------------
 
 
-def test_prompt_paths_catches_the_review_context_defect(tmp_path: Path):
+@pytest.mark.parametrize(
+    'path', ['/tmp/gh-aw/.review-context/', '/tmp/gh-aw/agent/open-issues.tsv', '/tmp/gh-aw/agent/issues/1.json']
+)
+def test_prompt_paths_catches_the_review_context_defect(tmp_path: Path, path: str):
     """The prompt told the agent to read a path its file tools cannot open."""
     source = _write(
         tmp_path / 'shared.md',
-        """---
+        f"""---
 name: x
 ---
 
-A pre-agent step wrote everything you need to `/tmp/gh-aw/.review-context/`.
+A pre-agent step wrote everything you need to `{path}`.
 **Read these files instead of calling the GitHub API.**
 """,
     )
@@ -359,7 +438,7 @@ A pre-agent step wrote everything you need to `/tmp/gh-aw/.review-context/`.
     violations = check_prompt_paths(source)
 
     assert [v.check for v in violations] == ['prompt-path-outside-workspace']
-    assert '/tmp/gh-aw/.review-context/' in violations[0].message
+    assert path in violations[0].message
 
 
 def test_prompt_paths_accepts_a_workspace_relative_path(tmp_path: Path):
@@ -445,9 +524,8 @@ A pre-agent step wrote everything you need to `/tmp/gh-aw/.review-context/`.
     [
         # Truncating the match at `:` would leave `/tmp/gh-aw/bin`, which is allowlisted.
         '/tmp/gh-aw/bin:secret/context.json',
-        # A sibling of an allowlisted *file*, the counterpart of `bindings/` vs `bin/`.
-        '/tmp/gh-aw/agent/open-issues.tsv.bak',
-        '/tmp/gh-aw/agent/issues-private/1.json',
+        '/tmp/gh-aw/agent/github-context.bak/1.json',
+        '/tmp/gh-aw/agent/github-context-private/1.json',
     ],
 )
 def test_prompt_paths_flags_a_near_miss_of_an_allowlist_entry(tmp_path: Path, path: str):
@@ -465,8 +543,6 @@ def test_prompt_paths_flags_a_near_miss_of_an_allowlist_entry(tmp_path: Path, pa
         '/tmp/gh-aw/bin',
         '/tmp/gh-aw/bin/pydantic-ai-runner-launch',
         '/tmp/gh-aw/agent/github-context/x.json',
-        '/tmp/gh-aw/agent/open-issues.tsv',
-        '/tmp/gh-aw/agent/issues/1.json',
     ],
 )
 def test_prompt_paths_allows_every_documented_corpus_path(tmp_path: Path, path: str):
@@ -674,43 +750,156 @@ def test_compiler_versions_accepts_a_uniform_set(tmp_path: Path):
     assert check_compiler_versions([a, b]) == []
 
 
-def test_compiled_runner_contract_rejects_drift_from_the_gh_aw_shim(tmp_path: Path):
-    """The generated agent command is the seam between gh-aw and our custom runner."""
+def test_compiled_runner_contract_rejects_the_legacy_runner(tmp_path: Path):
+    """A legacy runner must not silently bypass CLAI 2 and canonical capture."""
     lock = _write(
         tmp_path / 'w.lock.yml',
-        """
+        'jobs: {agent: {steps: [{id: agentic_execution, run: pydantic-ai-runner-launch}]}}',
+    )
+    violations = check_compiled_runner_contract(lock)
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'public CLAI 2 harness' in violations[0].message
+
+
+_PUBLIC_ENGINE_LOCK = """
 jobs:
   agent:
+    env:
+      GH_AW_ENGINE_VERSION: '0.64.0'
     steps:
-      - name: Run agent
-        run: |
-          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch --allowed-tools "Read,mcp__safeoutputs_fake"' --output-format stream-json --mcp-config ignored
-""",
-    )
+      - id: agentic_execution
+        run: >-
+          awf --exclude-env ANTHROPIC_API_KEY
+          --capture-command-output '${RUNNER_TEMP}/gh-aw-protected-capture-${GH_AW_PROTECTED_CAPTURE_ID}'
+          -- /bin/bash -c 'exec node /tmp/gh-aw/actions/pydantic-ai_harness.cjs clai2'
+        env:
+          PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
+          PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
+          PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
+          PAI_MODEL: anthropic/${{ vars.GH_AW_MODEL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
+          PYTHONPATH: /tmp/gh-aw/workflow-python
+          PYDANTIC_AI_TASK_ID: stable-task
+          GH_AW_PROTECTED_SESSION_CAPTURE: 1
+          GH_AW_PROTECTED_CAPTURE_ID: run-attempt-job
+"""
 
+
+def test_compiled_runner_contract_accepts_the_public_engine(tmp_path: Path):
+    """The public engine retains policy, model and proxy credential exclusion."""
+    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK)
+    assert check_compiled_runner_contract(lock) == []
+
+
+@pytest.mark.parametrize('version', ['0.59.0', '0.64.0', '0.65.1', 'invalid'])
+def test_compiled_runner_contract_allows_compatible_runtime_upgrades(tmp_path: Path, version: str):
+    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('0.64.0', version))
+    violations = check_compiled_runner_contract(lock)
+    assert bool(violations) == (version in {'0.59.0', 'invalid'})
+
+
+@pytest.mark.parametrize('variable', ['GH_AW_PROTECTED_SESSION_CAPTURE', 'GH_AW_PROTECTED_CAPTURE_ID'])
+def test_compiled_runner_contract_requires_protected_capture(tmp_path: Path, variable: str):
+    workflow = yaml.safe_load(_PUBLIC_ENGINE_LOCK)
+    del workflow['jobs']['agent']['steps'][0]['env'][variable]
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    violations = check_compiled_runner_contract(lock)
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'native protected session capture' in violations[0].message
+
+
+@pytest.mark.parametrize('variable', ['PAI_RESULT_METADATA', 'PAI_OTEL_EXPORT_PATH'])
+def test_compiled_runner_contract_requires_policy_observability(tmp_path: Path, variable: str):
+    """Compiling must retain the policy's authenticated outcome and private span path."""
+    workflow = yaml.safe_load(_PUBLIC_ENGINE_LOCK)
+    del workflow['jobs']['agent']['steps'][0]['env'][variable]
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    violations = check_compiled_runner_contract(lock)
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+
+
+@pytest.mark.parametrize('pythonpath', [None, '/tmp/other-policy'])
+def test_compiled_runner_contract_rejects_an_unavailable_policy(tmp_path: Path, pythonpath: str | None):
+    workflow = yaml.safe_load(_PUBLIC_ENGINE_LOCK)
+    env = workflow['jobs']['agent']['steps'][0]['env']
+    if pythonpath is None:
+        del env['PYTHONPATH']
+    else:
+        env['PYTHONPATH'] = pythonpath
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
     violations = check_compiled_runner_contract(lock)
 
-    assert [v.check for v in violations] == ['compiled-runner-contract']
-    assert '`mcp__safeoutputs`' in violations[0].message
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'staged workflow-policy import path' in violations[0].message
 
 
-def test_compiled_runner_contract_accepts_the_supported_interface(tmp_path: Path):
-    lock = _write(
-        tmp_path / 'w.lock.yml',
-        """
-jobs:
-  agent:
-    steps:
-      - name: Run agent
-        run: >-
-          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch
-          --allowed-tools "Read,mcp__safeoutputs"
-          --output-format stream-json
-          --mcp-config mcp-servers.json'
-""",
+@pytest.mark.parametrize(
+    'command',
+    [
+        "echo 'pydantic-ai_harness.cjs clai2 --exclude-env ANTHROPIC_API_KEY'\nawf -- /tmp/legacy-launcher",
+        'awf -- /bin/bash -c \'echo "--exclude-env ANTHROPIC_API_KEY"; node /tmp/gh-aw/actions/pydantic-ai_harness.cjs clai2\'',
+        'awf --exclude-env ANTHROPIC_API_KEY -- /bin/bash -c \'echo "pydantic-ai_harness.cjs clai2"; /tmp/legacy-launcher\'',
+        '# pydantic-ai_harness.cjs clai2 --exclude-env ANTHROPIC_API_KEY\nawf -- /tmp/legacy-launcher',
+        "awf -- /bin/bash -c 'node /tmp/gh-aw/actions/pydantic-ai_harness.cjs clai2' --exclude-env ANTHROPIC_API_KEY",
+    ],
+)
+def test_compiled_runner_contract_rejects_decoy_command_text(tmp_path: Path, command: str):
+    """Only executed commands and outer AWF arguments establish the contract."""
+    workflow = yaml.safe_load(_PUBLIC_ENGINE_LOCK)
+    workflow['jobs']['agent']['steps'][0]['run'] = command
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    assert [v.check for v in check_compiled_runner_contract(lock)] == ['compiled-runner-contract']
+
+
+@pytest.mark.parametrize('lock', sorted((Path(__file__).parent.parent / 'workflows').glob('pydantic-ai-*.lock.yml')))
+def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
+    """Every GLM producer receives compiled telemetry and verified accounting."""
+    workflow = yaml.safe_load(lock.read_text(encoding='utf-8'))
+    assert workflow['env']['OTEL_EXPORTER_OTLP_ENDPOINT']
+    assert workflow['env']['OTEL_EXPORTER_OTLP_HEADERS']
+    detector = next(
+        step['env']
+        for step in workflow['jobs']['detection']['steps']
+        if 'CLAUDE_CODE_ENABLE_TELEMETRY' in step.get('env', {})
     )
-
-    assert check_compiled_runner_contract(lock) == []
+    assert str(detector['CLAUDE_CODE_ENABLE_TELEMETRY']) == '1'
+    assert detector['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
+    assert detector['OTEL_LOGS_EXPORTER'] == 'otlp'
+    reporter = next(
+        step
+        for step in workflow['jobs']['detection']['steps']
+        if step.get('name') == 'Report detector usage and outcome'
+    )
+    assert reporter['if'] == "always() && steps.detection_guard.outputs.run_detection == 'true'"
+    assert reporter['env']['DETECTOR_OUTCOME'] == '${{ steps.detection_agentic_execution.outcome }}'
+    assert reporter['env']['DETECTOR_JOB_STATUS'] == '${{ job.status }}'
+    assert reporter['env']['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
+    assert reporter['continue-on-error'] is True
+    assert 'gh-aw.detector.result' in reporter['with']['script']
+    assert 'gh-aw.detector.request' in reporter['with']['script']
+    configs = compiled_awf_configs(lock)
+    assert len(configs) == 2
+    for config in configs:
+        proxy = config['apiProxy']
+        assert isinstance(proxy, dict)
+        assert proxy['providers']
+        assert proxy['defaultAiCreditsPricing']
+        network: dict[str, object] = TypeAdapter(dict[str, object]).validate_python(config['network'])
+        domains = network['allowDomains']
+        assert isinstance(domains, list)
+        assert all(
+            host in domains
+            for host in (
+                'logfire-api.pydantic.dev',
+                'logfire-eu.pydantic.dev',
+                'logfire-us.pydantic.dev',
+                'logfire-api.pydantic.info',
+                'logfire-eu.pydantic.info',
+                'logfire-us.pydantic.info',
+            )
+        )
+    assert check_ai_credits_accounting(lock) == []
 
 
 # --- AWF binary pin (the #8041 skew) ------------------------------------------
@@ -823,7 +1012,64 @@ jobs:
     assert 'GH_AW_INFO_AWF_VERSION' in violations[0].message
 
 
+@pytest.mark.parametrize('schema_version', ['v0.28.31', 'v0.28.44'])
+def test_awf_binary_version_compares_the_schema_when_info_is_empty(tmp_path: Path, schema_version: str):
+    """Custom engines emit an empty info version; their actual config supplies the reference."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        f"""
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        env:
+          GH_AW_INFO_AWF_VERSION: ""
+      - name: Install AWF binary
+        run: bash "${{RUNNER_TEMP}}/gh-aw/actions/install_awf_binary.sh" v0.28.31
+      - name: Write firewall config
+        run: >-
+          printf '%s' '{{"$schema":"https://github.com/github/gh-aw-firewall/releases/download/{schema_version}/config.schema.json"}}'
+""",
+    )
+
+    violations = check_awf_binary_version(lock)
+
+    if schema_version == 'v0.28.31':
+        assert violations == []
+    else:
+        assert [v.check for v in violations] == ['awf-binary-version']
+        assert 'v0.28.31' in violations[0].message
+        assert 'v0.28.44' in violations[0].message
+        assert 'Recompile with a gh-aw release' in violations[0].message
+
+
 # --- AI-credits accounting (the overlay that 403'd every agent job) -----------
+
+
+@pytest.mark.parametrize('per_million', [False, True])
+@pytest.mark.parametrize('stale_fallback', [False, True])
+def test_ai_credits_accounting_checks_glm_overlay_units(tmp_path: Path, per_million: bool, stale_fallback: bool):
+    """The same published rates use different units in the two pricing settings."""
+    unit = 1 if per_million else 1_000_000
+    config: dict[str, object] = {
+        'apiProxy': {
+            'defaultAiCreditsPricing': {'input': 0.6, 'cachedInput': 0.03, 'output': 2.4}
+            if stale_fallback
+            else {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50},
+            'providers': {
+                'anthropic': {
+                    'models': {
+                        'glm-5.3-flash': {
+                            'cost': {'input': 0.15 / unit, 'cache_read': 0.03 / unit, 'output': 0.50 / unit}
+                        }
+                    }
+                }
+            },
+        }
+    }
+    workflow: dict[str, object] = {'jobs': {'agent': {'steps': [{'run': f"printf '%s' '{json.dumps(config)}'"}]}}}
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    assert bool(check_ai_credits_accounting(lock)) is (per_million or stale_fallback)
 
 
 def test_ai_credits_accounting_rejects_a_priced_model_in_the_awf_config(tmp_path: Path):

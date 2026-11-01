@@ -1,13 +1,17 @@
-r"""Pydantic AI gh-aw shim — Claude Code CLI compatibility for gh-aw.
+r"""Claude Code CLI compatibility and shared policy for gh-aw workflows.
 
-gh-aw runs the agent engine like the Claude Code CLI:
+Production workflows load `agent.py` through the public `pydantic-ai` engine.
+This module provides the local/development runner and shared policy helpers
+(`run_request_limit`, `failure_details`, `compact_history`) used by that agent.
+
+The legacy runner accepts Claude Code CLI arguments:
 
     <command> --print --no-chrome --allowed-tools '<csv>' --debug-file <path> \\
       --verbose --permission-mode <mode> --output-format stream-json \\
       --mcp-config <mcp-servers.json> --prompt-file <prompt.txt> \\
       [--model <model>] "<rendered prompt>"
 
-With `engine.command` set, `<command>` is this shim. It speaks Claude
+With `engine.command` pointing to this shim, `<command>` speaks Claude
 Code's argv, recovers the prompt, builds a `pydantic-ai` agent backed by
 the gh-aw-injected Anthropic-compatible proxy, exposes Claude-named
 tools plus gh-aw's MCP servers (GitHub + the `safeoutputs` write-sink),
@@ -16,7 +20,7 @@ enforces gh-aw's `--allowed-tools` allow-list, and emits Claude-compatible
 
 Like Claude Code itself, the shim only talks to Anthropic-shape APIs
 (`ANTHROPIC_BASE_URL` → Anthropic or another Anthropic-compatible endpoint).
-No OpenAI path — the workflow's `engine.id: claude` contract is
+No OpenAI path — the legacy `engine.id: claude` contract is
 Anthropic-shape end to end.
 
 Credentials note: under gh-aw the real API key is *excluded* from the
@@ -90,6 +94,7 @@ from pydantic_ai.messages import (
     ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolSearchCallPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     ToolAvailabilityDeltaPart,
     ToolCallEvent,
     ToolCallPart,
@@ -159,7 +164,7 @@ def _mcp_protocol_error_message(error: Exception) -> str | None:
 
 
 @dataclass
-class _RecoverMCPToolErrors(AbstractCapability[object]):
+class RecoverMCPToolErrors(AbstractCapability[object]):
     """Hand escaped MCP protocol errors back to the model as recoverable `error:` results.
 
     Without this, a bare `McpError` from an MCP server crashes the whole run (an unhandled
@@ -190,11 +195,11 @@ def _mark_timed_out(span: Span) -> None:
 
 
 def _wall_clock_cap_expired() -> bool:
-    return any(expired() for expired in _wall_clock_caps.get())
+    return any(expired() for expired in wall_clock_caps.get())
 
 
 @dataclass
-class _MarkTimedOutSpans(AbstractCapability[object]):
+class MarkTimedOutSpans(AbstractCapability[object]):
     """Mark the agent-run and model-request spans that one of the shim's wall-clock caps cuts off.
 
     OpenTelemetry does not record `asyncio.CancelledError` as an error, so a run or request that
@@ -202,13 +207,15 @@ class _MarkTimedOutSpans(AbstractCapability[object]):
     A cut-off request also has no finish reason, and no usage when the provider reports it only at
     the end of the stream. Other cancellations, such as pydantic-ai stopping a request whose stream
     failed, are left as they are; pydantic-ai already records a cancelled tool span as an error.
-    Each hook runs inside the span pydantic-ai opens for it.
+    Each hook runs inside the span pydantic-ai opens for it. Under the CLAI 2 engine, a cut-off run
+    reaches `wrap_run` as the `RunTimeLimitExceeded` that `agent.WorkflowPolicy.on_run_error` raises
+    in place of the cancellation, which records an error but no `error.type`.
     """
 
     async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         try:
             return await handler()
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, RunTimeLimitExceeded):
             if _wall_clock_cap_expired():
                 _mark_timed_out(get_current_span())
             raise
@@ -479,7 +486,7 @@ DEFAULT_JOB_TIMEOUT_MINS = 30
 JOB_TIMEOUT_HEADROOM_MINS = 2
 
 
-def _run_timeout_secs() -> int:
+def run_timeout_secs() -> int:
     """Wall-clock budget for one agent run, derived from the job's own timeout."""
     raw = os.environ.get('PYDANTIC_AI_JOB_TIMEOUT_MINUTES') or os.environ.get('GH_AW_TIMEOUT_MINUTES') or ''
     try:
@@ -506,22 +513,22 @@ TIME_BUDGET_NOTICE = (
 )
 
 # Monotonic time at which `_run_with_timeout` cancels the run; `None` outside a run.
-_run_deadline: float | None = None
+run_deadline: float | None = None
 
 # Whether each wall-clock cap the current work runs under has expired, innermost last.
-_wall_clock_caps: ContextVar[tuple[Callable[[], bool], ...]] = ContextVar('_wall_clock_caps', default=())
+wall_clock_caps: ContextVar[tuple[Callable[[], bool], ...]] = ContextVar('wall_clock_caps', default=())
 
 
 @asynccontextmanager
 async def _wall_clock_cap(seconds: float) -> AsyncGenerator[None]:
     """`asyncio.timeout` that marks the span holding it when it expires.
 
-    It is registered so `_MarkTimedOutSpans` can tell the cancellations it causes from others, and a
+    It is registered so `MarkTimedOutSpans` can tell the cancellations it causes from others, and a
     `TimeoutError` raised by the work it caps leaves it unexpired. `task`'s cap marks the
     `execute_tool Task` span, which otherwise looks like a successful call.
     """
     cap = asyncio.timeout(seconds)
-    token = _wall_clock_caps.set((*_wall_clock_caps.get(), cap.expired))
+    token = wall_clock_caps.set((*wall_clock_caps.get(), cap.expired))
     try:
         async with cap:
             yield
@@ -530,12 +537,12 @@ async def _wall_clock_cap(seconds: float) -> AsyncGenerator[None]:
             _mark_timed_out(get_current_span())
         raise
     finally:
-        _wall_clock_caps.reset(token)
+        wall_clock_caps.reset(token)
 
 
 def _run_seconds_left() -> float | None:
     """Wall-clock seconds before the run is cancelled, or `None` when no run budget applies."""
-    return None if _run_deadline is None else _run_deadline - time.monotonic()
+    return None if run_deadline is None else run_deadline - time.monotonic()
 
 
 def time_budget_notice() -> str | None:
@@ -546,8 +553,9 @@ def time_budget_notice() -> str | None:
     return TIME_BUDGET_NOTICE
 
 
-# gh-aw's `safeoutputs` MCP server, under the shim's Claude Code tool-name prefix.
-SAFE_OUTPUT_TOOL_PREFIX = 'mcp__safeoutputs__'
+# gh-aw's `safeoutputs` MCP server: the shim's Claude Code tool-name prefix, then the
+# `<server>_` prefix `load_mcp_toolsets` gives it in the CLAI 2 engine.
+SAFE_OUTPUT_TOOL_PREFIXES = ('mcp__safeoutputs__', 'safeoutputs_')
 
 
 def hold_time_reserve_for_safe_output(
@@ -561,7 +569,7 @@ def hold_time_reserve_for_safe_output(
     """
     if time_budget_notice() is None:
         return tool_defs
-    return [tool_def for tool_def in tool_defs if tool_def.name.startswith(SAFE_OUTPUT_TOOL_PREFIX)]
+    return [tool_def for tool_def in tool_defs if tool_def.name.startswith(SAFE_OUTPUT_TOOL_PREFIXES)]
 
 
 class RunTimeLimitExceeded(Exception):
@@ -595,7 +603,7 @@ INSTRUCTIONS = (
     'provide `/tmp/gh-aw/agent/github-context/open-issues.json` and '
     '`open-pull-requests.json`; filter their local JSON with jq. PR reviewers '
     'use `$GITHUB_WORKSPACE/.review-context/`; the stale-issues workflow uses '
-    '`/tmp/gh-aw/agent/open-issues.tsv` and `/tmp/gh-aw/agent/issues/`. Do NOT '
+    '`.github/.issue-context/open-issues.tsv` and `.github/.issue-context/issues/`. Do NOT '
     'run `gh issue list`, `gh pr list`, `gh search`, or a paginated/list `gh api` '
     'request from inside the agent. Narrow per-item reads may still be used '
     'after the local corpus identifies a specific item. If required prefetched '
@@ -780,7 +788,7 @@ _SYNTHETIC_SUMMARY_TAG = '[compacted history]'
 
 
 def _is_synthetic_summary(message: ModelMessage) -> bool:
-    """A `ModelRequest` we synthesised in a prior `_compact_history` round."""
+    """A `ModelRequest` we synthesised in a prior `compact_history` round."""
     if not isinstance(message, ModelRequest):
         return False
     parts = message.parts
@@ -791,8 +799,15 @@ def _is_synthetic_summary(message: ModelMessage) -> bool:
     )
 
 
-async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]) -> list[ModelMessage]:
+async def compact_history(
+    ctx: RunContext[object], messages: list[ModelMessage], *, preserve_prompt: bool = False
+) -> list[ModelMessage]:
     """Cheap trim first; LLM-summarise the middle as fallback if still over budget."""
+    # CLAI supplies the workflow task as the first user message. Keep that exact
+    # contract outside the summary, including when summarisation fails.
+    if preserve_prompt and messages and isinstance(messages[0], ModelRequest):
+        if any(isinstance(part, UserPromptPart) for part in messages[0].parts):
+            return [messages[0], *await compact_history(ctx, messages[1:])]
     if len(messages) <= COMPACTION_KEEP_RECENT:
         return messages
     trimmed = _trim_tool_results(messages)
@@ -833,7 +848,9 @@ async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]
     assert isinstance(model, Model)
     try:
         r = await asyncio.wait_for(
-            Agent(cast('Model[Any]', model), instructions=COMPACTION_SUMMARY_INSTRUCTIONS).run(
+            Agent(
+                cast('Model[Any]', model), name='workflow-compaction', instructions=COMPACTION_SUMMARY_INSTRUCTIONS
+            ).run(
                 f'Transcript to summarise:\n\n{transcript[:COMPACTION_TRANSCRIPT_MAX_CHARS]}',
                 usage_limits=UsageLimits(request_limit=2),
                 usage=sub_usage,
@@ -846,12 +863,12 @@ async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]
         # stack is kept available (`exc_info`) without escalating the log level.
         # A bare `TimeoutError` stringifies to '' — fall back to the type name so
         # the emitted `error` is never empty.
-        ctx.usage.incr(sub_usage)
         detail = f'{type(exc).__name__}: {exc}' if str(exc) else type(exc).__name__
         logger.warning('compaction summarisation failed (%s); falling back', detail, exc_info=True)
         emit({'type': 'system', 'subtype': 'compaction_summary_failed', 'error': detail})
         return [prior_synthetic, *tail] if prior_synthetic else tail
-    ctx.usage.incr(sub_usage)
+    finally:
+        ctx.usage.incr(sub_usage)
     # If the summariser produces output larger than the middle it's replacing,
     # the next compaction round would trip on the same too-large synthetic
     # and never converge — fall back to the prior synthetic + tail.
@@ -1160,12 +1177,12 @@ def emit_result(
 
     provider_health: dict[str, object] = {
         'workflow': os.environ.get('GITHUB_WORKFLOW'),
-        'task_key': os.environ.get('PYDANTIC_AI_TASK_KEY'),
+        'task_key': os.environ.get('PYDANTIC_AI_TASK_ID') or os.environ.get('PYDANTIC_AI_TASK_KEY'),
         'trigger_event': os.environ.get('PYDANTIC_AI_TRIGGER_EVENT'),
         'run_attempt': run_attempt,
     }
     if is_error:
-        provider_health['failure'] = _failure_details(error)
+        provider_health['failure'] = failure_details(error)
     result: dict[str, object] = {
         'type': 'result',
         'subtype': 'error' if is_error else 'success',
@@ -1181,7 +1198,7 @@ def emit_result(
     emit(result)
 
 
-def _failure_details(error: BaseException | None) -> dict[str, object]:
+def failure_details(error: BaseException | None) -> dict[str, object]:
     """Return a safe, machine-readable classification while preserving the original error text."""
     kind = 'other'
     http_status: int | None = None
@@ -1235,7 +1252,11 @@ async def _stream_events(_ctx: RunContext[object], events: AsyncIterable[AgentSt
         elif isinstance(event, ToolResultEvent):
             # `outcome='retried'` means the call didn't work and pydantic-ai is asking the model to
             # make it again. Tag it so gh-aw doesn't read it as success.
-            is_retry = event.part.outcome == 'retried'
+            # TODO(v3): remove RetryPromptPart; the pinned runtime still emits it for a tool retry
+            is_retry = (
+                isinstance(event.part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                or event.part.outcome == 'retried'
+            )
             content = str(event.part.content)
             if len(content) > MAX_LIVE_TOOL_RESULT_CHARS:
                 content = (
@@ -1331,11 +1352,12 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     instructions = [INSTRUCTIONS, SUBAGENT_INSTRUCTIONS, prompt]
     sub = Agent(
         cast('Model[Any]', model),
+        name='workflow-delegate',
         instructions=instructions,
         toolsets=[sub_toolset],
         capabilities=[
             local_workspace(),
-            _MarkTimedOutSpans(),
+            MarkTimedOutSpans(),
             *_anthropic_native_capabilities(),
             ProcessEventStream(_stream_events),
         ],
@@ -1354,7 +1376,6 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     except TimeoutError:
         # A bare `TimeoutError` stringifies to '' — without an explicit message
         # the model (and the log) would see `sub-agent failed:` with no payload.
-        ctx.usage.incr(sub_usage)
         logger.error('sub-agent timed out after %.0f min: %s', timeout / 60, description[:120])
         timeout_error = f'error: sub-agent timed out after {math.ceil(timeout / 60)}min'
         # The resume is the sub-agent's last request, so it spends from the sub-agent's own request grant,
@@ -1376,7 +1397,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
                     cast('Model[Any]', model),
                     name='delegate-resume',
                     instructions=instructions,
-                    capabilities=[_MarkTimedOutSpans(), ProcessEventStream(_stream_events)],
+                    capabilities=[MarkTimedOutSpans(), ProcessEventStream(_stream_events)],
                 ).run(
                     SUBAGENT_RESUME_PROMPT,
                     message_history=repair_messages(history),
@@ -1397,12 +1418,11 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
         # The parent agent reacts to the returned string, but a sub-agent can hit
         # the same nested `ExceptionGroup`/`McpError` as the main run — log the
         # full stack so the failure isn't reduced to a one-line repr in the logs.
-        ctx.usage.incr(sub_usage)
         logger.exception('sub-agent failed: %s', description[:120])
         return f'error: sub-agent failed: {exc}'
     finally:
         _subagent_requests_in_flight -= sub_request_limit
-    ctx.usage.incr(sub_usage)
+        ctx.usage.incr(sub_usage)
     logger.info('Task done: +%d sub-requests (run total now %d)', sub_usage.requests, ctx.usage.requests)
     return str(result.output or '')
 
@@ -1416,9 +1436,9 @@ async def _run_with_timeout(
     session_id: str,
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
-    global _run_deadline
-    budget = _run_timeout_secs()
-    _run_deadline = time.monotonic() + budget
+    global run_deadline
+    budget = run_timeout_secs()
+    run_deadline = time.monotonic() + budget
     usage = RunUsage()
     try:
         async with AsyncExitStack() as stack:
@@ -1449,7 +1469,7 @@ async def _run_with_timeout(
         )
         return 1
     finally:
-        _run_deadline = None
+        run_deadline = None
 
 
 async def run(
@@ -1472,11 +1492,11 @@ async def run(
         capabilities=[
             # The Claude tools act on `ctx.workspace`: the checkout at `$GITHUB_WORKSPACE`.
             local_workspace(),
-            _RecoverMCPToolErrors(),
+            RecoverMCPToolErrors(),
             *_anthropic_native_capabilities(),
-            ProcessHistory(_compact_history),
+            ProcessHistory(compact_history),
             ProcessEventStream(_stream_events),
-            _MarkTimedOutSpans(),
+            MarkTimedOutSpans(),
             PrepareTools(hold_time_reserve_for_safe_output),
         ],
     )

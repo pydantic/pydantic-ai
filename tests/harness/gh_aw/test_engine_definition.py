@@ -687,8 +687,9 @@ def test_a_noop_written_by_an_earlier_step_skips_the_engine(tmp_path: Path, safe
 
     assert completed.returncode == 0, completed.stderr
     assert f'skipping the engine: an earlier step wrote a noop to {path}' in completed.stdout
-    assert completed.stderr == ''
-    assert not (tmp_path / 'record.json').exists()
+    recorded = json.loads((tmp_path / 'record.json').read_text())
+    assert recorded['env']['GH_AW_PREWRITTEN_NOOP'] == '1'
+    assert 'GH-AW-SESSION-PUBKEY:' in completed.stderr
 
 
 @pytest.mark.parametrize(

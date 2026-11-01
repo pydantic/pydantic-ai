@@ -277,6 +277,7 @@ jobs:
         run: >-
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py
+          .github/scripts/test_workflow_agent.py
           .github/scripts/test_review_lifecycle.py
           .github/scripts/test_pre_agent_steps_tag_fetch.py
           .github/scripts/test_agent_provider_health.py
@@ -301,6 +302,9 @@ jobs:
           .github/scripts/test_shard_durations.py
           .github/scripts/test_ci_matrix.py
           scripts/test_gather_pydantic_ai_review_context.py
+
+      - name: Test threat detector telemetry
+        run: node --test .github/scripts/test_detector_telemetry.cjs .github/scripts/test_workflow_telemetry.cjs
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.

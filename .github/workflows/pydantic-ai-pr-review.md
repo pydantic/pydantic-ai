@@ -4,8 +4,8 @@ name: "CI Review"
 description: "AI-driven PR review on the Pydantic AI gh-aw shim, triggered once the PR's current head has passed CI and is approved, labeled `final-review`, or dispatched: inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
 on:
   # Review a PR once it is about to merge, not on every push. One agent slot serves
-  # every PR (`engine.concurrency` below), so a review per passing push queued for
-  # hours. Each of these is a request:
+  # every PR (`engine.concurrency` in `shared/engine-zai.md`), so a review per
+  # passing push queued for hours. Each of these is a request:
   #
   # - an APPROVED review of the current head from a user with write access or
   #   higher (`pull_request_review`);
@@ -49,6 +49,11 @@ on:
   # demand via the `douwebot` label path in bots.yml.
   roles: [admin, maintainer, write]
   bots: [pydantic-docs]
+# CI Review handles arbitrary PR branch names. Eligibility verifies the triggering
+# head repository, live PR repository, author permission, and exact current head.
+threat-detection-suppress:
+  - rule: CTR-021
+    reason: Review all same-repository PR branches after eligibility validates the exact head and permissions.
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
@@ -131,42 +136,6 @@ safe-outputs:
     # rerun dedup in `eligibility`, and `supersede-older-reviews`, which filters
     # `review.body.includes(marker)` and is a silent no-op without it.
     footer: always
-  threat-detection:
-    # Detection has an independent budget and the same unknown-model constraint.
-    max-ai-credits: -1
-    # Detection uses the stateful Claude CLI, so it retains normal recovery.
-    engine:
-      id: claude
-      model: ${{ vars.GH_AW_MODEL }}
-      env:
-        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
-        GH_AW_HARNESS_MAX_RETRIES: "3"
-# The Z.AI engine from `shared/engine-zai.md`, inlined rather than imported: gh-aw allows
-# one `engine` across a workflow and its imports, and only this workflow sets
-# `concurrency`. Keep everything else here equal to that file, including the
-# `runtimes`, `max-ai-credits` and `safe-outputs.threat-detection` it sets.
-runtimes:
-  uv: {}
-max-ai-credits: -1
-engine:
-  id: claude
-  model: ${{ vars.GH_AW_MODEL }}
-  command: /tmp/gh-aw/bin/pydantic-ai-runner-launch
-  env:
-    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
-    GITHUB_WORKFLOW: ${{ github.workflow }}
-    PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
-    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
-    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
-    # The custom shim is stateless, so an outer retry repeats the whole task.
-    GH_AW_HARNESS_MAX_RETRIES: "0"
-  # One review at a time across all PRs, on the shared Z.AI account. gh-aw applies
-  # this group by default, but drops it for a workflow with `pull_request*` triggers.
-  concurrency:
-    group: "gh-aw-claude-${{ github.workflow }}"
-    queue: max
 timeout-minutes: 30
 env:
   # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
@@ -175,6 +144,8 @@ env:
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
+engine:
+  model: anthropic/${{ vars.GH_AW_MODEL }}
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:
@@ -193,8 +164,8 @@ imports:
   - shared/rigor.md
   - shared/review-context.md
   - shared/checkout.md
+  - shared/engine-zai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
   - shared/pre-agent-steps.md
 pre-agent-steps:
   # Check out the PR head. `workflow_run` starts the job on the default branch, and
@@ -276,7 +247,7 @@ pre-agent-steps:
       fi
       [ "$live" = "open at ${HEAD_SHA}" ] && exit 0
       msg="Not reviewing ${HEAD_SHA}: the PR is now ${live}."
-      if jq -cn --arg m "$msg" '{type: "noop", message: $m}' >> "$SAFE_OUTPUTS"; then
+      if mkdir -p "$(dirname "$SAFE_OUTPUTS")" && jq -cn --arg m "$msg" '{type: "noop", message: $m}' >> "$SAFE_OUTPUTS"; then
         echo "$msg" >> "$GITHUB_STEP_SUMMARY"
       else
         echo "::warning::could not write the noop; reviewing ${HEAD_SHA} anyway"
@@ -325,7 +296,7 @@ jobs:
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           AW_CONTEXT: ${{ github.event.inputs.aw_context }}
           # Must match gh-aw's GH_AW_CALLER_WORKFLOW_ID for this workflow.
-          REVIEW_MARKER: "<!-- gh-aw-workflow-call-id: ${{ github.repository }}/pydantic-ai-pr-review -->"
+          REVIEW_CALL_ID: "${{ github.repository }}/pydantic-ai-pr-review"
         run: |
           set -euo pipefail
 
@@ -513,8 +484,11 @@ jobs:
           # re-fires this workflow. Match our own marker, not the bot account: every
           # gh-aw reviewer here posts as `github-actions[bot]`, so an actor match
           # would let a UI Security Review on this head suppress this review entirely.
-          ALREADY=$(printf '%s' "$REVIEWS" | jq --arg sha "$HEAD_SHA" --arg marker "$REVIEW_MARKER" \
-            '[.[] | select(.commit_id == $sha and ((.body // "") | contains($marker)))] | length')
+          # Accept both footer encodings to deduplicate across compiler versions.
+          ALREADY=$(printf '%s' "$REVIEWS" | jq --arg sha "$HEAD_SHA" --arg caller "$REVIEW_CALL_ID" '
+            [.[] | select(.commit_id == $sha) | select((.body // "") |
+              contains("<!-- gh-aw-workflow-call-id: \($caller) -->") or
+              contains("[gh-aw-workflow-call-id]: # \"\($caller | @uri)\""))] | length')
           [ "$ALREADY" -eq 0 ] || skip "already reviewed ${HEAD_SHA}"
 
           {

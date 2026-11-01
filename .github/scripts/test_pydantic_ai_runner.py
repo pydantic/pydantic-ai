@@ -308,7 +308,7 @@ def test_shared_context_setup_is_scoped_and_uses_runtime_paths():
     tool_hints = context_steps.with_name('tool-hints.md').read_text(encoding='utf-8')
     prewarm = Path(__file__).with_name('prewarm-pydantic-ai-runner.sh').read_text(encoding='utf-8')
 
-    assert 'run: bash .github/scripts/prewarm-pydantic-ai-runner.sh' in shared_text
+    assert 'run: bash .github/scripts/stage-gh-aw-agent.sh' in shared_text
     assert 'GH_TOKEN' not in shared_text
     assert 'run: bash .github/scripts/prefetch-github-context.sh' in context_text
     assert '      GH_TOKEN: ${{ github.token }}' in context_text
@@ -1529,7 +1529,7 @@ def test_run_warns_the_model_when_the_time_budget_is_nearly_spent(
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
     monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     seconds_left = shim.RUN_TIME_RESERVE_SECS + (-1 if inside_reserve else 60)
-    monkeypatch.setattr(shim, '_run_deadline', time.monotonic() + seconds_left)
+    monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + seconds_left)
     warned: list[bool] = []
 
     def _respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1547,7 +1547,7 @@ def test_run_offers_only_safe_output_tools_inside_the_time_reserve(monkeypatch: 
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(shim, '_run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS + 60)
+    monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS + 60)
     offered: list[set[str]] = []
     glob_returns: list[str] = []
 
@@ -1560,7 +1560,7 @@ def test_run_offers_only_safe_output_tools_inside_the_time_reserve(monkeypatch: 
         )
         if len(offered) == 1:
             # The reserve starts while this request is in flight.
-            monkeypatch.setattr(shim, '_run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
+            monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
             return ModelResponse(parts=[ToolCallPart('Glob', {'pattern': '*'})])
         if sink.exists():
             return ModelResponse(parts=[TextPart('done')])
@@ -1634,7 +1634,7 @@ def test_task_refuses_to_spawn_inside_the_run_time_reserve(monkeypatch: pytest.M
         usage = RunUsage()
         usage_limits = None
 
-    monkeypatch.setattr(shim, '_run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
+    monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
     out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'x', 'y'))
     assert out == 'error: the time budget is nearly spent; finish the task from what you already have'
 
@@ -1899,7 +1899,7 @@ def test_attention_workflow_uses_direct_classification():
     assert 'run_workflow' not in text
 
 
-def test_attention_workflow_fetches_tags_for_runner_version():
+def test_attention_workflow_fetches_tags_before_policy_staging():
     workflow_dir = Path(__file__).parent.parent / 'workflows'
     source = workflow_dir / 'pydantic-ai-attention-triage.md'
     source_steps = agentic_workflow_guard.parse_frontmatter(source)['pre-agent-steps']
@@ -1919,13 +1919,17 @@ def test_attention_workflow_fetches_tags_for_runner_version():
             if str(step.get('uses', '')).startswith('actions/checkout@')
             and step.get('with', {}).get('ref') == expected_checkout_config['ref']
         )
-        prewarm_index = next(
-            index
-            for index, step in enumerate(steps)
-            if step.get('name') == 'Pre-warm Pydantic AI gh-aw shim uv environment'
+        staging_index = next(
+            index for index, step in enumerate(steps) if step.get('name') == 'Install repository workflow policy'
         )
-        assert checkout_index < prewarm_index
+        assert checkout_index < staging_index
         assert checkout['with'] == expected_checkout_config
+
+    assert next(
+        index for index, step in enumerate(compiled_steps) if step.get('name') == 'Preinstall Pydantic AI coder agent'
+    ) < next(
+        index for index, step in enumerate(compiled_steps) if step.get('name') == 'Install repository workflow policy'
+    )
 
 
 def test_runner_drops_dynamic_workflow_dependencies():
@@ -2083,7 +2087,7 @@ def test_compact_history_no_op_below_char_budget(monkeypatch: pytest.MonkeyPatch
     class _Ctx:
         model = None
 
-    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
+    out = asyncio.run(shim.compact_history(cast(RunContext[None], _Ctx()), msgs))
     assert out is msgs  # size-based: count alone never triggers
 
 
@@ -2107,7 +2111,7 @@ def test_compact_history_summarises_with_fresh_usage_then_merges():
         model = FunctionModel(_respond, stream_function=_stream)
         usage = parent_usage
 
-    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
+    out = asyncio.run(shim.compact_history(cast(RunContext[None], _Ctx()), msgs))
     assert len(out) == 1 + shim.COMPACTION_KEEP_RECENT
     assert parent_usage.requests > 50  # summariser's cost merged into parent
     summary_part = out[0].parts[0]
@@ -2267,7 +2271,7 @@ def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch: pytest.Mon
     class _Ctx:
         model = None
 
-    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
+    out = asyncio.run(shim.compact_history(cast(RunContext[None], _Ctx()), msgs))
     assert len(out) == len(msgs)
     # The first read result is now a marker, not the original payload.
     first_return = out[1].parts[0]
@@ -2293,7 +2297,7 @@ def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch: pytest
         model = TestModel()
         usage = RunUsage()
 
-    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
+    out = asyncio.run(shim.compact_history(cast(RunContext[None], _Ctx()), msgs))
     # On failure: keep just the tail (no head, no synthetic summary).
     assert len(out) == shim.COMPACTION_KEEP_RECENT
 
@@ -2322,7 +2326,7 @@ def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pyte
         model = TestModel()
         usage = RunUsage()
 
-    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
+    out = asyncio.run(shim.compact_history(cast(RunContext[None], _Ctx()), msgs))
     # First element is the preserved prior synthetic; rest is the tail.
     assert len(out) == 1 + shim.COMPACTION_KEEP_RECENT
     assert out[0] is prior_synthetic
@@ -2995,7 +2999,7 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
         return 0
 
     monkeypatch.setattr(shim, 'run', _hang)
-    monkeypatch.setattr(shim, '_run_timeout_secs', lambda: 0.01)
+    monkeypatch.setattr(shim, 'run_timeout_secs', lambda: 0.01)
     monkeypatch.delenv('PYDANTIC_AI_RUN_ATTEMPT', raising=False)
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -3081,7 +3085,7 @@ def test_run_with_timeout_closes_anthropic_client(outcome: str, monkeypatch: pyt
         return 0
 
     monkeypatch.setattr(shim, 'run', _fake_run)
-    monkeypatch.setattr(shim, '_run_timeout_secs', lambda: 0.01 if outcome == 'timeout' else 1)
+    monkeypatch.setattr(shim, 'run_timeout_secs', lambda: 0.01 if outcome == 'timeout' else 1)
     with redirect_stdout(io.StringIO()):
         rc = asyncio.run(
             shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
@@ -3132,24 +3136,24 @@ def test_run_timeout_budget_tracks_the_jobs_own_timeout(job_timeout_env: Callabl
     `timeout-minutes`, so the extra time was granted and never used.
     """
     job_timeout_env('45')
-    assert shim._run_timeout_secs() == 43 * 60  # pyright: ignore[reportPrivateUsage]
+    assert shim.run_timeout_secs() == 43 * 60
 
     job_timeout_env('30')
-    assert shim._run_timeout_secs() == 28 * 60  # pyright: ignore[reportPrivateUsage]
+    assert shim.run_timeout_secs() == 28 * 60
 
 
 @pytest.mark.parametrize('value', ['', 'not-a-number', '0', '2'])
 def test_run_timeout_budget_falls_back_when_the_env_is_unusable(job_timeout_env: Callable[[str], None], value: str):
     """Absent, malformed, or smaller than the teardown headroom all fall back."""
     job_timeout_env(value)
-    assert shim._run_timeout_secs() == 28 * 60  # pyright: ignore[reportPrivateUsage]
+    assert shim.run_timeout_secs() == 28 * 60
 
 
 def test_run_timeout_budget_prefers_the_variable_that_reaches_the_agent(monkeypatch: pytest.MonkeyPatch):
     """`PYDANTIC_AI_JOB_TIMEOUT_MINUTES` wins: it is the one set on the agent's own job."""
     monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', '45')
     monkeypatch.setenv('GH_AW_TIMEOUT_MINUTES', '20')
-    assert shim._run_timeout_secs() == 43 * 60  # pyright: ignore[reportPrivateUsage]
+    assert shim.run_timeout_secs() == 43 * 60
 
 
 def test_job_timeout_constants_match_the_guard():
@@ -3242,7 +3246,7 @@ def test_mcp_protocol_error_message_recognizes_only_mcp_errors():
 
 
 def test_recover_mcp_tool_errors_returns_error_string_instead_of_crashing():
-    cap = shim._RecoverMCPToolErrors()  # pyright: ignore[reportPrivateUsage]
+    cap = shim.RecoverMCPToolErrors()
     call = ToolCallPart(tool_name='mcp__safeoutputs__submit_pull_request_review', args={}, tool_call_id='c1')
     out = asyncio.run(
         cap.on_tool_execute_error(
@@ -3257,7 +3261,7 @@ def test_recover_mcp_tool_errors_returns_error_string_instead_of_crashing():
 
 
 def test_recover_mcp_tool_errors_reraises_non_mcp_errors():
-    cap = shim._RecoverMCPToolErrors()  # pyright: ignore[reportPrivateUsage]
+    cap = shim.RecoverMCPToolErrors()
     call = ToolCallPart(tool_name='Bash', args={}, tool_call_id='c2')
     with pytest.raises(RuntimeError, match='boom'):
         asyncio.run(
@@ -3290,8 +3294,25 @@ def test_mcp_allow_predicate_server_wildcard_vs_specific():
 # --------------------------------------------------------------------------- #
 # stream-json schema & structured-error guarantee
 # --------------------------------------------------------------------------- #
-def test_emit_result_matches_claude_stream_json_schema(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    ('task_id', 'task_key', 'expected_task_key'),
+    [
+        (None, None, None),
+        (None, 'legacy-task', 'legacy-task'),
+        ('task-id', None, 'task-id'),
+        ('task-id', 'legacy-task', 'task-id'),
+        ('', 'legacy-task', 'legacy-task'),
+    ],
+)
+def test_emit_result_matches_claude_stream_json_schema(
+    monkeypatch: pytest.MonkeyPatch, task_id: str | None, task_key: str | None, expected_task_key: str | None
+):
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '3')
+    for name, value in (('PYDANTIC_AI_TASK_ID', task_id), ('PYDANTIC_AI_TASK_KEY', task_key)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
     buf = io.StringIO()
     with redirect_stdout(buf):
         shim.emit_result('answer', usage=None, session_id='run-1')
@@ -3301,6 +3322,7 @@ def test_emit_result_matches_claude_stream_json_schema(monkeypatch: pytest.Monke
     assert obj['is_error'] is False
     assert obj['result'] == 'answer'
     assert obj['provider_health']['run_attempt'] == 3
+    assert obj['provider_health']['task_key'] == expected_task_key
     assert 'failure' not in obj['provider_health']
     for k in ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'):
         assert k in obj['usage']
@@ -3354,7 +3376,7 @@ def _zai_429_body(code: str | int) -> dict[str, object]:
 def test_failure_metadata_classifies_typed_errors(
     error: BaseException, expected_kind: str, expected_status: int | None
 ):
-    details = shim._failure_details(error)  # pyright: ignore[reportPrivateUsage]
+    details = shim.failure_details(error)
     assert details['kind'] == expected_kind
     assert details.get('http_status') == expected_status
 
@@ -3363,7 +3385,7 @@ def test_failure_metadata_classifies_wrapped_transport_timeout():
     error = shim.ModelAPIError('test-model', 'ReadTimeout')
     error.__cause__ = httpx2.ReadTimeout('read timed out')
 
-    details = shim._failure_details(error)  # pyright: ignore[reportPrivateUsage]
+    details = shim.failure_details(error)
 
     assert details == {'kind': 'timeout'}
 
@@ -3378,7 +3400,7 @@ def test_failure_metadata_classifies_anthropic_timeout_wrapped_by_model_api_erro
             error = shim.ModelAPIError('test-model', 'APITimeoutError')
             error.__cause__ = sdk_error
 
-    details = shim._failure_details(error)  # pyright: ignore[reportPrivateUsage]
+    details = shim.failure_details(error)
 
     assert details == {'kind': 'timeout'}
 
@@ -3388,6 +3410,7 @@ def test_run_preserves_partial_usage_on_failure_after_model_activity(monkeypatch
     monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', '/path/that/does/not/exist')
     monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI CI Review')
+    monkeypatch.delenv('PYDANTIC_AI_TASK_ID', raising=False)
     monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'pr-123')
     monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'pull_request')
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '2')

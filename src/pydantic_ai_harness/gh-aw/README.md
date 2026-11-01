@@ -189,14 +189,16 @@ name a harness capability or define a Python function tool; use a module for eit
 
 ## Observability
 
-The engine instruments the agent whenever gh-aw supplies an OTLP endpoint. A workflow
-turns that on with `observability.otlp`, plus an allowlist entry for the backend's host,
-because the egress firewall otherwise drops the export:
+gh-aw keeps OTLP endpoints and authorization headers on the host. The agent sandbox
+does not receive those credentials. Configure `observability.otlp` for the host and
+set `PAI_OTEL_EXPORT_PATH` in `engine.env` to a writable shared path when Python
+agent spans are required:
 
 ```yaml
-network:
-  allowed:
-    - logfire-us.pydantic.dev
+engine:
+  id: pydantic-ai
+  env:
+    PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
 observability:
   otlp:
     endpoint:
@@ -205,64 +207,54 @@ observability:
           Authorization: ${{ secrets.LOGFIRE_TOKEN }}
 ```
 
-gh-aw injects `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`,
-`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `TRACEPARENT` into the workflow
-environment when, and only when, an endpoint is configured, and workflow-level environment
-reaches both the pre-agent step and the agent container. The endpoint variable is what the
-engine keys on: with it set, the install step adds `logfire` and the launcher calls
-`logfire.configure()` and `logfire.instrument_pydantic_ai()` before importing the agent
-target, then attaches the W3C context from `TRACEPARENT`. With it unset, neither happens
-and the install costs nothing.
+When host OTLP observability is configured, the installer adds Logfire and the official
+OTLP file exporter. For standalone local-file export without host OTLP configuration,
+preinstall `logfire>=4.39.0` and `opentelemetry-exporter-otlp-json-file>=0.64b0` in a host
+workflow step. The agent-only export-path setting does not reach the host installer.
+The launcher instruments Pydantic AI and writes OTLP JSON trace payloads to the file without network export.
+Ended spans are flushed as they finish, including delegate and failed-request spans.
+The launcher attaches `TRACEPARENT` and preserves `OTEL_RESOURCE_ATTRIBUTES`, so
+the exported spans retain their workflow parentage and identity. A hard process kill
+can still lose spans that have not ended.
 
-These choices are not defaults, and each is load-bearing.
+Add an always-run host `post-steps` entry that sends each line unchanged to the
+configured collectors' `/v1/traces` endpoint using their host-held headers. Preserve
+long JSON-valued attributes and avoid artifact mirroring. Remove the file afterwards. The repository's
+[shared workflow configuration](https://github.com/pydantic/pydantic-ai/blob/main/.github/workflows/shared/engine-zai.md)
+contains that forwarding step. It reads the released helper's endpoint configuration
+and per-endpoint headers, then sends the private payload without the infrastructure
+exporter's attribute truncation. Keep the private span file out of artifact uploads: HTTP and
+model instrumentation can contain content intended only for the telemetry backend.
+Do not mirror these payloads into gh-aw's uploaded `otel.jsonl`.
 
-- **`send_to_logfire="if-token-present"`.** The default requires a `LOGFIRE_TOKEN` in the
-  environment and raises without one. The credential here is a header value gh-aw holds,
-  not an environment variable, so the export is driven by the endpoint alone and works
-  against any backend. A token that does reach the agent's environment adds Logfire as a
-  second destination rather than replacing the endpoint, prompts and completions included;
-  gh-aw strips `${{ secrets.* }}` out of `engine.env`, so that takes a workflow putting one
-  in its own `env:` or a `steps:` block.
-- **Private `config_dir` and `data_dir`.** Both point to a mode-0700 temporary directory
-  under `/tmp`, outside the checkout even if `TMPDIR` points into it. This prevents
-  checkout `pyproject.toml` settings and `.logfire/logfire_credentials.json` from selecting
-  a telemetry destination. Explicit directory arguments also override `LOGFIRE_CONFIG_DIR`
-  and `LOGFIRE_CREDENTIALS_DIR`; `LOGFIRE_TOKEN` in the environment remains supported.
-  The directory stays alive through the process and is removed at interpreter shutdown,
-  after exporter shutdown handlers run.
-- **`console=False`.** logfire's console exporter writes every span to stderr. Keeping it
-  off prevents spans and their content from entering captured engine stdio.
-- **The `TRACEPARENT` attach, with `distributed_tracing=True`.** gh-aw sets the variable for
-  behavior-defined engines (`applyTraceContextEnvToMap` in
-  `pkg/workflow/behavior_defined_engine.go`) so that an engine can nest its spans under the
-  workflow run's span, but neither logfire nor the OpenTelemetry SDK reads it from the
-  environment. Without the attach each run produces a second, unrelated trace. The flag is
-  what marks the propagated context as deliberate; logfire warns on every run without it,
-  because extracting incoming context is usually accidental.
-- **`OTEL_METRICS_EXPORTER` and `OTEL_LOGS_EXPORTER` default to `none`.** logfire's OTLP
-  setup is per signal, so an endpoint alone also builds metrics and logs exporters that POST
-  to `/v1/metrics` and `/v1/logs`. A traces-only backend answers `404`, and the step log then
-  carries `Failed to export metrics batch code: 404` once per export while the run still
-  succeeds. These are the standard OpenTelemetry switches rather than a logfire argument, so
-  a workflow that has a backend for those signals can set either one back to `otlp`.
+The local span file is diagnostic input from the sandbox. It does not supply
+canonical session usage, provider-health authority, or safe-output decisions.
+Host and proxy telemetry continue to use gh-aw's own exporters independently.
 
-The engine contributes no resource attributes of its own. `OTEL_RESOURCE_ATTRIBUTES`
-already carries `gh-aw.engine.id` (`pydantic-ai`), `gh-aw.workflow.name`,
-`gh-aw.repository`, `gh-aw.run.id` and `github.run_id`, and `logfire.configure()` merges
-the variable into the resource, so `gh-aw.engine.id` is the filter that finds runs of this
-engine in a backend. The configuration line the engine logs gains an `otlp=` segment while
-this is active, carrying the endpoint's origin only: userinfo and query parameters are
-credentials, and a run log is not a private place to put one.
+The launcher uses private mode-0700 Logfire configuration and data directories under
+`/tmp`, ignoring checkout settings and credentials. `console=False` prevents span
+content entering captured engine stdio. In local-file mode, `send_to_logfire=False`
+and metrics export is disabled. When an OTLP endpoint is directly available without
+local-file mode, the launcher retains direct OTLP export and
+`send_to_logfire='if-token-present'`. With neither setting, it does not configure
+Logfire.
 
-A `PAI_AGENT` module that calls `logfire.configure()` itself runs after the engine's call
-and replaces it, whole rather than argument by argument, so it has to restate the three
-settings above: `send_to_logfire="if-token-present"` or it raises, `console=False` or spans
-appear in captured engine stdio, and `distributed_tracing=True` or it warns on every run.
-The context attached from `TRACEPARENT` survives the reconfiguration. Reconfiguration must also
-supply private `config_dir` and `data_dir` values with process-lifetime cleanup; omitting
-these re-enables checkout configuration and credentials. Such a module also has
-to install `logfire` through the workflow's own `steps:` if it imports it on runs that
-configure no endpoint.
+A `PAI_AGENT` module can add HTTP or MCP instrumentation after the launcher configures
+Logfire. Calling `logfire.configure()` again replaces that configuration, including
+the local exporter. Preserve the private directories, disabled console output,
+distributed tracing and chosen export path if the agent replaces it.
+
+### Authenticated terminal metadata
+
+Set `PAI_RESULT_METADATA` to `MODULE:ATTRIBUTE` to include a trusted agent module's
+dictionary in `session.result.data.metadata`. The dictionary must have string keys
+and JSON-serializable values. Update the same dictionary during the run; the recorder
+serializes it when the process finishes, including handled failures.
+
+The engine signs this metadata with the terminal result. Ordinary stdout and
+sandbox-written files cannot substitute for it. Consumers should read the verified
+`agent-session.jsonl` artifact and validate their metadata schema and run identity.
+Like `PAI_AGENT`, this import target is trusted engine configuration.
 
 ## Threat detection
 

@@ -923,6 +923,27 @@ def test_result_parser_reads_shim_terminal_jsonl_at_root(tmp_path: Path) -> None
     )
 
 
+def test_result_parser_reads_protected_terminal_metadata_after_download(tmp_path: Path) -> None:
+    """Use authenticated metadata instead of the parser's projected usage-only result."""
+    artifact = tmp_path / 'agent'
+    artifact.mkdir()
+    (artifact / 'agent-stdio.log').write_text('{"type":"result","num_turns":1}\n')
+    metadata: dict[str, object] = {
+        'workflow': 'nightly-sweep',
+        'task_key': 'task-1',
+        'trigger_event': 'schedule',
+        'run_attempt': 1,
+        'failure': {'kind': 'rate_limit', 'http_status': 429},
+    }
+    (artifact / 'agent-session.jsonl').write_text(
+        json.dumps({'type': 'session.result', 'data': {'status': 'failure', 'metadata': {'provider_health': metadata}}})
+        + '\n'
+    )
+    assert health.parse_run_result(tmp_path, 1) == health.RunResult(
+        'nightly-sweep', 'task-1', 'schedule', 1, health.Failure('rate_limit', 429, None)
+    )
+
+
 def test_result_parser_rejects_ambiguous_agent_artifacts(tmp_path: Path) -> None:
     """Two distinct terminal records from eligible agent logs do not select an authority."""
     first_log = tmp_path / 'agent' / 'agent-stdio.log'
