@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import functools
+import socket
+import threading
 import typing
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Iterator, Mapping, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from itertools import count
+from itertools import chain, count
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, assert_never, cast, overload
 from urllib.parse import parse_qs, urlparse
@@ -18,6 +20,7 @@ from pydantic_core import to_json
 from typing_extensions import ParamSpec, TypedDict
 
 try:
+    import botocore
     from botocore.client import BaseClient
     from botocore.eventstream import ParserError as EventStreamParserError
     from botocore.exceptions import (
@@ -40,7 +43,10 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     CachePoint,
+    Citation,
     CompactionPart,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -65,16 +71,19 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
     _model_errors,
     _utils,
     usage,
 )
+from pydantic_ai._gateway_cost import fill_gateway_header_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._thinking_part import render_replayed_thinking
+from pydantic_ai._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
+    ModelNotFoundError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -97,11 +106,20 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._anthropic_schema_limits import (
+    SCHEMA_TOO_COMPLEX_HINT,
+    default_output_mode_within_limits,
+    is_schema_too_complex_error,
+    limit_exceeded_error,
+    model_exceeded_limit,
+)
 from pydantic_ai.models._prompt_cache import (
     excess_cache_points,
+    instruction_cache_boundaries,
     previous_tail_needing_breakpoint,
     raise_earlier_cache_ttls,
     split_cache_setting,
+    split_instruction_cache_points,
 )
 from pydantic_ai.models._tool_choice import (
     FORCING_UNSUPPORTED_REASON,
@@ -112,7 +130,7 @@ from pydantic_ai.models._tool_choice import (
 from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.output import StructuredOutputMode
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
@@ -139,6 +157,8 @@ if TYPE_CHECKING:
     )
     from mypy_boto3_bedrock_runtime.type_defs import (
         CachePointBlockTypeDef,
+        CitationOutputTypeDef,
+        CitationsDeltaTypeDef,
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
         ConverseRequestTypeDef,
@@ -147,6 +167,7 @@ if TYPE_CHECKING:
         ConverseStreamResponseTypeDef,
         ConverseTokensRequestTypeDef,
         CountTokensRequestTypeDef,
+        DocumentBlockTypeDef,
         DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
         InferenceConfigurationTypeDef,
@@ -182,7 +203,14 @@ _DATA_RETENTION_HINT = (
 
 
 @contextmanager
-def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Generator[None]:
+def _map_api_errors(
+    model_name: str, model_id_namespace: str = 'bedrock', *, strict_schema_limits: bool = False
+) -> Generator[None]:
+    """Map Bedrock errors to Pydantic AI exceptions.
+
+    `strict_schema_limits` says whether the model compiles strict schemas with Anthropic's limits, so that a 400 for
+    schemas too complex to compile gets a hint.
+    """
     try:
         yield
     except ClientError as e:
@@ -200,10 +228,14 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         if isinstance(status_code, int):
             suggested_model_id = None
             if message == 'The provided model identifier is invalid.':
+                # Bedrock sends an unknown model ID as a 400 `ValidationException`, identifiable only by its message.
+                category = ModelNotFoundError
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
             hint = (
                 _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
             )
+            if strict_schema_limits and status_code == 400 and is_schema_too_complex_error(message):
+                hint = SCHEMA_TOO_COMPLEX_HINT
             raise ModelHTTPError.for_category(
                 category or _model_errors.http_status_category(status_code, message),
                 status_code=status_code,
@@ -269,7 +301,7 @@ _EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
 _EXTRA_HEADERS_CONTEXT_KEY = 'pydantic_ai_extra_headers'
 _EXTRA_HEADERS_OPERATIONS = ('Converse', 'ConverseStream', 'CountTokens')
 _extra_headers_var: ContextVar[_ExtraHeadersState | None] = ContextVar('_extra_headers_var', default=None)
-_BedrockCallResult = TypeVar('_BedrockCallResult')
+_BedrockCallResult = TypeVar('_BedrockCallResult', bound=Mapping[str, object])
 
 
 def _claim_extra_headers(client_id: int, context: dict[str, Any], **_: Any) -> None:
@@ -315,20 +347,87 @@ async def _call_bedrock(
     _register_extra_headers(client)
     headers = dict(extra_headers or {})
 
+    # botocore blocks its thread until the provider answers or its `read_timeout` passes, so a request that's
+    # cancelled, like one its `request_timeout` ran out on, gives up on the thread rather than wait for it. What the
+    # thread then gets, like a `ConverseStream` response's open event stream, is closed rather than left open: by the
+    # thread when it sees the request was given up on, or by the request when the thread had already finished. Both
+    # may close it, which is harmless; neither can miss it.
+    abandoned = threading.Event()
+    results: list[_BedrockCallResult] = []
+
+    def close_abandoned_result(result: Mapping[str, object]) -> None:
+        if (stream := result.get('stream')) is not None:
+            cast('EventStream[Any]', stream).close()
+
     def call() -> _BedrockCallResult:
         context_token = _extra_headers_var.set(_ExtraHeadersState(id(client), headers))
         try:
-            return method(**params)
+            result = method(**params)
         finally:
             _extra_headers_var.reset(context_token)
+        results.append(result)
+        if abandoned.is_set():
+            close_abandoned_result(result)
+        return result
 
-    return await anyio.to_thread.run_sync(call)
+    try:
+        return await anyio.to_thread.run_sync(call, abandon_on_cancel=True)
+    except anyio.get_cancelled_exc_class():
+        abandoned.set()
+        # Only when the thread finished just as the request was cancelled, which a test can't arrange reliably.
+        for result in results:  # pragma: lax no cover
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(close_abandoned_result, result)
+        raise
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
 _SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
 _SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
 _ADAPTIVE_THINKING_SETTING = "bedrock_additional_model_requests_fields={'thinking': {'type': 'adaptive'}}"
+
+_GPT_OSS_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    **OPENAI_REASONING_EFFORT_MAP,
+    # gpt-oss on Converse accepts only `low`, `medium`, and `high`: it rejects `minimal` and `xhigh` as invalid
+    # values and `none` as unsupported, so `thinking=False` reasons as little as it can.
+    False: 'low',
+    'minimal': 'low',
+    'xhigh': 'high',
+    'max': 'high',
+}
+"""Maps unified thinking values to the `reasoning_effort` that gpt-oss accepts on Converse."""
+
+_QWEN_REASONING_CONFIG_MAP: dict[ThinkingLevel, str] = {
+    False: 'none',
+    True: 'high',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+    'max': 'high',
+}
+"""Maps unified thinking values to Qwen's `reasoning_config` on Converse.
+
+Converse accepts `none`, `low`, `medium`, and `high`, but only `high` produced reasoning in live checks, so `medium`
+folds up to it rather than sending a level that doesn't reason.
+"""
+
+_GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    # Grok always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`, so `thinking=False` and `minimal`
+    # reason as little as it can and `max` folds to `xhigh`. `True` picks `medium` like the other always-on
+    # effort-based variants.
+    False: 'low',
+    True: 'medium',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'xhigh',
+    'max': 'xhigh',
+}
+"""Maps unified thinking values to Grok's `reasoning.effort` on Converse."""
+
 _BEDROCK_USAGE_FIELDS = frozenset(
     {'inputTokens', 'outputTokens', 'totalTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens'}
 )
@@ -346,10 +445,25 @@ def _make_video_block(format: str, source: DocumentSourceTypeDef) -> ContentBloc
     return {'video': {'format': format, 'source': source}}
 
 
-def _make_document_block(name: str, format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
+def _make_document_block(
+    name: str, format: str, source: DocumentSourceTypeDef, *, include_citations: bool
+) -> ContentBlockUnionTypeDef:
     if format not in _SUPPORTED_DOCUMENT_FORMATS:
         raise UserError(f'Unsupported document format: {format}')
-    return {'document': {'name': name, 'format': format, 'source': source}}
+    document: DocumentBlockTypeDef = {'name': name, 'format': format, 'source': source}
+    # Bedrock rejects citations on a document read from S3.
+    if include_citations and format in {'txt', 'pdf'} and 's3Location' not in source:
+        document['citations'] = {'enabled': True}
+    return {'document': document}
+
+
+def _make_document_source(data: bytes, media_type: str, *, include_citations: bool) -> DocumentSourceTypeDef:
+    if include_citations and media_type == 'text/plain':
+        try:
+            return {'text': data.decode()}
+        except UnicodeDecodeError as e:
+            raise UserError('Bedrock citations require UTF-8 text documents') from e
+    return {'bytes': data}
 
 
 # Content-block kinds that may appear in a user message alongside a `toolResult` block. Used as the
@@ -533,6 +647,33 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
 }
 
 
+def _map_citation_source(
+    citation: CitationOutputTypeDef | CitationsDeltaTypeDef,
+) -> WebCitationSource | DocumentCitationSource | None:
+    title = citation.get('title')
+    excerpts = [text for content in citation.get('sourceContent', []) if (text := content.get('text'))]
+    if url := citation.get('location', {}).get('web', {}).get('url'):
+        return WebCitationSource(url=url, title=title, excerpts=excerpts)
+    if not (title or excerpts):
+        return None
+    # The location in the document stays in the raw citation data.
+    return DocumentCitationSource(title=title, excerpts=excerpts)
+
+
+def _map_citations(
+    citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef], text: str
+) -> list[Citation] | None:
+    sources = [source for citation in citations if (source := _map_citation_source(citation))]
+    if not sources:
+        return None
+    # Bedrock cites whole blocks of text, so the citation covers the whole part.
+    return [Citation(sources=sources, anchor=ContentCitationAnchor(start=0, end=len(text)) if text else None)]
+
+
+def _citations_provider_details(citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef]) -> dict[str, Any]:
+    return {'citations': [dict(citation) for citation in citations]}
+
+
 def _parse_s3_source(url: str) -> DocumentSourceTypeDef:
     """Parse an S3 URL into a Bedrock DocumentSourceTypeDef."""
     parsed = urlparse(url)
@@ -602,8 +743,22 @@ def _insert_cache_point_before_trailing_documents(
         return False
 
 
-def _is_pdf(block: Any) -> bool:
-    return block.get('document', {}).get('format') == 'pdf'
+def _has_cited_document(value: object) -> bool:
+    """Whether Bedrock messages hold a document block with citations turned on, including in tool results."""
+    if isinstance(value, list):
+        return any(_has_cited_document(item) for item in cast(list[object], value))
+    if _utils.is_str_dict(value):
+        document = value.get('document')
+        if _utils.is_str_dict(document) and 'citations' in document:
+            return True
+        return any(_has_cited_document(item) for item in value.values())
+    return False
+
+
+def _stays_in_place(block: Any) -> bool:
+    """Whether Bedrock keeps this document where it is, and accepts a `cachePoint` after it, on Anthropic models."""
+    document = block.get('document', {})
+    return document.get('format') == 'pdf' or 'citations' in document
 
 
 def _add_automatic_cache_point(
@@ -617,15 +772,15 @@ def _add_automatic_cache_point(
     same without it. See `bedrock_document_cache_point_variant`.
     """
     if variant == 'anthropic':
-        if _is_pdf(content[-1]):
+        if _stays_in_place(content[-1]):
             content.append(cache_point)
             return
         start = len(content)
-        while start > 0 and 'document' in content[start - 1] and not _is_pdf(content[start - 1]):
+        while start > 0 and 'document' in content[start - 1] and not _stays_in_place(content[start - 1]):
             start -= 1
         if (
             0 < start < len(content)
-            and not _is_pdf(content[start - 1])
+            and not _stays_in_place(content[start - 1])
             and not any('cachePoint' in block for block in content)
         ):
             # Bedrock moves these documents to the front of the message either way, so moving them ahead of the
@@ -835,6 +990,30 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
+    @functools.cached_property
+    def profile(self) -> ModelProfile:
+        """The model profile.
+
+        `supports_json_schema_output` is narrowed when the installed `botocore` can't send `outputConfig`, so that a
+        structured `output_type` that doesn't pick an output mode uses the mode it would for a model without Native
+        Output, rather than failing before the request is sent.
+        """
+        _profile = super().profile
+        if _profile.get('supports_json_schema_output', False) and not self._botocore_supports_output_config:
+            _profile = merge_profile(_profile, ModelProfile(supports_json_schema_output=False))
+        return _profile
+
+    @property
+    def canonical_system(self) -> str:
+        """`'anthropic'` for Claude models, whose thinking signatures the Anthropic API verifies too, otherwise the provider's.
+
+        A model is taken to be Claude when its profile's `bedrock_thinking_variant` is `'anthropic'`, which you can
+        set in `profile=` for a model the name doesn't identify, such as an application inference profile ARN.
+        """
+        if self.profile.get('bedrock_thinking_variant') == 'anthropic':
+            return 'anthropic'
+        return super().canonical_system
+
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
 
@@ -865,6 +1044,30 @@ class BedrockConverseModel(Model[BaseClient]):
         profile = cast(BedrockModelProfile, self.profile)
         return _effective_thinking_type(model_settings, model_request_parameters, profile) is not None
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_build_additional_model_request_fields` leaves alone the fields the user set: the variant's thinking
+        # field, and on adaptive Claude models the `output_config` an effort-level `thinking` maps its effort to.
+        fields = model_settings.get('bedrock_additional_model_requests_fields')
+        if not isinstance(fields, Mapping):
+            return ()
+        profile = self.profile
+        variant = profile.get('bedrock_thinking_variant', None)
+        effort_replaced = (
+            'output_config' in fields
+            and isinstance(model_settings.get('thinking'), str)
+            and profile.get('bedrock_supports_adaptive_thinking', False)
+            and profile.get('bedrock_supports_effort', False)
+        )
+        if (
+            (variant == 'anthropic' and ('thinking' in fields or effort_replaced))
+            or (variant == 'openai' and 'reasoning_effort' in fields)
+            or (variant == 'openai_responses' and 'reasoning' in fields)
+            or (variant == 'qwen' and 'reasoning_config' in fields)
+            or (variant == 'xai' and 'reasoning' in fields)
+        ):
+            return ('bedrock_additional_model_requests_fields',)
+        return ()
+
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:
@@ -872,8 +1075,39 @@ class BedrockConverseModel(Model[BaseClient]):
         if model_request_parameters.output_tools and _thinking_rejects_tool_forcing(
             _effective_thinking_type(model_settings, model_request_parameters, profile), profile
         ):
-            return 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
-        return super()._default_structured_output_mode(model_settings, model_request_parameters)
+            mode: StructuredOutputMode = 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
+        else:
+            mode = super()._default_structured_output_mode(model_settings, model_request_parameters)
+        return default_output_mode_within_limits(
+            self, mode, model_settings, model_request_parameters, self._strict_schema_limit_exceeded
+        )
+
+    def _strict_schema_limit_exceeded(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> str | None:
+        """The limit the request's strict schemas exceed, for a Claude model, where Converse enforces Anthropic's limits."""
+        return model_exceeded_limit(
+            self,
+            model_settings,
+            model_request_parameters,
+            supports_strict_tools=lambda: (
+                self.profile.get('bedrock_supports_strict_tool_definition', False)
+                and self._botocore_supports_strict_tool_param
+            ),
+            sent_tools=self._sent_tool_defs,
+        )
+
+    def _sent_tool_defs(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> Iterable[ToolDefinition]:
+        """The tools sent with prepared request parameters, leaving out those of `tool_choice='none'`.
+
+        Converse only gets those once the history has tool blocks, which isn't known before the messages are mapped.
+        """
+        declarations = self._tool_choice_declarations(
+            cast(BedrockModelSettings | None, model_settings), model_request_parameters
+        )
+        return declarations[0].values() if declarations is not None else ()
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -886,6 +1120,12 @@ class BedrockConverseModel(Model[BaseClient]):
         model_request_parameters = model_request_parameters.with_default_output_mode(
             self._default_structured_output_mode(settings, model_request_parameters)
         )
+        if model_request_parameters.output_mode == 'native' and not self._botocore_supports_output_config:
+            raise UserError(
+                f'The installed `botocore` ({botocore.__version__}) is too old to send Native Output to Bedrock, as it '
+                "predates Converse's `outputConfig`. Upgrade `boto3`/`botocore`; on AWS Lambda, the runtime's bundled "
+                '`botocore` may be shadowing a newer one from your layer.'
+            )
         if (
             model_request_parameters.output_mode == 'tool'
             and not model_request_parameters.allow_text_output
@@ -916,6 +1156,8 @@ class BedrockConverseModel(Model[BaseClient]):
             )
         # Pass unmerged model_settings; base class does its own merge
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
+            raise limit_exceeded_error(exceeded, self.model_name)
         if prepared_settings and (
             self.profile.get('anthropic_disallows_sampling_settings', False)
             or self.profile.get('bedrock_disallows_sampling_settings', False)
@@ -984,6 +1226,16 @@ class BedrockConverseModel(Model[BaseClient]):
         """
         tool_spec_shape = self.client.meta.service_model.shape_for('ToolSpecification')
         return isinstance(tool_spec_shape, StructureShape) and 'strict' in tool_spec_shape.members
+
+    @property
+    def _botocore_supports_output_config(self) -> bool:
+        """Whether the installed `botocore` knows Converse's `outputConfig`, which carries Native Output.
+
+        Like `strict` on tools, `botocore` rejects it with a `ParamValidationError` when its bundled service model
+        predates it.
+        """
+        request_shape = self.client.meta.service_model.shape_for('ConverseRequest')
+        return not isinstance(request_shape, StructureShape) or 'outputConfig' in request_shape.members
 
     def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
@@ -1067,7 +1319,8 @@ class BedrockConverseModel(Model[BaseClient]):
             'messages': bedrock_messages,
             'system': system_prompt,
         }
-        # No native-tool strip is needed here (unlike Anthropic's count_tokens, which must drop server tools):
+        # No native-tool strip is needed here (unlike Anthropic's count_tokens, which drops the native tools its
+        # count endpoints reject or aren't verified to accept):
         # count-tokens-capable models (Claude) don't support native tools, and native-tool-capable models
         # (Nova-2) don't support count_tokens, so a `systemTool` can never reach this request.
         tool_config = self._map_tool_config(model_request_parameters, settings, bedrock_messages)
@@ -1128,6 +1381,7 @@ class BedrockConverseModel(Model[BaseClient]):
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
+        streamed_response.canonical_system = self._canonical_system_stamp
         try:
             yield streamed_response
         finally:
@@ -1171,6 +1425,21 @@ class BedrockConverseModel(Model[BaseClient]):
                         )
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
+                elif citations_content := item.get('citationsContent'):
+                    text = ''.join(content.get('text', '') for content in citations_content.get('content', []))
+                    block_citations = citations_content.get('citations', [])
+                    citations = _map_citations(block_citations, text)
+                    # Like a stream, a block without text makes no part: there's nothing to cite, and Bedrock would
+                    # reject the empty text when the history is sent back.
+                    if text:
+                        items.append(
+                            TextPart(
+                                content=text,
+                                provider_name=self.system if citations else None,
+                                provider_details=_citations_provider_details(block_citations) if citations else None,
+                                citations=citations,
+                            )
+                        )
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
                         if tool_use['name'] == 'nova_code_interpreter':  # pragma: no branch
@@ -1216,16 +1485,20 @@ class BedrockConverseModel(Model[BaseClient]):
             provider_details['trace'] = response['trace']
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
-        return ModelResponse(
+        model_response = ModelResponse(
             parts=items,
             usage=u,
             model_name=self.model_name,
             provider_response_id=response_id,
             provider_name=self._provider.name,
             provider_url=self.base_url,
+            canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
+        # boto3 drops the Pydantic AI Gateway's cost from `usage`, but keeps its response header.
+        fill_gateway_header_cost(model_response, response.get('ResponseMetadata', {}).get('HTTPHeaders'))
+        return model_response
 
     def _build_additional_model_request_fields(
         self,
@@ -1270,35 +1543,24 @@ class BedrockConverseModel(Model[BaseClient]):
         if variant == 'anthropic' and 'thinking' not in existing:
             _add_anthropic_thinking_fields(existing, thinking, profile)
         elif variant == 'openai' and 'reasoning_effort' not in existing:
-            if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
-                existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+            existing['reasoning_effort'] = _GPT_OSS_REASONING_EFFORT_MAP[thinking]
+        elif variant == 'openai_responses' and 'reasoning' not in existing:
+            if thinking is False and profile.get('thinking_always_enabled', False):
+                # GPT-6 Astra and GPT-6.1 Sol reject `effort='none'`, so they reason as little as they can.
+                effort = 'low'
+            elif thinking == 'minimal':
+                # GPT-5.6 and GPT-6 reject `effort='minimal'`, so it maps to the closest level they accept.
+                effort = 'low'
+            else:
+                effort = OPENAI_REASONING_EFFORT_MAP[thinking]
+            existing['reasoning'] = {'effort': effort}
         elif variant == 'qwen' and 'reasoning_config' not in existing:
-            if thinking is not False:
-                # Qwen only supports low/high; map others to closest
-                level_map: dict[ThinkingLevel, str] = {
-                    True: 'high',
-                    'minimal': 'low',
-                    'low': 'low',
-                    'medium': 'high',
-                    'high': 'high',
-                    'xhigh': 'high',
-                }
-                existing['reasoning_config'] = level_map[thinking]
+            existing['reasoning_config'] = _QWEN_REASONING_CONFIG_MAP[thinking]
         elif variant == 'xai' and 'reasoning' not in existing:
-            # Grok always reasons on Converse, so `thinking=False` is silently ignored (like gpt-oss). `True` leaves
-            # the effort out where the profile records that the model's own default applies then (Grok 4.7: `high`).
-            if thinking is not False and not (thinking is True and profile.get('grok_default_effort_omitted', False)):
-                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low`;
-                # `True` picks `medium` like the other always-on effort-based variants.
-                effort_map: dict[ThinkingLevel, str] = {
-                    True: 'medium',
-                    'minimal': 'low',
-                    'low': 'low',
-                    'medium': 'medium',
-                    'high': 'high',
-                    'xhigh': 'xhigh',
-                }
-                existing['reasoning'] = {'effort': effort_map[thinking]}
+            # `True` leaves the effort out where the profile records that the model's own default applies then
+            # (Grok 4.7: `high`).
+            if not (thinking is True and profile.get('grok_default_effort_omitted', False)):
+                existing['reasoning'] = {'effort': _GROK_REASONING_EFFORT_MAP[thinking]}
 
         return existing or None
 
@@ -1379,7 +1641,11 @@ class BedrockConverseModel(Model[BaseClient]):
 
         # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(
+            self.model_name,
+            self._provider.model_id_namespace,
+            strict_schema_limits=self.profile.get('anthropic_enforces_strict_schema_limits', False),
+        ):
             if stream:
                 model_response = await _call_bedrock(
                     client, client.converse_stream, params, settings.get('extra_headers')
@@ -1416,18 +1682,10 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: BedrockModelSettings | None,
         bedrock_messages: Sequence[MessageUnionTypeDef],
     ) -> ToolConfigurationTypeDef | None:
-        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.declared_tool_defs
-
         profile = cast(BedrockModelProfile, self.profile)
-        supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
-
-        tool_choice: ToolChoiceTypeDef | None
-        if resolved_tool_choice == 'auto':
-            tool_choice = {'auto': {}}
-        elif resolved_tool_choice == 'required':
-            tool_choice = {'any': {}} if supports else {'auto': {}}
-        elif resolved_tool_choice == 'none':
+        if (declarations := self._tool_choice_declarations(model_settings, model_request_parameters)) is not None:
+            tool_defs, tool_choice = declarations
+        else:
             # Converse's `toolChoice` has no 'none' mode
             # (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html), so the tools are
             # dropped. Converse rejects `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once history has
@@ -1436,22 +1694,7 @@ class BedrockConverseModel(Model[BaseClient]):
             if not _has_tool_blocks(bedrock_messages):
                 return None
             # TODO(#10435): enforce `'none'` in core for models without a native `none`, which can still call these.
-            tool_choice = None
-        elif isinstance(resolved_tool_choice, tuple):
-            tool_choice_mode, tool_names = resolved_tool_choice
-            if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if supports:
-                    tool_choice = {'tool': {'name': next(iter(tool_names))}}
-                else:
-                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
-                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                    tool_choice = {'auto': {}}
-            else:
-                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
-                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
-        else:
-            assert_never(resolved_tool_choice)
+            tool_defs, tool_choice = model_request_parameters.declared_tool_defs, None
 
         tools: list[ToolTypeDef] = [self._map_tool_definition(t) for t in tool_defs.values()]
         for tool in model_request_parameters.native_tools:
@@ -1474,6 +1717,43 @@ class BedrockConverseModel(Model[BaseClient]):
             tool_config['toolChoice'] = tool_choice
 
         return tool_config
+
+    def _tool_choice_declarations(
+        self, model_settings: BedrockModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[dict[str, ToolDefinition], ToolChoiceTypeDef | None] | None:
+        """The tool definitions to declare, after any `tool_choice` restriction, and the `toolChoice` value.
+
+        `None` for `tool_choice='none'`, whose tools are only sent once the history has tool blocks.
+        """
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.declared_tool_defs
+
+        profile = cast(BedrockModelProfile, self.profile)
+        supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
+
+        tool_choice: ToolChoiceTypeDef | None
+        if resolved_tool_choice == 'auto':
+            tool_choice = {'auto': {}}
+        elif resolved_tool_choice == 'required':
+            tool_choice = {'any': {}} if supports else {'auto': {}}
+        elif resolved_tool_choice == 'none':
+            return None
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                if supports:
+                    tool_choice = {'tool': {'name': next(iter(tool_names))}}
+                else:
+                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = {'auto': {}}
+            else:
+                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
+        else:
+            assert_never(resolved_tool_choice)
+        return tool_defs, tool_choice
 
     async def _map_messages(  # noqa: C901
         self,
@@ -1498,7 +1778,13 @@ class BedrockConverseModel(Model[BaseClient]):
 
         # Most families accept a `status` field on `toolResult` blocks; Writer Palmyra rejects it.
         supports_tool_result_status = profile.get('bedrock_supports_tool_result_status', True)
-
+        # Anthropic models write their `<cite>` markup into tool and prompted output, so citations are only turned on for
+        # text output, and into a forced tool call's arguments, so that combination is an error (checked below).
+        include_citations = (
+            settings.get('citations', False)
+            and profile.get('bedrock_supports_citations', False)
+            and model_request_parameters.output_mode == 'text'
+        )
         # Media returned from a tool that can't live inside a `toolResult` block (see
         # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like
         # Mistral and Llama require every `toolResult` for a tool-use turn to sit together in the message
@@ -1526,6 +1812,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             await self._map_user_prompt(
                                 part,
                                 document_count,
+                                include_citations=include_citations,
                                 supports_prompt_caching=profile.get('bedrock_supports_prompt_caching', False),
                                 prior_messages=bedrock_messages,
                             )
@@ -1575,12 +1862,21 @@ class BedrockConverseModel(Model[BaseClient]):
                                     raise UserError('Audio files are not supported for Bedrock UploadedFile')
                                 else:
                                     tool_result_content.append(
-                                        _make_document_block(f'Document {next(document_count)}', uf_format, uf_source)
+                                        _make_document_block(
+                                            f'Document {next(document_count)}',
+                                            uf_format,
+                                            uf_source,
+                                            include_citations=include_citations,
+                                        )
                                     )
                             elif is_multi_modal_content(item):
                                 if isinstance(item, AudioUrl):
                                     raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
-                                file_block = await self._map_file_to_content_block(item, document_count)  # pyright: ignore[reportArgumentType]
+                                file_block = await self._map_file_to_content_block(
+                                    item,  # pyright: ignore[reportArgumentType]
+                                    document_count,
+                                    include_citations=include_citations,
+                                )
                                 kind = next((k for k in ('image', 'document', 'video') if k in file_block), None)
                                 if kind in profile.get(
                                     'bedrock_supported_media_kinds_in_tool_returns', frozenset({'image'})
@@ -1641,12 +1937,13 @@ class BedrockConverseModel(Model[BaseClient]):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
                         if (
-                            item.provider_name == self.system
-                            and item.signature
+                            item.signature
                             and profile.get('bedrock_send_back_thinking_parts', False)
+                            and self.accepts_stateless_artifacts(message, item)
                         ):
                             reasoning_content: ReasoningContentBlockOutputTypeDef
-                            if item.id == 'redacted_content':
+                            # `AnthropicModel` records redacted thinking as `redacted_thinking`, with the same data.
+                            if item.id in REDACTED_THINKING_PART_IDS:
                                 reasoning_content = {
                                     'redactedContent': item.signature.encode('utf-8'),
                                 }
@@ -1694,6 +1991,9 @@ class BedrockConverseModel(Model[BaseClient]):
                     elif isinstance(item, CompactionPart | FilePart):
                         # Compaction and file parts are not sent back to models that don't support them.
                         pass  # pragma: no cover
+                    elif isinstance(item, SpeechPart):
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
@@ -1781,17 +2081,22 @@ class BedrockConverseModel(Model[BaseClient]):
             and (cache_instructions := settings.get('bedrock_cache_instructions'))
             and profile.get('bedrock_supports_prompt_caching', False)
         ):
-            cache_point = cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
-            if instruction_parts and any(p.dynamic for p in instruction_parts):
-                # Insert cache point after the last static instruction (static parts are sorted first)
-                num_pre_instruction_blocks = len(system_prompt) - len(instruction_parts)
-                num_static = sum(1 for p in instruction_parts if not p.dynamic)
-                cache_idx = num_pre_instruction_blocks + num_static
-                if cache_idx > 0:
-                    system_prompt.insert(cache_idx, cache_point)
-            else:
-                # All static or no instruction_parts: cache point at end.
-                system_prompt.append(cache_point)
+            # After the literal instructions (or the system prompt when there are none), and after the append
+            # blocks; see `instruction_cache_boundaries`. `_limit_cache_points` drops the second first.
+            parts = instruction_parts or []
+            num_pre_instruction_blocks = len(system_prompt) - len(parts)
+            static_parts, stable_parts = instruction_cache_boundaries(parts)
+            static_idx = num_pre_instruction_blocks + static_parts
+            stable_idx = num_pre_instruction_blocks + stable_parts
+            # Inserted back to front, so the earlier index still points at the same block.
+            if stable_idx > static_idx:
+                system_prompt.insert(
+                    stable_idx, cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
+                )
+            if static_idx > 0:
+                system_prompt.insert(
+                    static_idx, cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
+                )
 
         if processed_messages and (cache_messages := settings.get('bedrock_cache_messages')):
             if profile.get('bedrock_supports_prompt_caching', False):
@@ -1835,6 +2140,15 @@ class BedrockConverseModel(Model[BaseClient]):
             and not profile.get('bedrock_supports_leading_assistant_message', False)
         ):
             processed_messages.insert(0, {'role': 'user', 'content': [{'text': '.'}]})
+
+        if include_citations and _has_cited_document(processed_messages):
+            tool_choice = resolve_tool_choice(settings, model_request_parameters)
+            if tool_choice == 'required' or (isinstance(tool_choice, tuple) and tool_choice[0] == 'required'):
+                raise UserError(
+                    "`Citations()` can't be used with a `tool_choice` that forces a tool call on Anthropic models: "
+                    "the model writes its citation markup into the tool's arguments. "
+                    'Remove `Citations()`, or let the model choose whether to call the tool.'
+                )
 
         return system_prompt, processed_messages
 
@@ -1901,18 +2215,24 @@ class BedrockConverseModel(Model[BaseClient]):
     async def _map_file_to_content_block(
         file: ImageUrl | DocumentUrl | VideoUrl | BinaryContent,
         document_count: Iterator[int],
+        *,
+        include_citations: bool = False,
     ) -> ContentBlockUnionTypeDef:
         """Map a multimodal file directly to a Bedrock content block."""
         source: DocumentSourceTypeDef
 
         if isinstance(file, BinaryContent):
-            source = {'bytes': file.data}
             if file.is_image:
-                return _make_image_block(file.format, source)
+                return _make_image_block(file.format, {'bytes': file.data})
             elif file.is_document:
-                return _make_document_block(f'Document {next(document_count)}', file.format, source)
+                return _make_document_block(
+                    f'Document {next(document_count)}',
+                    file.format,
+                    _make_document_source(file.data, file.media_type, include_citations=include_citations),
+                    include_citations=include_citations,
+                )
             elif file.is_video:
-                return _make_video_block(file.format, source)
+                return _make_video_block(file.format, {'bytes': file.data})
             else:
                 raise NotImplementedError(f'Unsupported binary content type for Bedrock: {file.media_type}')
         else:
@@ -1920,7 +2240,11 @@ class BedrockConverseModel(Model[BaseClient]):
                 source = _parse_s3_source(file.url)
             else:
                 downloaded = await download_item(file, data_format='bytes', type_format='extension')
-                source = {'bytes': downloaded['data']}
+                source = (
+                    _make_document_source(downloaded['data'], file.media_type, include_citations=include_citations)
+                    if isinstance(file, DocumentUrl)
+                    else {'bytes': downloaded['data']}
+                )
 
             try:
                 format = file.format
@@ -1930,7 +2254,9 @@ class BedrockConverseModel(Model[BaseClient]):
             if isinstance(file, ImageUrl):
                 return _make_image_block(format, source)
             elif isinstance(file, DocumentUrl):
-                return _make_document_block(f'Document {next(document_count)}', format, source)
+                return _make_document_block(
+                    f'Document {next(document_count)}', format, source, include_citations=include_citations
+                )
             else:
                 return _make_video_block(format, source)
 
@@ -1939,6 +2265,7 @@ class BedrockConverseModel(Model[BaseClient]):
         part: UserPromptPart,
         document_count: Iterator[int],
         *,
+        include_citations: bool = False,
         supports_prompt_caching: bool,
         prior_messages: list[MessageUnionTypeDef],
     ) -> list[MessageUnionTypeDef]:
@@ -1951,7 +2278,11 @@ class BedrockConverseModel(Model[BaseClient]):
                     text = item if isinstance(item, str) else item.content
                     content.append({'text': text})
                 elif isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
-                    content.append(await BedrockConverseModel._map_file_to_content_block(item, document_count))
+                    content.append(
+                        await BedrockConverseModel._map_file_to_content_block(
+                            item, document_count, include_citations=include_citations
+                        )
+                    )
                 elif isinstance(item, AudioUrl):
                     raise NotImplementedError('AudioUrl is not supported in Bedrock user prompts')
                 elif isinstance(item, UploadedFile):
@@ -1974,7 +2305,11 @@ class BedrockConverseModel(Model[BaseClient]):
                     elif item.media_type.startswith('audio/'):
                         raise UserError('Audio files are not supported for Bedrock UploadedFile')
                     else:
-                        content.append(_make_document_block(f'Document {next(document_count)}', format, source))
+                        content.append(
+                            _make_document_block(
+                                f'Document {next(document_count)}', format, source, include_citations=include_citations
+                            )
+                        )
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
@@ -1991,7 +2326,9 @@ class BedrockConverseModel(Model[BaseClient]):
                             'CachePoint cannot be preceded by another CachePoint - there must be content between cache points when using Bedrock.'
                         )
                     cache_point = BedrockConverseModel._get_cache_point(item.ttl)
-                    if self.profile.get('bedrock_document_cache_point_variant') == 'anthropic' and _is_pdf(content[-1]):
+                    if self.profile.get('bedrock_document_cache_point_variant') == 'anthropic' and _stays_in_place(
+                        content[-1]
+                    ):
                         content.append(cache_point)
                     else:
                         _insert_cache_point_before_trailing_documents(content, cache_point, raise_if_cannot_insert=True)
@@ -2031,22 +2368,25 @@ class BedrockConverseModel(Model[BaseClient]):
     ) -> None:
         """Limit the number of cache points in the request to Bedrock's maximum.
 
-        System prompt and tool definition cache points always take priority; excess message
-        cache points are removed oldest-first. A Bedrock cache point is a standalone
-        `cachePoint` content block, so excess blocks are dropped from their content lists.
+        Tool definition cache points and the first instruction cache point always take priority; excess
+        message cache points are removed oldest-first, after the instruction cache point behind the
+        `on_change='append'` blocks (see `split_instruction_cache_points`). A Bedrock cache point is a
+        standalone `cachePoint` content block, so excess blocks are dropped from their content lists.
 
         Raises:
             UserError: If system_prompt and tools combined already exceed the budget.
                       This indicates a configuration error that cannot be auto-fixed.
         """
-        reserved = sum(1 for block in system_prompt if 'cachePoint' in block)
+        reserved, optional_points = split_instruction_cache_points(
+            [block for block in system_prompt if 'cachePoint' in block]
+        )
         reserved += sum(1 for tool in tools if 'cachePoint' in tool)
 
         message_contents = [
             content for message in reversed(bedrock_messages) if isinstance(content := message.get('content'), list)
         ]
         excess = excess_cache_points(
-            (block for content in message_contents for block in reversed(content)),
+            chain((block for content in message_contents for block in reversed(content)), optional_points),
             # Bedrock enforces a maximum of 4 cache points per request.
             max_points=4,
             reserved=reserved,
@@ -2055,7 +2395,7 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         if excess:
             excess_ids = {id(block) for block in excess}
-            for content in message_contents:
+            for content in [*message_contents, system_prompt]:
                 content[:] = [block for block in cast('list[Any]', content) if id(block) not in excess_ids]
 
 
@@ -2079,6 +2419,14 @@ class BedrockStreamedResponse(StreamedResponse):
         return (BotoCoreError, ClientError, Urllib3HTTPError)
 
     async def close_stream(self) -> None:
+        # A read a cancellation gave up on keeps its thread blocked until botocore's `read_timeout` passes, and holds
+        # the response's lock meanwhile, so closing the stream would wait for it too. Shutting down the socket first
+        # wakes it. Best effort, and a no-op for a stream that isn't botocore's (`TypeError`, `KeyError`), one whose
+        # connection was already released once it was read through (`AttributeError`), or one whose socket is already
+        # closed (`OSError`).
+        with suppress(TypeError, KeyError, AttributeError, OSError):
+            raw_stream: Any = vars(self._event_stream)['_raw_stream']
+            raw_stream.connection.sock.shutdown(socket.SHUT_RDWR)
         await anyio.to_thread.run_sync(self._event_stream.close)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
@@ -2092,6 +2440,7 @@ class BedrockStreamedResponse(StreamedResponse):
             # Bedrock has deltas for built-in tool returns, which aren't supported by parts manager.
             # We accumulate the deltas here and yield the complete return part once the content block ends
             builtin_tool_returns: dict[int, NativeToolReturnPart] = {}
+            citations: dict[int, list[CitationsDeltaTypeDef]] = {}
 
             async for chunk in _AsyncIteratorWrapper(self._event_stream):
                 match chunk:
@@ -2184,6 +2533,8 @@ class BedrockStreamedResponse(StreamedResponse):
                                 ),
                             ):
                                 yield event
+                        if citation := delta.get('citation'):
+                            citations.setdefault(index, []).append(citation)
                         if 'toolUse' in delta:
                             tool_use = delta['toolUse']
                             maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -2211,6 +2562,18 @@ class BedrockStreamedResponse(StreamedResponse):
 
                     case {'contentBlockStop': content_block_stop}:
                         index = content_block_stop['contentBlockIndex']
+                        block_citations = citations.pop(index, [])
+                        part = self._parts_manager.get_part_by_vendor_id(index)
+                        text = part.content if isinstance(part, TextPart) else ''
+                        if text and (block_text_citations := _map_citations(block_citations, text)):
+                            for event in self._parts_manager.handle_text_delta(
+                                vendor_part_id=index,
+                                content='',
+                                provider_name=self.provider_name,
+                                provider_details=_citations_provider_details(block_citations),
+                                citations=block_text_citations,
+                            ):
+                                yield event
                         if return_part := builtin_tool_returns.get(index):
                             # Emit the complete built-in tool return only once when the block closes.
                             yield self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
@@ -2264,7 +2627,9 @@ class _AsyncIteratorWrapper(Generic[T]):
 
     async def __anext__(self) -> T:
         try:
-            return await anyio.to_thread.run_sync(next, self.sync_iterator)
+            # Given up on when the read is cancelled, rather than waited for until botocore's `read_timeout` passes;
+            # closing the stream, as `BedrockStreamedResponse.close_stream` does on the way out, ends the read.
+            return await anyio.to_thread.run_sync(next, self.sync_iterator, abandon_on_cancel=True)
         except RuntimeError as e:
             if type(e.__cause__) is StopIteration:
                 raise StopAsyncIteration
@@ -2276,9 +2641,16 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
     """Translate unified `thinking` into the Anthropic `thinking` (and `output_config.effort`) request fields."""
     if profile.get('bedrock_supports_adaptive_thinking', False):
         if thinking is False:
-            # Omitting `thinking` leaves it on for models that think by default. `Model.prepare_request`
-            # has already dropped `False` for models that can't turn thinking off.
-            if profile.get('thinking_enabled_by_default', False):
+            if profile.get('thinking_always_enabled', False):
+                # A model that can't turn thinking off thinks as little as it can: adaptively at the lowest effort.
+                # A model without an effort setting is left at its default.
+                if profile.get('bedrock_supports_effort', False):
+                    existing['thinking'] = {'type': 'adaptive'}
+                    existing.setdefault('output_config', {'effort': 'low'})
+            elif profile.get('anthropic_disables_thinking_with_between_tools', False):
+                existing['thinking'] = {'type': 'between_tools'}
+            elif profile.get('thinking_enabled_by_default', False):
+                # Omitting `thinking` leaves it on for models that think by default.
                 existing['thinking'] = {'type': 'disabled'}
         else:
             existing['thinking'] = {'type': 'adaptive'}
@@ -2291,7 +2663,9 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
                 and 'output_config' not in existing
             ):
                 effort = resolve_anthropic_effort(
-                    thinking, supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False)
+                    thinking,
+                    supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False),
+                    supports_max=profile.get('anthropic_supports_max_effort', True),
                 )
                 existing['output_config'] = {'effort': effort}
     elif thinking is False:
@@ -2328,7 +2702,7 @@ def _effective_thinking_type(
     if unified_thinking:
         return 'adaptive' if is_anthropic and profile.get('bedrock_supports_adaptive_thinking', False) else 'enabled'
     # Claude models that think by default keep thinking without a setting, and those that can't turn it off
-    # ignore `thinking=False`, as on the direct Anthropic API.
+    # still think at their lowest effort with `thinking=False`, as on the direct Anthropic API.
     if (
         is_anthropic
         and (unified_thinking is None or profile.get('thinking_always_enabled', False))
@@ -2343,10 +2717,12 @@ def _thinking_rejects_tool_forcing(
 ) -> bool:
     """Whether this request's thinking rejects the forced tool choice Tool Output relies on.
 
-    Extended thinking and thinking on the non-Anthropic variants do, except xAI Grok, which always reasons: Converse
-    accepts a forced `toolChoice` with Grok 4.6 while it reasons, and Grok 4.7 is assumed to match.
+    Extended thinking and thinking on the non-Anthropic variants do, except two. xAI Grok always reasons, and Converse
+    accepts a forced `toolChoice` with Grok 4.6 while it reasons (Grok 4.7 is assumed to match). OpenAI GPT-5.6 and
+    GPT-6 accept output tools while they think, offered without a forced `toolChoice` as their profile doesn't enable
+    forcing.
     """
-    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') != 'xai'
+    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in ('xai', 'openai_responses')
 
 
 def _support_tool_forcing(

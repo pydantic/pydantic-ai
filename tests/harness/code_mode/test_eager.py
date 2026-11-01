@@ -6,7 +6,6 @@ import asyncio
 import dataclasses
 import json
 import re
-import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 
@@ -110,7 +109,9 @@ async def observe(capability: CodeMode[None], ctx: RunContext[None], events: Seq
 
 
 class TestEagerCodeMode:
-    async def test_executes_before_model_stream_finishes(self):
+    @pytest.mark.parametrize('chunk_size', [4, 1])
+    async def test_executes_before_model_stream_finishes(self, chunk_size: int):
+        """Statements run while the call streams, including when every delta splits the `\\n` escape."""
         first_call = asyncio.Event()
         calls: list[str] = []
 
@@ -125,7 +126,7 @@ class TestEagerCodeMode:
             if prior_run_code_calls(messages):
                 yield 'done'
                 return
-            chunks = stream_json_args(code, chunk_size=4)
+            chunks = stream_json_args(code, chunk_size=chunk_size)
             yield {1: DeltaToolCall(name='run_code')}
             for chunk in chunks[:-1]:
                 yield {1: DeltaToolCall(json_args=chunk)}
@@ -958,6 +959,7 @@ class TestEagerCodeMode:
         behind it never run, and the tool is allowed to finish in the background."""
         monkeypatch.setattr('pydantic_ai_harness.code_mode._eager.CANCEL_TIMEOUT_SECONDS', 0.25)
         started = asyncio.Event()
+        release = asyncio.Event()
         done = asyncio.Event()
         calls: list[str] = []
 
@@ -967,8 +969,8 @@ class TestEagerCodeMode:
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
-                # Swallow the cancellation and keep working past the cleanup budget.
-                await asyncio.sleep(1.2)
+                # Swallow the cancellation and keep working until the test releases the tool.
+                await release.wait()
             calls.append('done')
             done.set()
             return 'late'
@@ -985,17 +987,21 @@ class TestEagerCodeMode:
                 ],
             )
             await asyncio.wait_for(started.wait(), timeout=5)
-            # Without the budget, the restart would wait out the 1.2 second non-cooperative linger.
-            discard_start = time.monotonic()
-            await observe(
-                capability,
-                ctx,
-                [PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'restart': True}, tool_call_id='c1'))],
+            # The tool holds the pump until it is released, so the restart can only return by
+            # abandoning the pump after the budget. Checking that, rather than a wall-clock bound on
+            # a tool that lingers for a fixed time, keeps a slow event loop from failing the test.
+            await asyncio.wait_for(
+                observe(
+                    capability,
+                    ctx,
+                    [PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'restart': True}, tool_call_id='c1'))],
+                ),
+                timeout=5,
             )
 
-            assert time.monotonic() - discard_start < 0.75
             assert calls == ['stubborn']
             # The abandoned tool is allowed to finish in the background.
+            release.set()
             await asyncio.wait_for(done.wait(), timeout=5)
             assert calls == ['stubborn', 'done']
 

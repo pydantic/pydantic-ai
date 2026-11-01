@@ -20,13 +20,20 @@ from rich.console import Console
 from rich.text import Text
 
 from pydantic_ai import PartStartEvent
-from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent, TextPart, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import Settings, resolve_settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.runtime.sandbox_calls import SandboxCallOrder, SandboxCallStartedEvent
+from pydantic_clai2.runtime.eager_timing import EAGER_TIMING_EVENTS, EagerExecutionCompletedEvent
+from pydantic_clai2.runtime.sandbox_calls import (
+    SHOW_SANDBOX_CALLS_EVENTS,
+    DelegationCallStartedEvent,
+    SandboxCallFinishedEvent,
+    SandboxCallOrder,
+    SandboxCallStartedEvent,
+)
 from pydantic_clai2.runtime.speculation import Speculation, SpeculationCounters
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
@@ -233,3 +240,20 @@ class TestChord:
         assert len(frame) <= height - 2
         assert frame[0].startswith('\u2500')
         assert ('PINNED ROW' in frame) is shown
+
+
+def test_clai2_capability_events_are_namespaced_by_the_capability_that_emits_them() -> None:
+    call = ToolCallPart('shell', tool_call_id='run__1')
+    result = ToolReturnPart('shell', 'ok', tool_call_id='run__1')
+    assert (SHOW_SANDBOX_CALLS_EVENTS, EAGER_TIMING_EVENTS) == ('show_sandbox_calls', 'eager_timing')
+    assert [
+        SandboxCallStartedEvent(call=call).kind,
+        DelegationCallStartedEvent(call=call).kind,
+        SandboxCallFinishedEvent(result=result).kind,
+        EagerExecutionCompletedEvent(saved_ms=1.0).kind,
+    ] == [
+        'show_sandbox_calls.sandbox_call_started',
+        'show_sandbox_calls.delegation_call_started',
+        'show_sandbox_calls.sandbox_call_finished',
+        'eager_timing.eager_execution_completed',
+    ]

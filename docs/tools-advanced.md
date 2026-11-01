@@ -74,7 +74,7 @@ Whether a file can travel inside the tool result depends on the model **and** th
 
 - **Inside the tool result**, where the API and the media type both allow it: Anthropic and OpenAI Responses for images and documents, Gemini 3 for the types listed in its [`GoogleModelProfile`][pydantic_ai.profiles.google.GoogleModelProfile]'s `google_supported_mime_types_in_tool_returns`, and Bedrock for the media kinds a model family supports.
 - **On the user channel** — the same channel the person talking to your agent uploads on — for everything else: OpenAI Chat Completions, Groq, Mistral, xAI, Hugging Face and Gemini 2.5 and earlier accept only text in a tool result, and Gemini 3 and Bedrock fall back here for a media type they can't carry (audio and video on Gemini 3, or a kind outside a Bedrock family's set).
-- **As a note in its place**, where the model can't read that kind of file at all, as its [profile](models/overview.md#inspecting-a-models-profile)'s file-input flags say. For example: documents other than text on Chat Completions providers without file input, such as Azure and vLLM, audio and video on Anthropic, OpenAI Responses, Mistral and xAI, video on OpenAI Chat Completions, audio on Bedrock, anything but images on Groq and Hugging Face, and any file on Cohere, as well as documents other than PDF and plain text on Anthropic, and other than PDF and text formats on Mistral.
+- **As a note in its place**, where the model can't read that kind of file at all, as its [profile](models/overview.md#inspecting-a-models-profile)'s file-input flags say. For example: documents other than text on Chat Completions providers without file input, such as Azure and vLLM, audio and video on Anthropic, OpenAI Responses, Mistral and xAI, video on OpenAI Chat Completions, audio on OpenAI's models without `audio` in their name, audio on Bedrock and video on Bedrock outside Nova, anything but images on Groq and Hugging Face, and any file on Cohere, as well as documents other than PDF and plain text on Anthropic, and other than PDF and text formats on Mistral.
 
 To keep the model from reading a tool's output as something the user attached, a file taking the user channel is framed with the call it came from:
 
@@ -96,7 +96,7 @@ A file the model can't read would fail the request if it were sent, which is out
 File d9a13f (audio/mpeg, 48,213 bytes) was not sent: this model cannot read audio files.
 ```
 
-The model can then tell the user, or try another tool. Like the framing, the note is only in the request: the file stays on the `ToolReturnPart` in your message history, and each model a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] tries decides for itself, so one that can read the file is sent it. A file in a user prompt, or in [`ToolReturn.content`](#advanced-tool-returns), is sent as it is, and a model that can't take it still fails the request: you or your user chose to send it.
+The model can then tell the user, or try another tool. Like the framing, the note is only in the request: the file stays on the `ToolReturnPart` in your message history, and each model a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] tries decides for itself, so one that can read the file is sent it. With the [File Understanding](capabilities/file-understanding.md) capability, the file is described in text by a model that can read it instead. A file in a user prompt, or in [`ToolReturn.content`](#advanced-tool-returns), is sent as it is, and a model that can't take it still fails the request: you or your user chose to send it.
 
 ### Advanced Tool Returns
 
@@ -459,9 +459,25 @@ selected function tools plus all output tools available and also allows text or 
 Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a tool that is still
 hidden is ignored when forcing by name, and an explicit choice raises only when every requested
 tool is hidden. `'required'` raises when every function
-tool is hidden. A tool *declared* with its schema deferred can be forced. On providers that carry
-revealed definitions outside the `tools` list (OpenAI Responses `additional_tools`), a revealed
-tool can't be forced by name either, since by-name forcing can only target declared tools.
+tool is hidden.
+
+Whether a deferred tool can be forced by name depends on how its definition reaches the model:
+
+- A tool *declared* with its schema deferred, such as a [tool search](#tool-search) corpus member
+  on a model with native tool search, is not ignored: Pydantic AI sends a `tool_choice` naming it as
+  is. Anthropic accepts the force where it supports forcing (see [Provider Support](#provider-support)).
+  On OpenAI Responses, the API rejects it with a 400 while nothing has revealed the tool, and after
+  the model's own server-executed tool search reveals it. After a [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn] reveal, GPT-5.6
+  and later accept the force and earlier models return the same 400.
+- On OpenAI Responses, a tool withheld until revealed, such as an on-demand capability's tool or a
+  tool search corpus member on a model without native tool search, travels in the
+  `additional_tools` item alone once `load_capability` or another tool's `ToolReturn.tools` reveals
+  it, as does a tool that [appears mid-run](#mid-run-tool-additions). Such a tool can be named in
+  `tool_choice` on every model unless `openai_previous_response_id` or `openai_conversation_id` is
+  set. GPT-5.6 and later accept the name as is. On earlier models, Pydantic AI declares the tool in
+  `tools` for the request whose `tool_choice` names it, so that one request misses the prompt cache. With either setting, Pydantic AI keeps the tool in the item alone:
+  earlier models reject the name with a 400 (`Tool choice '<name>' not found in 'tools' parameter.`),
+  and so does GPT-5.6 once a stored response holds the item.
 
 ### Example
 
@@ -561,21 +577,21 @@ Whether a model can be forced to call a tool is a property of the model, set on 
 
 Restricting the available tool set via `tool_choice` can invalidate provider prompt caches because most provider APIs cache on the full tools array. Pydantic AI restricts the tool set in two ways:
 
-- **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses (`allowed_tools`), Google (`allowed_function_names`), and Bedrock and Mistral when forcing a single tool.
+- **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses and OpenAI Chat through `OpenAIProvider` (`allowed_tools`), Google (`allowed_function_names`), and Bedrock and Mistral when forcing a single tool.
 - **Client-side filtering** (breaks cache): the tools array is trimmed before the request. Used when the provider API has no native filter for the given case.
 
-The table below covers the cases where Pydantic AI must filter client-side and therefore breaks cache:
+The table below covers the cases where Pydantic AI must change the tools array client-side and therefore breaks cache:
 
 | Provider | Cache-breaking case |
 |----------|---------------------|
 | Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
-| OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
+| OpenAI Chat | Only where `openai_chat_supports_allowed_tools` is off, as for OpenAI-compatible providers other than [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]: `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing. `OpenAIProvider` (including through a custom `base_url`) handles these cases natively with `allowed_tools`; a compatible server that rejects or ignores it opts out with `openai_chat_supports_allowed_tools=False` in the model's [profile](models/overview.md#models-and-providers) |
 | Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing, OR `'none'` while the history has no tool calls |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
 | Mistral | `tool_choice` is a list of multiple tools — the API can only force a single named tool |
 | Cohere | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | xAI | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
-| OpenAI Responses | Never — `allowed_tools` handles all cases natively |
+| OpenAI Responses | On models before GPT-5.6, a `tool_choice` (list or `ToolOrOutput`) naming a tool that only the `additional_tools` item declares, such as one `load_capability` revealed or one that [appeared mid-run](#mid-run-tool-additions): that request declares it in `tools`, unless `openai_previous_response_id` or `openai_conversation_id` is set, in which case the API rejects the request (see [Tool Choice](#tool-choice)). `allowed_tools` handles every other case natively |
 | Google | Never — `allowed_function_names` handles all cases natively |
 
 If preserving cache hits matters, prefer providers/cases marked "Never", or use `ToolOrOutput` (which keeps the full set) instead of a restrictive list.
@@ -908,7 +924,7 @@ Tools gated as a bundle are covered by [on-demand capabilities](capabilities/on-
 
 Each recorded reveal also surfaces as a [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] in the agent event stream and as the corresponding persistent Vercel AI data chunk or AG-UI activity snapshot.
 
-Provider adapters project each availability delta onto their supported history-based reveal mechanism. Anthropic declares each revealed definition in `tools` with `defer_loading=True` — up front in capability-only runs (no search surface can expose them), appended at reveal in mixed runs, which withhold capability-owned definitions until then — and references it from a native `tool_addition` block in the same request. OpenAI Responses carries a revealed definition in an appended `additional_tools` input item: a tool that was never declared travels in the item alone, while a tool already declared as a deferred `tools` entry keeps that entry and the item reveals it. Other models announce the newly available tools when their schemas are already visible, or receive a synthesized tool-search exchange when its result must reveal a withheld schema.
+Provider adapters project each availability delta onto their supported history-based reveal mechanism. Anthropic declares each revealed definition in `tools` with `defer_loading=True` — up front in capability-only runs (no search surface can expose them), appended at reveal in mixed runs, which withhold capability-owned definitions until then — and references it from a native `tool_addition` block in the same request. OpenAI Responses carries a revealed definition in an appended `additional_tools` input item: a tool that was never declared travels in the item alone (on models before GPT-5.6, a request whose `tool_choice` names it declares it in `tools` instead and misses the cache, while with `openai_previous_response_id` or `openai_conversation_id` set it gets a 400; see [Tool Choice](#tool-choice)), while a tool already declared as a deferred `tools` entry keeps that entry and the item reveals it. Other models announce the newly available tools when their schemas are already visible, or receive a synthesized tool-search exchange when its result must reveal a withheld schema.
 
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 
@@ -1033,7 +1049,7 @@ See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_load
 
 ### Tool search and prompt caching {#tool-search-caching}
 
-Prompt caching keys on a **stable prefix**: providers cache the longest unchanged run of tokens from the start of the request, in roughly the order tool definitions → system/instructions → message history. A change at any layer invalidates the cache for that layer and everything after it — so on most providers **changing, adding, removing, or reordering a tool definition invalidates the cache**, because tool definitions sit at the very front.
+Prompt caching keys on a **stable prefix**: providers cache the longest unchanged run of tokens from the start of the request, in roughly the order tool definitions → system/instructions → message history. A change at any layer invalidates the cache for that layer and everything after it — so on most providers **changing, adding, removing, or reordering a tool definition invalidates the cache**, because tool definitions sit at the very front. A tool that [appears mid-run](#mid-run-tool-additions) is the exception on OpenAI Responses and Anthropic, which receive it outside `tools[]`.
 
 Tool search works on **every model**, but it only *preserves* the cache where discovery leaves the tool definitions untouched: on models with native tool search — Anthropic Sonnet 4.5+, Opus 4.5+, and Haiku 4.5+, and OpenAI Responses on GPT-5.4+ except GPT-5.4 nano — and on first-party OpenAI Responses models without it, whose local fallback reveals each discovered tool in an `additional_tools` input item. There, discovery is [append-only](#tool-search) and the deferred tools never enter the prompt prefix, so an identical prefix is re-read from cache across discovery rounds. On every other model — including Google, older Anthropic models, OpenAI Chat Completions, and OpenAI-compatible Responses endpoints — the local `search_tools` fallback reveals a discovered tool by adding it to the tools array, which **invalidates the cached prefix from the tool definitions onward on each discovery turn** (on Google, a stable `system_instruction` sits ahead of the tool block and can still be reused — see [Related caching controls](#related-caching-controls) below).
 
@@ -1043,7 +1059,25 @@ Tool search works on **every model**, but it only *preserves* the cache where di
 !!! note "Deferring saves context — it is not dynamic registration"
     With either strategy, every tool the model can ever reach must be **declared on the agent or toolset up front**. Deferring keeps unused definitions out of the model's context (and, natively, out of the cached prefix); it does not let you register a brand-new tool the agent was never configured with. Where a provider can append a tool declaration mid-conversation — OpenAI Responses' `additional_tools` item — a tool that was never in the request's `tools` block can still become callable without touching the prefix, because the declaration travels as an appended input item.
 
-For [on-demand capabilities](capabilities/on-demand.md#on-demand-capabilities), loading a capability that reveals no new tool definitions — instructions or model settings only — preserves the cache on every provider, even without native tool search. Anthropic excludes deferred entries from its cache key: capability-only runs pre-advertise them from turn one, making the one-time deferred preamble part of the initial prefix, while mixed runs pay that preamble through the searchable corpus and append revealed deferred entries outside the cached prefix. No Anthropic capability reveal introduces the deferred preamble midway through a run. First-party OpenAI Responses appends the reveal as an `additional_tools` input item without changing `tools[]`. Elsewhere the revealed tool enters the tool-definitions prefix, as does a native tool, and as does a deferred `prepare_tools`/`prepare_output_tools` hook that rewrites tool definitions on load. See [Cache implications](capabilities/on-demand.md#cache-implications) for the full breakdown.
+For [on-demand capabilities](capabilities/on-demand.md#on-demand-capabilities), loading a capability that reveals no new tool definitions — instructions or model settings only — preserves the cache on every provider, even without native tool search. Anthropic excludes deferred entries from its cache key: capability-only runs pre-advertise them from turn one, making the one-time deferred preamble part of the initial prefix, while mixed runs pay that preamble through the searchable corpus and append revealed deferred entries outside the cached prefix. No Anthropic capability load introduces the deferred preamble midway through a run, though a tool that [appears mid-run](#mid-run-tool-additions) without a load, such as one from a capability's dynamic toolset, can on some models when it's the run's first deferred declaration. First-party OpenAI Responses appends the reveal as an `additional_tools` input item without changing `tools[]`. Elsewhere the revealed tool enters the tool-definitions prefix, as does a native tool, and as does a deferred `prepare_tools`/`prepare_output_tools` hook that rewrites tool definitions on load. See [Cache implications](capabilities/on-demand.md#cache-implications) for the full breakdown.
+
+#### Tools that appear mid-run {#mid-run-tool-additions}
+
+A tool can also join a run without being searched for or loaded. It might be added to a [`FunctionToolset`](toolsets.md#function-toolset) from inside another tool, returned by a [dynamically built toolset](toolsets.md#dynamically-building-a-toolset), listed by an MCP server after it sends `notifications/tools/list_changed`, or let through by a [`prepare_tools`](#prepare-tools) function. Pydantic AI compares the immediately available function tools at each step with the ones the run started with, and records each new one in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. A new tool with `defer_loading=True` isn't recorded: it joins the [tool search](#tool-search) corpus and is revealed when a search finds it. A recorded tool then reaches the model the same way a revealed deferred tool does:
+
+| Provider | How the new tool arrives | Cache prefix |
+|---|---|---|
+| First-party OpenAI Responses (`OpenAIProvider`) | An `additional_tools` input item carrying its definition | **Stable**: `tools[]` is unchanged, except on models before GPT-5.6 for a request whose `tool_choice` names the new tool (see [Tool Choice](#tool-choice)) |
+| Anthropic models with tool search (Sonnet 4.5+, Opus 4.5+, Haiku 4.5+) | A `defer_loading` declaration plus a `tool_addition` block (or a `tool_reference` result on models without mid-conversation tool changes) | **Stable** once the request already declares a deferred tool. Otherwise, on some models (Claude Opus 4.8, for example) the first deferred declaration adds a one-time preamble, which moves the prefix on that request only |
+| Everything else, including older Anthropic models, OpenAI-compatible Responses endpoints (Azure, OpenRouter, and so on), and OpenAI Chat Completions | Added to `tools[]`, plus a note in the conversation that it's now available | **Breaks** from the tool definitions onward on the request where it appears |
+
+There is one exception: when nothing the model was already given is left to keep stable, because the run started with no plainly visible tools (text output and only deferred tools, say, or an MCP server with an empty list) or every tool it started with has since left, the tools present go into `tools[]` directly and nothing is recorded. This also keeps a request from carrying only deferred tools, which Anthropic rejects.
+
+The record lives in the message history, so a retried request or a later run over the same history doesn't announce the tool again. When [compaction](capabilities/compaction.md) summarizes the record away during the run, the tool is announced once more without changing `tools[]`. A later run that starts after the compaction no longer sees the record, so it declares the tool in `tools[]` from its first request, like any tool it starts with.
+
+Only tools that appear within a single run are detected. A tool that's new to a later run over the same history, such as one unlocked after a [tool approval](deferred-tools.md#human-in-the-loop-tool-approval), is sent in `tools[]` from that run's first request. Tools that disappear, and tools whose definition changes under the same name, are also sent as-is.
+
+Under [durable execution](durable_execution/overview.md), drive mid-run changes from code that runs as part of the workflow, such as a `prepare_tools` function or a dynamically built toolset that reads run state. On Temporal, tools run in activities, which aren't re-executed when the workflow is replayed, so a tool that calls `add_function()` makes a change that replay won't reproduce.
 
 For a genuinely open-ended tool universe, route everything through a single, stable tool. The harness [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) capability collapses many tools into one `run_code` tool whose definition stays byte-stable; newly discovered tools are surfaced as callables inside the sandbox rather than as new tool schemas, keeping the tool-definitions prefix — and its cache — intact across discoveries.
 

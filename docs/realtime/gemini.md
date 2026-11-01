@@ -61,7 +61,8 @@ differs from every other Live model in three ways the model handles for you:
   possible" here rather than "off", since the model has no off.
 - **Its tool calls are always asynchronous.** Its profile's
   [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] is
-  `'always'`, since the model has no blocking mode, so an explicit `async_tool_calls=False` is ignored.
+  `'always'`, since the model has no blocking mode, so an explicit `async_tool_calls=False` is ignored, with an
+  [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] when the session has tools.
 - **Its spoken filler doesn't end the turn.** Gemini closes the filler's response and says the
   interaction is still in progress, so the filler and the tool call it was stalling for are recorded
   as one `ModelResponse`, and `RealtimeTurnCompleteEvent` and
@@ -76,7 +77,7 @@ Live models it defaults to asynchronous tool calls, so Pydantic AI declares tool
 
 Both 3.8 models keep proactive audio permanently on, so there's nothing for `google_proactive_audio`
 to turn on and it can be left unset. Gemini rejects an explicit `False`, which Pydantic AI never sends,
-and `True` still needs a `v1alpha` client like on any model. Neither supports affective dialog, and neither does
+and `True` is accepted too. Neither supports affective dialog, and neither does
 `gemini-3.1-flash-live-preview`: `google_affective_dialog=True` raises `UserError` when the session connects.
 
 ## Settings
@@ -94,7 +95,6 @@ settings = GoogleRealtimeModelSettings(
     google_voice='Puck',
     google_language_code='en-US',
     google_affective_dialog=True,
-    google_proactive_audio=True,
     google_vad={'start_sensitivity': 'high', 'end_sensitivity': 'low'},
     google_turn_coverage='all_video',
     google_context_compression={'trigger_tokens': 16000, 'target_tokens': 8000},
@@ -104,9 +104,9 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 
 | Setting | Purpose |
 | --- | --- |
-| `google_voice`, `google_language_code`, `google_multi_speaker` | Voice, output language, and per-speaker voices |
+| `google_voice`, `google_language_code` | Voice and output language. A Live session speaks in one voice: the deprecated `google_multi_speaker` raises when the session connects |
 | `google_affective_dialog` | Emotion-aware delivery, on the 2.5 models (not 3.1 Flash Live or the 3.8 models) |
-| `google_proactive_audio` | Model-decided speech on native-audio models; needs a `v1alpha` client (see below). Always on for the 3.8 models |
+| `google_proactive_audio` | Model-decided speech on native-audio models, served on the Developer API's `v1alpha` (see below). Always on for the 3.8 models |
 | `google_vad` | Exact automatic VAD; fully overrides shared [`turn_detection`](turns.md#automatic-turn-detection) |
 | `google_activity_handling`, `google_turn_coverage` | [Interruption](turns.md#barge-in) behavior and which input belongs to a turn |
 | `google_input_transcription`, `google_output_transcription` | Native [transcription](audio.md#input-transcription) switches, enabled by default |
@@ -118,12 +118,24 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 shared [`thinking`](../capabilities/thinking.md) setting when a token budget or other
 Gemini-specific control is needed.
 
-!!! note "`google_proactive_audio` needs a `v1alpha` client"
+Gemini Live has no tool-choice configuration, so it can't force a tool call: a
+[`tool_choice`](tools.md#restricting-the-available-tools) of `'required'` or a list of tool names
+raises a `UserError` before connecting. To limit the model to some tools, pass
+[`ToolOrOutput(function_tools=[...])`][pydantic_ai.settings.ToolOrOutput] instead. It also can't stop
+the model from calling several tools at once, so `parallel_tool_calls=False` warns with an
+[`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning].
+
+!!! note "`google_proactive_audio` dials the `v1alpha` API"
     Gemini serves `proactivity` on the Developer API's `v1alpha` only; on any other version the
     session is closed with `1007 Invalid JSON payload received. Unknown name "proactivity" at
-    'setup'`. The API version belongs to the client, and ordinary
-    [`GoogleModel`][pydantic_ai.models.google.GoogleModel] requests sharing that client read it too,
-    so build the client for it rather than having a session change it underneath them:
+    'setup'`. When the provider was built from an API key (the default `'google'` provider, or
+    `GoogleProvider(api_key=...)`), a session with `google_proactive_audio=True` opens its Live
+    connection with a separate `v1alpha` client built from that key, closed when the session ends.
+    The provider's own client is left as it is, so ordinary
+    [`GoogleModel`][pydantic_ai.models.google.GoogleModel] requests sharing it keep their version.
+
+    A client you built yourself can't be rebuilt that way, so pass one that is already on `v1alpha`;
+    connecting with one on another version raises [`UserError`][pydantic_ai.exceptions.UserError]:
 
     ```python {title="proactive_audio.py"}
     from google.genai import Client, types
@@ -141,8 +153,7 @@ Gemini-specific control is needed.
     )
     ```
 
-    Connecting without it raises [`UserError`][pydantic_ai.exceptions.UserError]. Unavailable on
-    Vertex AI, whose version line has no `v1alpha`.
+    Unavailable on Vertex AI, whose version line has no `v1alpha`.
 
 !!! warning "Keep automatic VAD enabled"
     Pydantic AI does not expose Gemini activity markers or manual turn verbs. Do not set
@@ -171,27 +182,45 @@ only native tool it supports — no Live model runs native code execution or URL
 [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] nor
 [`WebFetch`][pydantic_ai.capabilities.WebFetch] is advertised in `supported_native_tools`. Give
 those a [`local=` fallback](tools.md#native-tools) and the session runs the local tool instead:
-`CodeExecutionTool(local=...)`, or `WebFetch(native=False, local=True)`, which requires the
-`web-fetch` optional group (`pip/uv-add "pydantic-ai-slim[google-realtime,web-fetch]"`).
+[`NativeOrLocalTool(native=CodeExecutionTool(), local=...)`](../capabilities/overview.md#building-your-own),
+or `WebFetch(native=False, local=True)`, which requires the `web-fetch` optional group (`pip/uv-add "pydantic-ai-slim[google-realtime,web-fetch]"`).
 Google Search grounding takes no domain filters or usage limit, so a `WebSearch` with
 `allowed_domains`, `blocked_domains`, `max_uses`, or `external_web_access=False` set fails before the session connects (see
 [restricting parameters](../native-tools.md#restricting-parameters)).
 
 ### Specialist streaming models
 
-The built-in profile describes the speech-to-speech Live models. Gemini also serves specialist
-streaming models on the same endpoint that behave differently — `gemini-robotics-er-2-streaming-preview`,
-for instance, is text-only and rejects audio output. Point a session at one of those and correct the
-facts with [`profile=`](overview.md#provider-support), which resolves like a
-[standard model profile](../models/overview.md#inspecting-a-models-profile), e.g.
-`GoogleRealtimeModel('gemini-robotics-er-2-streaming-preview', profile={'supports_text_output': True})`.
+Gemini also serves specialist streaming models on the same endpoint. The robotics ones, like
+`gemini-robotics-er-2-streaming-preview`, are perception models rather than voice assistants: they take
+in a live audio and video stream and answer in text, for a robot's controller to act on, and reject
+audio output. Their profile reports
+[`supports_audio_output=False`][pydantic_ai.realtime.RealtimeModelProfile.supports_audio_output], so a
+session on one asks for text by default and records the answers as `TextPart`s:
+
+```python {title="robot_perception.py"}
+from pydantic_ai import Agent
+
+perception = Agent(instructions='You are the perception module of a robot.')
+
+
+async def main(frames=()):
+    async with perception.realtime('google:gemini-robotics-er-2-streaming-preview').session() as session:
+        for frame in frames:
+            await session.send(frame)  # a `BinaryImage` per camera frame
+        await session.send('What object is in front of you?')
+        await session.wait_for_reply()
+```
+
+For a streaming model the built-in profile doesn't describe, correct the facts with
+[`profile=`](overview.md#provider-support), which resolves like a
+[standard model profile](../models/overview.md#inspecting-a-models-profile).
 
 ## Feature support and limitations
 
 | Feature | Support | Notes |
 | --- | --- | --- |
 | Audio format | Full feature support | Mono PCM16, 16 kHz input and 24 kHz output |
-| Text output | Vertex `gemini-live-2.5-flash` only | The other Live models reject a `TEXT` response modality, so `output_modality='text'` raises; read the answer from the transcript on the `SpeechPart` |
+| Text output | Vertex `gemini-live-2.5-flash` and the [robotics streaming models](#specialist-streaming-models) only | The other Live models reject a `TEXT` response modality, so `output_modality='text'` raises; read the answer from the transcript on the `SpeechPart`. The robotics models only write text, which is their default |
 | Image/live video input | Full feature support | [Images](audio.md#images); `google_turn_coverage='all_video'` keeps streamed frames in context |
 | Manual turns | Unsupported | [Automatic turn detection](turns.md#automatic-turn-detection) is required |
 | Explicit interruption/truncation | Unsupported | Gemini [interrupts server-side](turns.md#barge-in) and emits `RealtimeResponseInterruptedEvent` |
@@ -227,7 +256,9 @@ policy, and explicitly setting it to `False` next to a policy raises
 [`UserError`][pydantic_ai.exceptions.UserError] rather than silently losing the conversation).
 Reconnection uses the latest in-memory server handle and emits `state_restored=True`, unless the
 drop cut off an exchange the resumed session no longer has (see
-[State restoration](lifecycle.md#state-restoration)).
+[State restoration](lifecycle.md#state-restoration)). A drop before the server has issued a handle
+dials a fresh session instead and replays the session's local history into it, as on the other
+providers.
 
 !!! note "The connection cap can briefly interrupt a turn"
     Gemini sends `GoAway` shortly before its provider-defined connection cap. Pydantic AI reconnects

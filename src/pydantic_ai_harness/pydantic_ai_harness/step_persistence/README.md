@@ -28,6 +28,8 @@ which `StepPersistence` works alongside.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/)
 
+![An agent run with StepPersistence writes to a step store as it goes: before_run writes a RunRecord, after_model_request appends a model_request_completed event, after_tool_execute marks a tool effect completed, and after_node_run saves a complete snapshot of the message history. When the worker crashes during a second tool call, that tool effect stays at started, so it reads as unknown after the crash. Later, in any process, your code finds the run with list_runs, loads the latest complete snapshot with continue_run, and passes its messages to a new Agent.run.](https://pydantic.dev/docs/ai/img/harness/step-persistence.svg)
+
 ## What it gives you
 
 1. **Append-only step events** -- every interesting boundary (run start/end,
@@ -97,6 +99,28 @@ the `run_id` derivation above, so the store key stays `ctx.run_id` and runs can
 still be looked up by the id passed to or returned from `Agent.run`.
 
 ## Durable execution
+
+`StepPersistence` and a durable execution engine recover from different
+failures:
+
+- **`StepPersistence`** saves message-history snapshots, a step-event trail,
+  and a tool-effect ledger to a store you choose, with no engine to run. After
+  a crash, your code decides what happens next: load the latest complete
+  snapshot's messages with `continue_run` or `fork_run` and pass them to a new
+  `Agent.run(message_history=...)`, in the same process or another one. A step
+  that was in flight is not retried: its tool calls show up as `started`
+  effects in the ledger, and you decide whether redoing them is safe.
+- **A durable engine** replays the run itself after a restart and retries the
+  call that was in flight, as
+  [Durable Execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/)
+  describes.
+
+Use `StepPersistence` alone when a run can be resumed or forked from its last
+settled step, for example by an orchestrator that continues a delegate's
+investigation. Use a durable engine when a run must finish without your code
+restarting it, including a step interrupted partway through. Use both to have
+the engine keep the run alive while the store keeps a history you can inspect,
+continue, or fork after the run ends.
 
 `StepPersistence` has the stable capability id `step_persistence`, so it can
 be attached alongside a Pydantic AI durability capability without passing
@@ -372,7 +396,8 @@ configured retention can delete older snapshots.
   Pass `connection=` instead of `database=` to share a `sqlite3.Connection`
   with the rest of your application; the connection must be opened with
   `check_same_thread=False` because hook calls are dispatched onto a
-  worker thread.
+  worker thread; the store leaves its busy timeout and journal mode as the
+  caller set them.
 - `MongoStepStore(client= or db_url=, database=...)` -- MongoDB collections
   `runs`, `events`, `snapshots`, `snapshot_messages`, `snapshot_idempotency_keys`,
   `tool_effects`, and `counters` (atomic `$inc` for monotonic `seq`). Run registration uses an
@@ -629,6 +654,18 @@ missing snapshot rather than an exception. That rejection is the version gate
 and is intended, but store users have to anticipate it. Keep a current reader
 for persisted snapshots that contain escaped markers.
 
+Two later additions follow the same upgrade-only rule. A dict the walker leaves
+inline but which carries `__harness_external_media__` or
+`__harness_external_literal__` (a tool return, say) is written wrapped under
+`__harness_external_literal__` with a `__harness_external_marker_format__`
+stamp, so it is never read back as a marker; a wrapper stamped with a version
+this reader does not know is rejected. An older reader leaves the wrapper in the
+restored payload, and still misreads a wrapped dict whose
+`__harness_external_media__` is `true`. A binary marker whose source used
+URL-safe base64, which is how pydantic serializes `bytes`, carries
+`__harness_external_urlsafe__` so the restored `data` uses the same alphabet; an
+older reader keeps that key in the restored part, which validation ignores.
+
 | StepStore           | Default `media_store`                  | Where blobs live                      |
 | ------------------- | --------------------------------------- | ------------------------------------- |
 | `InMemoryStepStore` | _(not applicable)_                     | bytes stay in the in-memory snapshot  |
@@ -747,20 +784,25 @@ class MediaContext:
 All fields default; new fields are added non-breakingly as use cases
 emerge. Pass what you have, ignore the rest.
 
-**Persistence by store.** `get_metadata(uri)` round-trips the
-user-supplied `metadata` mapping on all five stores. `media_type` is
-also persisted but is not part of what `get_metadata` returns (it is
-stored for the byte payload itself, e.g. as the `Content-Type`).
+**Persistence by store.** `get_metadata(uri)` returns the stored
+`metadata` mapping and raises `FileNotFoundError` for a blob that was
+never stored. A repeated `put` keeps the first metadata on the SQLite,
+MongoDB, and PostgreSQL stores. On `DiskMediaStore` a later `put` with
+metadata replaces it; on `S3MediaStore` every `put` replaces it, and one
+without metadata clears it. On Disk and S3 this holds for puts that
+resolve to the same key, which a custom `key_strategy` may not.
+`get_metadata` does not return `media_type`: S3 sends it as
+`Content-Type`, the database stores keep it in a column, and
+`DiskMediaStore` does not persist it.
 
 - `SqliteMediaStore` writes `metadata` to a JSON column and `media_type`
   to a dedicated column
-- `S3MediaStore` sends `metadata` as signed `x-amz-meta-*` headers
-  (ASCII alphanumeric + dash key names) and `media_type` as
-  `Content-Type`; `get_metadata` reads the `x-amz-meta-*` values back
-  from the HEAD response
+- `S3MediaStore` sends `metadata` as signed `x-amz-meta-*` headers and
+  `media_type` as `Content-Type`; `get_metadata` reads the `x-amz-meta-*`
+  values back from the HEAD response. Keys must match `[A-Za-z0-9-]+` and
+  come back lowercased
 - `DiskMediaStore` writes a sidecar JSON file (`<resolved>.meta.json`)
-  alongside each blob, atomic via tmp + rename. Sidecars are absent
-  only when the put carried no metadata
+  alongside each blob, atomically through a uniquely named temporary file
 - `MongoMediaStore` writes `metadata` as a JSON string and `media_type`
   as a dedicated field on the blob's manifest document (the `media`
   collection by default); `get_metadata` decodes the JSON string back.
@@ -855,6 +897,11 @@ keeps its messages, content revision, and activity timestamp. Saving new content
 unarchives it, since the conversation is in use again. Archiving deletes nothing.
 `listing(archived=False)` leaves archived conversations out, `archived=True` lists
 only those, and the default `None` lists both, as before archiving existed.
+
+An application that copies a conversation may set `ConversationSummary.forked_from`
+to the `id` of the conversation it copied; later saves keep it. It names the source
+conversation, not a message in it, and the application decides which copies record it.
+`listing(forked_from=...)` lists only the conversations recording that ID.
 
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.

@@ -1,8 +1,8 @@
 # `pydantic_ai.realtime`
 
 Support for **realtime, bidirectional speech-to-speech models** (OpenAI Realtime, OpenAI GPT-Live,
-Azure OpenAI, Gemini Live, xAI Grok Voice, and any other provider that streams audio in and out over
-a persistent connection).
+Azure OpenAI, Gemini Live, xAI Grok Voice, Eleven Realtime, ElevenLabs Agents, and any other provider that
+streams audio in and out over a persistent connection).
 
 Unlike [`Model`][pydantic_ai.models.Model], which is request-response, a realtime model opens a
 long-lived connection: you stream audio (or text/images) in, and consume audio, transcripts, and
@@ -50,7 +50,7 @@ provider-specific (see [Concurrent tool execution](../realtime/tools.md#concurre
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
 
 **Browser / WebRTC** — for browser voice agents, the media flows browser ↔ provider directly while the
-backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Connecting a frontend](../realtime/deployment.md#browser-webrtc-server-sideband)):
+backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Deployment](../realtime/deployment.md#browser-webrtc-server-sideband)):
 
 | Object | Role |
 | --- | --- |
@@ -110,6 +110,7 @@ completes.
 vocabulary yielded by a connection:
 [`AudioDelta`][pydantic_ai.realtime.codec.AudioDelta],
 [`OutputTranscript`][pydantic_ai.realtime.codec.OutputTranscript],
+[`OutputSpeechTimestamps`][pydantic_ai.realtime.codec.OutputSpeechTimestamps],
 [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript],
 [`ToolCall`][pydantic_ai.realtime.codec.ToolCall],
 [`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled],
@@ -255,8 +256,10 @@ session. The session translates codec events into the shared vocabulary from
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], deferred calls and their inline resolution as
 [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /
 [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], enqueued-message delivery as
-[`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], and the rest as the
-control-plane events above (`RealtimeInputSpeechStartEvent`, `RealtimeInputSpeechEndEvent`,
+[`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], events emitted with
+[`RunContext.emit`][pydantic_ai.tools.RunContext.emit] as the
+[`CustomEvent`][pydantic_ai.messages.CustomEvent] or [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]
+that was emitted, and the rest as the control-plane events above (`RealtimeInputSpeechStartEvent`, `RealtimeInputSpeechEndEvent`,
 `RealtimeOutputSpeechStartEvent`, `RealtimeOutputSpeechEndEvent`, `RealtimeInputTranscriptionErrorEvent`,
 `RealtimeResponseInterruptedEvent`, `RealtimeSessionReconnectEvent`, and `RealtimeSessionErrorEvent`), plus
 [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent], which the
@@ -266,6 +269,7 @@ The lower-level codec vocabulary is documented in
 [`pydantic_ai.realtime.codec`](realtime/codec.md), and each provider in its own module:
 [`pydantic_ai.realtime.openai`](realtime/openai.md), [`pydantic_ai.realtime.openai_live`](realtime/openai_live.md),
 [`pydantic_ai.realtime.google`](realtime/google.md), [`pydantic_ai.realtime.xai`](realtime/xai.md),
-[`pydantic_ai.realtime.azure`](realtime/azure.md), and [`pydantic_ai.realtime.elevenlabs_agents`](realtime/elevenlabs_agents.md).
+[`pydantic_ai.realtime.azure`](realtime/azure.md), [`pydantic_ai.realtime.elevenlabs`](realtime/elevenlabs.md),
+and [`pydantic_ai.realtime.elevenlabs_agents`](realtime/elevenlabs_agents.md).
 
 ::: pydantic_ai.realtime

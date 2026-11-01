@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Install policy dependencies with the same interpreter as the public engine.
 set -euo pipefail
+# The repository policy uses MCP 1's `McpError`; fastmcp 4 targets the MCP 2 API.
 python3 -P -m pip install --quiet --user --disable-pip-version-check \
-  'pydantic-ai-slim[logfire,retries]==2.59.0' 'fastmcp-slim[client]==3.4.7' 'mcp==1.28.1'
+  'pydantic-ai-slim[logfire,retries]>=2.64.0' 'fastmcp-slim[client]>=3.4.7,<4' 'mcp>=1.28.1,<2'
 mkdir -p /tmp/gh-aw/workflow-python
 cp -R .github/scripts/pydantic_ai_gh_aw_shim /tmp/gh-aw/workflow-python/
 # Keep workflow preferences separate from runner and repository preferences.

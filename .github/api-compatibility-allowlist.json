@@ -1,34 +1,138 @@
 {
-  "allowed_breakages": [
+  "model_name_literals": [
     {
-      "against": "v2.59.0",
-      "fingerprint": "b881938683d7a5ced698e9551495f8a1098fce10d9c64642076231d15d211336",
-      "reason": "Adds `RunInstructionSource` to the `InstructionSource` union; every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10789"
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/__init__.py",
+      "symbol": "KnownEmbeddingModelName"
     },
     {
-      "against": "v2.59.0",
-      "fingerprint": "4c68f760f7da49fd330ae6ec1c15bf49951de8ed4ff692e0de9509b451b3336c",
-      "reason": "Adds `RetryFeedbackPart` and the legacy retry translations to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8094"
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/bedrock.py",
+      "symbol": "LatestBedrockEmbeddingModelNames"
     },
     {
-      "against": "v2.59.0",
-      "fingerprint": "05907702fc1a6791d1a91c17069ed3bb3a21212936176b789fdeb4c53f9c31ae",
-      "reason": "Adds input-support profile flags to `DEFAULT_PROFILE`; every existing key and value is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10476"
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/cohere.py",
+      "symbol": "LatestCohereEmbeddingModelNames"
     },
     {
-      "against": "v2.59.0",
-      "fingerprint": "c4aa7c8b9e94bd5ada5a90325d99ca764fed5f8bd156d31ef511842e4d854f3a",
-      "reason": "False positive: `BackgroundTools` still inherits `prepare_tools` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the tool preparation moved into the wrapper toolset.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/google.py",
+      "symbol": "LatestGoogleGLAEmbeddingModelNames"
     },
     {
-      "against": "v2.59.0",
-      "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
-      "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/google.py",
+      "symbol": "LatestGoogleVertexEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",
+      "symbol": "LatestVoyageAIEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/images/__init__.py",
+      "symbol": "KnownImageGenerationModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/images/google.py",
+      "symbol": "LatestGoogleImageGenerationModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/_known_model_names.py",
+      "symbol": "KnownModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/bedrock.py",
+      "symbol": "LatestBedrockModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/bedrock_mantle.py",
+      "symbol": "LatestBedrockMantleModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/cohere.py",
+      "symbol": "LatestCohereModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/google.py",
+      "symbol": "LatestGoogleModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/groq.py",
+      "symbol": "PreviewGroqModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/groq.py",
+      "symbol": "ProductionGroqModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/mistral.py",
+      "symbol": "LatestMistralModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/openai.py",
+      "symbol": "OpenAIModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/openai_decisions.py",
+      "symbol": "OpenAIDecisionsModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/typesafe.py",
+      "symbol": "LatestTypeSafeModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/xai.py",
+      "symbol": "XaiModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/native_tools/__init__.py",
+      "symbol": "AdvisorModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/native_tools/__init__.py",
+      "symbol": "ImageGenerationModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/deepseek.py",
+      "symbol": "DeepSeekModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/meta.py",
+      "symbol": "MetaModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/moonshotai.py",
+      "symbol": "MoonshotAIModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/elevenlabs.py",
+      "symbol": "LatestElevenLabsRealtimeModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/model.py",
+      "symbol": "KnownRealtimeModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/openai_live.py",
+      "symbol": "LatestOpenAILiveModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/settings.py",
+      "symbol": "KnownRealtimeTranscriptionModelName"
+    }
+  ],
+  "growing_collections": [
+    {
+      "path": "src/pydantic_clai2/pydantic_clai2/config/features.py",
+      "symbol": "SUPPORTED_FEATURES"
+    },
+    {
+      "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
+      "symbol": "SETTING_FIELDS"
+    },
+    {
+      "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
+      "symbol": "STRING_SETTINGS"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/capabilities/__init__.py",
+      "symbol": "CAPABILITY_TYPES"
     }
   ]
 }

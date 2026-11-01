@@ -17,6 +17,8 @@ the `load_capability` tool to receive that skill's instructions.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![At the start of every run, Skills reads each SKILL.md in the configured libraries from the run's workspace, such as .agents/skills/code-review/SKILL.md, and puts a catalog of skill names and descriptions in the model's instructions. When a skill is useful, the model calls load_capability with its name and gets back a "# Skill: code-review" heading, the skill's directory and the Markdown body of SKILL.md.](../img/harness/skills.svg)
+
 ## Installation
 
 Install the `skills` extra for YAML frontmatter support:
@@ -249,6 +251,11 @@ tools work, so their instructions leave the directory out. Placeholders such as
 `Shell` to load a skill, and adding either does not change which files `Skills`
 reads.
 
+For tools scoped to a loaded skill's own files, see
+[`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills), a
+community package by [Doug Trajano](https://github.com/DougTrajano) that builds
+on `Skills`.
+
 ## Compatibility with existing skill libraries
 
 The portable `name`, `description`, and Markdown instructions are supported.
@@ -266,6 +273,14 @@ If a selected skill uses any of these fields, the run emits one aggregated
 `UserWarning` at its start. Fields such as `license`, `compatibility`, and `metadata` are
 accepted without changing runtime behavior. Other unknown, non-behavioral fields
 are also accepted.
+
+To keep a skill's tools hidden until the skill is loaded, define that skill as
+an [on-demand capability with its tools](../capabilities/on-demand.md#hide-tools-until-loaded)
+instead: `Skills` delivers instructions only. Such a capability sits alongside
+`Skills` on the same agent: both appear in one catalog, and the model loads
+either with the `load_capability` tool. A capability `id` that matches a skill
+name `Skills` exposes to the model fails the run, so leave that skill out of
+the library or out of `include`, or pass its name in `exclude`.
 
 ## Invoke a skill yourself
 
@@ -354,6 +369,25 @@ refunds = Capability(
 `Skills` loads portable Agent Skill packages. It does not replace the core API
 for code-defined capabilities.
 
+## Scan skills before loading them
+
+Skills an agent wrote, or that came from a third party, can carry instructions that take effect in a later session. Pass an [`ArtifactScanner`](artifact-scanning.md) to check each skill's description and body for prompt injection, credential exfiltration, HTML comments, and invisible characters before it is offered:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness import ArtifactScanner, Skills
+
+agent = Agent(
+    capabilities=[
+        LocalWorkspace('.'),
+        Skills('.agents/skills', scanner=ArtifactScanner()),
+    ],
+)
+```
+
+A flagged skill is left out of the catalog with a `UserWarning`, and a zero-duration `artifact_scan flagged` span. `Skills.load()` reports it as a `SkippedSkill` with `reason='flagged'` and the findings in `scan`. Bundled files are not scanned, since `Skills` does not load them. The scanner belongs to the `Skills` it is passed to, so when two combine, a vetted library can go unscanned while an agent-written one is scanned.
+
 ## Configuration
 
 ```python {test="skip"}
@@ -366,6 +400,7 @@ Skills(
     duplicate_names: Literal['error', 'keep_first'] = 'error',
     unknown_names: Literal['error', 'skip'] = 'error',
     workspace: WorkspaceBackend | None = None,
+    scanner: ArtifactScanner | None = None,
 )
 ```
 
@@ -376,6 +411,7 @@ Skills(
 - `duplicate_names='keep_first'` keeps the first of two skills with one name, with a warning.
 - `unknown_names='skip'` ignores `include` and `exclude` names that no library has.
 - `workspace` reads the libraries from this backend instead of the run's workspace.
+- `scanner` checks each skill's description and body with an [`ArtifactScanner`](artifact-scanning.md) and leaves flagged skills out of the catalog; see [Scan skills before loading them](#scan-skills-before-loading-them).
 
 Pass at least one library directory, not the path of an individual skill
 package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names warn and skip that skill. Unknown selections fail at run start, and so do duplicate selected names, missing libraries, and library paths that are files or skill packages, unless `duplicate_names`, `missing_directories`, or `unknown_names` say otherwise.

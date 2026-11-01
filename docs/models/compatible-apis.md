@@ -100,6 +100,10 @@ agent = Agent(model)
 ...
 ```
 
+Use [`NativeOutput`][pydantic_ai.output.NativeOutput] for Fireworks' schema-constrained structured output.
+Fireworks enforces the schema through its OpenAI-compatible `response_format` parameter.
+As the [Fireworks structured output documentation](https://docs.fireworks.ai/structured-responses/structured-response-formatting) describes, `pattern` enforcement is best-effort: unsupported regex constructs, such as lookahead and lookbehind, are ignored, leaving the field as an unconstrained string. Pydantic AI still validates the output, so a value that doesn't match the pattern triggers an output retry.
+
 ## Heroku AI
 
 To use [Heroku AI](https://www.heroku.com/ai), first create an API key.
@@ -109,7 +113,7 @@ You can set the `HEROKU_INFERENCE_KEY` and (optionally) `HEROKU_INFERENCE_URL` e
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('heroku:claude-sonnet-4-5')
+agent = Agent('heroku:claude-4-5-sonnet')
 ...
 ```
 
@@ -121,7 +125,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.heroku import HerokuProvider
 
 model = OpenAIChatModel(
-    'claude-sonnet-4-5',
+    'claude-4-5-sonnet',
     provider=HerokuProvider(api_key='your-heroku-inference-key'),
 )
 agent = Agent(model)
@@ -129,6 +133,9 @@ agent = Agent(model)
 ```
 
 ## LiteLLM
+
+!!! note "No `litellm` package dependency"
+    `LiteLLMProvider` does not install or import the `litellm` Python package. It talks to a LiteLLM proxy over HTTP using the OpenAI client.
 
 [`LiteLLMProvider`][pydantic_ai.providers.litellm.LiteLLMProvider] connects to a [LiteLLM proxy](https://docs.litellm.ai/docs/simple_proxy), which translates requests for the upstream providers it is configured with. Pass the proxy URL (for example `http://localhost:<port>`) as `api_base` and your LiteLLM key (or a placeholder) as `api_key`. Requests are sent as Chat Completions to `api_base` as-is, so you can also point it at an OpenAI-compatible upstream directly, such as `https://api.openai.com/v1` with your OpenAI key, but not at an API that only LiteLLM can translate. Use the `custom/` model name prefix for custom LLMs.
 
@@ -359,24 +366,34 @@ print(result.output)
 
 ## Other endpoints
 
-For an OpenAI-compatible service or server that Pydantic AI has no provider for, use [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] with its `base_url` and `api_key`, or set the `OPENAI_BASE_URL` and `OPENAI_API_KEY` environment variables. Use [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] for a Chat Completions endpoint, or [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] if the service implements the Responses API:
+For an OpenAI-compatible service or server that Pydantic AI has no provider for, use [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] with a name for the service, its `base_url` and, if it needs one, its `api_key`. Use [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] for a Chat Completions endpoint, or [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] if the service implements the Responses API:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 
 model = OpenAIChatModel(
     'model_name',
-    provider=OpenAIProvider(
-        base_url='https://<openai-compatible-api-endpoint>', api_key='your-api-key'
+    provider=OpenAICompatibleProvider(
+        'my-service',
+        base_url='https://<openai-compatible-api-endpoint>',
+        api_key='your-api-key',
     ),
 )
 agent = Agent(model)
 ...
 ```
 
-Compatibility with one API does not imply support for the other or for every OpenAI feature. `OpenAIProvider` also assumes OpenAI's models: it selects a profile from the model name as if it were an OpenAI model, whatever the `base_url`. For other models, features such as `thinking` or structured output may be ignored or rejected until you configure the [model profile](#model-profile).
+The name is recorded as the [`provider_name`][pydantic_ai.messages.ModelResponse.provider_name] of every response and in OpenTelemetry attributes, and it decides which data from earlier responses is sent back to the service: response and item IDs only go back to a provider with the same name, and encrypted reasoning only to one with the same [canonical system](../message-history.md#sending-history-to-another-provider), which defaults to the name. So choose a name that stays the same for the service.
+
+Compatibility with one API does not imply support for the other or for every OpenAI feature. The provider picks a profile from the model name: a `vendor/model` name, as many gateways use, gets that vendor's model profile, and any other name the profile OpenAI-compatible APIs share, without the features only OpenAI's own API supports. If features such as `thinking` or structured output are ignored or rejected, configure the [model profile](#model-profile).
+
+[`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] also takes a `base_url`, but it's for OpenAI itself, or a transparent proxy to it: it assumes OpenAI's models and features, and sends OpenAI's encrypted reasoning and compaction items to the endpoint.
+
+## Non-standard finish reasons
+
+When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
 
 ## Model profile
 
@@ -388,12 +405,14 @@ Pass your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors
 from pydantic_ai import Agent, InlineDefsJsonSchemaTransformer
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.profiles.openai import OpenAIModelProfile
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 
 model = OpenAIChatModel(
     'model_name',
-    provider=OpenAIProvider(
-        base_url='https://<openai-compatible-api-endpoint>.com', api_key='your-api-key'
+    provider=OpenAICompatibleProvider(
+        'my-service',
+        base_url='https://<openai-compatible-api-endpoint>.com',
+        api_key='your-api-key',
     ),
     profile=OpenAIModelProfile(
         json_schema_transformer=InlineDefsJsonSchemaTransformer,  # Supported by any model class via the base ModelProfile
@@ -409,7 +428,7 @@ A model supporting reasoning does not mean the endpoint accepts OpenAI's `reason
 
 ### Gateways that serve several model families {#custom-openai-compatible-provider}
 
-If you run your own gateway that has no provider class and routes to models from several developers, you can subclass [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] and override [`model_profile()`][pydantic_ai.providers.Provider.model_profile] to pick a profile from each model name, instead of passing `profile=` on every model. The helpers in [`pydantic_ai.profiles`](../api/profiles.md) return the profile for each model family:
+A gateway that routes to models from several developers usually names them `vendor/model`, which `OpenAICompatibleProvider` already picks a profile for. If your gateway names them otherwise, such as `openai.gpt-5.6-sol` in this example, or needs gateway-specific overrides, pass `profile=` to the provider instead of to every model: a [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is merged over the profile picked for each model, and a function from the model name to a profile replaces it. The helpers in [`pydantic_ai.profiles`](../api/profiles.md) return the profile for each model family:
 
 ```python
 from pydantic_ai import Agent
@@ -422,40 +441,38 @@ from pydantic_ai.profiles.openai import (
     OpenAIModelProfile,
     openai_model_profile,
 )
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 
 
-class GatewayProvider(OpenAIProvider):
-    @property
-    def name(self) -> str:
-        return 'my-gateway'
-
-    @staticmethod
-    def model_profile(model_name: str) -> ModelProfile:
-        provider_to_profile = {
-            'openai': openai_model_profile,
-            'groq': groq_model_profile,
-            'moonshotai': moonshotai_model_profile,
-        }
-        provider_name, _, model_name = model_name.partition('/')
-        profile = None
-        if profile_func := provider_to_profile.get(provider_name):
-            profile = profile_func(model_name)
-        return merge_profile(
-            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
-            profile,
-        )
+def gateway_model_profile(model_name: str) -> ModelProfile:
+    provider_to_profile = {
+        'openai': openai_model_profile,
+        'groq': groq_model_profile,
+        'moonshotai': moonshotai_model_profile,
+    }
+    provider_name, _, model_name = model_name.partition('.')
+    profile = None
+    if profile_func := provider_to_profile.get(provider_name):
+        profile = profile_func(model_name)
+    return merge_profile(
+        OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+        profile,
+    )
 
 
-provider = GatewayProvider(
+provider = OpenAICompatibleProvider(
+    'my-gateway',
     base_url='https://gateway.example/v1',
     api_key='your-gateway-api-key',
+    profile=gateway_model_profile,
 )
-model = OpenAIChatModel('openai/gpt-5.6-sol', provider=provider)
+model = OpenAIChatModel('openai.gpt-5.6-sol', provider=provider)
 agent = Agent(model)
 ```
 
 The model name is only normalized for the profile lookup; the name sent to the gateway stays unchanged. Pydantic AI merges the returned profile with [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE], and you can pass gateway-specific overrides as a final argument to [`merge_profile()`][pydantic_ai.profiles.merge_profile]. The model class doesn't change with the profile: `OpenAIChatModel` still sends a Chat Completions request, whichever model family the gateway routes it to.
+
+If the gateway passes requests through unchanged to a provider whose encrypted reasoning it returns, such as OpenAI, pass that provider's canonical system as `canonical_system`, and the systems whose data the gateway accepts as `compatible_systems`. See [Sending history to another provider](../message-history.md#sending-history-to-another-provider).
 
 ### Detect incomplete streamed responses
 

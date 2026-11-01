@@ -70,7 +70,9 @@ def isolated_workflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('PYDANTIC_AI_TASK_ID', 'CI Review:workflow_dispatch:branch:head:run')
     monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_dispatch')
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '2')
-    monkeypatch.delenv('GH_AW_SAFE_OUTPUTS', raising=False)
+    sink = tmp_path / 'published-review.jsonl'
+    sink.write_text('{"type":"submit_pull_request_review"}\n')
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
 
 
 async def test_clai2_headless_keeps_coder_tools_and_read_only_task(
@@ -120,7 +122,12 @@ async def test_safe_output_must_be_emitted_before_clai2_completes(
             return ModelResponse(parts=[TextPart('About to publish')])
         if requests == 2:
             return ModelResponse(
-                parts=[ToolCallPart('shell', {'command': 'printf \'{"type":"noop"}\\n\' > "$GH_AW_SAFE_OUTPUTS"'})]
+                parts=[
+                    ToolCallPart(
+                        'shell',
+                        {'command': 'printf \'{"type":"submit_pull_request_review"}\\n\' > "$GH_AW_SAFE_OUTPUTS"'},
+                    )
+                ]
             )
         return ModelResponse(parts=[TextPart('Published')])
 
@@ -129,7 +136,7 @@ async def test_safe_output_must_be_emitted_before_clai2_completes(
         result = await agent.run('Publish a safe output', usage_limits=UsageLimits(request_limit=400))
     assert result.output == 'Published'
     assert requests == 3
-    assert json.loads(sink.read_text()) == {'type': 'noop'}
+    assert json.loads(sink.read_text()) == {'type': 'submit_pull_request_review'}
 
 
 async def test_only_safe_output_tools_remain_inside_the_time_reserve(
@@ -141,8 +148,8 @@ async def test_only_safe_output_tools_remain_inside_the_time_reserve(
     monkeypatch.setattr(cli, 'run_timeout_secs', lambda: cli.RUN_TIME_RESERVE_SECS + 60)
     offered: list[set[str]] = []
 
-    def noop(message: str) -> str:
-        sink.write_text(json.dumps({'type': 'noop', 'message': message}) + '\n')
+    def submit_pull_request_review(message: str) -> str:
+        sink.write_text(json.dumps({'type': 'submit_pull_request_review', 'message': message}) + '\n')
         return 'posted'
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -152,17 +159,17 @@ async def test_only_safe_output_tools_remain_inside_the_time_reserve(
             # The reserve starts while this request is in flight. Not `monkeypatch`: it would restore
             # the run's deadline after `WorkflowPolicy` clears it, leaking it into later tests.
             cli.run_deadline = time.monotonic() + cli.RUN_TIME_RESERVE_SECS - 1
-            return ModelResponse(parts=[ToolCallPart('safeoutputs_noop', {'message': 'posted'})])
+            return ModelResponse(parts=[ToolCallPart('safeoutputs_submit_pull_request_review', {'message': 'posted'})])
         return ModelResponse(parts=[TextPart('done')])
 
     # `load_mcp_toolsets` prefixes each gh-aw MCP server's tools with its name.
-    safe_outputs = FunctionToolset([noop]).prefixed('safeoutputs')
+    safe_outputs = FunctionToolset([submit_pull_request_review]).prefixed('safeoutputs')
     agent = workflow.build_agent()
     with agent.override(model=streaming_model(respond)):
         result = await agent.run('Review', toolsets=[safe_outputs], usage_limits=UsageLimits(request_limit=400))
     assert result.output == 'done'
-    assert {'Task', 'safeoutputs_noop'} < offered[0]
-    assert offered[1:] == [{'safeoutputs_noop'}]
+    assert {'Task', 'safeoutputs_submit_pull_request_review'} < offered[0]
+    assert offered[1:] == [{'safeoutputs_submit_pull_request_review'}]
 
 
 async def test_attention_request_limit_is_enforced_and_reported(
@@ -203,7 +210,7 @@ async def test_request_limit_after_safe_output_preserves_success(
 ) -> None:
     """The last allowed request can publish the output without a further model call."""
     sink = tmp_path / 'safeoutputs.jsonl'
-    sink.write_text('{"type":"noop"}\n')
+    sink.write_text('{"type":"submit_pull_request_review"}\n')
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

@@ -6,21 +6,23 @@ Run your agent's commands and file edits in a local [Docker](https://www.docker.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. DockerSandbox's get_workspace hook gives the run a Docker container on your machine as ctx.workspace, and each command and file operation runs in it through docker exec; output comes back to the tool. The first use creates the container with docker run and the ai.pydantic.workspace=true label, its WorkspaceRef holds the container name, a later run reattaches with it, and destroy(ref) removes it. A project directory mounted with docker_args is the only part of your files the commands can change. A container shares your kernel, a weaker boundary than a VM.](https://pydantic.dev/docs/ai/img/harness/docker-sandbox.svg)
+
 ## Install
 
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[anthropic]"
+uv add "pydantic-ai-harness[coder,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[anthropic]"
+pip install "pydantic-ai-harness[coder,anthropic]"
 ```
 
-No extra is needed for Docker itself: the capability runs the `docker` CLI already on your machine, so there is no SDK to install. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
+No extra is needed for Docker itself: the capability runs the `docker` CLI already on your machine, so there is no SDK to install. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -96,6 +98,16 @@ sandbox = DockerSandbox(
 The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. `docker_args` can't change the container's name, its `ai.pydantic.workspace=true` label or its entrypoint. Set the directory commands start in with `working_dir`.
 
 A new container gets `--pids-limit 2048`, so a runaway fork loop can't use up the process table of the machine (or VM) running Docker. A command that hits it fails with `Cannot fork` or `Resource temporarily unavailable`; pass your own `--pids-limit` in `docker_args` to change it, or `-1` to remove it.
+
+## Use a remote Docker host
+
+The capability runs the `docker` CLI on your machine, so it uses whichever daemon that CLI points at. To run containers on another host, point the CLI there before the agent starts; your code doesn't change:
+
+```bash
+export DOCKER_HOST=ssh://dev@build-box  # or: docker context use build-box
+```
+
+The host needs Docker, and `ssh` must log in without a prompt, through a key or your SSH agent. `DOCKER_HOST` overrides `DOCKER_CONTEXT`, which overrides `docker context use`, so unset the ones you don't use. Paths in `docker_args`, such as a `--volume` source, are paths on that host, and `allow_internet_access` reaches that host's network. Each run reads these settings when it starts, and `destroy` when it's called, so keep them the same while a container is in use.
 
 ## Reattach later
 

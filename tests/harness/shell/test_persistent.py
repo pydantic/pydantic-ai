@@ -3,9 +3,10 @@
 import json
 import os
 import shlex
+import shutil
 import signal
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -60,10 +61,26 @@ async def shell(
     arguments: dict[str, object],
     *,
     capabilities: Sequence[AbstractCapability[None]] = (),
+    workspace_env: Mapping[str, str] | None = None,
     **settings: object,
 ) -> str:
     capability = Shell[None](denied_commands=[], allow_interactive=True, tools=['shell'], **settings)  # pyright: ignore[reportArgumentType]
-    return await call_tool([capability, *capabilities], 'shell', arguments, workspace=LocalWorkspaceBackend(cwd))
+    workspace = LocalWorkspaceBackend(cwd, env=workspace_env)
+    return await call_tool([capability, *capabilities], 'shell', arguments, workspace=workspace)
+
+
+@pytest.fixture
+def unwritable(tmp_path: Path) -> Iterator[tuple[Path, Path]]:
+    """A working directory the test user cannot write to, like a root-owned `/app` in a `USER nobody` container, and a temp directory."""
+    if os.geteuid() == 0:  # pragma: no cover
+        pytest.skip('root can write to a read-only directory')
+    temp = tmp_path / 'tmp'
+    temp.mkdir()
+    work = tmp_path / 'work'
+    work.mkdir()
+    work.chmod(0o555)
+    yield work, temp
+    work.chmod(0o755)
 
 
 class Recorder(AbstractCapability[None]):
@@ -140,6 +157,43 @@ class TestShellTool:
         assert f'Output: {metadata}/shell/' in output
         assert (metadata / '.gitignore').read_text() == '*\n'
 
+    async def test_unwritable_workspace_keeps_job_files_in_a_private_temp_directory(
+        self, unwritable: tuple[Path, Path]
+    ) -> None:
+        work, temp = unwritable
+        output = await shell(work, {'command': 'id -u; printf hello'}, workspace_env={'TMPDIR': str(temp)})
+        assert 'hello' in output and 'Permission denied' not in output
+        [fallback] = temp.iterdir()
+        assert fallback.name.startswith(f'.pydantic-ai-harness-{os.geteuid()}-')
+        assert f'Output: {fallback}/shell/' in output
+        assert fallback.stat().st_mode & 0o777 == 0o700
+        assert not (work / '.pydantic-ai-harness').exists()
+        # A later run in the same workspace finds the same directory.
+        assert f'Output: {fallback}/shell/' in await shell(
+            work, {'command': 'true'}, workspace_env={'TMPDIR': str(temp)}
+        )
+
+    async def test_temp_directory_another_user_could_control_is_refused(self, unwritable: tuple[Path, Path]) -> None:
+        work, temp = unwritable
+        await shell(work, {'command': 'true'}, workspace_env={'TMPDIR': str(temp)})
+        [fallback] = temp.iterdir()
+        shutil.rmtree(fallback)
+        elsewhere = temp / 'elsewhere'
+        elsewhere.mkdir()
+        fallback.symlink_to(elsewhere)
+        output = await shell(work, {'command': 'printf hello'}, workspace_env={'TMPDIR': str(temp)})
+        assert 'hello' not in output
+        assert 'Cannot create `.pydantic-ai-harness/shell` in the workspace (Permission denied)' in output
+        assert list(elsewhere.iterdir()) == []
+
+    async def test_path_in_the_way_does_not_fall_back(self, tmp_path: Path) -> None:
+        temp = tmp_path / 'tmp'
+        temp.mkdir()
+        (tmp_path / '.pydantic-ai-harness').write_text('')
+        output = await shell(tmp_path, {'command': 'printf hello'}, workspace_env={'TMPDIR': str(temp)})
+        assert 'Cannot create `.pydantic-ai-harness/shell` in the workspace' in output
+        assert list(temp.iterdir()) == []
+
     async def test_events(self, tmp_path: Path) -> None:
         recorder = Recorder()
         result = await shell(tmp_path, {'command': 'printf hello'}, capabilities=[recorder])
@@ -161,7 +215,8 @@ class TestShellTool:
         recorder = Recorder()
         script = 'import os; os.ftruncate(1, 1 << 32)'
         command = f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'
-        await shell(tmp_path, {'command': command}, capabilities=[recorder])
+        # Without a log limit, which would empty a log this size when the command ends.
+        await shell(tmp_path, {'command': command}, capabilities=[recorder], max_log_bytes=None)
         assert recorder.finished.total_lines is None
         assert recorder.finished.truncated
 
@@ -287,6 +342,20 @@ class TestShellTool:
             assert 'Shell supervisor exited with 125' in await shell(tmp_path, {'command': 'echo hi'})
         finally:
             jobs.chmod(0o700)
+
+    async def test_jobs_directory_removed_by_a_command(self, tmp_path: Path) -> None:
+        # The jobs directory is looked up once per run, so a later launch recreates it.
+        capability = Shell[None](denied_commands=[], tools=['shell'])
+        results = await call_tools(
+            [capability],
+            # The removed job never publishes its status, so the first call waits out its timeout.
+            [
+                ('shell', {'command': 'rm -rf .pydantic-ai-harness', 'timeout': 0.2}),
+                ('shell', {'command': 'echo again'}),
+            ],
+            workspace=LocalWorkspaceBackend(tmp_path),
+        )
+        assert results[1].startswith('again\nPID: ')
 
     async def test_no_jobs_directory(self, tmp_path: Path) -> None:
         # A file where the jobs directory belongs fails the call; retrying cannot help.

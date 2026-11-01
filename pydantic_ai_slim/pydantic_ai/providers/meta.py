@@ -19,7 +19,7 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 MetaModelName = Literal[
@@ -36,7 +36,7 @@ See <https://dev.meta.ai/docs/models> for an up to date list of models.
 """
 
 
-class MetaProvider(_OpenAICompatibleProvider):
+class MetaProvider(_OpenAISDKProvider):
     """Provider for Meta's Model API (Muse models)."""
 
     @property

@@ -11,13 +11,15 @@ Run your agent's commands and file edits in a [smolvm](https://github.com/smol-m
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SmolSandbox's get_workspace hook gives the run a smolvm microVM on your own machine as ctx.workspace. The smolvm engine runs inside your process, and each command and file operation runs in the VM, which has its own kernel and filesystem and no network by default; output comes back to the tool. The first use boots the VM, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. File changes are kept when the VM is stopped with machine.stop() before the process exits, and can be lost otherwise.](../img/harness/smol-sandbox.svg)
+
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[smol,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,smol,anthropic]"
 ```
 
-The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol), the SDK that embeds the smolvm engine. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
+The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol), the SDK that embeds the smolvm engine. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
 
 smolmachines ships wheels for macOS on Apple silicon and for Linux on x86_64 and aarch64 (glibc 2.34 or newer). On Linux, the user running the agent needs read and write access to `/dev/kvm`. See [Platforms](#platforms).
 

@@ -46,7 +46,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
 from pydantic_clai2 import Session, StreamRenderer
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -57,7 +57,6 @@ from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.speculation import Speculation, SpeculationCounters
 from pydantic_clai2.runtime.speculative_mode import (
     NATIVE_TOOLS,
-    SPECULATIVE_TOOLS,
     ShowSandboxCalls,
     SpeculativeExecution,
     WorkspaceCodeMode,
@@ -160,7 +159,7 @@ async def test_stock_delegates_keep_speculative_plugins_and_workspace(tmp_path: 
     prompts: list[str] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file'}
+        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file', 'load_capability'}
         assert guidance('read-only').strip() in (info.instructions or '')
         if len(messages) == 1:
             [request] = messages
@@ -204,7 +203,8 @@ class TestFold:
             capabilities=[Coder[None](repo_context=False), customization_guide(), LocalWorkspace(tmp_path)],
         )
         await agent.run('hi')
-        assert {*SPECULATIVE_TOOLS, *NATIVE_TOOLS} <= set(seen)
+        assert {'list_files', 'read_file', 'grep', *NATIVE_TOOLS} <= set(seen)
+        assert 'search_clai_docs' not in seen and 'read_clai_docs' not in seen
 
     async def test_shell_folds_in_but_other_code_tools_stay_native(self, tmp_path: Path) -> None:
         seen: list[AgentInfo] = []
@@ -229,7 +229,8 @@ class TestFold:
         [info] = seen
         tools = {tool.name: tool for tool in info.function_tools}
         assert sorted(tools) == ['edit_file', 'run_code', 'run_workflow', 'write_file']
-        assert 'async def shell(' in (tools['run_code'].description or '')
+        # The functions `run_code` can call are listed in its catalog, in the instructions.
+        assert 'async def shell(' in (info.instructions or '')
 
     async def test_writes_stay_native_and_guidance_rides_along(self, tmp_path: Path) -> None:
         seen: list[AgentInfo] = []
@@ -284,6 +285,62 @@ class TestFold:
 
 
 class TestEagerTiming:
+    @pytest.mark.parametrize(
+        'call',
+        [
+            'await read_clai_docs(path="reference#saved-api-keys")',
+            'await search_clai_docs(query="saved api keys")',
+        ],
+        ids=['read-docs', 'search-docs'],
+    )
+    async def test_loaded_docs_tools_speculate(self, call: str, tmp_path: Path) -> None:
+        counters = SpeculationCounters()
+        probe_started, stream_finished = anyio.Event(), anyio.Event()
+        head = f'text = {call}\nwaited = await probe()\npad = 0\n'
+        tail = 'done = 1\ntext\n'
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "clai_customization"}')}
+                return
+            if len(messages) > 3:
+                yield 'done'
+                return
+            args = json.dumps({'code': head + tail})
+            yield {0: DeltaToolCall(name='run_code')}
+            split = args.index('done = 1')
+            for offset in range(0, split, 8):
+                yield {0: DeltaToolCall(json_args=args[offset : min(offset + 8, split)])}
+                await anyio.sleep(0)
+            await probe_started.wait()
+            yield {0: DeltaToolCall(json_args=args[split:])}
+            stream_finished.set()
+
+        docs = customization_guide()
+        sandbox = speculative_capabilities(counters, (docs,))
+        agent = Agent(
+            FunctionModel(stream_function=stream),
+            deps_type=type(None),
+            capabilities=[docs, *sandbox, LocalWorkspace(tmp_path)],
+        )
+
+        @agent.tool_plain
+        async def probe() -> str:
+            """Hold the stream open until the preceding docs call has run."""
+            probe_started.set()
+            await stream_finished.wait()
+            return 'probed'
+
+        agent_run_messages: list[ModelMessage] = []
+        with anyio.fail_after(10):
+            async with agent.run_stream_events('Find the saved API keys documentation') as events:
+                async for event in events:
+                    if isinstance(event, AgentRunResultEvent):
+                        agent_run_messages = event.result.all_messages()
+        assert (counters.hits, counters.misses, counters.wasted) == (1, 0, 0)
+        returns = [part for message in agent_run_messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        assert any('Saved API keys' in str(part.content) for part in returns)
+
     @pytest.mark.parametrize('rekey', [False, True])
     async def test_counts_speculative_hits_and_eager_overlap(self, rekey: bool, tmp_path: Path) -> None:
         counters = SpeculationCounters()

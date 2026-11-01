@@ -23,7 +23,7 @@
 #   imports:
 #     - shared/engine-zai.md
 imports:
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@b4b9ad3de2d7a9cbfd7c70715f1f945496e990ce
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@80a13916fbdac4891828aaeaa532da3b9785b203
 runtimes:
   uv: {}
 # Keep existing configurable budgets. AWF also has a fixed 10,000-credit cap.
@@ -49,7 +49,7 @@ sandbox:
     token-steering: false
 engine:
   id: pydantic-ai
-  version: '0.59.0'
+  version: '0.64.0'
   env:
     ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}

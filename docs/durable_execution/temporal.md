@@ -152,11 +152,11 @@ async def main():
 1. The agent's `name` is used to uniquely identify its activities.
 2. Attach durability via `capabilities=[...]`. The capability discovers the agent's name, model, and toolsets when bound to the agent, and registers an activity for each. Outside a workflow, the capability is transparent — the agent behaves as a normal `Agent`.
 3. The workflow represents a deterministic piece of code that can use non-deterministic activities for operations that require I/O. Subclassing [`PydanticAIWorkflow`][pydantic_ai.durable_exec.temporal.PydanticAIWorkflow] is optional but provides proper typing for the `__pydantic_ai_agents__` class variable.
-4. List the agents used by this workflow. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] automatically registers the activities contributed by each agent's [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability with the worker. Alternatively, if modifying the worker initialization is easier than the workflow class, you can use [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin] to register an agent's activities directly on the worker.
+4. List the agents used by this workflow. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] automatically registers the activities and child workflows contributed by each agent's [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability with the worker. Alternatively, if modifying the worker initialization is easier than the workflow class, you can use [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin] to register an agent's activities and child workflows directly on the worker. Use one of these plugin paths when any tool is configured with `child_workflow`; registering only `TemporalDurability.temporal_activities` is rejected because it would omit the required workflow definitions.
 5. `agent.run()` works as usual; inside the workflow, model requests, tool calls, and MCP server communication are routed through Temporal activities.
 6. We connect to the Temporal server which keeps track of workflow and activity execution.
 7. This assumes the Temporal server is [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally).
-8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own over-limit-payload failure types, `PayloadsTooLarge` and (before `temporalio` 1.31) `PayloadSizeError` (see [Large Payloads](#large-payloads)), and the workspace errors `WorkspaceTimeoutError`, `WorkspaceOutputLimitError`, `WorkspaceReadOnlyError` and `WorkspaceUnavailableError`, while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], `UnsupportedEventLoopError`, and [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] as `workflow_failure_exception_types`.
+8. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and automatically registers activities for agents listed in `__pydantic_ai_agents__`. Activity retry policies treat [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], and [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] as non-retryable, along with Temporal's own over-limit-payload failure types, `PayloadsTooLarge` and (before `temporalio` 1.31) `PayloadSizeError` (see [Large Payloads](#large-payloads)), and the workspace errors `WorkspaceTimeoutError`, `WorkspaceOutputLimitError`, `WorkspaceReadOnlyError` and `WorkspaceUnavailableError`, while the worker registers `UserError`, `PydanticUserError`, [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], `FallbackExceptionGroup`, `UnsupportedEventLoopError`, and [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] as `workflow_failure_exception_types`.
 9. We start the worker that will listen on the specified task queue and run workflows and activities. In a real world application, this might be run in a separate service.
 10. We call on the server to execute the workflow on a worker that's listening on the specified task queue.
 
@@ -198,7 +198,7 @@ There are a few considerations specific to agents and toolsets when using Tempor
 
 To ensure that Temporal knows what code to run when an activity fails or is interrupted and then restarted, even if your code is changed in between, each activity needs to have a name that's stable and unique.
 
-When [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] dynamically creates activities for the agent's model requests and toolsets (specifically those that implement their own tool listing and calling, i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]), their names are derived from the agent's [`name`][pydantic_ai.agent.AbstractAgent.name] and the toolsets' [`id`s][pydantic_ai.toolsets.AbstractToolset.id]. These fields are normally optional, but are required to be set when using Temporal. They should not be changed once the durable agent has been deployed to production as this would break active workflows.
+When [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] dynamically creates activities for the agent's model requests and toolsets (specifically those that implement their own tool listing and calling, i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]), their names are derived from the agent's [`name`][pydantic_ai.agent.AbstractAgent.name] and the toolsets' [`id`s][pydantic_ai.toolsets.AbstractToolset.id]. These fields are normally optional, but are required to be set when using Temporal, and the hostname a URL `MCPToolset` without one takes as its `id` doesn't count. They should not be changed once the durable agent has been deployed to production as this would break active workflows.
 
 Upgrading to this version changes the activity sequence for tools that have an `args_validator`, so workflows already in flight that call such a tool need [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) or a [patch](https://python.temporal.io/temporalio.workflow.html#patched). Workflows that don't call a tool with an `args_validator` are unaffected.
 
@@ -229,9 +229,9 @@ Values that Pydantic AI carries across the boundary as untyped dictionaries — 
 !!! warning "Persisted payload schemas"
     Temporal deserializes persisted workflow and activity payloads using the models and type annotations available in the currently deployed worker, so treat these models as durable contracts across deployments. Adding an optional field with a default stays compatible, but adding a required field or making another incompatible change can cause payload decoding to fail before the workflow or activity body executes. This is especially relevant to application-owned workflow inputs and dependency models: since Pydantic AI does not own or migrate Temporal workflow history, applications with long-running workflows should adopt a versioning or migration strategy when changing them.
 
-Specifically, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `partial_output`, `usage`, `usage_limits`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, and `capability_active` fields are available by default. `agent` and `root_capability` are re-attached from the worker's agent instance, `tool_manager` is `None` (so [`available_tool_names`][pydantic_ai.tools.RunContext.available_tool_names] returns the snapshot resolved when the activity was dispatched, and falls back to `discovered_tool_names` only for a subclass whose `serialize_run_context` doesn't carry it; [`active_capability_ids`][pydantic_ai.tools.RunContext.active_capability_ids] is carried the same way, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a tool owned by a capability), and `pending_messages` holds a guard that makes [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, since the activity's recorded result is replayed without re-running your code and the enqueued messages would be dropped.
+Specifically, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `partial_output`, `usage`, `usage_limits`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, and `capability_active` fields are available by default. `agent` and `root_capability` are re-attached from the worker's agent instance, `tool_manager` is `None` (so [`available_tool_names`][pydantic_ai.tools.RunContext.available_tool_names] returns the snapshot resolved when the activity was dispatched, and falls back to `discovered_tool_names` only for a subclass whose `serialize_run_context` doesn't carry it; [`active_capability_ids`][pydantic_ai.tools.RunContext.active_capability_ids] is carried the same way, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a tool owned by a capability), and `pending_messages` holds a guard that makes [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, since the activity's recorded result is replayed without re-running your code and the enqueued messages would be dropped. [`ctx.load_capability()`][pydantic_ai.tools.RunContext.load_capability] raises inside an activity for the same reason; see [Loading a capability from code](../capabilities/on-demand.md#loading-from-code-durable) for where to load on-demand capabilities instead.
 
-Trying to access any other field — `model`, `prompt`, `messages`, `model_settings`, `tracer`, `validation_context`, or `capabilities` — raises a `UserError` rather than returning that field's default value, so a field that didn't cross the boundary can't be mistaken for real run state. A multi-modal `prompt` can carry large [`BinaryContent`][pydantic_ai.messages.BinaryContent], and carrying it would put that content in every activity payload, creating the same Temporal [payload size](#large-payloads) concern as `messages`.
+Trying to access any other field — `model`, `prompt`, `messages`, `model_settings`, `tracer`, or `capabilities` — raises a `UserError` rather than returning that field's default value, so a field that didn't cross the boundary can't be mistaken for real run state. `validation_context` isn't serialized either, but it's rebuilt from the agent's `validation_context` setting the first time it's read inside an activity. A multi-modal `prompt` can carry large [`BinaryContent`][pydantic_ai.messages.BinaryContent], and carrying it would put that content in every activity payload, creating the same Temporal [payload size](#large-payloads) concern as `messages`.
 If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A subclass can opt in to carrying `prompt` if it knows its prompts are text-only.
 
 The activity's `RunContext` is rebuilt from the serialized payload, so its fields are copies: mutating them inside an activity does not affect the run. In particular, `usage` is a snapshot of the run's usage at the time the activity was scheduled. If a tool [delegates to another agent](../multi-agent-applications.md#agent-delegation) with `usage=ctx.usage`, the delegate's tokens and requests stay behind in the activity: they're missing from the parent run's [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] and are never charged against its [usage limits](../agent.md#usage-limits). To account for delegate usage, carry it yourself: return the delegate's [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] from the tool, or record it in an external store your `deps` can reach. Temporal loses these mutations unconditionally. [DBOS](dbos.md) and [Prefect](prefect.md) pass the live `RunContext` into their in-process durable units, so mutations do accrue while a step or task body actually runs — but they're lost there too whenever the body doesn't run because its recorded result is replayed (DBOS workflow recovery) or reused (a Prefect task cache hit), which makes the same code account differently from one run to the next. Don't rely on the in-process engines' behavior; a return channel that works for all three is under discussion in [pydantic-ai#6886](https://github.com/pydantic/pydantic-ai/issues/6886).
@@ -274,8 +274,11 @@ results. When Temporal replays a workflow, approval listeners run again, so make
 idempotent.
 
 **Delegation.** `Coder`'s delegate, `self`, runs in the workflow, so the child's model requests and tools
-become activities of the same agent. Sub-agents read from `agent_folders` are not supported: reading the
-folders at run start adds a toolset at run time, which Temporal refuses, so pass
+become activities of the same agent. A `SubAgents` whose only delegate is `self` does the same, also with a
+`models` menu: register a `Model` instance from the menu with `TemporalDurability(models=...)`. With other
+delegates, a delegation runs in an activity, where the parent run's model is unavailable, so each delegate
+needs a model of its own or a `models` option. Sub-agents read from `agent_folders` are not supported: reading
+the folders at run start adds a toolset at run time, which Temporal refuses, so pass
 `SubAgents(include_self=True, agent_folders=None)` when you compose `SubAgents` yourself.
 
 #### Command timeouts {#harness-command-timeouts}
@@ -325,7 +328,7 @@ Temporal stores every payload it records in the workflow execution event history
 
 #### When a tool return or model response is too large
 
-A tool returning a [`BinaryImage`][pydantic_ai.messages.BinaryImage] — whether the direct image generator or the subagent fallback behind the [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] capability, or your own `local=` tool — sends those bytes back as the activity's result payload, and Pydantic AI raises a `UserError` naming the tool if Temporal rejects it. The same applies to an image a model returns on its response, as with a [native image generation tool](../native-tools.md#image-generation-tool), since the model request is itself an activity; there the `UserError` names the model. A [streamed](#streaming) segment can also overflow on its buffered events alone, without any image involved.
+A tool returning a [`BinaryImage`][pydantic_ai.messages.BinaryImage] — whether the direct image generator or the subagent fallback behind the [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] capability, or your own `local=` tool — sends those bytes back as the activity's result payload, and Pydantic AI raises a `UserError` naming the tool if Temporal rejects it. The same applies to an image a model returns on its response, as with a [native image generation tool](../native-tools.md#image-generation-tool), since the model request is itself an activity; there the `UserError` names the model.
 
 For a tool you control, the simplest fix is to keep the bytes out of history entirely: write the image to object storage and return a reference — an [`ImageUrl`][pydantic_ai.messages.ImageUrl], or a key your application resolves later. Small payloads also keep workflow replay fast, so this pays off beyond just staying under the cap. When the bytes come back from a provider, or the payload is a large `deps` object rather than media, use external storage instead.
 
@@ -379,11 +382,11 @@ As a last resort, if the bytes genuinely need to sit in the workflow history, ra
 
 ### Streaming
 
-[`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] work inside a Temporal workflow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable activity, and its events are replayed to the workflow after the activity completes.
+[`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] work inside a Temporal workflow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable activity, and once the activity completes the workflow replays its final response: each part arrives as one [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] carrying its full content, rather than as the deltas the model streamed, so the deltas aren't recorded in the activity's result.
 
 For handlers with I/O side effects, pass `event_stream_handler=` to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. Model events are delivered live inside each model-request activity, while each tool event is delivered in its own event-handler activity. As with any Temporal activity, a handler may run more than once if an activity retries, so keep its side effects idempotent.
 
-Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream]. Its handler runs in workflow code and must be deterministic because it re-runs on workflow replay. Tool and final-output events arrive live, while the real captured model events are replayed after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream]. Its handler runs in workflow code and must be deterministic because it re-runs on workflow replay. Tool and final-output events arrive live, while model events are replayed from the final response after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 A durability `event_stream_handler=` and a separately registered `ProcessEventStream` are two distinct handlers, and each fires once. The durability handler receives live events inside the durable activity, while `ProcessEventStream` sees the buffered replay in workflow code.
 
@@ -616,13 +619,138 @@ Some providers can pause a model turn mid-flight (Anthropic `pause_turn`) or run
 
 This has a few operational implications:
 
-- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. A [`request_timeout`](../timeouts.md#model-request-deadlines) model setting covers all segments of the turn: it runs as a workflow timer, and cancels the in-flight activity when it fires. With a [`FallbackModel`](../models/overview.md#fallback-model), the deadlines run inside the activities instead, and the picked model's deadline carries over from one segment's activity to the next. Model request activities are given a default `heartbeat_timeout` of 30 seconds; see [Activity Configuration](#activity-configuration) for how heartbeating works across the other activities.
+- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. A [`request_timeout`](../timeouts.md#model-request-deadlines) model setting covers all segments of the turn: it runs as a workflow timer, and cancels the in-flight activity when it fires. With the [`ModelFallback`](../capabilities/model-fallback.md#durable-execution) capability, each model it tries gets an activity and a workflow timer of its own. With a [`FallbackModel`](../models/overview.md#fallback-model), the deadlines run inside the activities instead, and the picked model's deadline carries over from one segment's activity to the next. A [`first_event_timeout`](../timeouts.md#waiting-for-the-first-event) always runs inside the activity, which is what sees the stream's events, and carries over the same way until the turn has produced output. Model request activities are given a default `heartbeat_timeout` of 30 seconds; see [Activity Configuration](#activity-configuration) for how heartbeating works across the other activities.
 - **Retries and waits**: a failed segment retries independently. Delays between background polls use durable Temporal timers and do not consume activity wall-clock time.
 - **Cancellation**: if an error abandons a suspended job, its provider teardown runs in a dedicated cancellation activity.
-- **Payload size**: whenever [streaming](#streaming) is used — an `event_stream_handler`, a `ProcessEventStream` capability, or a per-run `event_stream_handler` — each segment's buffered events are shipped back to the workflow and must fit within Temporal's [payload size limit](#large-payloads) (2MB by default). A segment that overflows raises the same `UserError` as any other oversized model response.
+- **Batching**: [batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate activities, with durable timers between checks.
 
 !!! note
     If you use a custom [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with your own `serialize_run_context`, keep including the `usage` and `usage_limits` fields: tools and capabilities running inside activities read them from the [`RunContext`][pydantic_ai.tools.RunContext], e.g. to adapt to the run's remaining [usage budget](../agent.md#usage-limits).
+
+### Continuing as New for Long-Running Agents
+
+A Temporal workflow's execution history is capped at around 50,000 events or 50MB. An agent run with enough turns can eventually hit that ceiling. Temporal's answer is [`continue_as_new`](https://docs.temporal.io/develop/python/continue-as-new), which completes the current workflow execution and starts a fresh one with a clean history while carrying forward the arguments you provide.
+
+[`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] can do this at a point the agent can resume from. Pass `continue_as_new`, a sync or async function that receives the run's [`RunContext`][pydantic_ai.tools.RunContext]. Just before each model request, the capability checks `workflow.info().is_continue_as_new_suggested()`. If Temporal suggests continuing, it calls your function, which calls `workflow.continue_as_new()` with the arguments your workflow's `@workflow.run` method needs to resume, including the conversation so far. At that point, every tool result from the previous step is already in the history and nothing is in flight.
+
+The Temporal server decides when to suggest continuing, based on the history's event count and size. To continue earlier or later, tune its `limit.historyCount.suggestContinueAsNew` and `limit.historySize.suggestContinueAsNew` [dynamic config](https://docs.temporal.io/references/dynamic-configuration) values, which can be set per namespace.
+
+As an async function, yours can first [execute an activity](https://docs.temporal.io/develop/python/core-application#activity-execution), for example to store the history somewhere else and pass a reference instead. It can also return without calling `workflow.continue_as_new()` to wait for a condition only your application can judge; it is then called again before the next model request. Setting `continue_as_new=None`, the default, leaves the feature disabled.
+
+!!! warning "`continue_as_new` arguments share Temporal's per-payload size limit"
+    Like activity and workflow inputs, each argument passed to `continue_as_new` counts against Temporal's per-payload size limit (see [Large Payloads](#large-payloads)). Bound the history you carry, for example by compacting it with a history-processing capability like [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory], or [offload large payloads to your own storage](#offloading-payloads-to-your-own-storage).
+
+```python {title="temporal_continue_as_new.py" test="skip"}
+from temporalio import workflow
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import (
+    PydanticAIPlugin,
+    PydanticAIWorkflow,
+    TemporalDurability,
+)
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage, UsageLimits
+
+
+def continue_as_new(ctx: RunContext) -> None:
+    workflow.continue_as_new(
+        args=[None, ctx.messages, ctx.usage, ctx.usage_limits],
+    )
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='investigator',
+    capabilities=[TemporalDurability(continue_as_new=continue_as_new)],
+)
+
+
+@workflow.defn
+class InvestigatorWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
+    @workflow.run
+    async def run(
+        self,
+        prompt: str | None,
+        message_history: list[ModelMessage] | None = None,
+        usage: RunUsage | None = None,
+        usage_limits: UsageLimits | None = None,
+    ) -> str:
+        result = await agent.run(
+            prompt,
+            message_history=message_history,
+            usage=usage,
+            usage_limits=usage_limits,
+        )
+        return result.output
+
+
+async def main():
+    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
+    async with Worker(client, task_queue='investigator', workflows=[InvestigatorWorkflow]):
+        await client.execute_workflow(
+            InvestigatorWorkflow.run,
+            args=['Start the investigation.'],
+            id='investigator-1',
+            task_queue='investigator',
+        )
+```
+
+The continuation passes `None` as the prompt: the carried-over history already ends with the request the model was about to receive (such as the latest tool results), so the new run sends it as is instead of adding a new user message.
+
+Carrying `usage` and `usage_limits` across the boundary keeps [usage limits](../agent.md#usage-limits) like `request_limit` bounding the whole logical run rather than resetting on each continuation. `message_history`, `usage`, and `usage_limits` are ordinary workflow arguments here, not a feature of `TemporalDurability` itself. The function and the `@workflow.run` signature that receives them are yours to shape.
+
+### Responses WebSocket connections
+
+An OpenAI Responses model can reuse a [Responses WebSocket](../models/openai.md#responses-websockets) across model activities when the worker holds the registered model open. Install `pydantic-ai-slim[openai-realtime]`, set [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport], and enter the model around the worker's lifetime:
+
+```python {test="skip" gateway_toggle="skip"}
+from temporalio import workflow
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel(
+    '{{ openai:medium.name }}',
+    settings=OpenAIResponsesModelSettings(openai_transport='websocket', max_retries=0),
+)
+agent = Agent(model, name='triage', capabilities=[TemporalDurability()])
+
+
+@workflow.defn
+class TriageWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await agent.run(prompt)).output
+
+
+async def main():
+    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
+    async with model:
+        async with Worker(client, task_queue='triage', workflows=[TriageWorkflow]):
+            await client.execute_workflow(
+                TriageWorkflow.run,
+                'Triage this request.',
+                id='triage-1',
+                task_queue='triage',
+            )
+```
+
+Each activity still checkpoints its result independently. Activities borrow the socket only on the event loop where an outer model context holds it; without that owner, or for a model created only inside an activity, requests use HTTP. Capacity overflow also uses HTTP. Set [`max_retries=0`][pydantic_ai.settings.ModelSettings.max_retries] when Temporal owns the retry budget; this disables transport retries for both WebSocket requests and HTTP overflow, compaction and token counting.
+
+Connections are worker-local resources. A replacement worker uses its own model and connection; it can resend the retained conversation when a previous response is unavailable on that connection. Keep the full message history, especially with [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store]. Replaying completed activities uses their recorded results without opening a connection or sending another model request.
+
+With [instrumentation](../logfire.md) enabled, inspect `pydantic_ai.transport` on the model activity span within each request's `chat` span. It records `'websocket'` for a socket request or `'http'` for HTTP fallback in WebSocket mode.
 
 ### Model Selection at Runtime
 
@@ -631,7 +759,7 @@ This has a few operational implications:
 - pre-register it by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], then reference it by name or by passing the registered instance directly to `agent.run(model=...)`;
 - pass a model-name string and build the instance on the worker with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials.
 
-Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default; the agent must have a model set when it's created.
+Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default; the agent must have a model set when it's created, or a capability that supplies one, like [`ModelFallback`](../capabilities/model-fallback.md) or [`SelectModel`](../capabilities/select-model.md). The models a `ModelFallback` falls back to follow the same rules: a model-name string is built on the worker, and a model instance is registered in `models` and given to `ModelFallback` by name, as in [Model Fallback](../capabilities/model-fallback.md#durable-execution).
 
 Model strings work as expected. To customize how a model string is built — a custom provider, API keys injected from configuration, per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `TemporalDurability`: it gets first crack at every string, both at run setup and when the model is rebuilt inside the activity, where the resolver runs again with the run's actual `deps`. Since the resolver re-runs on the worker, it must be deterministic for a given `(model_id, deps)` and must not perform external I/O — carry credentials on `deps` or close over configuration loaded at startup.
 
@@ -775,11 +903,97 @@ their Temporal activity, so `metadata={'temporal': False}` on an MCP tool raises
 !!! tip "Configuring third-party tools"
     [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] is the recommended path when the activity config doesn't belong on the tool definition — for example, tools defined in third-party packages, or a group of tools that share the same timeout profile but live in different files.
 
+### Child workflows
+
+An async function tool can run as a Temporal child workflow instead of an activity. This is useful
+when the tool runs a nested agent with its own `TemporalDurability`: the nested model requests and
+tool calls remain durable operations with their own timeouts and retries, recorded in the child's
+separate workflow history instead of growing the parent's.
+
+Set the `'temporal'` metadata value to a dictionary whose only key is `'child_workflow'`. Its value
+accepts the same options as [`workflow.start_child_workflow()`](https://python.temporal.io/temporalio.workflow.html#start_child_workflow):
+
+```python {title="temporal_child_workflow.py" test="skip"}
+from datetime import timedelta
+
+from temporalio import workflow
+from temporalio.workflow import ChildWorkflowConfig
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
+from pydantic_ai.toolsets import FunctionToolset
+
+researcher = Agent(
+    '{{ openai:medium }}',
+    name='researcher',
+    capabilities=[TemporalDurability()],
+)
+
+delegation = FunctionToolset(id='delegation')
+
+
+@delegation.tool_plain(
+    metadata={
+        'temporal': {
+            'child_workflow': ChildWorkflowConfig(execution_timeout=timedelta(minutes=10))
+        }
+    }
+)
+async def research(topic: str) -> str:
+    """Research a topic in depth."""
+    result = await researcher.run(f'Research: {topic}')
+    return result.output
+
+
+lead = Agent(
+    '{{ openai:medium }}',
+    name='lead',
+    toolsets=[delegation],
+    capabilities=[TemporalDurability()],
+)
+
+
+@workflow.defn
+class LeadWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [lead, researcher]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await lead.run(prompt)
+        return result.output
+```
+
+Each `research` call starts a child workflow, and the `researcher` agent's model requests and tool
+calls are activities in that child's history rather than the parent's. List both agents in
+`__pydantic_ai_agents__` (or pass an [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin]
+for each) so the worker registers the nested agent's activities as well as the child workflow
+definition.
+
+When `id` is omitted, the child workflow ID is the parent's workflow ID followed by a UUID generated
+deterministically by the workflow. The `id`, `task_queue`, `execution_timeout`, `run_timeout`,
+`task_timeout`, `id_reuse_policy`, `retry_policy`, `cron_schedule`, `cancellation_type`,
+`parent_close_policy`, `memo`, `search_attributes`, `versioning_intent`, `static_summary`,
+`static_details`, and `priority` options are passed through to Temporal. The tool body
+runs as deterministic workflow code, so it must delegate I/O to durable operations, such as a nested
+agent's activities. Child workflows are not supported for sync, dynamic, or MCP tools.
+
+An exception raised by the tool body fails the child workflow and reaches the parent's tool call the
+way a failed activity would. The child is retried according to its `retry_policy`, except on errors a
+retry can't fix, such as a [`UserError`][pydantic_ai.exceptions.UserError], which an activity doesn't
+retry either.
+
+A worker registers a toolset's child workflow when the plugin configures it, if a tool in the
+toolset has `child_workflow` metadata by then (tools added with `@agent.tool` included) or a
+[`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability sets it. Workers for agents
+without such tools register only their activities, as before. Metadata that first appears later,
+for example from a capability that rewrites tool definitions during a run, fails the tool call
+with a `UserError`.
+
 ## Activity Retries
 
 On top of the automatic retries for request failures that Temporal will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, with improper `Retry-After` handling.
 
-When using Temporal, it's recommended to not use [transport retries](../retries.md#transport-retries) and to turn off your provider API client's own retry logic, for example by setting `max_retries=0` on a [custom `OpenAIProvider` API client](../models/openai.md#custom-openai-client).
+When using Temporal, it's recommended to not use [transport retries](../retries.md#transport-retries) and to turn off your provider API client's own retry logic, by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0`, so the engine is the [one retry owner](../retries.md#choosing-one-retry-owner).
 
 You can customize Temporal's retry policy using [activity configuration](#activity-configuration).
 
@@ -789,19 +1003,27 @@ A model error is different: with [`TemporalDurability`][pydantic_ai.durable_exec
 
 A retry policy and workflow code see a model error differently. Workflow code and capabilities get the [error category](../models/overview.md#handling-model-api-errors) class, so `except ModelTimeoutError` or `except ModelRateLimitError` works in a workflow. A retry policy's `non_retryable_error_types` only sees the error's `ApplicationError` type, which is `ModelHTTPError` for an error that has an HTTP status and `ModelAPIError` for any other category, the class it's raised as apart from its category. So a policy that names a category, like `'ModelRateLimitError'`, matches nothing. A policy that names `'ModelHTTPError'` or `'ModelAPIError'` matches what it did before the categories existed, except for errors that now get the HTTP status the provider uses for the same error, and so are now also raised as a `ModelHTTPError`: Bedrock `ConverseStream` exception events (e.g. a throttling event as a 429), error objects inside an OpenAI-compatible or OpenAI Responses stream, Hugging Face Text Generation Inference's in-stream `OverloadedError`, and xAI's `INVALID_ARGUMENT` (as a 400). These now report `ModelHTTPError` instead of `ModelAPIError`.
 
-To stop Temporal from retrying an error category that a retry can't fix, like [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] or [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], list its class in `non_retryable_model_errors` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A model error that's an instance of a listed class fails the model activity on its first attempt, whatever the retry policy says, and still reaches workflow code as its own class. Because classes match with `isinstance`, listing [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] also covers [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError]. The `ApplicationError` type the retry policy sees doesn't change.
+To stop Temporal from retrying an error category that a retry can't fix, like [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] or [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], list its class in `non_retryable_model_errors` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A model error that's an instance of a listed class fails the model activity on its first attempt, whatever the retry policy says, and still reaches workflow code as its own class. Because classes match with `isinstance`, listing [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] also covers [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError], and listing [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] also covers [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError]. The `ApplicationError` type the retry policy sees doesn't change.
 
 ```python {title="temporal_non_retryable_model_errors.py"}
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.temporal import TemporalDurability
-from pydantic_ai.exceptions import ModelContextWindowExceededError, ModelQuotaExceededError
+from pydantic_ai.exceptions import (
+    ModelAuthenticationError,
+    ModelContextWindowExceededError,
+    ModelQuotaExceededError,
+)
 
 agent = Agent(
     '{{ openai:medium }}',
     name='assistant',
     capabilities=[
         TemporalDurability(
-            non_retryable_model_errors=[ModelContextWindowExceededError, ModelQuotaExceededError],
+            non_retryable_model_errors=[
+                ModelContextWindowExceededError,
+                ModelQuotaExceededError,
+                ModelAuthenticationError,
+            ],
         ),
     ],
 )

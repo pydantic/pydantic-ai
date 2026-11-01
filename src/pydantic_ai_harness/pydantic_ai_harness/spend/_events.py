@@ -38,7 +38,7 @@ class SpendRecordedEvent(CapabilityEvent, namespace=SPEND_LIMITS_EVENTS, name='r
     priced: bool
     budgets: tuple[SpendBudgetStatus, ...]
     failed_attempt: bool = False
-    """Whether this is a response a `FallbackModel` rejected, rather than one the agent acted on.
+    """Whether this is a response a `FallbackModel` or the `ModelFallback` capability rejected, not one the agent acted on.
 
     Such a response was billed, so it is recorded with its own event; `model` and `usage` are the attempt's.
     """

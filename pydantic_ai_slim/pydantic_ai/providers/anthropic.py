@@ -9,7 +9,11 @@ from typing import TypeAlias, overload
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
+from pydantic_ai.profiles.anthropic import (
+    _COUNTING_STRICT_SCHEMAS,  # pyright: ignore[reportPrivateUsage]
+    AnthropicModelProfile,
+    anthropic_model_profile,
+)
 from pydantic_ai.providers import Provider, missing_api_key_error
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
@@ -82,11 +86,56 @@ the way it does a plain system entry. Verified live per model, including `claude
 """
 
 
+_MID_CONVERSATION_EFFORT_MODEL_PREFIXES = (
+    'claude-fable-5-1',
+    'claude-mythos-5-1',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that accept an effort-only `{'role': 'system'}` entry with a per-message `output_config`.
+
+The list Anthropic publishes for the `mid-conversation-output-config-2026-07-01` beta on the Claude API and
+Google Cloud: Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5. `claude-fable-5`
+(5.0) rejects it with `requires a model that supports per-turn effort`. Amazon Bedrock serves fewer, which
+`AnthropicModel.profile` narrows per client. https://platform.claude.com/docs/en/build-with-claude/effort
+"""
+
+_ON_DEMAND_COMPACTION_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-mythos-preview',
+    'claude-opus-4-6',
+    'claude-opus-4-7',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-4-6',
+    'claude-sonnet-5',
+    'claude-haiku-5-5',
+)
+"""Models that accept the `compaction` request parameter of the `compact-2026-09-04` beta, and the block it returns.
+
+The models whose `capabilities.compaction.summarize.supported` is true on Anthropic's Models API, which is `false` for
+Claude Opus 4.5, Sonnet 4.5 and Haiku 4.5. The Mythos models aren't reachable with our credentials; Anthropic's
+on-demand compaction docs list them. https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand
+
+No client narrows it. Besides the Claude API, the legacy Bedrock InvokeModel API and the Bedrock Messages API
+(`AsyncAnthropicBedrockMantle`) compact and accept the block back live, although the docs don't list Bedrock. Vertex AI
+and Microsoft Foundry are documented as supported, but weren't reachable with our credentials.
+"""
+
+
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
     """Provider for Anthropic API."""
 
     @property
     def name(self) -> str:
+        return 'anthropic'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing thinking signatures. Every client (the
+        # Anthropic API, Bedrock, Claude Platform on AWS, Vertex AI and Foundry) verifies the same ones.
         return 'anthropic'
 
     @property
@@ -139,6 +188,16 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
             else AnthropicModelProfile(),
+            AnthropicModelProfile(
+                supports_mid_conversation_effort=model_name.startswith(_MID_CONVERSATION_EFFORT_MODEL_PREFIXES)
+            ),
+            # Verified live on the Messages API and both Bedrock transports; `AnthropicModel` narrows it per client.
+            AnthropicModelProfile(anthropic_enforces_strict_schema_limits=True),
+            # On-demand compaction is likewise a Messages API feature, so the Bedrock Converse API and the
+            # OpenAI-compatible gateways that share `anthropic_model_profile()` don't get it.
+            AnthropicModelProfile(
+                anthropic_supports_on_demand_compaction=model_name.startswith(_ON_DEMAND_COMPACTION_MODEL_PREFIXES)
+            ),
             AnthropicModelProfile(
                 # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
                 # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.
@@ -254,7 +313,7 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
         schema = super()._handle_object(schema)
-        if self.strict is True:
+        if self.strict is True and not _COUNTING_STRICT_SCHEMAS.get():
             additional_properties = schema.get('additionalProperties')
             if isinstance(additional_properties, dict) or additional_properties is True:
                 warnings.warn(

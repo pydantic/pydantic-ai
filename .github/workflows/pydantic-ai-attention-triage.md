@@ -99,7 +99,10 @@ safe-outputs:
         - name: Install the typed-boundary dependency
           # Pinned exactly: this job holds a write-scoped token, so a
           # compromised new release must never reach it.
-          run: python3 -m pip install --quiet 'pydantic==2.13.4'
+          run: >-
+            python3 -m pip install --quiet 'pydantic==2.13.4'
+            'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4'
+            --no-deps
         - name: Restore exact candidate allowlist
           uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
           with:
@@ -131,7 +134,10 @@ pre-agent-steps:
   - name: Install tools for AWF sandbox (ripgrep)
     run: bash .github/scripts/install-sandbox-tools.sh
   - name: Install the typed-boundary dependency
-    run: python3 -m pip install --quiet 'pydantic==2.13.4'
+    run: >-
+      python3 -m pip install --quiet 'pydantic==2.13.4'
+      'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4'
+      --no-deps
   - name: Build bounded attention snapshot
     env:
       GITHUB_TOKEN: ${{ github.token }}

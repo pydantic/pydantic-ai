@@ -8,7 +8,7 @@ A decision model answers typed questions about a text rather than writing text: 
 
 [`DecisionModel`][pydantic_ai.models.decision.DecisionModel] maps an agent run onto those questions. Each field of the `output_type` becomes one question, the prompt is the text, and the answers come back as the output: a `bool` is a yes or no, a `Literal` or `Enum` is one label out of several, a list of labels is a yes or no per label, a bounded `float` is the probability of yes itself, and a set of described levels is a score against a rubric. A Pydantic model with several fields extracts several values in one request. Output types, output functions and tools are [routes](#routes-which-thing-to-do): with more than one on offer, the model picks the one the text calls for, and fills that route's fields or arguments the same way. Change the model name and the same agent runs on a language model, so you can compare the two.
 
-A decision model can also work together with a language model. When it picks a route it cannot continue down — a tool with an argument it cannot fill, such as a free-form `str`, or one of several output types with such a field — it escalates: behind a [`FallbackModel`](overview.md#fallback-model), a language model takes that whole step, with the same tools and output types to choose from. The same fallback can take the steps the decision model [was unsure about](#falling-back-on-low-confidence). The cheap model answers what it can, and the expensive one only runs when it is needed.
+A decision model can also work together with a language model. When it picks a route it cannot continue down — a tool with an argument it cannot fill, such as a free-form `str`, or one of several output types with such a field — it escalates: with [`ModelFallback`](../capabilities/model-fallback.md), a language model takes that whole step, with the same tools and output types to choose from. The same fallback can take the steps the decision model [was unsure about](#falling-back-on-low-confidence). The cheap model answers what it can, and the expensive one only runs when it is needed.
 
 Pydantic AI supports three decision model backends out of the box:
 
@@ -122,7 +122,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict
 
 from pydantic_ai import Agent, BoolCriteria, UseEnumMemberDocstrings
-from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.capabilities import ModelFallback
 
 
 class Area(UseEnumMemberDocstrings, StrEnum):
@@ -199,10 +199,11 @@ def check_status(service: Literal['payments', 'login', 'reports']) -> str:
 
 
 support = Agent(
-    FallbackModel('typesafe:jev-latest', '{{ anthropic:large }}'),
+    'typesafe:jev-latest',
     output_type=[Triage, Refund, Reply],
     instructions='Tickets to the support desk of a project-management app.',
     tools=[check_status],
+    capabilities=[ModelFallback('{{ anthropic:large }}')],
 )
 
 result = support.run_sync('You charged me twice for the March invoice.')
@@ -234,9 +235,9 @@ Each ticket is a run, and Jev takes every step it can:
 1. **The route question.** The first request asks Jev one pick-one question over the ticket: does it call for `Triage`, `Refund`, `Reply`, or `check_status`? Each option is described by its docstring. The routes' fields go along beside it when that is cheaper than asking them afterwards, but `Triage`'s four questions cost more than sending a short ticket a second time, so here no fields are asked yet.
 2. **The fill.** A second request asks only the picked route's questions, over the same ticket: `Refund`'s `reason`, or all four of `Triage`'s fields at once. The run ends with that output. The first two tickets go this way, and cost two Jev requests each and no language model call.
 3. **A tool call.** A picked tool is filled the same way — here, `check_status`'s `service`. Your function runs, and the next step asks Jev the route question again, with the ticket as the text and the call and its result beside it as what has been done. `check_status` is not offered a second time in the same run.
-4. **Escalation.** `Reply` has a field Jev cannot fill, so picking it — like picking a tool with such an argument — raises [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. The `FallbackModel` hands the whole step to the language model, with the same tools and output types, and the language model decides afresh: it could triage, refund or check the status as well. On the third ticket, Jev checked the status and then picked `Reply`, so the language model wrote the reply with the status in view, and the response names it as the model that answered. That one step is the only language model call; the steps before it stayed on Jev.
+4. **Escalation.** `Reply` has a field Jev cannot fill, so picking it — like picking a tool with such an argument — raises [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. `ModelFallback` hands the whole step to the language model, with the same tools and output types, and the language model decides afresh: it could triage, refund or check the status as well. On the third ticket, Jev checked the status and then picked `Reply`, so the language model wrote the reply with the status in view, and the response names it as the model that answered. That one step is the only language model call; the steps before it stayed on Jev.
 
-The rest of this page takes each piece in turn: [where the wording comes from](#where-the-wording-comes-from), [each field type](#what-each-field-type-does), [routes](#routes-which-thing-to-do) through [tools](#tools-pick-then-fill) and [unions](#a-union-of-output-types), [escalation](#escalating-to-a-language-model), and [confidence](#confidence-and-thresholds) — where the same `FallbackModel` can also take the steps Jev was unsure about.
+The rest of this page takes each piece in turn: [where the wording comes from](#where-the-wording-comes-from), [each field type](#what-each-field-type-does), [routes](#routes-which-thing-to-do) through [tools](#tools-pick-then-fill) and [unions](#a-union-of-output-types), [escalation](#escalating-to-a-language-model), and [confidence](#confidence-and-thresholds) — where the same `ModelFallback` can also take the steps Jev was unsure about.
 
 ## Where the wording comes from
 
@@ -246,12 +247,14 @@ Every input to the agent ends up in one of two places: the state, which is judge
 
 | Agent input | Where it ends up |
 |---|---|
-| the run's prompt | the whole state when there is no history, otherwise its `text` |
+| the run's prompt | the whole state when there is no history, otherwise its `text`; a [structured prompt](#structured-input) is sent as its value instead: the whole state, or under `state` in place of `text` |
 | the message history | the state's `history`, as user prompts, answers, thinking, tool calls and results, and retry feedback, with the error as the result of a call that asked for a retry — see [judging a conversation](#judging-a-conversation) |
 | the tool calls, their results and retry feedback since the latest prompt | the state's `done`, with the prompt as `text` — see [judging a conversation](#judging-a-conversation) |
 | a system prompt, including the agent's own `system_prompt=` | the state's `history`, as a `system` entry — [not part of the question](#judging-a-conversation) |
 
 A question can point at a part of the state by its name, such as "Is the request in `text` already answered in `history`?", which TypeSafe [recommend](https://docs.typesafe.ai/model-jaggedness/jev-1.13#indirection) over leaving the model to work out which part is meant.
+
+OpenAI Decisions is sent the same conversation as messages instead, with no `history`, `text` and `done` to point at, so say in the question what to judge, such as "the user's latest request". See [OpenAI](openai.md#decisions-api).
 
 **Asked**, as the questions:
 
@@ -476,7 +479,7 @@ A field only means something on the route it belongs to, and nothing else in the
 
 When the model picks and then fills, the response sums the input and output tokens from both requests, but [`RequestUsage.requests`][pydantic_ai.usage.RequestUsage.requests] is fixed at one request per model step and cannot carry the real count, so `provider_details['requests']` is `2` when the model picked and then filled.
 
-A second request has already committed to the selected route. If it fails or returns invalid answers, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] names the route and stops the run; the default `FallbackModel` does not replay the original step and quietly choose another one.
+A second request has already committed to the selected route. If it fails or returns invalid answers, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] names the route and stops the run; the default `ModelFallback` does not replay the original step and quietly choose another one.
 
 The questions in one request are answered independently. A field cannot depend on another field's answer: two arguments of the same tool are decided separately, and neither sees the other. Where one judgement genuinely follows from another, they belong in different steps, not in two fields of the same call — which is what the [patterns below](#decision-models-inside-an-agent-run) build on: an output function is a route the model can choose, and choosing it *is* calling it.
 
@@ -622,25 +625,29 @@ The route question is answered with one of the routes on offer, so the output ty
 
 It matters most after a tool returns. A tool whose result is already in the turn is [not offered again](#tools-pick-then-fill), so the next step picks one of the output types, whether or not any of them fits. Give that agent an order lookup tool, and "What day is my order arriving?" looks the order up and then comes back as a refund or as feedback — `Feedback`, most likely — with the answer the customer wanted nowhere in it.
 
-The way out is a route that hands the step on: an output type like the [support desk](#a-support-desk-end-to-end)'s `Reply`, with a `str` field no decision model can fill. Picking it [escalates](#escalating-to-a-language-model) the step, so behind a `FallbackModel` a language model answers whatever the other routes do not cover, with the tool's result in view.
+The way out is a route that hands the step on: an output type like the [support desk](#a-support-desk-end-to-end)'s `Reply`, with a `str` field no decision model can fill. Picking it [escalates](#escalating-to-a-language-model) the step, so with `ModelFallback` a language model answers whatever the other routes do not cover, with the tool's result in view.
 
 ## Escalating to a language model
 
-A route the model cannot fill is still offered, and picking it hands the step on: a tool with any unsupported argument, such as a plain `str` or an unbounded number, or an output type with such a field, like the support desk's `Reply`. A selected route with more field questions than the backend allows also hands the step on before filling. The pick becomes an [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute] rather than a response. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) with a language model behind the decision model hands that model the whole step, with the same tools and output types, and the language model decides the step again for itself. The rest of the requests never leave the decision model. Without a model behind it, the hand-off is the error, and it says which route the model picked and how sure it was. The request that proposed the call is not on the fallback response's usage.
+A route the model cannot fill is still offered, and picking it hands the step on: a tool with any unsupported argument, such as a plain `str` or an unbounded number, or an output type with such a field, like the support desk's `Reply`. A selected route with more field questions than the backend allows also hands the step on before filling. The pick becomes an [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute] rather than a response. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so [`ModelFallback`](../capabilities/model-fallback.md) with a language model behind the decision model hands that model the whole step, with the same tools and output types, and the language model decides the step again for itself. The rest of the requests never leave the decision model. Without a model behind it, the hand-off is the error, and it says which route the model picked and how sure it was. The request that proposed the call is not on the fallback response's usage.
 
 The decision model answers the tickets it can and hands over the ones that need writing, so only those cost a language model call. How many that is depends on your tickets and on [`decision_route_threshold`](#handing-off-an-unsure-route) if you set it, and `provider_details['route']` on each response is how to see it.
 
 An agent on which *every* route would hand off is refused before any request instead: an `output_type` the model cannot fill, or a union of them, with no route beside it that the model can take — a tool or output type it can fill, or one with nothing to fill. Every answer could only hand off, so the request asking for one would buy nothing — that is a coding error, and finding out at setup beats finding out from the bill. With such a route on offer, an output type the model cannot fill is a route like any other, whether it is alone or in a union.
 
-The same `FallbackModel` can also take the steps the decision model answered but [was unsure about](#falling-back-on-low-confidence).
+The same `ModelFallback` can also take the steps the decision model answered but [was unsure about](#falling-back-on-low-confidence).
 
-`UnfillableRoute` and [`UnsureRoute`](#handing-off-an-unsure-route) are both a [`DecisionHandOff`][pydantic_ai.models.decision.DecisionHandOff]: the decision model handing the step on, rather than failing. A `FallbackModel` falls back on every `ModelAPIError` by default, which includes an outage of the decision model's backend. To hand the language model only the steps the decision model hands off, and let a backend error fail the run instead of quietly costing a language model call on every step, pass `fallback_on=DecisionHandOff`:
+`UnfillableRoute` and [`UnsureRoute`](#handing-off-an-unsure-route) are both a [`DecisionHandOff`][pydantic_ai.models.decision.DecisionHandOff]: the decision model handing the step on, rather than failing. `ModelFallback` falls back on every `ModelAPIError` by default, which includes an outage of the decision model's backend. To hand the language model only the steps the decision model hands off, and let a backend error fail the run instead of quietly costing a language model call on every step, pass `fallback_on=DecisionHandOff`:
 
 ```python {title="hand_offs_only.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ModelFallback
 from pydantic_ai.models.decision import DecisionHandOff
-from pydantic_ai.models.fallback import FallbackModel
 
-model = FallbackModel('typesafe:jev-latest', '{{ anthropic:large }}', fallback_on=DecisionHandOff)
+agent = Agent(
+    'typesafe:jev-latest',
+    capabilities=[ModelFallback('{{ anthropic:large }}', fallback_on=DecisionHandOff)],
+)
 ```
 
 !!! warning "Watch the hand-off rate"
@@ -651,11 +658,11 @@ model = FallbackModel('typesafe:jev-latest', '{{ anthropic:large }}', fallback_o
     Note where the number is. On a request the decision model answers, its pick and the probability of every
     route are in `provider_details['route']`. On a hand-off they are not:
     a [`DecisionHandOff`][pydantic_ai.models.decision.DecisionHandOff] is raised instead of a response, and
-    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] returns the *next* model's response, which carries
-    none of the decision model's numbers. So counting hand-offs by their absence in `provider_details` is the
+    the fallback returns the *next* model's response, which carries none of the decision model's numbers. So counting hand-offs by their absence in `provider_details` is the
     measurement. If you would rather catch the exceptions, each hand-off carries the `route` the model picked and
     its `probability`, and `UnsureRoute` the `probabilities` of every route as well: run the models separately, or
-    wrap the fallback, when you want both.
+    catch them in an [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error]
+    hook, when you want both.
 
 ## Confidence and thresholds
 
@@ -720,7 +727,7 @@ The threshold applies to every `bool` field and to each option of a fanned-out `
 
 ### Falling back on low confidence
 
-[`FallbackModel`](overview.md#fallback-model) falls back on API errors by default, and its `fallback_on` also takes a handler that looks at the response. A decision model's confidence is on the response, so a language model can take over the requests the decision model was unsure about — the cheap model answers what it can, the expensive one only the rest. A `float` field has no confidence entry, for the reason above, so a handler like this one does not see its uncertainty and an output of nothing but `float`s never falls back:
+[`ModelFallback`](../capabilities/model-fallback.md) falls back on API errors by default, and its `fallback_on` also takes a handler that looks at the response. A decision model's confidence is on the response, so a language model can take over the requests the decision model was unsure about — the cheap model answers what it can, the expensive one only the rest. A `float` field has no confidence entry, for the reason above, so a handler like this one does not see its uncertainty and an output of nothing but `float`s never falls back:
 
 ```python {title="fall_back_when_unsure.py"}
 from typing import Literal
@@ -728,7 +735,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, ModelAPIError, ModelResponse
-from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.capabilities import ModelFallback
 
 
 class Screening(BaseModel):
@@ -749,10 +756,11 @@ def unsure(response: ModelResponse) -> bool:
     return any(value < BARS[field] for field, value in confidence.items())
 
 
-model = FallbackModel(
-    'typesafe:jev-latest', '{{ anthropic:large }}', fallback_on=[ModelAPIError, unsure]
+agent = Agent(
+    'typesafe:jev-latest',
+    output_type=Screening,
+    capabilities=[ModelFallback('{{ anthropic:large }}', fallback_on=[ModelAPIError, unsure])],
 )
-agent = Agent(model, output_type=Screening)
 
 result = agent.run_sync('Rename the helper functions in utils.py to snake_case.')
 print(result.output)
@@ -774,14 +782,14 @@ The handler runs on every model in the chain, and a language model reports no `c
 
 ### Handing off an unsure route
 
-The [route](#routes-which-thing-to-do) pick can be unsure too. The model has to pick one of the routes it is offered, so when none of them really fits the text — after a tool has returned, say, with only output types left to pick from — it still picks one, with a low probability, as a language model given the same choices would. The likeliest route is taken however unsure the model is of it, unless you set [`decision_route_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_route_threshold]: a pick below it raises [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute] before anything is filled. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a `FallbackModel` hands the language model the whole step, with the same tools and output types:
+The [route](#routes-which-thing-to-do) pick can be unsure too. The model has to pick one of the routes it is offered, so when none of them really fits the text — after a tool has returned, say, with only output types left to pick from — it still picks one, with a low probability, as a language model given the same choices would. The likeliest route is taken however unsure the model is of it, unless you set [`decision_route_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_route_threshold]: a pick below it raises [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute] before anything is filled. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so `ModelFallback` hands the language model the whole step, with the same tools and output types:
 
 ```python {title="unsure_route.py"}
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import ModelFallback
 from pydantic_ai.models.decision import DecisionModelSettings
-from pydantic_ai.models.fallback import FallbackModel
 
 
 class Ticket(BaseModel):
@@ -797,9 +805,10 @@ class Escalation(BaseModel):
 
 
 agent = Agent(
-    FallbackModel('typesafe:jev-latest', '{{ anthropic:large }}'),
+    'typesafe:jev-latest',
     output_type=[Ticket, Escalation],
     model_settings=DecisionModelSettings(decision_route_threshold=0.7),
+    capabilities=[ModelFallback('{{ anthropic:large }}')],
 )
 
 result = agent.run_sync('The export button does nothing when I click it.')
@@ -816,7 +825,7 @@ print(result.response.model_name)
 
 Jev is sure the broken button is a ticket, so its pick stands. A restaurant recommendation is neither, and Jev gave `Ticket` only about 0.6, below the bar, so the language model took the step.
 
-If you set `decision_route_threshold`, put a `FallbackModel` behind the decision model, or `agent.run` raises `UnsureRoute`. You can also catch it yourself, to send the text to a review queue, say: it carries the picked `route`, its `probability`, the `probabilities` of every route, and the `threshold` it fell below. The one route left when every other has returned this turn, and a single output type with nothing else on offer, are taken without a pick, so there is nothing to be unsure of and the threshold does not apply to them.
+If you set `decision_route_threshold`, add a `ModelFallback` with a model to hand off to, or `agent.run` raises `UnsureRoute`. You can also catch it yourself, to send the text to a review queue, say: it carries the picked `route`, its `probability`, the `probabilities` of every route, and the `threshold` it fell below. The one route left when every other has returned this turn, and a single output type with nothing else on offer, are taken without a pick, so there is nothing to be unsure of and the threshold does not apply to them.
 
 0.7 is a reasonable place to start. A higher threshold hands off more steps and gets more of the rest right, so tune it on your own data: [below](#tuning-a-threshold-on-your-own-data) is how, without paying for a run per setting. It is not a guard for a tool with side effects, such as a refund or an account change: [require approval](../deferred-tools.md#human-in-the-loop-tool-approval) for that tool instead.
 
@@ -899,7 +908,7 @@ A new prompt on top of a history is judged as `text` beside it; the latest promp
 
 A model's thinking goes along as a `thinking` entry, where it was in the response, so a question can be about the reasoning itself, such as whether the model considered getting around its tests. Thinking a provider returned only in encrypted form, as a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] with a `signature` and no text, has nothing to judge and is left out.
 
-Accuracy falls as the state grows with detail the question does not need, and a backend has a limit on how large the state can be; past it the request fails with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], which a `FallbackModel` hands to the model behind it like any API error. Every later turn of the conversation is then over the limit too, so each one quietly becomes a language model call until the history is compacted. With the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window] set to the limit that binds, as [Jev's](typesafe.md#compaction) is, compacting on [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used], as the [compact when the context window fills](../message-history.md#compact-when-the-context-window-fills) processor does, fires in time, and a `FallbackModel` measures against the smallest window among its models. A compaction that summarizes needs a language model to write the summary, since the decision model cannot. Jev's limits, and a worked example, are on the [TypeSafe page](typesafe.md#compaction).
+Accuracy falls as the state grows with detail the question does not need, and a backend has a limit on how large the state can be; past it the request fails with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], which `ModelFallback` hands to the model behind it like any API error. Every later turn of the conversation is then over the limit too, so each one quietly becomes a language model call until the history is compacted. With the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window] set to the limit that binds, as [Jev's](typesafe.md#compaction) is, compacting on [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used], as the [compact when the context window fills](../message-history.md#compact-when-the-context-window-fills) processor does, fires in time: with `ModelFallback` it measures against the window of the step's model, the decision model, and a `FallbackModel` against the smallest window among its models. A compaction that summarizes needs a language model to write the summary, since the decision model cannot. Jev's limits, and a worked example, are on the [TypeSafe page](typesafe.md#compaction).
 
 !!! note "A system prompt is judged, not asked"
     A decision model is told what a conversation said and asked what the agent's `instructions` ask. A
@@ -908,6 +917,24 @@ Accuracy falls as the state grows with detail the question does not need, and a 
     Nothing on the part says who wrote it, so treating any of them as an instruction would mean that judging
     another agent's run folded that agent's persona into the question. Give a decision model agent its question
     through `instructions=`.
+
+## Judging structured data {#structured-input}
+
+When the material to judge is structured, such as a question with an expected and a generated answer, pass it as a [`StructuredContent`][pydantic_ai.StructuredContent] and the decision model is sent the value itself, which a backend like TypeSafe takes as a JSON object, rather than the value serialized as text:
+
+```python {title="structured_judge.py"}
+from pydantic_ai import Agent, StructuredContent
+
+judge = Agent('typesafe:jev-latest', output_type=bool, instructions='Are the two answers equivalent?')
+
+result = judge.run_sync(
+    [StructuredContent({'question': 'What is 2 + 2?', 'expected_answer': '4', 'generated_answer': 'Four'})]
+)
+print(result.output)
+#> True
+```
+
+The value is the whole state when there is no history; otherwise it goes under `state` where a text prompt goes under `text`, beside `history` and `done` rather than merged into it, so its keys stay its own. An earlier structured prompt in the history is a `user` entry holding its value. A Pydantic model or dataclass is sent as the JSON-compatible data it dumps to. Only a prompt that is a single `StructuredContent` is sent this way; one that has text or other items beside it is sent as text, with the item as the text it [renders](../input.md#structured-input) to, as any other model would be sent it. A language model the decision model falls back to is sent that text too.
 
 ## Streaming
 
@@ -1188,6 +1215,8 @@ A decision model does not revise an answer the way a language model does. Its pr
 
 Any backend that answers the three kinds of question can be a decision model. [`TypeSafeModel`](typesafe.md) and [`SystemOneModel`](system-one.md) are both built this way, and are worth reading as examples of one that calls an SDK and one that calls an HTTP API directly. Subclass [`DecisionModel`][pydantic_ai.models.decision.DecisionModel] and implement [`decide`][pydantic_ai.models.decision.DecisionModel.decide], which sends one [`DecisionRequest`][pydantic_ai.models.decision.DecisionRequest] and returns a [`DecisionResponse`][pydantic_ai.models.decision.DecisionResponse]; the base class does everything else on this page. A `DecisionModel` is a [`Model`][pydantic_ai.models.Model], so it also needs `model_name`, `system` and `base_url`, like any [custom model](overview.md#custom-models).
 
+The request carries the conversation twice: as `state`, the one JSON value described above, and as `messages`, the [messages](../message-history.md) it was built from. Send `state` to a backend that judges a single input. A backend whose API takes a conversation natively can map `messages` to it instead, as [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] does; `messages` is empty when `decide` is called directly with only a `state`, and its images are the ones in `request.images`, resolved and in order.
+
 This one has no opinion at all: every option is equally likely. Replace the body of `decide` with a call to your backend:
 
 ```python {title="undecided_model.py"}
@@ -1270,13 +1299,13 @@ A probability of 0.5 lands exactly on the default threshold, so `urgent` comes b
 
 What `decide` receives and owes:
 
-- `request.state` is the text to judge as a `str`, or a dict with the conversation under `history`, the latest prompt under `text`, and what was done since under `done`, as [above](#judging-a-conversation). Each question's `instructions` is likewise a `str` when there is one thing to say, or a dict of labelled parts: `field`; `premise`, the route a field belongs to, when there is more than one [route](#routes-which-thing-to-do); `context`, a list of what a nested field sits in; `question`; `goal`, the output type's docstring when it is the only route; `background`, the agent's instructions; and `option` on each yes/no a `list` or `dict` of options fans out to. A pick-one, a rubric, or a yes/no with described answers that has none of these, such as a bare `Literal` output with no agent `instructions`, has no `instructions` at all, and asks through its options alone.
+- `request.state` is the text to judge as a `str`, or a dict with the conversation under `history`, the latest prompt under `text`, and what was done since under `done`, as [above](#judging-a-conversation). A [structured prompt](#structured-input) is any JSON value in place of the text: the whole state, or under `state` in place of `text`. Each question's `instructions` is likewise a `str` when there is one thing to say, or a dict of labelled parts: `field`; `premise`, the route a field belongs to, when there is more than one [route](#routes-which-thing-to-do); `context`, a list of what a nested field sits in; `question`; `goal`, the output type's docstring when it is the only route; `background`, the agent's instructions; and `option` on each yes/no a `list` or `dict` of options fans out to. A pick-one, a rubric, or a yes/no with described answers that has none of these, such as a bare `Literal` output with no agent `instructions`, has no `instructions` at all, and asks through its options alone.
 - `request.images` is a tuple of [`BinaryContent`][pydantic_ai.messages.BinaryContent] images, labelled in `state` as `'<image 1>'`, `'<image 2>'`, and so on in tuple order. Image URLs are downloaded once when the step is prepared; a route and its later fill receive the same images. Backends accept text only unless they declare image support.
 - A question's name is for reading its answer back, and is not something to send to the model. The fields asked beside the route question are named `'<route>.<field>'`, and the route question is named `route`.
 - Every question in `request.questions` needs an answer of the matching kind under the same name: a [`NoulAnswer`][pydantic_ai.models.decision.NoulAnswer] with the probability of yes, a [`ChoiceAnswer`][pydantic_ai.models.decision.ChoiceAnswer] with a probability for every option in `criteria`, or a [`ScoreAnswer`][pydantic_ai.models.decision.ScoreAnswer] with a position along the levels. A missing or mismatched answer is an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
 - Probabilities are read as probabilities, and the [thresholds](#confidence-and-thresholds) and reported confidence assume they are calibrated. A backend whose scores are not should calibrate them before returning them, or document that its bars need tuning of their own.
 - Report the tokens a request used on `DecisionResponse.usage`, and the model version that answered on `model_name`.
-- Raise [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] or [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the backend fails, so a [`FallbackModel`](overview.md#fallback-model) can take over, and [`UserError`][pydantic_ai.exceptions.UserError] when a request cannot be sent as given. Forward `timeout`, `extra_headers` and `extra_body` from `model_settings` where the backend supports them.
+- Raise [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] or [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the backend fails, so [`ModelFallback`](../capabilities/model-fallback.md) can take over, and [`UserError`][pydantic_ai.exceptions.UserError] when a request cannot be sent as given. Forward `timeout`, `extra_headers` and `extra_body` from `model_settings` where the backend supports them.
 
 Set [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels] to the backend's limits, so an agent over them is refused before a request is sent rather than by the backend after it. Leave them `None` when the backend has none. Where the limits differ between the models behind one backend, have its provider set `decision_max_choice_options` and `decision_max_score_levels` per model name in a [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile] instead; the profile takes precedence over the class.
 
@@ -1284,6 +1313,6 @@ Likewise, set [`requires_instructions`][pydantic_ai.models.decision.DecisionMode
 
 Set [`supports_image_input`][pydantic_ai.models.decision.DecisionModel.supports_image_input] to `True` when the backend can receive images. The shared mapper collects image evidence from user prompts, assistant file parts and regular or native tool returns while keeping their labels in the conversation. Serialize `request.images` in `decide`, and reject any non-image content. A text-only backend must reject a nonempty `request.images` tuple when `decide` is called directly, since that bypasses shared request preparation.
 
-Set [`max_images`][pydantic_ai.models.decision.DecisionModel.max_images] and [`max_questions`][pydantic_ai.models.decision.DecisionModel.max_questions] to the backend's per-request limits, or leave them `None` when there is no limit. These are endpoint transport limits, independent of the selected model, so profiles do not override them. The planner keeps speculative fields within the question cap by filling a selected route in a second request when needed. The shared preparation checks both counts before downloading image URLs. Direct `decide` calls must enforce the same limits with a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], allowing a [`FallbackModel`](overview.md#fallback-model) to take over.
+Set [`max_images`][pydantic_ai.models.decision.DecisionModel.max_images] and [`max_questions`][pydantic_ai.models.decision.DecisionModel.max_questions] to the backend's per-request limits, or leave them `None` when there is no limit. These are endpoint transport limits, independent of the selected model, so profiles do not override them. The planner keeps speculative fields within the question cap by filling a selected route in a second request when needed. The shared preparation checks both counts before downloading image URLs. Direct `decide` calls must enforce the same limits with a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], allowing [`ModelFallback`](../capabilities/model-fallback.md) or a [`FallbackModel`](overview.md#fallback-model) to take over.
 
 What a question costs is the backend's business, and it is not the same everywhere. `decide` is called once per request with every question at once, but a backend that evaluates each option of a pick-one separately pays per option, where one that answers a whole request together pays once. Keep that in mind when you choose the limits, and document it for your users, since the same output type can be cheap on one backend and expensive on another.

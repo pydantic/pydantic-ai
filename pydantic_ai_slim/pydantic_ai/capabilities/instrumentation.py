@@ -70,8 +70,11 @@ from .abstract import (
 
 
 def _usage_response(request_context: ModelRequestContext) -> ModelResponse | None:
-    """Represent the usage committed at the provider boundary without changing semantic output."""
-    responses = request_context._usage_responses  # pyright: ignore[reportPrivateUsage]
+    """Represent the usage committed at the provider boundary without changing semantic output.
+
+    A response a hook rejected to make another attempt is left out: its failed attempt's span reports it.
+    """
+    responses = request_context._unrejected_usage_responses  # pyright: ignore[reportPrivateUsage]
     if not responses:
         return None
     usage = RequestUsage()
@@ -194,6 +197,11 @@ class Instrumentation(AbstractCapability[Any]):
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
+
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # A realtime session builds its own session and response spans from these settings.
+        # Measured against this class, so a subclass that adds its own hooks still warns.
+        return self._realtime_uncalled_hooks_overriding(Instrumentation)
 
     @classmethod
     def from_spec(
@@ -443,7 +451,7 @@ class Instrumentation(AbstractCapability[Any]):
 
             segments: list[ModelResponse] = []
 
-            def capture_response(response: ModelResponse, time_to_first_chunk: float | None) -> None:
+            def capture_response(response: ModelResponse | None, time_to_first_chunk: float | None) -> None:
                 nonlocal captured_response, captured_time_to_first_chunk
                 captured_response = response
                 captured_time_to_first_chunk = time_to_first_chunk
