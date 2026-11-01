@@ -78,7 +78,7 @@ agent = Agent(
 1. Each activity attempt sends the request once.
 2. Temporal attempts a model request up to 3 times, each time in a new activity attempt.
 
-To stop the engine from retrying errors that another attempt can't fix, like a rejected API key, see [Activity retries](durable_execution/temporal.md#activity-retries) on Temporal.
+On Temporal, the engine doesn't retry errors that another attempt can't fix, like a rejected API key, an exhausted quota or a request that ran out of its deadline; see [Activity retries](durable_execution/temporal.md#activity-retries) to change which.
 
 ## Recovery scopes compared {#recovery-scopes}
 

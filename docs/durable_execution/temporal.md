@@ -1003,15 +1003,24 @@ A model error is different: with [`TemporalDurability`][pydantic_ai.durable_exec
 
 A retry policy and workflow code see a model error differently. Workflow code and capabilities get the [error category](../models/overview.md#handling-model-api-errors) class, so `except ModelTimeoutError` or `except ModelRateLimitError` works in a workflow. A retry policy's `non_retryable_error_types` only sees the error's `ApplicationError` type, which is `ModelHTTPError` for an error that has an HTTP status and `ModelAPIError` for any other category, the class it's raised as apart from its category. So a policy that names a category, like `'ModelRateLimitError'`, matches nothing. A policy that names `'ModelHTTPError'` or `'ModelAPIError'` matches what it did before the categories existed, except for errors that now get the HTTP status the provider uses for the same error, and so are now also raised as a `ModelHTTPError`: Bedrock `ConverseStream` exception events (e.g. a throttling event as a 429), error objects inside an OpenAI-compatible or OpenAI Responses stream, Hugging Face Text Generation Inference's in-stream `OverloadedError`, and xAI's `INVALID_ARGUMENT` (as a 400). These now report `ModelHTTPError` instead of `ModelAPIError`.
 
-To stop Temporal from retrying an error category that a retry can't fix, like [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] or [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], list its class in `non_retryable_model_errors` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A model error that's an instance of a listed class fails the model activity on its first attempt, whatever the retry policy says, and still reaches workflow code as its own class. Because classes match with `isinstance`, listing [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] also covers [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError], and listing [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] also covers [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError]. The `ApplicationError` type the retry policy sees doesn't change.
+Temporal doesn't retry a model error that another attempt at the same request can't fix. By default, `non_retryable_model_errors` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] lists:
+
+- [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError], including [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] and [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError]: the provider rejects the same request again.
+- [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError]: the quota stays exhausted until it resets, often hours later.
+- [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]: the request's [deadline](../timeouts.md#model-request-deadlines) ran out, so there's no time left for another attempt.
+
+A model error that's an instance of a listed class fails the model activity on its first attempt, whatever the retry policy says, and still reaches workflow code as its own class, where an `on_model_request_error` hook or the [`ModelFallback`](../capabilities/model-fallback.md) capability can act on it. Classes match with `isinstance`, so listing [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] also covers [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError]. The `ApplicationError` type the retry policy sees doesn't change. Other model errors, like a rate limit, an overloaded model or a dropped connection, are retried according to the retry policy.
+
+A list you pass replaces the default, so include the default classes you still want, or pass `()` to have the retry policy retry every model error:
 
 ```python {title="temporal_non_retryable_model_errors.py"}
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai.exceptions import (
-    ModelAuthenticationError,
-    ModelContextWindowExceededError,
     ModelQuotaExceededError,
+    ModelRequestRejectedError,
+    ModelRequestTimeout,
+    ModelUnavailableError,
 )
 
 agent = Agent(
@@ -1020,14 +1029,17 @@ agent = Agent(
     capabilities=[
         TemporalDurability(
             non_retryable_model_errors=[
-                ModelContextWindowExceededError,
+                ModelRequestRejectedError,
                 ModelQuotaExceededError,
-                ModelAuthenticationError,
+                ModelRequestTimeout,
+                ModelUnavailableError,  # (1)!
             ],
         ),
     ],
 )
 ```
+
+1. On top of the defaults, don't retry a model that's unavailable, for example to let `ModelFallback` move on to the next model straight away.
 
 ## Observability with Logfire
 
