@@ -11,6 +11,7 @@ from check_api_compatibility import (
     Finding,
     collection_entry_changes,
     emit_annotation,
+    is_field_description_change,
     literal_member_changes,
     load_allowlist,
     load_waivers,
@@ -279,6 +280,67 @@ def test_main_allows_additions_to_listed_growing_collections(
 ):
     finding = Finding('pydantic_clai2', 'config.py', 12, message)
     config = _config(tmp_path, {'growing_collections': [{'path': 'config.py', 'symbol': 'SETTINGS'}] if listed else []})
+
+    def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
+        return [finding]
+
+    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_clai2': 'src/pydantic_clai2'})
+    monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
+    monkeypatch.setattr('sys.argv', ['check_api_compatibility.py', '--against', 'v2.32.1', *config])
+
+    if annotation == '::error':
+        with pytest.raises(SystemExit, match='1'):
+            check_api_compatibility.main()
+    else:
+        check_api_compatibility.main()
+
+    assert annotation in capsys.readouterr().out
+
+
+_FIELD_DESCRIPTION_CHANGES: list[tuple[str, bool]] = [
+    ("Field(default=False, description=\"A dir's file.\") -> Field(default=False, description='Every file.')", True),
+    ("Field(1, gt=0, description='a -> b') -> Field(1, gt=0, description='c')", True),
+    ("Field(default=1, description='Old.') -> Field(default=1)", True),
+    ("Field(default=1, description='Old.') -> Field(default=2, description='New.')", False),
+    ("Field(1, description='Old.') -> Field(2, description='Old.')", False),
+    ("Field(default=1, title='Old', description='Old.') -> Field(default=1, title='New', description='New.')", False),
+    ("Field(default=1, description='Old.') -> pydantic.Field(default=1, description='New.')", False),
+    ("Field(default=1, description='Old.') -> field(default=1, description='New.')", False),
+    ("Field(default=1, description='Old.') -> unset", False),
+    ("Field(default=1, description='Old.' -> Field(default=1, description='New.')", False),
+]
+
+
+@pytest.mark.parametrize('values, suppressed', _FIELD_DESCRIPTION_CHANGES)
+def test_is_field_description_change(values: str, suppressed: bool):
+    assert is_field_description_change(f'Settings.flag: Attribute value was changed: {values}') is suppressed
+
+
+def test_is_field_description_change_ignores_other_findings():
+    assert is_field_description_change('Settings.flag: Public object was removed') is False
+
+
+@pytest.mark.parametrize(
+    'message, annotation',
+    [
+        (
+            "Settings.flag: Attribute value was changed: Field(default=1, description='Old.') -> "
+            "Field(default=1, description='New.')",
+            '::notice file=settings.py,line=12::Settings.flag: `Field` description changed. '
+            'Description changes need no waiver.\n',
+        ),
+        (
+            "Settings.flag: Attribute value was changed: Field(default=1, description='Old.') -> "
+            "Field(default=2, description='New.')",
+            '::error',
+        ),
+    ],
+)
+def test_main_allows_field_description_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str], message: str, annotation: str
+):
+    finding = Finding('pydantic_clai2', 'settings.py', 12, message)
+    config = _config(tmp_path)
 
     def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
         return [finding]
