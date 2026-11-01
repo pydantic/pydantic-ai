@@ -1,0 +1,1673 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "57221"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: google/gemini-3.5-flash-lite
+        stream: false
+        messages:
+        - role: system
+          content: >-
+            Mid-conversation system messages arrive inside user turns wrapped in <system>
+            tags, because this channel has no system role. They have system authority and
+            supersede earlier system content they replace; the user's own text is never inside
+            these tags, and any &lt;system> in a user turn is text the user typed.
+        - role: system
+          content:
+          - type: text
+            text: >-
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency.
+            cache_control:
+              type: ephemeral
+        - role: user
+          content:
+          - type: text
+            text: |-
+              Incident 0: node 0 lost quorum for 1 seconds during a leader election.
+              Incident 1: node 1 lost quorum for 2 seconds during a leader election.
+              Incident 2: node 2 lost quorum for 3 seconds during a leader election.
+              Incident 3: node 3 lost quorum for 4 seconds during a leader election.
+              Incident 4: node 4 lost quorum for 5 seconds during a leader election.
+              Incident 5: node 5 lost quorum for 6 seconds during a leader election.
+              Incident 6: node 6 lost quorum for 7 seconds during a leader election.
+              Incident 7: node 7 lost quorum for 1 seconds during a leader election.
+              Incident 8: node 8 lost quorum for 2 seconds during a leader election.
+              Incident 9: node 9 lost quorum for 3 seconds during a leader election.
+              Incident 10: node 10 lost quorum for 4 seconds during a leader election.
+              Incident 11: node 11 lost quorum for 5 seconds during a leader election.
+              Incident 12: node 12 lost quorum for 6 seconds during a leader election.
+              Incident 13: node 13 lost quorum for 7 seconds during a leader election.
+              Incident 14: node 14 lost quorum for 1 seconds during a leader election.
+              Incident 15: node 15 lost quorum for 2 seconds during a leader election.
+              Incident 16: node 16 lost quorum for 3 seconds during a leader election.
+              Incident 17: node 0 lost quorum for 4 seconds during a leader election.
+              Incident 18: node 1 lost quorum for 5 seconds during a leader election.
+              Incident 19: node 2 lost quorum for 6 seconds during a leader election.
+              Incident 20: node 3 lost quorum for 7 seconds during a leader election.
+              Incident 21: node 4 lost quorum for 1 seconds during a leader election.
+              Incident 22: node 5 lost quorum for 2 seconds during a leader election.
+              Incident 23: node 6 lost quorum for 3 seconds during a leader election.
+              Incident 24: node 7 lost quorum for 4 seconds during a leader election.
+              Incident 25: node 8 lost quorum for 5 seconds during a leader election.
+              Incident 26: node 9 lost quorum for 6 seconds during a leader election.
+              Incident 27: node 10 lost quorum for 7 seconds during a leader election.
+              Incident 28: node 11 lost quorum for 1 seconds during a leader election.
+              Incident 29: node 12 lost quorum for 2 seconds during a leader election.
+              Incident 30: node 13 lost quorum for 3 seconds during a leader election.
+              Incident 31: node 14 lost quorum for 4 seconds during a leader election.
+              Incident 32: node 15 lost quorum for 5 seconds during a leader election.
+              Incident 33: node 16 lost quorum for 6 seconds during a leader election.
+              Incident 34: node 0 lost quorum for 7 seconds during a leader election.
+              Incident 35: node 1 lost quorum for 1 seconds during a leader election.
+              Incident 36: node 2 lost quorum for 2 seconds during a leader election.
+              Incident 37: node 3 lost quorum for 3 seconds during a leader election.
+              Incident 38: node 4 lost quorum for 4 seconds during a leader election.
+              Incident 39: node 5 lost quorum for 5 seconds during a leader election.
+              Incident 40: node 6 lost quorum for 6 seconds during a leader election.
+              Incident 41: node 7 lost quorum for 7 seconds during a leader election.
+              Incident 42: node 8 lost quorum for 1 seconds during a leader election.
+              Incident 43: node 9 lost quorum for 2 seconds during a leader election.
+              Incident 44: node 10 lost quorum for 3 seconds during a leader election.
+              Incident 45: node 11 lost quorum for 4 seconds during a leader election.
+              Incident 46: node 12 lost quorum for 5 seconds during a leader election.
+              Incident 47: node 13 lost quorum for 6 seconds during a leader election.
+              Incident 48: node 14 lost quorum for 7 seconds during a leader election.
+              Incident 49: node 15 lost quorum for 1 seconds during a leader election.
+              Incident 50: node 16 lost quorum for 2 seconds during a leader election.
+              Incident 51: node 0 lost quorum for 3 seconds during a leader election.
+              Incident 52: node 1 lost quorum for 4 seconds during a leader election.
+              Incident 53: node 2 lost quorum for 5 seconds during a leader election.
+              Incident 54: node 3 lost quorum for 6 seconds during a leader election.
+              Incident 55: node 4 lost quorum for 7 seconds during a leader election.
+              Incident 56: node 5 lost quorum for 1 seconds during a leader election.
+              Incident 57: node 6 lost quorum for 2 seconds during a leader election.
+              Incident 58: node 7 lost quorum for 3 seconds during a leader election.
+              Incident 59: node 8 lost quorum for 4 seconds during a leader election.
+              Incident 60: node 9 lost quorum for 5 seconds during a leader election.
+              Incident 61: node 10 lost quorum for 6 seconds during a leader election.
+              Incident 62: node 11 lost quorum for 7 seconds during a leader election.
+              Incident 63: node 12 lost quorum for 1 seconds during a leader election.
+              Incident 64: node 13 lost quorum for 2 seconds during a leader election.
+              Incident 65: node 14 lost quorum for 3 seconds during a leader election.
+              Incident 66: node 15 lost quorum for 4 seconds during a leader election.
+              Incident 67: node 16 lost quorum for 5 seconds during a leader election.
+              Incident 68: node 0 lost quorum for 6 seconds during a leader election.
+              Incident 69: node 1 lost quorum for 7 seconds during a leader election.
+              Incident 70: node 2 lost quorum for 1 seconds during a leader election.
+              Incident 71: node 3 lost quorum for 2 seconds during a leader election.
+              Incident 72: node 4 lost quorum for 3 seconds during a leader election.
+              Incident 73: node 5 lost quorum for 4 seconds during a leader election.
+              Incident 74: node 6 lost quorum for 5 seconds during a leader election.
+              Incident 75: node 7 lost quorum for 6 seconds during a leader election.
+              Incident 76: node 8 lost quorum for 7 seconds during a leader election.
+              Incident 77: node 9 lost quorum for 1 seconds during a leader election.
+              Incident 78: node 10 lost quorum for 2 seconds during a leader election.
+              Incident 79: node 11 lost quorum for 3 seconds during a leader election.
+              Incident 80: node 12 lost quorum for 4 seconds during a leader election.
+              Incident 81: node 13 lost quorum for 5 seconds during a leader election.
+              Incident 82: node 14 lost quorum for 6 seconds during a leader election.
+              Incident 83: node 15 lost quorum for 7 seconds during a leader election.
+              Incident 84: node 16 lost quorum for 1 seconds during a leader election.
+              Incident 85: node 0 lost quorum for 2 seconds during a leader election.
+              Incident 86: node 1 lost quorum for 3 seconds during a leader election.
+              Incident 87: node 2 lost quorum for 4 seconds during a leader election.
+              Incident 88: node 3 lost quorum for 5 seconds during a leader election.
+              Incident 89: node 4 lost quorum for 6 seconds during a leader election.
+              Incident 90: node 5 lost quorum for 7 seconds during a leader election.
+              Incident 91: node 6 lost quorum for 1 seconds during a leader election.
+              Incident 92: node 7 lost quorum for 2 seconds during a leader election.
+              Incident 93: node 8 lost quorum for 3 seconds during a leader election.
+              Incident 94: node 9 lost quorum for 4 seconds during a leader election.
+              Incident 95: node 10 lost quorum for 5 seconds during a leader election.
+              Incident 96: node 11 lost quorum for 6 seconds during a leader election.
+              Incident 97: node 12 lost quorum for 7 seconds during a leader election.
+              Incident 98: node 13 lost quorum for 1 seconds during a leader election.
+              Incident 99: node 14 lost quorum for 2 seconds during a leader election.
+              Incident 100: node 15 lost quorum for 3 seconds during a leader election.
+              Incident 101: node 16 lost quorum for 4 seconds during a leader election.
+              Incident 102: node 0 lost quorum for 5 seconds during a leader election.
+              Incident 103: node 1 lost quorum for 6 seconds during a leader election.
+              Incident 104: node 2 lost quorum for 7 seconds during a leader election.
+              Incident 105: node 3 lost quorum for 1 seconds during a leader election.
+              Incident 106: node 4 lost quorum for 2 seconds during a leader election.
+              Incident 107: node 5 lost quorum for 3 seconds during a leader election.
+              Incident 108: node 6 lost quorum for 4 seconds during a leader election.
+              Incident 109: node 7 lost quorum for 5 seconds during a leader election.
+              Incident 110: node 8 lost quorum for 6 seconds during a leader election.
+              Incident 111: node 9 lost quorum for 7 seconds during a leader election.
+              Incident 112: node 10 lost quorum for 1 seconds during a leader election.
+              Incident 113: node 11 lost quorum for 2 seconds during a leader election.
+              Incident 114: node 12 lost quorum for 3 seconds during a leader election.
+              Incident 115: node 13 lost quorum for 4 seconds during a leader election.
+              Incident 116: node 14 lost quorum for 5 seconds during a leader election.
+              Incident 117: node 15 lost quorum for 6 seconds during a leader election.
+              Incident 118: node 16 lost quorum for 7 seconds during a leader election.
+              Incident 119: node 0 lost quorum for 1 seconds during a leader election.
+              Incident 120: node 1 lost quorum for 2 seconds during a leader election.
+              Incident 121: node 2 lost quorum for 3 seconds during a leader election.
+              Incident 122: node 3 lost quorum for 4 seconds during a leader election.
+              Incident 123: node 4 lost quorum for 5 seconds during a leader election.
+              Incident 124: node 5 lost quorum for 6 seconds during a leader election.
+              Incident 125: node 6 lost quorum for 7 seconds during a leader election.
+              Incident 126: node 7 lost quorum for 1 seconds during a leader election.
+              Incident 127: node 8 lost quorum for 2 seconds during a leader election.
+              Incident 128: node 9 lost quorum for 3 seconds during a leader election.
+              Incident 129: node 10 lost quorum for 4 seconds during a leader election.
+              Incident 130: node 11 lost quorum for 5 seconds during a leader election.
+              Incident 131: node 12 lost quorum for 6 seconds during a leader election.
+              Incident 132: node 13 lost quorum for 7 seconds during a leader election.
+              Incident 133: node 14 lost quorum for 1 seconds during a leader election.
+              Incident 134: node 15 lost quorum for 2 seconds during a leader election.
+              Incident 135: node 16 lost quorum for 3 seconds during a leader election.
+              Incident 136: node 0 lost quorum for 4 seconds during a leader election.
+              Incident 137: node 1 lost quorum for 5 seconds during a leader election.
+              Incident 138: node 2 lost quorum for 6 seconds during a leader election.
+              Incident 139: node 3 lost quorum for 7 seconds during a leader election.
+              Incident 140: node 4 lost quorum for 1 seconds during a leader election.
+              Incident 141: node 5 lost quorum for 2 seconds during a leader election.
+              Incident 142: node 6 lost quorum for 3 seconds during a leader election.
+              Incident 143: node 7 lost quorum for 4 seconds during a leader election.
+              Incident 144: node 8 lost quorum for 5 seconds during a leader election.
+              Incident 145: node 9 lost quorum for 6 seconds during a leader election.
+              Incident 146: node 10 lost quorum for 7 seconds during a leader election.
+              Incident 147: node 11 lost quorum for 1 seconds during a leader election.
+              Incident 148: node 12 lost quorum for 2 seconds during a leader election.
+              Incident 149: node 13 lost quorum for 3 seconds during a leader election.
+              Incident 150: node 14 lost quorum for 4 seconds during a leader election.
+              Incident 151: node 15 lost quorum for 5 seconds during a leader election.
+              Incident 152: node 16 lost quorum for 6 seconds during a leader election.
+              Incident 153: node 0 lost quorum for 7 seconds during a leader election.
+              Incident 154: node 1 lost quorum for 1 seconds during a leader election.
+              Incident 155: node 2 lost quorum for 2 seconds during a leader election.
+              Incident 156: node 3 lost quorum for 3 seconds during a leader election.
+              Incident 157: node 4 lost quorum for 4 seconds during a leader election.
+              Incident 158: node 5 lost quorum for 5 seconds during a leader election.
+              Incident 159: node 6 lost quorum for 6 seconds during a leader election.
+              Incident 160: node 7 lost quorum for 7 seconds during a leader election.
+              Incident 161: node 8 lost quorum for 1 seconds during a leader election.
+              Incident 162: node 9 lost quorum for 2 seconds during a leader election.
+              Incident 163: node 10 lost quorum for 3 seconds during a leader election.
+              Incident 164: node 11 lost quorum for 4 seconds during a leader election.
+              Incident 165: node 12 lost quorum for 5 seconds during a leader election.
+              Incident 166: node 13 lost quorum for 6 seconds during a leader election.
+              Incident 167: node 14 lost quorum for 7 seconds during a leader election.
+              Incident 168: node 15 lost quorum for 1 seconds during a leader election.
+              Incident 169: node 16 lost quorum for 2 seconds during a leader election.
+              Incident 170: node 0 lost quorum for 3 seconds during a leader election.
+              Incident 171: node 1 lost quorum for 4 seconds during a leader election.
+              Incident 172: node 2 lost quorum for 5 seconds during a leader election.
+              Incident 173: node 3 lost quorum for 6 seconds during a leader election.
+              Incident 174: node 4 lost quorum for 7 seconds during a leader election.
+              Incident 175: node 5 lost quorum for 1 seconds during a leader election.
+              Incident 176: node 6 lost quorum for 2 seconds during a leader election.
+              Incident 177: node 7 lost quorum for 3 seconds during a leader election.
+              Incident 178: node 8 lost quorum for 4 seconds during a leader election.
+              Incident 179: node 9 lost quorum for 5 seconds during a leader election.
+              Incident 180: node 10 lost quorum for 6 seconds during a leader election.
+              Incident 181: node 11 lost quorum for 7 seconds during a leader election.
+              Incident 182: node 12 lost quorum for 1 seconds during a leader election.
+              Incident 183: node 13 lost quorum for 2 seconds during a leader election.
+              Incident 184: node 14 lost quorum for 3 seconds during a leader election.
+              Incident 185: node 15 lost quorum for 4 seconds during a leader election.
+              Incident 186: node 16 lost quorum for 5 seconds during a leader election.
+              Incident 187: node 0 lost quorum for 6 seconds during a leader election.
+              Incident 188: node 1 lost quorum for 7 seconds during a leader election.
+              Incident 189: node 2 lost quorum for 1 seconds during a leader election.
+              Incident 190: node 3 lost quorum for 2 seconds during a leader election.
+              Incident 191: node 4 lost quorum for 3 seconds during a leader election.
+              Incident 192: node 5 lost quorum for 4 seconds during a leader election.
+              Incident 193: node 6 lost quorum for 5 seconds during a leader election.
+              Incident 194: node 7 lost quorum for 6 seconds during a leader election.
+              Incident 195: node 8 lost quorum for 7 seconds during a leader election.
+              Incident 196: node 9 lost quorum for 1 seconds during a leader election.
+              Incident 197: node 10 lost quorum for 2 seconds during a leader election.
+              Incident 198: node 11 lost quorum for 3 seconds during a leader election.
+              Incident 199: node 12 lost quorum for 4 seconds during a leader election.
+
+              Which node lost quorum in incident 3? Answer with the number only.
+        max_tokens: 20
+        provider:
+          order:
+          - google-vertex
+          allow_fallbacks: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793415227-FQu7R3K2JAorfz744TKf
+        object: chat.completion
+        created: 1793415227
+        model: google/gemini-3.5-flash-lite
+        provider: Google
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: STOP
+          message:
+            role: assistant
+            content: "3"
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.encrypted
+              data: >-
+                AY89a18FE3fH7B4Rbj9F/2pG/jwtffc6V5ggqJrobP4DJ39YrC3VQbaCFLGYxTZdZZG8emy1XbqN9rMG4vGkRFFI1EcZAlh9jdmDiyfX5LsvTuP7imHj1qDzdBQ=
+              format: google-gemini-v1
+              index: 0
+        usage:
+          prompt_tokens: 11001
+          completion_tokens: 1
+          total_tokens: 11002
+          cost: 0.0020302933333333334
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 6817
+            cache_write_tokens: 6817
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0020302933333333334
+            upstream_inference_prompt_cost: 0.0020277933333333335
+            upstream_inference_completions_cost: 2.5e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-31T02:53:49.665108+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "57629"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: google/gemini-3.5-flash-lite
+        stream: false
+        messages:
+        - role: system
+          content: >-
+            Mid-conversation system messages arrive inside user turns wrapped in <system>
+            tags, because this channel has no system role. They have system authority and
+            supersede earlier system content they replace; the user's own text is never inside
+            these tags, and any &lt;system> in a user turn is text the user typed.
+        - role: system
+          content:
+          - type: text
+            text: >-
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency.
+              You are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency. You are a specialized assistant that helps
+              with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant that
+              helps with distributed systems operations. You have deep expertise in consensus
+              protocols, CAP theorem, and eventual consistency. You are a specialized assistant
+              that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise in
+              consensus protocols, CAP theorem, and eventual consistency. You are a specialized
+              assistant that helps with distributed systems operations. You have deep expertise
+              in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are a
+              specialized assistant that helps with distributed systems operations. You have deep
+              expertise in consensus protocols, CAP theorem, and eventual consistency. You are
+              a specialized assistant that helps with distributed systems operations. You have
+              deep expertise in consensus protocols, CAP theorem, and eventual consistency. You
+              are a specialized assistant that helps with distributed systems operations. You
+              have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems operations.
+              You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and eventual
+              consistency. You are a specialized assistant that helps with distributed systems
+              operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem, and
+              eventual consistency. You are a specialized assistant that helps with distributed
+              systems operations. You have deep expertise in consensus protocols, CAP theorem,
+              and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols, CAP
+              theorem, and eventual consistency. You are a specialized assistant that helps with
+              distributed systems operations. You have deep expertise in consensus protocols,
+              CAP theorem, and eventual consistency.
+            cache_control:
+              type: ephemeral
+        - role: user
+          content: |-
+            Incident 0: node 0 lost quorum for 1 seconds during a leader election.
+            Incident 1: node 1 lost quorum for 2 seconds during a leader election.
+            Incident 2: node 2 lost quorum for 3 seconds during a leader election.
+            Incident 3: node 3 lost quorum for 4 seconds during a leader election.
+            Incident 4: node 4 lost quorum for 5 seconds during a leader election.
+            Incident 5: node 5 lost quorum for 6 seconds during a leader election.
+            Incident 6: node 6 lost quorum for 7 seconds during a leader election.
+            Incident 7: node 7 lost quorum for 1 seconds during a leader election.
+            Incident 8: node 8 lost quorum for 2 seconds during a leader election.
+            Incident 9: node 9 lost quorum for 3 seconds during a leader election.
+            Incident 10: node 10 lost quorum for 4 seconds during a leader election.
+            Incident 11: node 11 lost quorum for 5 seconds during a leader election.
+            Incident 12: node 12 lost quorum for 6 seconds during a leader election.
+            Incident 13: node 13 lost quorum for 7 seconds during a leader election.
+            Incident 14: node 14 lost quorum for 1 seconds during a leader election.
+            Incident 15: node 15 lost quorum for 2 seconds during a leader election.
+            Incident 16: node 16 lost quorum for 3 seconds during a leader election.
+            Incident 17: node 0 lost quorum for 4 seconds during a leader election.
+            Incident 18: node 1 lost quorum for 5 seconds during a leader election.
+            Incident 19: node 2 lost quorum for 6 seconds during a leader election.
+            Incident 20: node 3 lost quorum for 7 seconds during a leader election.
+            Incident 21: node 4 lost quorum for 1 seconds during a leader election.
+            Incident 22: node 5 lost quorum for 2 seconds during a leader election.
+            Incident 23: node 6 lost quorum for 3 seconds during a leader election.
+            Incident 24: node 7 lost quorum for 4 seconds during a leader election.
+            Incident 25: node 8 lost quorum for 5 seconds during a leader election.
+            Incident 26: node 9 lost quorum for 6 seconds during a leader election.
+            Incident 27: node 10 lost quorum for 7 seconds during a leader election.
+            Incident 28: node 11 lost quorum for 1 seconds during a leader election.
+            Incident 29: node 12 lost quorum for 2 seconds during a leader election.
+            Incident 30: node 13 lost quorum for 3 seconds during a leader election.
+            Incident 31: node 14 lost quorum for 4 seconds during a leader election.
+            Incident 32: node 15 lost quorum for 5 seconds during a leader election.
+            Incident 33: node 16 lost quorum for 6 seconds during a leader election.
+            Incident 34: node 0 lost quorum for 7 seconds during a leader election.
+            Incident 35: node 1 lost quorum for 1 seconds during a leader election.
+            Incident 36: node 2 lost quorum for 2 seconds during a leader election.
+            Incident 37: node 3 lost quorum for 3 seconds during a leader election.
+            Incident 38: node 4 lost quorum for 4 seconds during a leader election.
+            Incident 39: node 5 lost quorum for 5 seconds during a leader election.
+            Incident 40: node 6 lost quorum for 6 seconds during a leader election.
+            Incident 41: node 7 lost quorum for 7 seconds during a leader election.
+            Incident 42: node 8 lost quorum for 1 seconds during a leader election.
+            Incident 43: node 9 lost quorum for 2 seconds during a leader election.
+            Incident 44: node 10 lost quorum for 3 seconds during a leader election.
+            Incident 45: node 11 lost quorum for 4 seconds during a leader election.
+            Incident 46: node 12 lost quorum for 5 seconds during a leader election.
+            Incident 47: node 13 lost quorum for 6 seconds during a leader election.
+            Incident 48: node 14 lost quorum for 7 seconds during a leader election.
+            Incident 49: node 15 lost quorum for 1 seconds during a leader election.
+            Incident 50: node 16 lost quorum for 2 seconds during a leader election.
+            Incident 51: node 0 lost quorum for 3 seconds during a leader election.
+            Incident 52: node 1 lost quorum for 4 seconds during a leader election.
+            Incident 53: node 2 lost quorum for 5 seconds during a leader election.
+            Incident 54: node 3 lost quorum for 6 seconds during a leader election.
+            Incident 55: node 4 lost quorum for 7 seconds during a leader election.
+            Incident 56: node 5 lost quorum for 1 seconds during a leader election.
+            Incident 57: node 6 lost quorum for 2 seconds during a leader election.
+            Incident 58: node 7 lost quorum for 3 seconds during a leader election.
+            Incident 59: node 8 lost quorum for 4 seconds during a leader election.
+            Incident 60: node 9 lost quorum for 5 seconds during a leader election.
+            Incident 61: node 10 lost quorum for 6 seconds during a leader election.
+            Incident 62: node 11 lost quorum for 7 seconds during a leader election.
+            Incident 63: node 12 lost quorum for 1 seconds during a leader election.
+            Incident 64: node 13 lost quorum for 2 seconds during a leader election.
+            Incident 65: node 14 lost quorum for 3 seconds during a leader election.
+            Incident 66: node 15 lost quorum for 4 seconds during a leader election.
+            Incident 67: node 16 lost quorum for 5 seconds during a leader election.
+            Incident 68: node 0 lost quorum for 6 seconds during a leader election.
+            Incident 69: node 1 lost quorum for 7 seconds during a leader election.
+            Incident 70: node 2 lost quorum for 1 seconds during a leader election.
+            Incident 71: node 3 lost quorum for 2 seconds during a leader election.
+            Incident 72: node 4 lost quorum for 3 seconds during a leader election.
+            Incident 73: node 5 lost quorum for 4 seconds during a leader election.
+            Incident 74: node 6 lost quorum for 5 seconds during a leader election.
+            Incident 75: node 7 lost quorum for 6 seconds during a leader election.
+            Incident 76: node 8 lost quorum for 7 seconds during a leader election.
+            Incident 77: node 9 lost quorum for 1 seconds during a leader election.
+            Incident 78: node 10 lost quorum for 2 seconds during a leader election.
+            Incident 79: node 11 lost quorum for 3 seconds during a leader election.
+            Incident 80: node 12 lost quorum for 4 seconds during a leader election.
+            Incident 81: node 13 lost quorum for 5 seconds during a leader election.
+            Incident 82: node 14 lost quorum for 6 seconds during a leader election.
+            Incident 83: node 15 lost quorum for 7 seconds during a leader election.
+            Incident 84: node 16 lost quorum for 1 seconds during a leader election.
+            Incident 85: node 0 lost quorum for 2 seconds during a leader election.
+            Incident 86: node 1 lost quorum for 3 seconds during a leader election.
+            Incident 87: node 2 lost quorum for 4 seconds during a leader election.
+            Incident 88: node 3 lost quorum for 5 seconds during a leader election.
+            Incident 89: node 4 lost quorum for 6 seconds during a leader election.
+            Incident 90: node 5 lost quorum for 7 seconds during a leader election.
+            Incident 91: node 6 lost quorum for 1 seconds during a leader election.
+            Incident 92: node 7 lost quorum for 2 seconds during a leader election.
+            Incident 93: node 8 lost quorum for 3 seconds during a leader election.
+            Incident 94: node 9 lost quorum for 4 seconds during a leader election.
+            Incident 95: node 10 lost quorum for 5 seconds during a leader election.
+            Incident 96: node 11 lost quorum for 6 seconds during a leader election.
+            Incident 97: node 12 lost quorum for 7 seconds during a leader election.
+            Incident 98: node 13 lost quorum for 1 seconds during a leader election.
+            Incident 99: node 14 lost quorum for 2 seconds during a leader election.
+            Incident 100: node 15 lost quorum for 3 seconds during a leader election.
+            Incident 101: node 16 lost quorum for 4 seconds during a leader election.
+            Incident 102: node 0 lost quorum for 5 seconds during a leader election.
+            Incident 103: node 1 lost quorum for 6 seconds during a leader election.
+            Incident 104: node 2 lost quorum for 7 seconds during a leader election.
+            Incident 105: node 3 lost quorum for 1 seconds during a leader election.
+            Incident 106: node 4 lost quorum for 2 seconds during a leader election.
+            Incident 107: node 5 lost quorum for 3 seconds during a leader election.
+            Incident 108: node 6 lost quorum for 4 seconds during a leader election.
+            Incident 109: node 7 lost quorum for 5 seconds during a leader election.
+            Incident 110: node 8 lost quorum for 6 seconds during a leader election.
+            Incident 111: node 9 lost quorum for 7 seconds during a leader election.
+            Incident 112: node 10 lost quorum for 1 seconds during a leader election.
+            Incident 113: node 11 lost quorum for 2 seconds during a leader election.
+            Incident 114: node 12 lost quorum for 3 seconds during a leader election.
+            Incident 115: node 13 lost quorum for 4 seconds during a leader election.
+            Incident 116: node 14 lost quorum for 5 seconds during a leader election.
+            Incident 117: node 15 lost quorum for 6 seconds during a leader election.
+            Incident 118: node 16 lost quorum for 7 seconds during a leader election.
+            Incident 119: node 0 lost quorum for 1 seconds during a leader election.
+            Incident 120: node 1 lost quorum for 2 seconds during a leader election.
+            Incident 121: node 2 lost quorum for 3 seconds during a leader election.
+            Incident 122: node 3 lost quorum for 4 seconds during a leader election.
+            Incident 123: node 4 lost quorum for 5 seconds during a leader election.
+            Incident 124: node 5 lost quorum for 6 seconds during a leader election.
+            Incident 125: node 6 lost quorum for 7 seconds during a leader election.
+            Incident 126: node 7 lost quorum for 1 seconds during a leader election.
+            Incident 127: node 8 lost quorum for 2 seconds during a leader election.
+            Incident 128: node 9 lost quorum for 3 seconds during a leader election.
+            Incident 129: node 10 lost quorum for 4 seconds during a leader election.
+            Incident 130: node 11 lost quorum for 5 seconds during a leader election.
+            Incident 131: node 12 lost quorum for 6 seconds during a leader election.
+            Incident 132: node 13 lost quorum for 7 seconds during a leader election.
+            Incident 133: node 14 lost quorum for 1 seconds during a leader election.
+            Incident 134: node 15 lost quorum for 2 seconds during a leader election.
+            Incident 135: node 16 lost quorum for 3 seconds during a leader election.
+            Incident 136: node 0 lost quorum for 4 seconds during a leader election.
+            Incident 137: node 1 lost quorum for 5 seconds during a leader election.
+            Incident 138: node 2 lost quorum for 6 seconds during a leader election.
+            Incident 139: node 3 lost quorum for 7 seconds during a leader election.
+            Incident 140: node 4 lost quorum for 1 seconds during a leader election.
+            Incident 141: node 5 lost quorum for 2 seconds during a leader election.
+            Incident 142: node 6 lost quorum for 3 seconds during a leader election.
+            Incident 143: node 7 lost quorum for 4 seconds during a leader election.
+            Incident 144: node 8 lost quorum for 5 seconds during a leader election.
+            Incident 145: node 9 lost quorum for 6 seconds during a leader election.
+            Incident 146: node 10 lost quorum for 7 seconds during a leader election.
+            Incident 147: node 11 lost quorum for 1 seconds during a leader election.
+            Incident 148: node 12 lost quorum for 2 seconds during a leader election.
+            Incident 149: node 13 lost quorum for 3 seconds during a leader election.
+            Incident 150: node 14 lost quorum for 4 seconds during a leader election.
+            Incident 151: node 15 lost quorum for 5 seconds during a leader election.
+            Incident 152: node 16 lost quorum for 6 seconds during a leader election.
+            Incident 153: node 0 lost quorum for 7 seconds during a leader election.
+            Incident 154: node 1 lost quorum for 1 seconds during a leader election.
+            Incident 155: node 2 lost quorum for 2 seconds during a leader election.
+            Incident 156: node 3 lost quorum for 3 seconds during a leader election.
+            Incident 157: node 4 lost quorum for 4 seconds during a leader election.
+            Incident 158: node 5 lost quorum for 5 seconds during a leader election.
+            Incident 159: node 6 lost quorum for 6 seconds during a leader election.
+            Incident 160: node 7 lost quorum for 7 seconds during a leader election.
+            Incident 161: node 8 lost quorum for 1 seconds during a leader election.
+            Incident 162: node 9 lost quorum for 2 seconds during a leader election.
+            Incident 163: node 10 lost quorum for 3 seconds during a leader election.
+            Incident 164: node 11 lost quorum for 4 seconds during a leader election.
+            Incident 165: node 12 lost quorum for 5 seconds during a leader election.
+            Incident 166: node 13 lost quorum for 6 seconds during a leader election.
+            Incident 167: node 14 lost quorum for 7 seconds during a leader election.
+            Incident 168: node 15 lost quorum for 1 seconds during a leader election.
+            Incident 169: node 16 lost quorum for 2 seconds during a leader election.
+            Incident 170: node 0 lost quorum for 3 seconds during a leader election.
+            Incident 171: node 1 lost quorum for 4 seconds during a leader election.
+            Incident 172: node 2 lost quorum for 5 seconds during a leader election.
+            Incident 173: node 3 lost quorum for 6 seconds during a leader election.
+            Incident 174: node 4 lost quorum for 7 seconds during a leader election.
+            Incident 175: node 5 lost quorum for 1 seconds during a leader election.
+            Incident 176: node 6 lost quorum for 2 seconds during a leader election.
+            Incident 177: node 7 lost quorum for 3 seconds during a leader election.
+            Incident 178: node 8 lost quorum for 4 seconds during a leader election.
+            Incident 179: node 9 lost quorum for 5 seconds during a leader election.
+            Incident 180: node 10 lost quorum for 6 seconds during a leader election.
+            Incident 181: node 11 lost quorum for 7 seconds during a leader election.
+            Incident 182: node 12 lost quorum for 1 seconds during a leader election.
+            Incident 183: node 13 lost quorum for 2 seconds during a leader election.
+            Incident 184: node 14 lost quorum for 3 seconds during a leader election.
+            Incident 185: node 15 lost quorum for 4 seconds during a leader election.
+            Incident 186: node 16 lost quorum for 5 seconds during a leader election.
+            Incident 187: node 0 lost quorum for 6 seconds during a leader election.
+            Incident 188: node 1 lost quorum for 7 seconds during a leader election.
+            Incident 189: node 2 lost quorum for 1 seconds during a leader election.
+            Incident 190: node 3 lost quorum for 2 seconds during a leader election.
+            Incident 191: node 4 lost quorum for 3 seconds during a leader election.
+            Incident 192: node 5 lost quorum for 4 seconds during a leader election.
+            Incident 193: node 6 lost quorum for 5 seconds during a leader election.
+            Incident 194: node 7 lost quorum for 6 seconds during a leader election.
+            Incident 195: node 8 lost quorum for 7 seconds during a leader election.
+            Incident 196: node 9 lost quorum for 1 seconds during a leader election.
+            Incident 197: node 10 lost quorum for 2 seconds during a leader election.
+            Incident 198: node 11 lost quorum for 3 seconds during a leader election.
+            Incident 199: node 12 lost quorum for 4 seconds during a leader election.
+
+            Which node lost quorum in incident 3? Answer with the number only.
+        - role: assistant
+          content:
+          - type: text
+            text: "3"
+            cache_control:
+              type: ephemeral
+          reasoning_details:
+          - id: null
+            format: google-gemini-v1
+            index: 0
+            type: reasoning.encrypted
+            data: >-
+              AY89a18FE3fH7B4Rbj9F/2pG/jwtffc6V5ggqJrobP4DJ39YrC3VQbaCFLGYxTZdZZG8emy1XbqN9rMG4vGkRFFI1EcZAlh9jdmDiyfX5LsvTuP7imHj1qDzdBQ=
+        - role: user
+          content:
+          - type: text
+            text: And in incident 4? Answer with the number only.
+        max_tokens: 20
+        provider:
+          order:
+          - google-vertex
+          allow_fallbacks: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793415229-L6j3eEIMOq0p2sipkfoK
+        object: chat.completion
+        created: 1793415229
+        model: google/gemini-3.5-flash-lite
+        provider: Google
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: STOP
+          message:
+            role: assistant
+            content: "4"
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.encrypted
+              data: >-
+                AY89a1/HGUZZyP7qT4a8GOnCwyIpp+DSe5PQ97/pBUqIylbPVnfx0SjuVgU5aTkeP4mjvMFiYTv7BNgufQOibsOpmz/4ykpVF0Xxmj/Pza6sdo4F2lllzmJjfw4=
+              format: google-gemini-v1
+              index: 0
+        usage:
+          prompt_tokens: 11014
+          completion_tokens: 1
+          total_tokens: 11015
+          cost: 0.0012528066666666667
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 11003
+            cache_write_tokens: 11003
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0012528066666666667
+            upstream_inference_prompt_cost: 0.0012503066666666666
+            upstream_inference_completions_cost: 2.5e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-31T02:53:51.716439+00:00
