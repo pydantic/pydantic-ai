@@ -5540,6 +5540,33 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-exporter-otlp-json-common"
+version = "0.66b1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-proto-json" },
+    { name = "opentelemetry-sdk" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ca/27/fd51023a4916ad00ef0c970577e148fba36e3682716d15a1495f74f830fb/opentelemetry_exporter_otlp_json_common-0.66b1.tar.gz", hash = "sha256:d8bd656ee03be5d2f54b533e03e297792c5017501417d132c3c67eb2ac95b3de", size = 24519, upload-time = "2026-10-06T17:33:02.52Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0f/34/6e7a4794ff9995042c8372af5c7e4e5127aea10dfeec64402fbec93a6d43/opentelemetry_exporter_otlp_json_common-0.66b1-py3-none-any.whl", hash = "sha256:1ae23eb3dfcd756607367c1ff5df2b4120fe481a523e7868b26b61720c558875", size = 14826, upload-time = "2026-10-06T17:32:39.052Z" },
+]
+
+[[package]]
+name = "opentelemetry-exporter-otlp-json-file"
+version = "0.66b1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-exporter-otlp-common" },
+    { name = "opentelemetry-exporter-otlp-json-common" },
+    { name = "opentelemetry-sdk" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/67/8b/85d818f165d322dafdb2eda88652323ed04b3e094f61fd64ed419b56d395/opentelemetry_exporter_otlp_json_file-0.66b1.tar.gz", hash = "sha256:2ab453ee9c52be464feff1219837788a186e51ffd99c3e22b9a8453b38811d68", size = 12429, upload-time = "2026-10-06T17:33:03.35Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4a/05/a9970ba8b3b3b2dc701c335f3e0828696c662892a4da3562e27e7f2a3a06/opentelemetry_exporter_otlp_json_file-0.66b1-py3-none-any.whl", hash = "sha256:e352d087c957bbad0c1a80916b93ab0bd57ff94066310bfbe5ee90e6a95bea04", size = 11825, upload-time = "2026-10-06T17:32:39.986Z" },
+]
+
+[[package]]
 name = "opentelemetry-exporter-otlp-proto-common"
 version = "1.45.1"
 source = { registry = "https://pypi.org/simple" }
@@ -5717,6 +5744,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/4b/7f/15f014fb195da6c2dbb6c71399b8e76824878718e94de6454038488eed28/opentelemetry_proto-1.45.1.tar.gz", hash = "sha256:79e0fb95e4616691a469439238aa9224d75779b3e108e895d1aa125ab29ca77c", size = 46488, upload-time = "2026-10-06T17:33:11.49Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/9a/42ec8180a769516ae757e893b69736826efceac7332553915b4528a91c6d/opentelemetry_proto-1.45.1-py3-none-any.whl", hash = "sha256:f38e2a8413053c180cd3d2637fbb279673ec2f6a6e09c995aafa2f452c52b46e", size = 72488, upload-time = "2026-10-06T17:32:53.057Z" },
+]
+
+[[package]]
+name = "opentelemetry-proto-json"
+version = "0.66b1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/25/a845cc4644123c6b29b2c21822341a55e7f1808703d4f557d24cbd841290/opentelemetry_proto_json-0.66b1.tar.gz", hash = "sha256:92bb70ff0f05815821e922ea628bfdf96f034b981747b0ba8e09db61e1a9cddd", size = 18708, upload-time = "2026-10-06T17:33:12.169Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/93/7d/bb6acc006c6c4042ef9f734f4901630a440992033f48b66a58fc8fd5e3f4/opentelemetry_proto_json-0.66b1-py3-none-any.whl", hash = "sha256:0d07f1922451cf3a8705bb46fa807f478a1164fbe9287bf7bd50e1ff43f75da3", size = 32061, upload-time = "2026-10-06T17:32:54.097Z" },
 ]
 
 [[package]]
@@ -6780,6 +6816,7 @@ dev = [
     { name = "mcp-types" },
     { name = "mongomock-motor" },
     { name = "nest-asyncio" },
+    { name = "opentelemetry-exporter-otlp-json-file" },
     { name = "opentelemetry-instrumentation-logging" },
     { name = "pip" },
     { name = "pydocket" },
@@ -6863,6 +6900,7 @@ dev = [
     { name = "mcp-types", specifier = ">=2.0.0" },
     { name = "mongomock-motor", specifier = ">=0.0.36" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
+    { name = "opentelemetry-exporter-otlp-json-file", specifier = ">=0.64b0" },
     { name = "opentelemetry-instrumentation-logging", specifier = ">=0.63b0" },
     { name = "pip", specifier = ">=26.1" },
     { name = "pydocket", specifier = ">=0.20.2" },

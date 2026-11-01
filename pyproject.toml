@@ -304,6 +304,7 @@ dev = [
     # interleavings of client operations and provider events, shrunk to a minimal failing trace. Also draws
     # the message histories of the property tests in `tests/test_history_properties.py`.
     "hypothesis>=6.153.2",
+    "opentelemetry-exporter-otlp-json-file>=0.64b0",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
