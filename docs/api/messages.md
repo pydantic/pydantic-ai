@@ -12,6 +12,7 @@ graph RL
     ToolAvailabilityDeltaPart(ToolAvailabilityDeltaPart) --- ModelRequestPart
     InstructionDeltaPart(InstructionDeltaPart) --- ModelRequestPart
     InstructionBaselinePart(InstructionBaselinePart) --- ModelRequestPart
+    CapabilityPart(CapabilityPart) --- ModelRequestPart
     TextPart(TextPart) --- ModelResponsePart
     ToolCallPart(ToolCallPart) --- ModelResponsePart
     ThinkingPart(ThinkingPart) --- ModelResponsePart

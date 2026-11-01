@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     CapabilityInstructionSource,
     CompactionPart,
     InstructionBaselinePart,
+    InstructionCapabilityPart,
     InstructionDeltaPart,
     InstructionDigest,
     InstructionId,
@@ -34,6 +35,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
+    OperatorText,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -82,6 +85,12 @@ with try_import() as vercel_available:
 with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.providers.xai import XaiProvider
+
+
+@dataclass(kw_only=True)
+class ReminderPart(InstructionCapabilityPart, namespace='test_instruction_updates'):
+    """A capability's request-scoped reminder, which renders as a `SystemPromptPart(..., scope='request')`."""
+
 
 pytestmark = pytest.mark.anyio
 
@@ -620,7 +629,11 @@ async def test_instruction_updates_coexist_with_request_scoped_prompts(inline_sy
             self, ctx: RunContext[State], request_context: ModelRequestContext
         ) -> ModelRequestContext:
             self.requests += 1
-            ctx.enqueue(SystemPromptPart(f'Reminder {self.requests}.', scope='request'))
+            ctx.enqueue(
+                ReminderPart(
+                    content=OperatorText(f'Reminder {self.requests}.'), source=OperatorSource(), scope='request'
+                )
+            )
             return request_context
 
     agent = Agent(

@@ -46,6 +46,7 @@ from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
 from .._canonical_system import accepts_stateless_artifact
+from .._capability_parts import content_author, is_rendered_capability_part, render_capability_parts
 from .._file_input import (
     KNOWN_DOCUMENT_MEDIA_TYPES,
     FileInputKind,
@@ -99,6 +100,7 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     DocumentMediaType,
     FilePart,
@@ -1789,6 +1791,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
+        # A no-op on the agent's path, which renders them before handing this the history.
+        messages = render_capability_parts(messages)
         messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
@@ -3735,11 +3739,13 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     exists to avoid.
 
     A request-scoped part ends the standing prompt too: the top-level system parameter is sent with every
-    request, and a request-scoped part has to stop being sent once its request has been answered.
+    request, and a request-scoped part has to stop being sent once its request has been answered. So does one
+    rendered from a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]: a capability said it, the history wasn't
+    authored with it.
     """
     count = 0
     for part in request.parts:
-        if not isinstance(part, SystemPromptPart) or part.scope == 'request':
+        if not isinstance(part, SystemPromptPart) or part.scope == 'request' or is_rendered_capability_part(part):
             break
         count += 1
     return count
@@ -4116,7 +4122,11 @@ def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, li
     if isinstance(part, UserPromptPart):
         items: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
         for item in items:
-            check('user', _text_of(item))
+            # A rendered capability part's body names its author: a tool, a file's author, the user, or the
+            # application, whose own text gets no note.
+            author = content_author(item) if isinstance(item, TextContent) else 'user'
+            if author != 'application':
+                check(author, _text_of(item))
         for item in items:
             check('file', _text_file_content(item))
         # A frame a capability wrote around someone else's text, such as a background tool's output: the frame's own
@@ -4587,11 +4597,12 @@ _UnpreparedPart: TypeAlias = (
     | RetryFeedbackPart
     | RetryPromptPart  # pyright: ignore[reportDeprecated]
     | CompactionPart
+    | CapabilityPart
 )
 """The request parts `prepare_messages` translates away before any adapter sees them.
 
 Each of these carries something no provider API has a field for — a mid-conversation change to the tool list or the
-thinking effort, a capability load from code, or a retry that isn't a plain turn — and `prepare_messages` turns it into
+thinking effort, a capability load from code, a retry that isn't a plain turn, or a capability's record — and `prepare_messages` turns it into
 the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that
 step never ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
 a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
