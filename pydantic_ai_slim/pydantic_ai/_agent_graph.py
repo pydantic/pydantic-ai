@@ -121,6 +121,7 @@ from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    _dangling_tool_calls_by_response,  # pyright: ignore[reportPrivateUsage]
     _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
     _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
@@ -1068,6 +1069,15 @@ def _ensure_model_supports_streaming(model: models.Model) -> None:
         )
 
 
+_UNPROCESSED_TOOL_CALLS = (
+    'Cannot provide a new user prompt when the message history contains unprocessed tool calls. '
+    'Run the agent with this message history and no new prompt to execute the calls, pass '
+    '`deferred_tool_results` if they were deferred, or call '
+    '`pydantic_ai.messages.repair_messages()` on the history first to close them out.'
+)
+"""The error a new prompt gets when it would abandon calls that could still be answered."""
+
+
 @dataclasses.dataclass
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that handles the user prompt and instructions."""
@@ -1130,6 +1140,13 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
                 if (prompt := _request_prompt(last_message)) is not None:
                     ctx.deps.prompt = prompt
+            elif isinstance(last_message, _messages.ModelRequest):
+                # A trailing request can leave some of the last response's calls unanswered: a paused
+                # conversation whose inline handler resolved only part of the batch. A new prompt would
+                # abandon the rest — repair closes them out as interrupted — so raise, as the history
+                # ending on the response itself does.
+                if _unanswered_tool_calls(messages):
+                    raise exceptions.UserError(_UNPROCESSED_TOOL_CALLS)
             elif isinstance(last_message, _messages.ModelResponse):
                 if last_message.state == 'suspended' and self.user_prompt is None:
                     # The history ends in a turn a provider paused mid-flight (Anthropic
@@ -1176,12 +1193,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                 elif last_message.tool_calls:
                     # An interrupted response's calls were already closed out by `_repair_interrupted_tail`.
-                    raise exceptions.UserError(
-                        'Cannot provide a new user prompt when the message history contains unprocessed tool calls. '
-                        'Run the agent with this message history and no new prompt to execute the calls, pass '
-                        '`deferred_tool_results` if they were deferred, or call '
-                        '`pydantic_ai.messages.repair_messages()` on the history first to close them out.'
-                    )
+                    raise exceptions.UserError(_UNPROCESSED_TOOL_CALLS)
 
         if not run_context:
             run_context = build_run_context(ctx)
@@ -1330,6 +1342,20 @@ def _repair_interrupted_tail(
     ):
         return _repair_dangling_tool_calls(messages, repair_last_response=True)
     return messages
+
+
+def _unanswered_tool_calls(messages: list[_messages.ModelMessage]) -> bool:
+    """Whether the history's last response still has tool calls no later message answers.
+
+    Repair closes out every earlier response's calls with synthesized results, so the last response's
+    are the only ones a new prompt could still abandon — and the ones `deferred_tool_results` may
+    answer.
+    """
+    last_response_index = next(
+        (index for index in range(len(messages) - 1, -1, -1) if isinstance(messages[index], _messages.ModelResponse)),
+        None,
+    )
+    return last_response_index is not None and last_response_index in _dangling_tool_calls_by_response(messages)
 
 
 def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
