@@ -1,3 +1,4 @@
+# description: Runs the latest-versions canary daily on main and files each new failure signature as a deduplicated issue.
 name: Latest Versions Canary Nightly
 
 # The daily run of `latest-versions-canary.yml`, and the job that reports it. The report job lives
@@ -22,8 +23,8 @@ jobs:
 
   report:
     needs: [canary]
-    # A green run reports too: it is how an issue learns its failure passed.
-    if: ${{ !cancelled() }}
+    # A green run reports too: it is how an issue learns its failure passed. A fork only runs the tests.
+    if: ${{ !cancelled() && github.repository == 'pydantic/pydantic-ai' }}
     # Filing lists the open issues and then creates the missing ones, so two reports at once, such as a
     # re-run beside the next night's run, could file one signature twice.
     concurrency:
@@ -35,7 +36,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -62,3 +63,19 @@ jobs:
           --reports "${RUNNER_TEMP}/canary-reports"
           --result "$CANARY_RESULT"
           --tested-at "$(git log -1 --format=%cI)"
+
+  alert:
+    needs: [report]
+    # A reporter that fails files nothing, so its failure reports privately through the triage Slack webhook.
+    if: ${{ !cancelled() && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Report canary reporter failure privately
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          errors: true
+          payload: '{"text":":rotating_light: Latest versions canary reporter failed: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|inspect the run>"}'
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook

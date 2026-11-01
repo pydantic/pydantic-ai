@@ -288,9 +288,11 @@ class FakeClient(report.attention.GitHubClient):
         return {}
 
 
-def run(client: FakeClient, root: Path, reports: Path, run_id: int, *, green: bool = False) -> list[str]:
-    """Report one scheduled run, a day after the previous one, testing a commit made an hour before it."""
-    client.now = START + run_id * DAY
+def run(
+    client: FakeClient, root: Path, reports: Path, run_id: int, *, green: bool = False, day: float | None = None
+) -> list[str]:
+    """Report one scheduled run on day `run_id`, or on `day` for a re-run, testing a commit made an hour before it."""
+    client.now = START + (run_id if day is None else day) * DAY
     observation = report.Observation({}, complete=True) if green else report.collect(reports, root)
     canary = report.Run(REPO, run_id, f'{run_id:040x}', 'https://github.com', client.now - dt.timedelta(hours=1))
     return report.reconcile(client, canary, observation, report.read_moved(reports))
@@ -475,7 +477,8 @@ def test_known_signature_is_commented_once_per_run_and_never_relabeled(tmp_path:
     run(client, root, reports, 1)
 
     assert run(client, root, reports, 2) == [f'#100: noted that `{UNION}` still fails']
-    assert run(client, root, reports, 2) == ['#100: already updated for this run']
+    assert run(client, root, reports, 2) == ['#100: already updated by this run or a later one']
+    assert run(client, root, reports, 1, green=True, day=3) == ['#100: already updated by this run or a later one']
 
     assert len(client.created) == 1
     [(number, comment)] = client.posted
@@ -528,6 +531,26 @@ def test_continuous_failure_after_a_completed_close_is_not_refiled(tmp_path: Pat
     assert len(client.created) == 1
     assert [number for number, _ in client.posted] == [100, 100]
     assert 'No canary run has passed it since its last failure, so no new issue is filed.' in client.posted[-1][1]
+
+
+def test_a_rerun_of_an_older_run_leaves_what_newer_runs_reported(tmp_path: Path, root: Path):
+    reports = failing_reports(tmp_path, 'reports', [case('tests/models/test_anthropic.py', 'test_request', UNION_311)])
+    client = FakeClient()
+    run(client, root, reports, 2)
+    client.now = START + 2.5 * DAY
+    client.close(100)
+    assert run(client, root, reports, 3) == [f'#100: noted that `{UNION}` still fails after the close']
+
+    # Run 1 passed; re-running it after the close is no recovery, so the continuing failure is not refiled.
+    assert run(client, root, reports, 1, green=True, day=4) == ['#100: already updated by this run or a later one']
+    assert run(client, root, reports, 5) == [f'`{UNION}`: still failing since #100 was closed; already noted there']
+
+    # Nor does re-running a red run from before a recorded pass refile.
+    assert run(client, root, reports, 6, green=True) == [f'#100: recorded that `{UNION}` passes']
+    assert run(client, root, reports, 5, day=7) == ['#100: already updated by this run or a later one']
+
+    assert len(client.created) == 1
+    assert [number for number, _ in client.posted] == [100, 100]
 
 
 def test_recovery_then_recurrence_files_a_linked_issue(tmp_path: Path, root: Path):

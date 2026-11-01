@@ -19,6 +19,7 @@ and reconciles them with the issues it filed before, one issue per signature:
   keeps failing, and refiling every day would loop issues through triage. That
   closed issue gets one notice instead. A close as not planned or as a
   duplicate keeps the signature quiet.
+- A re-run of an older run leaves alone every issue a newer run already updated.
 
 The reports come from a job that ran freshly published third-party code, so they
 are untrusted. A signature is built only from paths that exist in this checkout
@@ -442,6 +443,8 @@ def reconcile(
         number, reason, closed_at = last.issue.number, last.issue.state_reason, last.issue.closed_at
         if reason in _SETTLED_CLOSES:
             log.append(f'`{signature}`: #{number} was closed as {reason}; not refiled')
+        elif marker.run_id >= run.run_id:
+            log.append(f'#{number}: already updated by this run or a later one')
         elif marker.status == 'passing':
             filed.append(signature)
         elif closed_at is not None and closed_at >= run.tested_at:
@@ -482,8 +485,9 @@ def _update_open(client: attention.GitHubClient, run: Run, observation: Observat
     if failure is None and not observation.complete:
         return []
     marker = tracked.markers[0][0]
-    if marker.run_id == run.run_id:
-        return [f'#{number}: already updated for this run']
+    # Run IDs only grow, so an older one is a re-run: it must not overwrite what a newer run reported.
+    if marker.run_id >= run.run_id:
+        return [f'#{number}: already updated by this run or a later one']
     if failure is not None:
         verb = 'Fails again after passing' if marker.status == 'passing' else 'Still fails'
         _comment(client, run, tracked, 'failing', f'{verb} in the {run.link} ({_counts(failure)}).')
@@ -516,7 +520,11 @@ def _record_recoveries(
     for signature, tracked in closed.items():
         if signature in observation.failures or tracked.issue.state_reason in _SETTLED_CLOSES:
             continue
-        if tracked.markers[0][0].status == 'passing':
+        marker = tracked.markers[0][0]
+        if marker.run_id >= run.run_id:
+            log.append(f'#{tracked.issue.number}: already updated by this run or a later one')
+            continue
+        if marker.status == 'passing':
             continue
         _comment(client, run, tracked, 'passing', f'Passes in the {run.link}. A later failure files a new issue.')
         log.append(f'#{tracked.issue.number}: recorded that `{tracked.signature}` passes')
