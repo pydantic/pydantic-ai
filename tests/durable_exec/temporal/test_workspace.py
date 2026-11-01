@@ -9,6 +9,8 @@ re-imports the scenario module and can construct a backend, but only an activity
 
 from __future__ import annotations
 
+import json
+import os
 import sys
 import uuid
 from datetime import timedelta
@@ -265,6 +267,91 @@ async def test_workspace_runs_draw_their_run_id_without_the_stable_id_patch(clie
 
     replay = await Replayer(workflows=[ScenarioWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
     assert replay.replay_failure is None
+
+
+# The default activity config: a 60-second start-to-close timeout.
+default_config_agent = Agent(
+    TestModel(), name='default_config', capabilities=[provider.capability(), TemporalDurability()]
+)
+
+
+async def _seeded_workspace() -> Any:
+    return (
+        await default_config_agent.run('Hi.', workspace=WorkspaceRef(provider=provider.name, id='seeded'))
+    ).workspace
+
+
+@workflow.defn
+class CommandWorkflow:
+    @workflow.run
+    async def run(self) -> None:
+        workspace = await _seeded_workspace()
+        await workspace.exists('a.txt')
+        await workspace.run(['sleep', '900'], timeout=900)
+
+
+@workflow.defn
+class ReadWorkflow:
+    @workflow.run
+    async def run(self) -> None:
+        await (await _seeded_workspace()).read_bytes('big.bin')
+
+
+async def _execute_workspace_calls(
+    client: Client, workflow_class: type[CommandWorkflow | ReadWorkflow]
+) -> WorkflowHistory:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[workflow_class],
+        plugins=[AgentPlugin(default_config_agent)],
+    ):
+        handle = await client.start_workflow(
+            workflow_class.run,
+            id=f'workspace-calls-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        # Not `execution_timeout`: Temporal would cap the activity timeouts under test at it.
+        with anyio.fail_after(30):  # hang guard
+            await handle.result()
+        return await handle.fetch_history()
+
+
+async def test_a_command_activity_outlasts_the_command_timeout(client: Client) -> None:
+    """Under the 60-second tool timeout, a command with a longer `timeout=` was retried while still running."""
+    provider.reset()
+    provider.environments['seeded'] = {}
+    history = await _execute_workspace_calls(client, CommandWorkflow)
+    scheduled = [
+        event.activity_task_scheduled_event_attributes
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+        and event.activity_task_scheduled_event_attributes.activity_type.name.endswith('workspace__call')
+    ]
+    assert [
+        (
+            json.loads(attributes.input.payloads[0].data)['call']['method'],
+            attributes.start_to_close_timeout.ToTimedelta(),
+        )
+        for attributes in scheduled
+    ] == snapshot(
+        [
+            ('ensure', timedelta(seconds=60)),
+            ('exists', timedelta(seconds=60)),
+            ('run', timedelta(seconds=960)),
+        ]
+    )
+
+
+async def test_an_oversized_workspace_result_explains_the_payload_limit(client: Client) -> None:
+    provider.reset()
+    provider.environments['seeded'] = {'/remote/big.bin': os.urandom(1_600_000)}
+    with pytest.raises(WorkflowFailureError) as exc_info:
+        await _execute_workspace_calls(client, ReadWorkflow)
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == 'UserError'
+    assert cause.message.startswith("A workspace 'read_bytes' call returned a result too large for Temporal.")
+    assert 'Work with large files or command output inside a tool' in cause.message
 
 
 # --- The activity side on its own ---------------------------------------------------------------
