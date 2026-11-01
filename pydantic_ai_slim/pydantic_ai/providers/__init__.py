@@ -108,7 +108,8 @@ class Provider(ABC, Generic[InterfaceClient]):
 
         For replay, it's the system whose keys and format verify the stateless signed or encrypted data
         this provider returns. That data is encrypted reasoning, thinking and thought signatures,
-        redacted thinking and OpenAI compaction items. A model sends it back only to a provider whose `canonical_system` matches, or
+        redacted thinking and OpenAI compaction items.
+        A model sends it back only to a provider whose `canonical_system` matches, or
         lists it in [`compatible_systems`][pydantic_ai.providers.Provider.compatible_systems]; other
         providers get the fallback each model uses for foreign data, such as thinking rendered as text.
         Server-side state, such as response, item and container IDs, is judged by endpoint instead: see

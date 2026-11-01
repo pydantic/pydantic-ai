@@ -7,7 +7,9 @@ import inspect
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Self, cast
+from typing import Any, Literal, Self
+
+from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, ModelSelection, NativeOrLocalTool
@@ -41,6 +43,11 @@ def _caller_stacklevel() -> int:
     return stacklevel
 
 
+def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
+    """Narrow a run's model without losing its provider client type."""
+    return isinstance(model, Model)
+
+
 def _executor_service(model: AbstractModel) -> str:
     """The service the executor reaches, which decides the native advisor's model-ID namespace.
 
@@ -48,7 +55,7 @@ def _executor_service(model: AbstractModel) -> str:
     itself, such as a `claude-code` `AnthropicProvider`, still gets the Anthropic advisor. Not the
     model's, which `BedrockConverseModel` reports as `'anthropic'` for Claude's thinking signatures.
     """
-    provider = cast('Model[Any]', model).provider if isinstance(model, Model) else None
+    provider = model.provider if _is_request_response_model(model) else None
     return provider.canonical_system if provider is not None else model.system
 
 
