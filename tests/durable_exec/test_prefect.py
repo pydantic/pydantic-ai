@@ -70,6 +70,7 @@ from pydantic_ai.capabilities import (
     MCP,
     AbstractCapability,
     BatchModelRequests,
+    BinaryContent,
     Capability,
     DynamicCapability,
     Hooks,
@@ -2259,6 +2260,65 @@ async def test_cache_policy_hashes_tools_by_value_not_object_identity():
     assert key_for(shared_name, tools['side_effect']) == key_for(deserialized_name, tools['side_effect'])
     # The tool definition still forks the key: a different tool is a different cache entry.
     assert key_for(shared_name, tools['side_effect']) != key_for(shared_name, tools['other_effect'])
+
+
+def test_cache_policy_keys_a_binary_payload_by_value_not_object_sharing():
+    """A payload holding non-UTF-8 `bytes` must key by value, not by which objects it shares.
+
+    `hash_objects` tries Prefect's JSON serializer first, but its encoder dies on a non-UTF-8
+    `bytes` (`UnicodeDecodeError`), so the whole projected payload falls back to `cloudpickle`.
+    There the digest depends on object *sharing* — pickle emits memo references for repeats —
+    so two value-identical payloads hash differently: a first attempt carries one shared
+    string object (e.g. a recorded response's state) into several slots, while a retry
+    deserializes the recorded history into fresh equal objects. The model request then re-runs
+    on the retry instead of replaying its recorded result (#11943). Base64-encoding the binary
+    values walks the payload back onto the value-addressed JSON path.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(state_a: str, state_b: str, state_c: str) -> str | None:
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={
+                'logical_inputs': (
+                    [{'state': state_a}, {'state': state_b}],
+                    {'messages': [{'state': state_c}], 'prompt': 'follow up'},
+                    b'\xff\xfe',
+                ),
+            },
+            flow_parameters={},
+        )
+
+    # One shared object repeated, as a first attempt that reuses a recorded value does...
+    shared = ''.join(['com', 'plete'])
+    # ...vs equal values sharing no objects, as a retry deserialized from the result store does.
+    fresh = [''.join(['com', 'plete']) for _ in range(3)]
+
+    assert key_for(shared, shared, shared) == key_for(*fresh)
+    # Different values still fork the key.
+    changed = [''.join(['com', 'pletx']) for _ in range(3)]
+    assert key_for(shared, shared, shared) != key_for(*changed)
+
+
+def test_cache_policy_encodes_binary_content_by_value():
+    """`BinaryContent` in the message history must key by value and still fork on other content."""
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(binary: BinaryContent) -> str | None:
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={'messages': [ModelRequest(parts=[UserPromptPart(['look', binary])])]},
+            flow_parameters={},
+        )
+
+    shared = BinaryContent(data=b'\xff\xfe', media_type='image/png')
+    # An equal `BinaryContent` sharing no objects, as a deserialized retry history does.
+    deserialized = BinaryContent(data=b'\xff\xfe', media_type='image/png')
+
+    assert key_for(shared) == key_for(deserialized)
+    assert key_for(shared) != key_for(BinaryContent(data=b'\xfe\xff', media_type='image/png'))
 
 
 def test_dynamic_tool_cache_identity_includes_prepared_definition() -> None:

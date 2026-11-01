@@ -1,3 +1,4 @@
+from base64 import b64encode
 from collections.abc import Callable
 from dataclasses import fields, is_dataclass
 from typing import Any, TypeGuard
@@ -12,6 +13,40 @@ from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 _NON_SERIALIZABLE = '<non-serializable>'
+
+_BYTES_KEY = '__bytes_b64__'
+"""Marker key for binary values in a cache-key payload, value-addressed as base64."""
+
+
+def _bytes_to_b64(value: bytes | bytearray) -> dict[str, str]:
+    return {_BYTES_KEY: b64encode(value).decode('ascii')}
+
+
+def _replace_binary_content(value: Any) -> Any:
+    """Replace `bytes` and `bytearray` with a value-addressed base64 marker.
+
+    `hash_objects` tries Prefect's JSON serializer first, but that encoder cannot emit a raw
+    `bytes` (a non-UTF-8 one dies decoding it), so any payload that holds one falls through to
+    the `cloudpickle` fallback. On that path the digest depends on which objects the payload
+    *shares* — pickle emits memo references for repeats — not only on their values. A first
+    attempt may pass the same `BinaryContent` object around a payload that shares it, while a
+    flow retry deserializes the recorded history into fresh equal objects, so an
+    identity-sensitive key changes across attempts and the model request re-runs instead of
+    replaying its recorded result (#11943).
+
+    Base64-encoding the bytes walks the payload back onto the JSON path, where the digest is
+    value-addressed: equal bytes hash equally however the objects are shared, and different
+    bytes still fork the key. Recurses through the containers a projected payload nests them in.
+    """
+    if isinstance(value, bytes | bytearray):
+        return _bytes_to_b64(value)
+    if _is_dict(value):
+        return {key: _replace_binary_content(item) for key, item in value.items()}
+    if _is_list(value):
+        return [_replace_binary_content(item) for item in value]
+    if _is_tuple(value):
+        return tuple(_replace_binary_content(item) for item in value)
+    return value
 
 
 def _is_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
@@ -275,7 +310,7 @@ class PrefectAgentInputs(CachePolicy):
         inputs_with_hashable_context = _replace_run_context(inputs_without_toolset_tools)
         filtered_inputs = _strip_cache_excluded_fields(inputs_with_hashable_context)
 
-        return INPUTS.compute_key(task_ctx, filtered_inputs, flow_parameters, **kwargs)
+        return INPUTS.compute_key(task_ctx, _replace_binary_content(filtered_inputs), flow_parameters, **kwargs)
 
 
 DEFAULT_PYDANTIC_AI_CACHE_POLICY = PrefectAgentInputs() + TASK_SOURCE + RUN_ID
