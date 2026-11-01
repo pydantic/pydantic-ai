@@ -191,15 +191,21 @@ def function_schema(  # noqa: C901
             var_kwargs_schema = gen_schema.generate_schema(annotation)
         else:
             if p.kind == Parameter.VAR_POSITIONAL:
+                # `*args` can always be omitted at the call site (it binds an empty tuple), so it must not be a
+                # required field; an empty-list default makes it behave like `args: list[T] = []`.
+                # See https://github.com/pydantic/pydantic-ai/issues/8350
                 annotation = list[annotation]
+                default = []
+            else:
+                default = p.default
 
-            required = p.default is Parameter.empty
+            required = default is Parameter.empty
             # FieldInfo.from_annotated_attribute expects a type, `annotation` is Any
             annotation = cast(type[Any], annotation)
             if required:
                 field_info = FieldInfo.from_annotation(annotation)
             else:
-                field_info = FieldInfo.from_annotated_attribute(annotation, p.default)
+                field_info = FieldInfo.from_annotated_attribute(annotation, default)
             if field_info.description is None:
                 field_info.description = field_descriptions.get(field_name)
 
