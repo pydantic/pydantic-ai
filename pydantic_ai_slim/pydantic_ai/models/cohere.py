@@ -261,6 +261,9 @@ class CohereModel(Model[AsyncClientV2]):
                     category, status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
                 ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        except httpx.HTTPStatusError as e:
+            # A retrying transport raises this for a status it gave up on, and `cohere` lets it through unwrapped.
+            raise _model_errors.transport_status_error(self.model_name, e.response) from e
         except httpx.TransportError as e:
             # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
             timeout = isinstance(e, httpx.TimeoutException)

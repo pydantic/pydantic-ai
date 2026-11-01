@@ -11,10 +11,11 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | Python (also Node) | Python |
 | License | Apache-2.0 | MIT |
 | Model providers | Many (plugins) | [Many](../models/overview.md) |
-| Extensibility | Pipeline nodes (`stt_node`, `llm_node`, …) | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Pipeline nodes (`stt_node`, `llm_node`, …) | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
-| Durable execution | No | [Seven integrations](../durable_execution/overview.md) |
+| Enterprise support | With a [LiveKit Cloud plan](https://livekit.com/pricing) | [For the framework itself](../enterprise-support.md), no platform required |
+| Durable execution | No | [Eight integrations](../durable_execution/overview.md) |
 | Interfaces | WebRTC rooms, telephony, text sessions | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | Speech-to-speech and cascaded STT + LLM + TTS | [Speech-to-speech](../realtime/overview.md), five providers |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
@@ -100,3 +101,10 @@ async def summarize_call(session: AgentSession) -> CallSummary:
 ```
 
 Pydantic AI merges consecutive requests or responses, such as a spoken reply followed by a tool call, before sending the history to the model. Agent handoffs and configuration updates in the LiveKit history have no Pydantic AI equivalent and are skipped.
+
+*Last checked: 2026-10-26*
+
+## Sources
+
+- [LiveKit Agents documentation](https://docs.livekit.io/agents/)
+- [LiveKit voice AI quickstart](https://docs.livekit.io/agents/start/voice-ai/)

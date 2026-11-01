@@ -54,6 +54,7 @@ from pydantic_ai_harness.code_mode import (
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import ToolGuardrail
 from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_clai2.clai_docs import ClaiDocs
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
 from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.runtime.sandbox_calls import (
@@ -72,12 +73,14 @@ SPECULATIVE_TOOLS: Mapping[str, type[object]] = {
     'list_files': FileSystem,
     'read_file': FileSystem,
     'grep': FileSystem,
+    'search_clai_docs': ClaiDocs,
+    'read_clai_docs': ClaiDocs,
 }
 """Tools that are pure with respect to the workspace, so safe to start early, re-run, or discard,
 keyed to the capability that must provide them.
 
 A plugin or MCP tool can share one of these names when `Coder` is off, so the name alone does not
-vouch for it.
+vouch for it. CLAI's docs tools only read files shipped inside the installed packages.
 """
 
 NATIVE_TOOLS = frozenset({'write_file', 'edit_file'})

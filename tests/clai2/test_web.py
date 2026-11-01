@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
@@ -85,6 +86,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     image_id,
 )
+from pydantic_clai2.builtin_plugins.web.sidebar import project_names
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -92,7 +94,13 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
 from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.image_codec import decode_images
-from pydantic_clai2.runtime.project_identity import git_checkout, project_identity, worktree_roots
+from pydantic_clai2.runtime.project_identity import (
+    MISSING,
+    ProjectIdentity,
+    git_checkout,
+    project_identity,
+    worktree_roots,
+)
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 from pydantic_clai2.ui.menus.menu_worker import require_terminal
@@ -995,6 +1003,53 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
 
 
+def test_sidebar_tells_apart_projects_that_share_a_name(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Projects whose folders share a name each add the shortest end of their path that no other one shares.
+
+    A relative workspace an older CLAI saved has no more path to add, so it keeps its name.
+    """
+    web_ = make_web(Agent(TestModel()))
+    first, second, third = tmp_path / 'a' / 'scratch', tmp_path / 'b' / 'scratch', tmp_path / 'z' / 'a' / 'scratch'
+    git('init', '-b', 'main', str(first))
+    git('init', '-b', 'main', str(third))
+    second.mkdir(parents=True)
+    other = tmp_path / 'other'
+    other.mkdir()
+    workspaces = [('First', first.resolve()), ('Second', second.resolve()), ('Third', third.resolve())]
+    for title, workspace in [*workspaces, ('Other', other.resolve()), ('Relative', Path('scratch'))]:
+        summary = ConversationSummary(workspace=str(workspace), title=title)
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    web_.shell.session.workspace = str(first.resolve())
+
+    projects = web_.get('/api/sessions').json()
+    names = {project['worktrees'][0]['sessions'][0]['title']: project['name'] for project in projects}
+    assert names == {
+        'First': str(Path(tmp_path.resolve().name, 'a', 'scratch')),
+        'Second': str(Path('b', 'scratch')),
+        'Third': str(Path('z', 'a', 'scratch')),
+        'Other': 'other',
+        'Relative': 'scratch',
+    }
+
+
+def test_projects_of_one_folder_show_their_keys() -> None:
+    """Two projects of one folder, as when Git failed once while listing it, show their keys.
+
+    Removed folders keeps its name, which a real folder of that name adds its parent to.
+    """
+    repository = ProjectIdentity(key='/x/scratch/.git', name='scratch', root='/x/scratch', checkout='main')
+    fallback = ProjectIdentity(key='/x/scratch', name='scratch', root='/x/scratch')
+    removed = ProjectIdentity(key=MISSING, name='Removed folders', root='/gone', missing=True)
+    named = ProjectIdentity(key='/y/Removed folders', name='Removed folders', root='/y/Removed folders')
+    identities = {identity.key: identity for identity in (repository, fallback, removed, named)}
+    assert project_names(identities) == {
+        '/x/scratch/.git': '/x/scratch/.git',
+        '/x/scratch': '/x/scratch',
+        MISSING: 'Removed folders',
+        '/y/Removed folders': str(Path('y', 'Removed folders')),
+    }
+
+
 def test_sidebar_lists_removed_worktrees_after_live_ones(make_web: 'MakeWeb', tmp_path: Path) -> None:
     """A removed worktree comes after the project's live checkouts, even when its session is the newest."""
     web_ = make_web(Agent(TestModel()))
@@ -1092,6 +1147,76 @@ def test_new_session_offers_every_worktree_of_a_known_repository(
     assert shown('q=Main&include_worktrees=true') == [main]
     monkeypatch.setenv('PATH', '')
     assert shown('include_worktrees=true') == [main]
+
+
+def test_new_session_checks_out_a_new_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """`POST /api/worktrees` checks out a new branch in `.worktrees/`, as `clai2 --worktree` does, and New session lists it.
+
+    Without a branch the name is generated as `--worktree` generates it; Git's refusals come back as the error.
+    """
+    web_ = make_web(Agent(TestModel()))
+    repo = tmp_path / 'repo'
+    repository(repo, linked=tmp_path / 'wt' / 'feature', branch='feature')
+    git(
+        '-C',
+        str(repo),
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit',
+        '--allow-empty',
+        '-m',
+        'two',
+    )
+    main = repo.resolve()
+    summary = ConversationSummary(workspace=str(main), title='Main')
+    web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[]))
+
+    def add(body: dict[str, str]) -> tuple[int, str]:
+        response = web_.post('/api/worktrees', body)
+        return response.status_code, response.json()['root' if response.status_code == 200 else 'detail']
+
+    def output(*args: str) -> str:
+        return subprocess.run(['git', *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    status, root = add({'repo': str(repo), 'branch': 'feature-x', 'base': 'main~1'})
+    assert (status, root) == (200, str(main / '.worktrees' / 'feature-x'))
+    assert output('-C', root, 'branch', '--show-current') == 'feature-x'
+    assert output('-C', root, 'rev-parse', 'HEAD') == output('-C', str(repo), 'rev-parse', 'main~1')
+    assert output('-C', str(repo), 'status', '--porcelain') == '', 'the worktrees folder is excluded'
+    [project] = [p for p in web_.get('/api/sessions?include_worktrees=true').json() if p['name'] == 'repo']
+    assert ('feature-x', root) in [(w['label'], w['root']) for w in project['worktrees']]
+
+    # From inside a checkout, by default from its `HEAD`; a branch with a slash gets a flat folder.
+    (main / 'src').mkdir()
+    status, root = add({'repo': str(main / 'src'), 'branch': 'fix/y'})
+    assert (status, root) == (200, str(main / '.worktrees' / 'fix-y'))
+    assert output('-C', root, 'rev-parse', 'HEAD') == output('-C', str(repo), 'rev-parse', 'HEAD')
+    status, root = add({'repo': str(repo)})
+    assert status == 200 and re.fullmatch(r'worktree-[0-9a-f]{8}', Path(root).name)
+    assert output('-C', root, 'branch', '--show-current') == f'clai-{Path(root).name}'
+
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    assert add({'repo': str(repo), 'branch': 'feature'}) == (
+        400,
+        'Cannot create worktree: branch feature already exists. Pick another name.',
+    )
+    assert add({'repo': str(repo), 'branch': 'feature/x'}) == (
+        400,
+        f'Cannot create worktree: {main / ".worktrees" / "feature-x"} already exists. Pick another name.',
+    )
+    assert add({'repo': str(repo), 'branch': 'a..b'}) == (
+        400,
+        "Cannot create worktree: fatal: 'a..b' is not a valid branch name",
+    )
+    assert add({'repo': str(repo), 'branch': 'other', 'base': 'nowhere'}) == (
+        400,
+        f'nowhere is not a branch, tag, or commit in {main}.',
+    )
+    assert add({'repo': str(plain), 'branch': 'other'}) == (400, f'{plain} is not in a Git repository.')
+    assert add({'repo': 'relative'}) == (400, "Choose a directory by its absolute path, not 'relative'.")
 
 
 def test_new_session_completes_a_typed_path_with_its_repository_worktrees(make_web: 'MakeWeb', tmp_path: Path) -> None:

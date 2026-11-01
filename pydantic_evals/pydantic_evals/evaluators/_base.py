@@ -62,10 +62,15 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
             A JSON-serializable representation of this evaluator as an EvaluatorSpec.
         """
         return to_jsonable_python(
-            self.as_spec(),
+            self._serialization_spec(),
             context=info.context,
             serialize_unknown=True,
         )
+
+    def _serialization_spec(self) -> EvaluatorSpec:
+        # Pydantic always calls the serializer of the declared field type (e.g. `Evaluator`), never a subclass's own
+        # `model_serializer`, so this is where a subclass that can't be serialized raises.
+        return self.as_spec()
 
     def as_spec(self) -> EvaluatorSpec:
         raw_arguments = self.build_serialization_arguments()

@@ -459,6 +459,22 @@ HISTORY_CONTAINER_CASES = [
     HistoryContainerCase(
         'api-web-fetch', 'api', 'claude-sonnet-4-6', container_sent=True, native_tools=[WebFetchTool()]
     ),
+    HistoryContainerCase(
+        'api-web-search-direct',
+        'api',
+        'claude-sonnet-4-6',
+        container_sent=False,
+        native_tools=[WebSearchTool()],
+        model_settings={'anthropic_web_tools_allowed_callers': ['direct']},
+    ),
+    HistoryContainerCase(
+        'api-web-search-20250305-code-execution-caller',
+        'api',
+        'claude-sonnet-4-5',
+        container_sent=True,
+        native_tools=[WebSearchTool()],
+        model_settings={'anthropic_web_tools_allowed_callers': ['code_execution_20260120']},
+    ),
     HistoryContainerCase('bedrock', 'bedrock', 'us.anthropic.claude-sonnet-4-6', container_sent=False),
     HistoryContainerCase('vertex', 'vertex', 'claude-sonnet-4-6', container_sent=False),
     HistoryContainerCase('mantle', 'mantle', 'anthropic.claude-sonnet-4-6', container_sent=True),
@@ -483,8 +499,10 @@ async def test_anthropic_history_container_without_code_execution_by_client(
 ):
     """A request without code execution doesn't send the history container where the API is known to reject it.
 
-    That includes the container of a suspended response the run resumes. The `20260209` web tools count as code
-    execution, since Anthropic calls them from it by default. The direct API rejects the container. The Bedrock
+    That includes the container of a suspended response the run resumes. A web tool counts as code execution when
+    code execution may call it: a `20260209` version without `allowed_callers`, which Anthropic calls from code
+    execution by default, or any version whose `allowed_callers` names a code execution caller. One limited to
+    `['direct']` doesn't count. The direct API rejects the container. The Bedrock
     Messages API hasn't been verified, so it keeps sending it, and the legacy Bedrock, Vertex AI and Foundry clients
     don't send container ids at all. Tools passed in `extra_body` aren't read, so such a request sends it.
 

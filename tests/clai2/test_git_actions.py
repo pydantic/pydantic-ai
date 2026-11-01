@@ -51,6 +51,7 @@ if [ "$1 $2" = "auth token" ]; then
 fi
 if [ "$1 $2" = "pr create" ]; then
   cat > "$FAKE_GH_STATE/body"
+  env > "$FAKE_GH_STATE/gh-env"
   [ -f "$FAKE_GH_STATE/fail" ] && cat "$FAKE_GH_STATE/fail" >&2 && exit 1
   [ -f "$FAKE_GH_STATE/silent" ] && exit 0
   echo "Creating pull request for feature into main in octo/repo"
@@ -155,6 +156,23 @@ async def test_a_conflict_is_unmerged(repo: Path) -> None:
     assert status is not None
     assert status.files == [ChangedFile(path='notes.txt', status='U')]
     assert status.ahead == 1, 'main is ahead of origin/main'
+    # Unresolved, nothing is committed: staging it would record the conflict markers.
+    with pytest.raises(ValueError, match=r'Resolve the merge conflict in notes.txt before committing'):
+        await commit(repo, message='Merge other')
+    assert len(git(repo, 'log', '-1', '--format=%P').split()) == 1
+
+    # Resolved, the merge is finished only with every change, as Git allows.
+    (repo / 'notes.txt').write_text('both\n')
+    git(repo, 'add', 'notes.txt')
+    (repo / 'extra.txt').write_text('extra\n')
+    # Deleted in the working tree only: the merge commit records it too.
+    (repo / 'old.txt').unlink()
+    with pytest.raises(ValueError, match='A merge is in progress'):
+        await commit(repo, message='Merge other', files=['notes.txt'])
+    await commit(repo, message='Merge other')
+    assert len(git(repo, 'log', '-1', '--format=%P').split()) == 2
+    assert git(repo, 'show', 'HEAD:extra.txt') == 'extra\n'
+    assert 'old.txt' not in git(repo, 'ls-tree', '--name-only', 'HEAD').split()
 
 
 async def test_commit_only_the_chosen_files_then_the_chip_counts_the_commit(repo: Path) -> None:
@@ -277,6 +295,27 @@ async def test_a_failing_hook_says_why(repo: Path) -> None:
         await commit(repo, message='Change the notes')
 
 
+async def test_git_and_its_hooks_never_see_api_keys(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'sk-secret')
+    hook = repo / '.git' / 'hooks' / 'pre-commit'
+    hook.write_text(f'#!/bin/sh\nenv > "{repo.parent / "hook-env"}"\n')
+    hook.chmod(0o755)
+    (repo / 'notes.txt').write_text('changed\n')
+    await commit(repo, message='Change the notes')
+    seen = (repo.parent / 'hook-env').read_text()
+    assert 'GIT_TERMINAL_PROMPT=0' in seen
+    assert 'sk-secret' not in seen
+
+
+async def test_gh_never_sees_api_keys(repo: Path, gh_state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'sk-secret')
+    git(repo, 'checkout', '-q', '-b', 'feature')
+    assert await open_pull_request(repo, title='Feature', body='') == PR_URL
+    seen = (gh_state / 'gh-env').read_text()
+    assert 'FAKE_GH_STATE=' in seen
+    assert 'sk-secret' not in seen
+
+
 async def test_push_confirms_the_default_branch_and_sets_the_upstream(repo: Path) -> None:
     (repo / 'notes.txt').write_text('changed\n')
     await commit(repo, message='Change the notes')
@@ -324,6 +363,14 @@ async def test_pull_requests_need_github_and_a_signed_in_gh(
     )
     with pytest.raises(RuntimeError, match='not signed in'):
         await open_pull_request(repo, title='Feature', body='')
+    git(repo, 'remote', 'set-url', 'origin', 'https://gitlab.example.com/octo/repo.git')
+    status = await git_status(repo)
+    assert status is not None
+    assert status.pull_request == (
+        'The GitHub CLI is not signed in to gitlab.example.com; '
+        'if gitlab.example.com is a GitHub host, run gh auth login --hostname gitlab.example.com.'
+    )
+    git(repo, 'remote', 'set-url', 'origin', GITHUB)
 
     def locked(host: str) -> str | None:
         raise UserError('gh auth token did not answer within 10 seconds.')
@@ -408,6 +455,15 @@ async def test_a_workspace_gone_while_git_runs_is_reported_gone(tmp_path: Path) 
         await run(tmp_path, str(program))
 
 
+async def test_a_branch_tracking_another_one_is_pushed_under_its_own_name(repo: Path, gh_state: Path) -> None:
+    git(repo, 'checkout', '-q', '-b', 'feature', '--track', 'origin/main')
+    status = await git_status(repo)
+    assert status is not None
+    assert (status.upstream, status.ahead, status.pull_request) == ('origin/main', 0, None)
+    assert await open_pull_request(repo, title='Feature', body='') == PR_URL
+    assert git(repo, 'ls-remote', str(repo.parent / 'remote.git'), 'refs/heads/feature').strip()
+
+
 async def test_run_failures(tmp_path: Path) -> None:
     with pytest.raises(GitError, match=r'sleep 5 did not finish within 0.01 seconds'):
         await git_actions._run(tmp_path, 'sleep', '5', timeout=0.01)  # pyright: ignore[reportPrivateUsage]
@@ -471,9 +527,11 @@ async def test_draft_a_commit_message_before_the_first_commit(tmp_path: Path, gh
     subprocess.run(['git', 'init', '-b', 'main', str(fresh)], check=True, capture_output=True)
     (fresh / 'first.txt').write_text('first\n')
     git(fresh, 'add', 'first.txt')
+    # Edited after staging: the commit takes this, so the draft shows it.
+    (fresh / 'first.txt').write_text('first\nlater\n')
     drafter = Drafter(fenced=False)
     assert await draft_commit_message(fresh, model=drafter.resolved) == 'Edit the notes\n\nAnd add one.'
-    assert '+first' in drafter.prompts[-1]
+    assert '+later' in drafter.prompts[-1]
 
 
 async def test_draft_a_pull_request_from_the_branch(repo: Path, tmp_path: Path) -> None:
@@ -513,6 +571,8 @@ async def test_commands(repo: Path, gh_state: Path) -> None:
     commands = {command.name: command for command in git_commands(workspace=lambda: repo, model=drafter.resolved)}
     assert commands['push'].complete([]) == ('confirm',)
     assert commands['push'].complete(['confirm', 'x']) == ()
+    assert commands['pr'].complete([]) == ('confirm',)
+    assert commands['pr'].complete(['confirm', 'x']) == ()
 
     async def run(name: str, *args: str) -> str:
         result = commands[name].handler(list(args))
@@ -534,10 +594,27 @@ async def test_commands(repo: Path, gh_state: Path) -> None:
     (repo / 'notes.txt').write_text('feature\n')
     await run('commit', 'Feature')
     assert await run('push') == 'Pushed feature to origin.\nfeature: 0 changed, 0 ahead'
-    assert await run('pr') == f'Opened {PR_URL}'
+    # Nothing is published unseen: bare `/pr` only shows the draft that `/pr confirm` then opens.
+    with pytest.raises(ValueError, match='Run /pr first'):
+        await run('pr', 'confirm')
+    assert await run('pr') == (
+        'Add a feature\n\nIt adds one.\n\n/pr confirm opens this pull request; /pr TITLE opens it with another title.'
+    )
+    assert not any(call.startswith('pr create') for call in calls(gh_state))
+    assert await run('pr', 'confirm') == f'Opened {PR_URL}'
     assert calls(gh_state)[-1] == 'pr create --head=feature --title=Add a feature --body-file=-'
+    with pytest.raises(ValueError, match='Run /pr first'):
+        await run('pr', 'confirm')
+    # A draft is for the branch it was shown on.
+    await run('pr')
+    git(repo, 'checkout', '-q', '-b', 'other')
+    with pytest.raises(ValueError, match='The branch changed'):
+        await run('pr', 'confirm')
+    git(repo, 'checkout', '-q', 'feature')
+    await run('pr')
     assert await run('pr', 'My title') == f'Opened {PR_URL}'
     assert calls(gh_state)[-1] == 'pr create --head=feature --title=My title --body-file=-'
+    assert (gh_state / 'body').read_text() == 'It adds one.'
 
 
 def test_a_plugins_own_git_command_takes_over() -> None:

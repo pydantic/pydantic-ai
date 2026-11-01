@@ -166,15 +166,15 @@ async def test_a_slow_notice_outlives_the_naming_timeout(tmp_path: Path) -> None
     summary = await store.save(
         summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart('fix renderer')])]
     )
-    entered, release, done = anyio.Event(), anyio.Event(), anyio.Event()
+    done = anyio.Event()
     notified: list[tuple[str, str]] = []
+    deadlines: list[float] = []
 
     async def generate(prompt: str) -> NamingResult:
         return NamingResult(name=SessionName(title='Fix renderer'))
 
     async def on_named(conversation_id: str, title: str) -> None:
-        entered.set()
-        await release.wait()
+        deadlines.append(anyio.current_effective_deadline())
         notified.append((conversation_id, title))
         done.set()
 
@@ -182,21 +182,20 @@ async def test_a_slow_notice_outlives_the_naming_timeout(tmp_path: Path) -> None
         summary=ConversationSummary(workspace='/a', title_source='user'),
         messages=[ModelRequest(parts=[UserPromptPart('keep my title')])],
     )
-    namer, client = SessionNamer(store=store, timeout=0.01), NamingClient(generate=generate)
+    namer, client = SessionNamer(store=store, timeout=5), NamingClient(generate=generate)
     namer.listeners.append(on_named)
     # A conversation that needs no name saves nothing, so the shell hears nothing about it.
     assert namer.submit(named_by_user.id, client=client)
     assert namer.submit(summary.id, client=client)
     with anyio.fail_after(10):
+        outer = anyio.current_effective_deadline()
         async with anyio.create_task_group() as group:
             group.start_soon(namer.run)
-            # Hold the notice, once it is waiting, past the naming timeout.
-            await entered.wait()
-            await anyio.sleep(0.05)
-            release.set()
             await done.wait()
             group.cancel_scope.cancel()
     assert notified == [(summary.id, 'Fix renderer')]
+    # The notice runs outside the naming timeout, under only its caller's deadline, so holding it costs nothing.
+    assert deadlines == [outer]
 
 
 async def test_one_worker_names_each_conversation_with_the_model_of_the_session_that_queued_it(
@@ -342,3 +341,63 @@ async def test_templated_sessions_get_their_own_titles_not_the_prompt_prefix(tmp
         named = await store.get(conversation_id=(await store.save(summary=named.summary, messages=named.messages)).id)
     assert await namer.name(conversation_id=named.summary.id, client=client)
     assert prompts[-1].startswith('Previous title: Fix issue 11281\n')
+
+
+async def test_templated_sessions_in_one_workspace_get_titles_that_differ_beyond_case(tmp_path: Path) -> None:
+    """Prompts differing only in their last word must not end up with titles differing only in case."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    template = 'Templated stress prompt for round three of the web UI test, please answer with exactly one word: {}'
+    elsewhere = await store.save(
+        summary=ConversationSummary(workspace='/elsewhere'),
+        messages=[ModelRequest(parts=[UserPromptPart(template.format('charlie'))])],
+    )
+    sessions = [
+        await store.save(
+            summary=ConversationSummary(workspace='/a'),
+            messages=[ModelRequest(parts=[UserPromptPart(template.format(word))])],
+        )
+        for word in ('alpha', 'bravo', 'delta')
+    ]
+    prompts: list[str] = []
+    styles = iter(
+        ['Web UI Stress Test Round Three', 'Web UI stress test round three', 'web ui stress test round three']
+    )
+
+    async def generate(prompt: str) -> NamingResult:
+        """Like the model in the report: drops the distinguishing word, in whatever casing."""
+        prompts.append(prompt)
+        return NamingResult(name=SessionName(title=next(styles, 'Web UI stress test round three')))
+
+    namer, client = SessionNamer(store=store), NamingClient(generate=generate)
+    assert await namer.name(conversation_id=elsewhere.id, client=client)
+    for summary in sessions:
+        assert await namer.name(conversation_id=summary.id, client=client)
+    titles = [(await store.get(conversation_id=s.id)).summary.title for s in sessions]
+    assert titles == [
+        'Web UI stress test round three',
+        'web ui stress test round three (2)',
+        'Web UI stress test round three (3)',
+    ]
+    # The namer is told its siblings' titles in this workspace, and only those, so it can tell them apart.
+    assert 'Web UI Stress Test Round Three' not in prompts[1]
+    assert '- Web UI stress test round three\n' in prompts[2]
+    assert '- web ui stress test round three (2)\n' in prompts[3]
+
+
+async def test_titles_stay_distinct_behind_many_newer_sessions_elsewhere(tmp_path: Path) -> None:
+    """A workspace's siblings are found however many newer sessions other workspaces have."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    messages = [ModelRequest(parts=[UserPromptPart('fix renderer')])]
+    first = await store.save(summary=ConversationSummary(workspace='/a'), messages=messages)
+    second = await store.save(summary=ConversationSummary(workspace='/a'), messages=messages)
+    for _ in range(200):
+        await store.save(summary=ConversationSummary(workspace='/elsewhere'), messages=[])
+
+    async def generate(prompt: str) -> NamingResult:
+        return NamingResult(name=SessionName(title='Fix renderer'))
+
+    namer, client = SessionNamer(store=store), NamingClient(generate=generate)
+    assert await namer.name(conversation_id=first.id, client=client)
+    assert await namer.name(conversation_id=second.id, client=client)
+    titles = [(await store.get(conversation_id=s.id)).summary.title for s in (first, second)]
+    assert titles == ['Fix renderer', 'Fix renderer (2)']

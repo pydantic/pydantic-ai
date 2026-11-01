@@ -8,6 +8,7 @@ import functools
 import inspect
 import random
 import threading
+import uuid
 import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextvars import ContextVar
@@ -220,6 +221,12 @@ def _should_evaluate(
     return random.random() < resolved
 
 
+def may_sample(online_eval: OnlineEvaluator, config: OnlineEvalConfig) -> bool:
+    """Whether the evaluator's sample rate leaves any chance of it being sampled."""
+    rate = _resolve_sample_rate_field(online_eval, config)
+    return callable(rate) or rate > 0
+
+
 def evaluation_allowed(config: OnlineEvalConfig) -> bool:
     """Whether `config` allows evaluation here, apart from the check for an enclosing task run."""
     return config.enabled and not EVALUATION_DISABLED.get()
@@ -317,6 +324,7 @@ async def _run_and_collect(
     target: str,
     config: OnlineEvalConfig,
     group: _SinkGroup,
+    scoring_run_id: str,
 ) -> None:
     """Run a single evaluator, emit its OTel events, and stash the outcome on the group.
 
@@ -368,6 +376,7 @@ async def _run_and_collect(
                     results=results,
                     failures=failures,
                     target=target,
+                    scoring_run_id=scoring_run_id,
                     include_baggage=config.include_baggage,
                 )
             except Exception as exc:  # pragma: no cover
@@ -442,6 +451,10 @@ async def dispatch_evaluators(
     if not groups:
         return
 
+    # One scoring pass per target call: every event this dispatch emits shares this id,
+    # regardless of which sink group its evaluator landed in.
+    scoring_run_id = str(uuid.uuid4())
+
     # Phase 1: run every evaluator in parallel, collecting outcomes into their group.
     async with anyio.create_task_group() as eval_tg:
         for group in groups.values():
@@ -455,6 +468,7 @@ async def dispatch_evaluators(
                         target,
                         config,
                         group,
+                        scoring_run_id,
                     )
                 )
 

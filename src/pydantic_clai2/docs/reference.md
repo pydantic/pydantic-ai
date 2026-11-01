@@ -9,7 +9,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 - [Models and accounts](#models-and-accounts): [Models and their settings](#models-and-their-settings), [Codex authentication](#codex-authentication), [GitHub Copilot subscriptions](#github-copilot-subscriptions), [vllm connection](#vllm-connection), [openrouter connection](#openrouter-connection), [Saved API keys](#saved-api-keys), [Usage and cost](#usage-and-cost)
 - [The prompt](#the-prompt): [Prompt area](#prompt-area), [Pasting images](#pasting-images), [Input history](#input-history), [Word deletion](#word-deletion), [Undo and redo](#undo-and-redo), [Option keys on macOS](#option-keys-on-macos), [Interrupting a turn](#interrupting-a-turn), [Rewinding a conversation](#rewinding-a-conversation), [Shell commands with !](#shell-commands-with-)
 - [Output](#output): [How tool calls look](#how-tool-calls-look), [Streaming](#streaming), [Code highlighting](#code-highlighting), [Grep previews](#grep-previews), [Shell preview limit](#shell-preview-limit), [Tool details](#tool-details), [Status line](#status-line), [Themes](#themes), [Spinners](#spinners)
-- [The agent](#the-agent): [Your instructions: /system_prompt](#your-instructions-system_prompt), [Code mode and speculative execution](#code-mode-and-speculative-execution), [Questions from the model](#questions-from-the-model), [Compacting the conversation](#compacting-the-conversation), [Task delegation](#task-delegation), [Ask CLAI to customize itself](#ask-clai-to-customize-itself)
+- [The agent](#the-agent): [Your instructions: /system_prompt](#your-instructions-system_prompt), [Code mode and speculative execution](#code-mode-and-speculative-execution), [Questions from the model](#questions-from-the-model), [Compacting the conversation](#compacting-the-conversation), [Task delegation](#task-delegation), [Ask CLAI about itself](#ask-clai-about-itself)
 - [Sessions](#sessions): [Saved sessions and /resume](#saved-sessions-and-resume), [Background forks: /fork](#background-forks-fork), [Git worktrees](#git-worktrees), [Several sessions in the web UI](#several-sessions-in-the-web-ui)
 - [Plugins and integrations](#plugins-and-integrations): [Plugins](#plugins), [Built-in plugins at a glance](#built-in-plugins-at-a-glance), [MCP servers: /mcp](#mcp-servers-mcp), [Desktop notifications](#desktop-notifications), [Herdr integration](#herdr-integration), [Agent of Empires integration](#agent-of-empires-integration), [Telemetry and references](#telemetry-and-references)
 - [Using CLAI from code](#using-clai-from-code): [Your own agent](#your-own-agent), [Headless mode](#headless-mode), [The stock agent in your own code](#the-stock-agent-in-your-own-code), [Bring an agent](#bring-an-agent)
@@ -48,7 +48,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
-| `/pr [TITLE]` | Push the branch and open a GitHub pull request with `gh`; the model drafts its description |
+| `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer CLAI is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
 | `/reload` | Reload CLAI's own code without restarting |
 | `/exit` | Quit |
@@ -105,6 +105,9 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `sessions.naming` | `true` | Name saved sessions in the background using a model. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
+| `repo_context.walk_up_root` | `~` | User-only inclusive stop for instruction autoload when the plugin's `walk_up` is on. |
+| `repo_context.autoload_symlink_roots` | `[]` | User-only JSON list of authorized external instruction-symlink target directories, for autoload only. |
+| `worktrees.remove_commands` | `{}` | User-only repository-to-argv map for confirmed exit cleanup. See [Register a worktree removal command](#register-a-worktree-removal-command). |
 
 ### Environment variables at a glance
 
@@ -269,9 +272,10 @@ an interactive session, which installs after CLAI exits. The flag cannot be comb
 `--fork-session`.
 
 `/update now` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
-typed in the page or in the terminal: the page shows uv's progress and the result. After
-an install, CLAI restarts with the web UI on the same port and token, so the page
-reconnects by itself and names the new version. `clai2 --web` keeps `--web`, `--port`,
+typed in the page or in the terminal: the page shows uv's progress, over Settings too while
+it is open, and the result. After an install, CLAI restarts with the web UI on the same port
+and token, so the page reconnects by itself and names the new version, and Settings › About
+names the versions it updated from and to. `clai2 --web` keeps `--web`, `--port`,
 and `--token-file`; a terminal session that ran `/web` comes back with the web UI running.
 Like any command, `/update now` entered while a turn runs waits for the turn to end.
 
@@ -397,6 +401,8 @@ and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
 first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
+For instruction-loading settings, see [Repository instructions](#repository-instructions).
+
 `plugins` takes the module declarations used by `/plugins add NAME module[:Class] [JSON]`: an `id`, a `factory`
 (`module` or `module:attr`), an optional `path`, and optional `settings`. A
 relative `path` is relative to the folder that holds `.clai`, whichever
@@ -435,6 +441,35 @@ built-in `repo_context` plugin (harness `RepoContext`), which is separate from
 the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
+
+### Repository instructions
+
+By default, `repo_context` reads only the workspace's `CLAUDE.md` and `AGENTS.md`.
+Enable its existing `walk_up` option to read ancestors too:
+
+```text
+/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
+/set repo_context.walk_up_root /srv/projects
+/set repo_context.autoload_symlink_roots '["~/agent-context"]'
+```
+
+`walk_up` defaults to `false`; setting a root does not turn it on. When enabled,
+it reads ancestors up to `repo_context.walk_up_root`, inclusive (`~`, your home,
+by default). A root outside the workspace's ancestors leaves only the workspace
+scanned. `repo_context.autoload_symlink_roots` defaults to `[]`; set it to a JSON
+list of directories if your instruction files are symlinks into a shared directory.
+
+Both settings are user-only, not plugin JSON options; `.clai/settings.json`
+rejects their fields. Use absolute paths, `~`, or `~/...`, not relative paths,
+`~other-user`, or environment-variable interpolation. Quote paths containing
+spaces, such as `/set repo_context.walk_up_root '/srv/My Projects'`, and
+single-quote the whole JSON list as above. Paths are normalized when used and
+need not exist when saved. Changes apply on the next run, not during a running turn.
+
+Authorize a directory holding only trusted instructions, not `/` or all of home:
+repository symlinks can select any readable file beneath it. See
+[Repo Context](../../../docs/harness/repo-context.md#shared-instruction-symlinks)
+for symlink loading, scope, and backend requirements.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
@@ -594,8 +629,9 @@ control say so. Like `/fast`, `/effort` waits for the current turn to finish.
 `/commit [MESSAGE]` stages and commits every change in the session's directory;
 without MESSAGE the session's model drafts one from the changes. `/push` runs
 `git push -u origin BRANCH`; on the default branch it asks for `/push confirm`.
-`/pr [TITLE]` pushes the branch and opens a GitHub pull request with `gh`, the
-model drafting its description (and title, without TITLE). The web UI's git chip
+`/pr` shows a pull request title and description the model drafts from the
+branch; `/pr confirm` then pushes the branch and opens exactly that with `gh`,
+and `/pr TITLE` does so with your title instead. The web UI's git chip
 does the same, with a file list and the drafts to edit first. A plugin's own
 `/commit`, `/push`, or `/pr` replaces these; a skill of the same name is hidden
 by them, and CLAI says so.
@@ -917,6 +953,15 @@ instead of falling back, so a missing login is not hidden. Older CLAI builds kee
 the rest of your settings, but cannot run a profile, `@*`, `@default`, or chain
 model, and run a model without an account on the default account only.
 
+### Long subscription retry waits
+
+With a `claude-code:` model, when Claude asks CLAI to wait more than a minute before
+retrying (usually because your subscription limit was reached), CLAI shows the error
+at once instead of waiting silently. The error says about how long Claude asked you
+to wait. Try again later, or pick another model or a chain with `/model`.
+
+For response-header details, see the [plugin contract](../PLUGINS.md#run-models-under-your-own-prefix-get_model_providers).
+
 ### vllm connection
 
 Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks. The connection is saved like Codex's, see [Codex authentication](#codex-authentication).
@@ -1022,6 +1067,10 @@ for wrapped or pasted text, not to fill the terminal. Text pastes of five or mor
 lines, or at least 1,000 characters, display as `[paste N lines]`. The full text
 is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
+Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
+accent colour, with the prompt text in bold. This keeps your prompts apart from
+answers. Steering messages, commands entered during a turn, and prompts restored by
+`/resume` look the same.
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders and no prompt marker, so they cannot drift out of alignment.
@@ -1708,11 +1757,11 @@ While the model writes:
 
 - **Eager execution** runs each complete statement as soon as it has streamed,
   so a slow `shell` build or test starts before the snippet is finished.
-- **Speculation**, only while its switch is on, starts `list_files`, `read_file`, and `grep`
-  calls whose arguments are all literals the
+- **Speculation**, only while its switch is on, starts `list_files`, `read_file`, `grep`,
+  `search_clai_docs`, and `read_clai_docs` calls whose arguments are all literals the
   moment their line has streamed. Only these
   read-only tools speculate, because an early call may belong to a branch the
-  snippet never takes. They must come from CLAI's own file tools: a
+  snippet never takes. They must come from CLAI's own file and docs tools: a
   plugin or MCP tool with the same name, or one that declares itself read-only,
   waits like any other call. Writes and shell commands never start speculatively.
 
@@ -2126,23 +2175,43 @@ read, so with one loaded the catalog is read from the project directory. If that
 plugin does run the agent in a sandbox, the skills' directories are paths on this
 machine that the sandbox may not reach.
 
-### Ask CLAI to customize itself
+### Ask CLAI about itself
 
-Ask, for example, "Create a plugin with a custom menu" or "Use my model provider".
-The default agent lists CLAI's customization guide as the deferred capability
-`clai_customization`, one line in the catalog of capabilities the model can load
-with `load_capability`. The guide is bundled with the installed package and read
-only when the model loads it, not included in every prompt. No network access or
-source checkout is needed to read it.
+Ask, for example, "How do saved API keys work?", "Create a plugin with a custom
+menu", or "Use my model provider". The default agent lists `clai_customization`
+as a deferred capability in its catalog, one line until the model calls
+`load_capability` to reveal two docs tools. The loaded capability gives the model
+a short instruction to use these docs for questions about CLAI, and to read the
+customization guide before advising on customizing CLAI.
 
-It covers plugin installation and reload, hooks, tools, settings, commands,
-rendering, custom TUI menus, and model/provider launchers. It distinguishes plugin
-APIs from UI changes that currently need a CLAI source change. This is guidance,
-not an automatic installer or a permission boundary: plugins execute trusted Python
-as your user. Review generated plugins before enabling them.
+- `search_clai_docs(query)` returns the best matching sections, each with its path
+  and a short snippet.
+- `read_clai_docs(path)` lists the docs when `path` is empty, returns a doc such as
+  `reference` or `harness/coder`, or one section such as
+  `reference#saved-api-keys`, with its subsections. A doc over 50,000 characters
+  comes back as an outline of section paths instead, so a long doc like this
+  reference is read a section at a time. A section over the limit returns its own
+  text (truncated if needed) and an outline of any subsections. Section paths are
+  the docs' own heading anchors.
 
-Custom agents are unchanged. To offer the same guide, add
-`customization_guide()` from `pydantic_clai2.customization` to their capabilities.
+The docs are this reference, the [README](../README.md), the
+[plugin contract](../PLUGINS.md), the customization guide, the
+[declarative plugins](declarative-plugins.md) design note, and the README of each
+Pydantic AI Harness capability CLAI uses, such as `harness/shell` and
+`harness/subagents`. They ship with the installed packages and are read only when a
+tool is called, never included in every prompt or loaded capability. No network
+access or source checkout is needed.
+
+The customization guide covers plugin installation and reload, hooks, tools,
+settings, commands, rendering, custom TUI menus, and model/provider launchers. It
+distinguishes plugin APIs from UI changes that currently need a CLAI source change.
+This is guidance, not an automatic installer or a permission boundary: plugins
+execute trusted Python as your user. Review generated plugins before enabling them.
+
+A custom agent can opt in by adding `ClaiDocs()` from `pydantic_clai2.clai_docs`
+to its capabilities. `customization_guide()` from
+`pydantic_clai2.customization`, which previously loaded the whole guide as
+instructions, now returns `ClaiDocs()` and uses the same deferred catalog entry.
 See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions
@@ -2322,7 +2391,10 @@ The worker uses up to 2,400 characters of recent user/assistant text, plus the
 previous summary once a model has generated one. Until then, the fallback title
 is not offered as a name to keep. When the conversation is longer than that
 text, its first 400 characters are sent as well, so sessions begun from one
-template are told apart. It refreshes generated names after 16 content
+template are told apart. The worker is also given the titles of the other
+sessions in the same workspace, and asked for a sentence-case title that differs
+from them; a title one of them already has, in any letter case, is numbered, as
+in `Fix renderer (2)`. It refreshes generated names after 16 content
 revisions; revisions, unlike message offsets, survive compaction. This is a
 bounded current summary, not a lossless incremental transcript archive. Opening
 the browser backfills up to ten eligible sessions. Queue length, request count,
@@ -2463,13 +2535,61 @@ unchanged worktree that CLAI reopened, or one you launched inside, is kept witho
 asking.
 
 If the worktree changed, CLAI asks whether to remove its checkout. Enter, Ctrl-C,
-or EOF keeps it; only `y` or `yes` confirms removal, and the branch is kept. Git
-removal runs without `--force`, so dirty or locked worktrees are kept with an
-explanation. The main checkout is never removed. Headless runs, piped input, and
-startup errors keep the worktree without prompting. `/new`, `/resume`, and `/reload` do not remove the checkout:
+or EOF keeps it; only `y` or `yes` confirms removal. By default, removal keeps
+the branch and uses Git without `--force`, so dirty or locked worktrees are kept
+with an explanation. You can register a user-only removal command for an exact
+repository in `config.db` with the `worktrees.remove_commands` user setting; when
+unset or empty (`{}`), removal uses Git. See
+[Register a removal command](#register-a-worktree-removal-command). The command runs
+only after this explicit confirmation, from outside the target checkout, and CLAI
+considers it successful only if the checkout is actually gone. The main checkout is never
+removed. Headless runs, piped input, and startup errors keep the worktree without
+prompting. `/new`, `/resume`, and `/reload` do not remove the checkout:
 they leave the shell using the same working directory.
 Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to continue a saved session.
 `--worktree` cannot be combined with `--resume`, `--continue`, `config`, or `plugins`.
+
+#### Register a worktree removal command
+
+For a repository where Git cannot perform the cleanup you want, set
+`worktrees.remove_commands` in your user settings. It maps the repository's
+canonical absolute Git common directory to a nonempty argv list. Find the key
+with `git rev-parse --path-format=absolute --git-common-dir` inside that repository.
+The match is exact, with no wildcards. Keys resolving to the same directory are
+rejected rather than silently choosing one command. For example:
+
+```sh
+clai2 config set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["/absolute/path/to/cleanup-worktree", "{path}", "{branch}"]}'
+```
+
+The executable is your own cleanup program. Only whole argv tokens are
+substituted: `{path}` is the absolute target checkout, `{branch}` is its current
+branch (empty when detached), and `{repo}` is Git's main-worktree location: the
+parent of a non-bare `.git` directory, or the common directory for other layouts.
+Embedded placeholders such as
+`--worktree={path}` are rejected; pass `"--worktree", "{path}"` instead. CLAI does
+not invoke a shell or expand variables.
+
+To call a user-defined shell function, explicitly invoke its shell. For example,
+a zsh function named `cleanup_worktree` could use this argv:
+
+```json
+["zsh", "-ic", "cleanup_worktree \"$1\"", "clai2-remove", "{branch}"]
+```
+
+Interactive zsh loads your rc files, adding startup overhead and possibly output.
+The branch reaches the function as `$1`; CLAI never inserts it into shell text.
+Neither the function nor the cleanup program above ships with CLAI.
+
+CLAI warns that the command may delete the branch and uncommitted files before
+asking for confirmation. The command inherits stdin, stdout, stderr, and the
+terminal, has no timeout, and can be interrupted with Ctrl-C. A command failure
+does not fall back to Git. If the saved configuration cannot be read or validated
+on exit, CLAI warns and offers the existing Git cleanup prompt instead. If Git
+metadata cannot be read to prepare a registered command, CLAI keeps the checkout
+and reports the error. `.clai/settings.json` cannot set `worktree_remove_commands`;
+CLAI refuses to start if it does. Automatic removal of unchanged worktrees and
+`/workspaces destroy` continue to use Git.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
 original repository root. Without `--force`, Git refuses to remove a dirty worktree:
@@ -2496,8 +2616,14 @@ queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
 asks which folder, offering every worktree of the repositories it has sessions in,
-and completing a typed path to any directory, with every worktree of each repository it finds;
-with `/web`, it starts in the folder of the session you are looking at.
+and completing a typed path to any directory, with every worktree of each repository it finds.
+**New worktree…**, on a folder's row or below the list for the row the arrow keys
+select, checks out a new branch of that folder's repository
+first, from the base you name (by default its `HEAD`), in `.worktrees/` as
+[`--worktree`](#git-worktrees) does, and starts the session there; without a branch
+name, it makes `clai-NAME` with a generated NAME. The worktree stays when the
+session closes. With `/web`, New session starts in the folder of the session you are
+looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
 
@@ -2918,6 +3044,9 @@ leave content out by default, so the team gets UX telemetry and timing; turn on
 
 The plugin owns an isolated Logfire instance. Disable, reload, or exit flushes
 and shuts down that instance without shutting down application-global providers.
+CLAI waits at most three seconds for this, then warns that some telemetry may
+not have been sent and lets cleanup finish in the background. If an export is
+stuck, OpenTelemetry can still delay CLAI's exit.
 The existing global propagator is preserved. Logfire's SDK may install shared
 executor context-propagation helpers; those SDK hooks are not removed on unload.
 The plugin does not mutate a supplied agent. While enabled, its explicit per-run

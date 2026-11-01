@@ -110,6 +110,28 @@ def _run_step(
         path = tmp_path / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
+    subprocess.run(['git', 'add', '--all'], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            'git',
+            '-c',
+            'user.name=Test',
+            '-c',
+            'user.email=test@example.com',
+            '-c',
+            'core.hooksPath=/dev/null',
+            'commit',
+            '--quiet',
+            '-m',
+            'Base attributes',
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    base = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=tmp_path, capture_output=True, text=True, check=True)
+    helper = tmp_path / '.github' / 'scripts' / 'pr_size.sh'
+    helper.parent.mkdir(parents=True, exist_ok=True)
+    helper.write_text((WORKFLOW.parents[1] / 'scripts' / 'pr_size.sh').read_text(encoding='utf-8'), encoding='utf-8')
     gh = tmp_path / 'gh'
     gh.write_text(FAKE_GH, encoding='utf-8')
     gh.chmod(0o755)
@@ -126,6 +148,7 @@ def _run_step(
             **os.environ,
             'PATH': f'{tmp_path}{os.pathsep}{os.environ["PATH"]}',
             'GH_TOKEN': 'fake-token',
+            'BASE_SHA': base.stdout.strip(),
             'FAKE_STATE': str(tmp_path),
             'FAKE_FILE_PAGES': json.dumps(pages),
             **(overrides or {}),
@@ -195,6 +218,7 @@ def test_label_updates(tmp_path: Path, script: str, initial_sizes: list[str], wr
             97,  # 80 code + floor(25 docs / 2) + floor(11 tests / 2).
             'size: S',
         ),
+        ([('tests/README.md', 200, 0)], 100, 'size: S'),
     ],
 )
 def test_scoring(tmp_path: Path, script: str, files: list[tuple[str, int, int]], score: int, target: str):
@@ -255,6 +279,7 @@ def test_stale_event_labels(tmp_path: Path, script: str):
 @pytest.mark.parametrize(
     ('overrides', 'expected_calls'),
     [
+        ({'BASE_SHA': ''}, [f'GET {PULL}/files']),
         ({'FAKE_FAILURE': 'files'}, [f'GET {PULL}/files']),
         ({'GIT_DIR': '/nonexistent-size-label-repository'}, [f'GET {PULL}/files']),
         ({'FAKE_FILE_RESPONSE': 'not json'}, [f'GET {PULL}/files']),
@@ -336,7 +361,9 @@ def test_attribute_overrides(tmp_path: Path, script: str):
 def test_generated_paths_on_later_pages(tmp_path: Path, script: str):
     """Handle deleted or new paths, shell metacharacters and NUL-delimited Git output."""
     filenames = ['new file.js', 'quote".js', 'line\nbreak.js', '$(touch injected).js', '-option.js', 'café.js']
-    changes: list[ChangedFile] = [{'filename': filename, 'additions': 1000, 'deletions': 1000} for filename in filenames]
+    changes: list[ChangedFile] = [
+        {'filename': filename, 'additions': 1000, 'deletions': 1000} for filename in filenames
+    ]
     result = _run_step(
         tmp_path,
         script,
@@ -352,11 +379,44 @@ def test_generated_paths_on_later_pages(tmp_path: Path, script: str):
     assert not (tmp_path / 'injected').exists()
 
 
+def test_base_edit_recalculates_the_size_label(tmp_path: Path, script: str):
+    """A changed base diff recovers its matching label without a push or manual edit."""
+    changes: list[ChangedFile] = [{'filename': 'src/code.py', 'additions': 101, 'deletions': 0}]
+    result = _run_step(tmp_path, script, ['size: S'], [changes])
+    assert result.process.returncode == 0, result.process.stderr
+    assert result.labels == ['size: M']
+    assert result.calls[-2:] == [f'DELETE {LABELS}/size: S', f'POST {LABELS}']
+
+
 def test_trusted_checkout():
     """Pin declarations to base code without persisting the privileged token."""
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding='utf-8'))
     steps = workflow['jobs']['size-label']['steps']
 
     assert steps[0]['uses'].startswith('actions/checkout@')
-    assert steps[0]['with'] == {'ref': '${{ github.event.pull_request.base.sha }}', 'persist-credentials': False}
+    assert steps[0]['with'] == {'ref': '${{ github.event.repository.default_branch }}', 'persist-credentials': False}
     assert steps[1]['name'] == 'Calculate PR size and set label'
+    assert steps[1]['env']['BASE_SHA'] == '${{ github.event.pull_request.base.sha }}'
+
+
+@pytest.mark.parametrize('arguments', [[], ['']])
+def test_shared_calculator_requires_base_attributes(arguments: list[str]):
+    """Reject absent or empty base identity instead of reading checkout attributes."""
+    result = subprocess.run(
+        ['bash', str(WORKFLOW.parents[1] / 'scripts' / 'pr_size.sh'), *arguments],
+        input='[]',
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert 'base SHA required' in result.stderr
+
+
+def test_base_attributes_ignore_trusted_checkout_changes(tmp_path: Path, script: str):
+    """Use committed base declarations even when the trusted checkout differs."""
+    changes: list[ChangedFile] = [
+        {'filename': '.github/workflows/generated.lock.yml', 'additions': 2000, 'deletions': 0}
+    ]
+    result = _run_step(tmp_path, ': > .gitattributes\n' + script, [], [changes])
+    assert result.process.returncode == 0, result.process.stderr
+    assert 'Weighted score: 0\n' in result.process.stdout
