@@ -174,10 +174,12 @@ output_schema:
   properties:
     answer:
       type: string
-    confidence:
-      type: number
-  required: [answer, confidence]
-instructions: "You are helping {{user_name}}. Always include a confidence score."
+    sources:
+      type: array
+      items:
+        type: string
+  required: [answer, sources]
+instructions: "You are helping {{user_name}}. List the URL of every page your answer relies on in `sources`."
 capabilities:
   - WebSearch:
       local: duckduckgo

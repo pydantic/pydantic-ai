@@ -810,6 +810,83 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
+#### Checking quoted evidence against the source {#grounding-validators}
+
+When an agent extracts facts from text you hold, such as a document, a web page, or a tool result, have each fact carry a verbatim quote of the text it rests on, and check in an output validator that every quote appears in the source. A quote that doesn't appear was paraphrased, misremembered, or made up. Raising [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] sends the model back to quote the source exactly or leave the fact out. The check is a substring test, so a grounded output costs no extra request.
+
+Collapse whitespace on both sides before comparing, so that a quote can span a line break in the source:
+
+```python {title="grounding_validator.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+
+class Fact(BaseModel):
+    statement: str
+    quote: str = Field(description='The source text that supports the statement, copied verbatim.')
+
+
+class Extraction(BaseModel):
+    facts: list[Fact]
+
+
+def normalize(text: str) -> str:
+    return ' '.join(text.split())
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    output_type=Extraction,
+    deps_type=str,
+    instructions='Extract the payment terms from the contract. Quote the supporting text for each fact verbatim.',
+)
+
+
+@agent.output_validator
+def check_quotes(ctx: RunContext[str], output: Extraction) -> Extraction:
+    if ctx.partial_output:  # when streaming, check only the complete output
+        return output
+    source = normalize(ctx.deps)
+    unsupported = [fact.quote for fact in output.facts if normalize(fact.quote) not in source]
+    if unsupported:
+        raise ModelRetry(
+            f'These quotes do not appear in the contract: {unsupported}. '
+            'Copy the supporting text exactly, or leave the fact out.'
+        )
+    return output
+
+
+contract = """\
+Invoices are payable within 30 days of receipt. Late payments accrue
+interest at 1.5% per month."""
+
+result = agent.run_sync(f'<contract>\n{contract}\n</contract>', deps=contract)
+for fact in result.output.facts:
+    print(fact.quote)
+    #> Invoices are payable within 30 days of receipt.
+    #> Late payments accrue interest at 1.5% per month.
+print(result.usage.requests)  # here the first output paraphrased the second quote, and the validator asked for a retry
+#> 2
+```
+
+_(This example is complete, it can be run "as is")_
+
+Normalizing more, such as case or curly quotes, accepts more text the source doesn't contain verbatim, so add only the normalization your sources need. A quote that appears in the source proves the text exists, not that it supports the statement: to check that, use a second model as a judge, or measure it with [Pydantic Evals](evals.md).
+
+#### Don't gate actions on model-reported confidence {#model-reported-confidence}
+
+It's tempting to add a `confidence` field to an output type, or a `risk` argument to a tool, and act on the number: run the side effect above 0.8, ask a person below it. A score the model reports about its own output is not calibrated across models, prompts, or days, so a threshold on it doesn't mean what it says, and an output that is confidently wrong passes it.
+
+Gate on what your code can check instead:
+
+- **Verifiable outputs and arguments**: a quote that appears in the source, as [above](#grounding-validators), an id that exists in your database, an amount under a policy limit. Check outputs in an output validator and tool arguments in an [`args_validator`](tools-advanced.md#args-validator) or the tool itself.
+- **Policy on the action**: which tool is called, with which arguments, in which context. Mark a tool `requires_approval=True` or raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] when the arguments cross your policy, as in the [tool approval example](deferred-tools.md#human-in-the-loop-tool-approval).
+
+If you keep a score, for instance to order work in a review queue, measure what it means before acting on it: build a dataset of cases with known answers using [Pydantic Evals](evals.md), check how often outputs at each score are right for the model and prompt you run, and measure again when either changes. The same goes for the confidence a [decision model](models/decision.md) reports in `provider_details`: [tune any threshold on your own labelled data](models/decision.md#tuning-a-threshold-on-your-own-data).
+
+The Pydantic AI Harness [`ApprovalReviewer`](harness/approval-reviewer.md#risk-tiers) follows the same rule: it asks the reviewing model one question about a tool call, answered `yes`, `no`, or `unsure`, instead of grading risk on a scale against a threshold.
+
 ## Image output
 
 Some models can generate images as part of their response, for example those that support the [Image Generation native tool](native-tools.md#image-generation-tool) and OpenAI models using the [Code Execution native tool](native-tools.md#code-execution-tool) when told to generate a chart.
