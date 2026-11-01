@@ -391,6 +391,14 @@ Compatibility with one API does not imply support for the other or for every Ope
 
 [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] also takes a `base_url`, but it's for OpenAI itself, or a transparent proxy to it: it assumes OpenAI's models and features, and sends OpenAI's encrypted reasoning and compaction items to the endpoint.
 
+### Tsubasa
+
+For text requests to [Tsubasa](https://tsubasa.sh/), configure [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]
+with `base_url='https://api.tsubasa.sh/v1'` and pass the value of your
+`TSUBASA_API_KEY` environment variable as `api_key`. Use this provider with
+[`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], selecting
+`tsubasa-fast` or `tsubasa-pro` as the model name.
+
 ## Non-standard finish reasons
 
 When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
