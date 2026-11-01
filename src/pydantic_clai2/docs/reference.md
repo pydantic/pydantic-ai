@@ -9,7 +9,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 - [Models and accounts](#models-and-accounts): [Models and their settings](#models-and-their-settings), [Codex authentication](#codex-authentication), [GitHub Copilot subscriptions](#github-copilot-subscriptions), [vllm connection](#vllm-connection), [openrouter connection](#openrouter-connection), [Saved API keys](#saved-api-keys), [Usage and cost](#usage-and-cost)
 - [The prompt](#the-prompt): [Prompt area](#prompt-area), [Pasting images](#pasting-images), [Input history](#input-history), [Word deletion](#word-deletion), [Undo and redo](#undo-and-redo), [Option keys on macOS](#option-keys-on-macos), [Interrupting a turn](#interrupting-a-turn), [Rewinding a conversation](#rewinding-a-conversation), [Shell commands with !](#shell-commands-with-)
 - [Output](#output): [How tool calls look](#how-tool-calls-look), [Streaming](#streaming), [Code highlighting](#code-highlighting), [Grep previews](#grep-previews), [Shell preview limit](#shell-preview-limit), [Tool details](#tool-details), [Status line](#status-line), [Themes](#themes), [Spinners](#spinners)
-- [The agent](#the-agent): [Your instructions: /system_prompt](#your-instructions-system_prompt), [Code mode and speculative execution](#code-mode-and-speculative-execution), [Questions from the model](#questions-from-the-model), [Compacting the conversation](#compacting-the-conversation), [Task delegation](#task-delegation), [Ask CLAI to customize itself](#ask-clai-to-customize-itself)
+- [The agent](#the-agent): [Your instructions: /system_prompt](#your-instructions-system_prompt), [Code mode and speculative execution](#code-mode-and-speculative-execution), [Questions from the model](#questions-from-the-model), [Compacting the conversation](#compacting-the-conversation), [Task delegation](#task-delegation), [Ask CLAI about itself](#ask-clai-about-itself)
 - [Sessions](#sessions): [Saved sessions and /resume](#saved-sessions-and-resume), [Background forks: /fork](#background-forks-fork), [Git worktrees](#git-worktrees), [Several sessions in the web UI](#several-sessions-in-the-web-ui)
 - [Plugins and integrations](#plugins-and-integrations): [Plugins](#plugins), [Built-in plugins at a glance](#built-in-plugins-at-a-glance), [MCP servers: /mcp](#mcp-servers-mcp), [Desktop notifications](#desktop-notifications), [Herdr integration](#herdr-integration), [Agent of Empires integration](#agent-of-empires-integration), [Telemetry and references](#telemetry-and-references)
 - [Using CLAI from code](#using-clai-from-code): [Your own agent](#your-own-agent), [Headless mode](#headless-mode), [The stock agent in your own code](#the-stock-agent-in-your-own-code), [Bring an agent](#bring-an-agent)
@@ -1748,11 +1748,11 @@ While the model writes:
 
 - **Eager execution** runs each complete statement as soon as it has streamed,
   so a slow `shell` build or test starts before the snippet is finished.
-- **Speculation**, only while its switch is on, starts `list_files`, `read_file`, and `grep`
-  calls whose arguments are all literals the
+- **Speculation**, only while its switch is on, starts `list_files`, `read_file`, `grep`,
+  `search_clai_docs`, and `read_clai_docs` calls whose arguments are all literals the
   moment their line has streamed. Only these
   read-only tools speculate, because an early call may belong to a branch the
-  snippet never takes. They must come from CLAI's own file tools: a
+  snippet never takes. They must come from CLAI's own file and docs tools: a
   plugin or MCP tool with the same name, or one that declares itself read-only,
   waits like any other call. Writes and shell commands never start speculatively.
 
@@ -2166,23 +2166,43 @@ read, so with one loaded the catalog is read from the project directory. If that
 plugin does run the agent in a sandbox, the skills' directories are paths on this
 machine that the sandbox may not reach.
 
-### Ask CLAI to customize itself
+### Ask CLAI about itself
 
-Ask, for example, "Create a plugin with a custom menu" or "Use my model provider".
-The default agent lists CLAI's customization guide as the deferred capability
-`clai_customization`, one line in the catalog of capabilities the model can load
-with `load_capability`. The guide is bundled with the installed package and read
-only when the model loads it, not included in every prompt. No network access or
-source checkout is needed to read it.
+Ask, for example, "How do saved API keys work?", "Create a plugin with a custom
+menu", or "Use my model provider". The default agent lists `clai_customization`
+as a deferred capability in its catalog, one line until the model calls
+`load_capability` to reveal two docs tools. The loaded capability gives the model
+a short instruction to use these docs for questions about CLAI, and to read the
+customization guide before advising on customizing CLAI.
 
-It covers plugin installation and reload, hooks, tools, settings, commands,
-rendering, custom TUI menus, and model/provider launchers. It distinguishes plugin
-APIs from UI changes that currently need a CLAI source change. This is guidance,
-not an automatic installer or a permission boundary: plugins execute trusted Python
-as your user. Review generated plugins before enabling them.
+- `search_clai_docs(query)` returns the best matching sections, each with its path
+  and a short snippet.
+- `read_clai_docs(path)` lists the docs when `path` is empty, returns a doc such as
+  `reference` or `harness/coder`, or one section such as
+  `reference#saved-api-keys`, with its subsections. A doc over 50,000 characters
+  comes back as an outline of section paths instead, so a long doc like this
+  reference is read a section at a time. A section over the limit returns its own
+  text (truncated if needed) and an outline of any subsections. Section paths are
+  the docs' own heading anchors.
 
-Custom agents are unchanged. To offer the same guide, add
-`customization_guide()` from `pydantic_clai2.customization` to their capabilities.
+The docs are this reference, the [README](../README.md), the
+[plugin contract](../PLUGINS.md), the customization guide, the
+[declarative plugins](declarative-plugins.md) design note, and the README of each
+Pydantic AI Harness capability CLAI uses, such as `harness/shell` and
+`harness/subagents`. They ship with the installed packages and are read only when a
+tool is called, never included in every prompt or loaded capability. No network
+access or source checkout is needed.
+
+The customization guide covers plugin installation and reload, hooks, tools,
+settings, commands, rendering, custom TUI menus, and model/provider launchers. It
+distinguishes plugin APIs from UI changes that currently need a CLAI source change.
+This is guidance, not an automatic installer or a permission boundary: plugins
+execute trusted Python as your user. Review generated plugins before enabling them.
+
+A custom agent can opt in by adding `ClaiDocs()` from `pydantic_clai2.clai_docs`
+to its capabilities. `customization_guide()` from
+`pydantic_clai2.customization`, which previously loaded the whole guide as
+instructions, now returns `ClaiDocs()` and uses the same deferred catalog entry.
 See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions

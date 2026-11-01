@@ -24,7 +24,9 @@ commands, and menus without forking anything.
   background, or rewind it to an earlier prompt. You can even pick up sessions from
   Claude Code and Codex.
 - **Yours to change.** Turn plugins on and off from a menu, install one from Git, or
-  write your own in a few lines of Python.
+  write your own in a few lines of Python. Ask CLAI how: it can look up its own
+  [reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#ask-clai-about-itself)
+  and plugin docs when you need them.
 
 CLAI runs commands and edits files as you, with no sandbox and no approval step. Run it
 in a project you trust.
