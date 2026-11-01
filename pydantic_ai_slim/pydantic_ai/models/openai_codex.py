@@ -1,11 +1,13 @@
 from __future__ import annotations as _annotations
 
-from typing import Literal
+from functools import cached_property
+from typing import Literal, cast
 
 from typing_extensions import override
 
 from ..messages import ModelRequest, ModelResponse
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfileSpec, merge_profile
+from ..profiles.openai import OpenAIModelProfile
 from ..providers import Provider
 from ..settings import ModelSettings
 
@@ -51,6 +53,15 @@ class OpenAICodexModel(OpenAIResponsesModel):
             settings: Default model settings for this model instance.
         """
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
+
+    @cached_property
+    def profile(self) -> OpenAIModelProfile:
+        # The session headers depend on each conversation, while a socket sends its headers once, at the handshake,
+        # so `profile=` can't turn the socket on.
+        return cast(
+            OpenAIModelProfile,
+            merge_profile(super().profile, OpenAIModelProfile(openai_responses_supports_websocket=False)),
+        )
 
     @property
     @override

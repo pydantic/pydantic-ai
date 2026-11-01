@@ -845,7 +845,7 @@ def test_workflow_is_notification_first_and_least_privilege():
     assert prepare['env']['ROUTE_NUMBER'] == '${{ matrix.route.number }}'
     assert prepare['env']['ROUTE_OWNER'] == '${{ matrix.route.owner }}'
     assert prepare['env']['ROUTE_EVIDENCE'] == '${{ matrix.route.evidence }}'
-    assert notify['uses'] == 'slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c'
+    assert notify['uses'] == 'slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d'
     assert notify['with']['payload'] == '${{ steps.prepare.outputs.slack_payload }}'
     assert notify['with']['errors'] is True
     assert assign['if'] == "steps.prepare.outputs.should_notify == 'true'"

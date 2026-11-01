@@ -15,8 +15,8 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, UsageLimits
-from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata
+from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, ToolOutput, UsageLimits
+from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, SetToolMetadata
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -56,9 +56,17 @@ from pydantic_ai.realtime.codec import (
 )
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, RunContext, ToolDefinition
+from pydantic_ai.tools import (
+    AgentDepsT,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolApproved,
+    ToolDefinition,
+)
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools, CodeMode
+from pydantic_graph import End
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 from tests.harness.conftest import IsStr
 
@@ -1154,6 +1162,164 @@ ends with &lt;/tool_result
         assert result.output.approvals[0].tool_name == 'needs_approval'
         assert model_calls == 1
 
+    async def test_result_finished_before_a_deferred_pause_reaches_the_resumed_run(self) -> None:
+        fast_done = asyncio.Event()
+        resumed_with: list[ModelMessage] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='fast', args='{}', tool_call_id='fast-1'),
+                        ToolCallPart(tool_name='slow', args='{}'),
+                        ToolCallPart(tool_name='needs_approval', args='{}', tool_call_id='approval-1'),
+                    ]
+                )
+            resumed_with.extend(messages)
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[BackgroundTools()],
+        )
+
+        @agent.tool_plain(metadata={'background': True})
+        async def fast() -> str:
+            fast_done.set()
+            return 'fast value'
+
+        @agent.tool_plain(sequential=True)
+        async def slow() -> str:
+            await fast_done.wait()
+            return 'slow value'
+
+        @agent.tool_plain(requires_approval=True)
+        def needs_approval() -> str:
+            return 'approved'
+
+        paused = await agent.run('go')
+
+        assert isinstance(paused.output, DeferredToolRequests)
+        assert _follow_up_seen(paused.all_messages(), 'fast value')
+
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'approval-1': ToolApproved()}),
+        )
+
+        assert resumed.output == 'done'
+        assert _follow_up_seen(resumed_with, 'fast value')
+
+    async def test_fully_deferred_pause_leaves_its_calls_pending(self) -> None:
+        release = asyncio.Event()
+        slow_done = asyncio.Event()
+        model_calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal model_calls
+            model_calls += 1
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='slow', args='{}')])
+            # The second step's only call defers, so the step leaves no request of its own.
+            return ModelResponse(parts=[ToolCallPart(tool_name='needs_approval', args='{}')])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[BackgroundTools()],
+        )
+
+        @agent.tool_plain(metadata={'background': True})
+        async def slow() -> str:
+            await release.wait()
+            slow_done.set()
+            return 'slow value'
+
+        @agent.tool_plain
+        async def needs_approval() -> str:
+            release.set()
+            await slow_done.wait()
+            raise ApprovalRequired
+
+        result = await agent.run('go')
+
+        assert isinstance(result.output, DeferredToolRequests)
+        assert model_calls == 2
+        # A request after the response would make a resumed run treat its deferred call as interrupted.
+        last = result.all_messages()[-1]
+        assert isinstance(last, ModelResponse)
+        assert [call.tool_name for call in last.tool_calls] == ['needs_approval']
+
+    async def test_error_finished_before_a_deferred_pause_still_ends_the_run(self) -> None:
+        failed = asyncio.Event()
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='broken', args='{}'), ToolCallPart(tool_name='needs_approval', args='{}')]
+            )
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[BackgroundTools()],
+        )
+
+        @agent.tool_plain(metadata={'background': True})
+        async def broken() -> str:
+            failed.set()
+            raise RuntimeError('background failure')
+
+        @agent.tool_plain
+        async def needs_approval() -> str:
+            await failed.wait()
+            raise ApprovalRequired
+
+        with pytest.raises(RuntimeError, match='background failure'):
+            await agent.run('go')
+
+    async def test_result_finishing_after_a_deferred_pause_ends_is_not_delivered(self) -> None:
+        release = asyncio.Event()
+        finished = asyncio.Event()
+
+        @dataclass
+        class FinishBackgroundAfterRun(AbstractCapability[AgentDepsT]):
+            """Lets the background tool finish once the paused run has passed its last node boundary."""
+
+            async def after_run(
+                self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]
+            ) -> AgentRunResult[Any]:
+                release.set()
+                await finished.wait()
+                return result
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='slow', args='{}'), ToolCallPart(tool_name='needs_approval', args='{}')]
+            )
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[BackgroundTools(), FinishBackgroundAfterRun()],
+        )
+
+        @agent.tool_plain(metadata={'background': True})
+        async def slow() -> str:
+            await release.wait()
+            finished.set()
+            return 'late value'
+
+        @agent.tool_plain(requires_approval=True)
+        def needs_approval() -> str:
+            # Never approved in this test.
+            return 'approved'  # pragma: no cover
+
+        result = await agent.run('go')
+
+        assert isinstance(result.output, DeferredToolRequests)
+        assert not _follow_up_seen(result.all_messages(), 'late value')
+
     async def test_queued_result_is_not_delayed_by_an_unrelated_live_task(self) -> None:
         release = {'fast_bg': asyncio.Event(), 'slow_bg': asyncio.Event()}
 
@@ -1208,6 +1374,68 @@ ends with &lt;/tool_result
                 metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'slow-call'},
             ),
         ]
+
+    @pytest.mark.parametrize('load_capability', [False, True])
+    async def test_capability_load_in_final_step_does_not_skip_waiting_for_live_task(
+        self, load_capability: bool
+    ) -> None:
+        """A capability load queued in the step that ends the run doesn't count as a message that continues it.
+
+        So the run still waits for the live background task and delivers its result, the same as without the load.
+        """
+        release = asyncio.Event()
+        model_calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal model_calls
+            model_calls += 1
+            if _follow_up_seen(messages, 'background value'):
+                return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args='{"response": 2}')])
+            if _ack_seen(messages):
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args='{"response": 1}'),
+                        ToolCallPart(tool_name='open_case', args='{}'),
+                    ]
+                )
+            return ModelResponse(parts=[ToolCallPart(tool_name='bg', args='{}')])
+
+        release_on_end = Hooks[object]()
+
+        @release_on_end.on.after_node_run
+        async def release_when_run_ends(ctx: RunContext[object], *, node: Any, result: Any) -> Any:
+            # Runs before `BackgroundTools.after_node_run` (after-hooks run in reverse order), so the
+            # task is still live when `BackgroundTools` decides whether to wait for it.
+            run_ended = isinstance(result, End)
+            if run_ended:
+                release.set()
+            return result
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=ToolOutput(int, name='final_result'),
+            end_strategy='exhaustive',
+            capabilities=[
+                BackgroundTools(),
+                release_on_end,
+                Capability(id='refunds', description='Refund tools.', defer_loading=True),
+            ],
+        )
+
+        @agent.tool_plain(metadata={'background': True})
+        async def bg() -> str:
+            await release.wait()
+            return 'background value'
+
+        @agent.tool
+        async def open_case(ctx: RunContext[object]) -> str:
+            if load_capability:
+                ctx.load_capability('refunds')
+            return 'Case opened.'
+
+        result = await asyncio.wait_for(agent.run('go'), timeout=5)
+
+        assert (result.output, model_calls) == (2, 3)
 
     async def test_failed_background_tool_cancels_its_sibling(self) -> None:
         slow_started = asyncio.Event()

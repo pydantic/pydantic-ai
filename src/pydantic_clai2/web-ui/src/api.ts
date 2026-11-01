@@ -2,6 +2,7 @@ import { createContext } from 'react'
 import type { Snapshot } from './state'
 import { PROTOCOL } from './protocol'
 import type {
+  AddedWorktree,
   AnswerBody,
   ChangeScope,
   Changes,
@@ -29,6 +30,16 @@ const token =
   document.querySelector<HTMLMetaElement>('meta[name="clai-token"]')?.content ??
   new URLSearchParams(location.search).get('token') ??
   ''
+
+const RELOADED = 'clai-reloaded-for'
+const RELOADED_FROM = 'clai-reloaded-from'
+
+/** The version of the CLAI whose bundle this page loaded again for, after `/update` restarted it; `null` otherwise. */
+export const reloadedFor = sessionStorage.getItem(RELOADED)
+/** The version the page ran before that reload, which an older bundle reloading leaves unset. */
+export const reloadedFrom = sessionStorage.getItem(RELOADED_FROM)
+sessionStorage.removeItem(RELOADED)
+sessionStorage.removeItem(RELOADED_FROM)
 
 export class ApiError extends Error {
   constructor(
@@ -173,6 +184,9 @@ export const api = {
   /** Start a live session, in `workspace` when given; it answers the new session's conversation ID. */
   newSession: (workspace?: string) =>
     call<Opened>('POST', '/api/sessions/new', workspace === undefined ? undefined : { workspace }),
+  /** Check out a new `branch` (empty: generated) from `base` (empty: `HEAD`) in `repo`'s repository, as `clai2 --worktree` does. */
+  addWorktree: (repo: string, branch: string, base: string) =>
+    call<AddedWorktree>('POST', '/api/worktrees', { repo, branch, base }),
   /** Make a saved session live, or find the live one; it answers its conversation ID. */
   open: (id: string) => call<Opened>('POST', `/api/sessions/${id}/open`),
   rename: (id: string, title: string) => call<void>('POST', `/api/sessions/${id}/rename`, { title }),
@@ -263,7 +277,8 @@ export function preconnect(): void {
 Each new connection watches `watching()`'s sessions again, after calling `onWatch` with the shown one, before any of
 its messages arrive.
 A CLAI restarted since this page loaded has a new token: after a few failed attempts this checks, and
-reports `expired` instead of retrying forever.
+reports `expired` instead of retrying forever. One that `/update` restarted as another version serves its own bundle,
+which the page loads instead of talking to it with this one.
  */
 export function connect(
   onMessage: (message: ServerMessage) => void,
@@ -308,7 +323,23 @@ export function connect(
     send(sessions)
     onState('open')
   }
-  const received = (event: MessageEvent<string>) => onMessage(JSON.parse(event.data) as ServerMessage)
+  // The version of the CLAI this bundle came from, as its first snapshot says.
+  let version: string | null = null
+  const received = (event: MessageEvent<string>) => {
+    const message = JSON.parse(event.data) as ServerMessage
+    if (message.type === 'snapshot') {
+      if (version !== null && message.version !== version) {
+        stopped = true
+        socket?.close()
+        sessionStorage.setItem(RELOADED, message.version)
+        sessionStorage.setItem(RELOADED_FROM, version)
+        location.reload()
+        return
+      }
+      version = message.version
+    }
+    onMessage(message)
+  }
   const closed = () => {
     if (stopped) return
     onState('closed')

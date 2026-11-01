@@ -71,7 +71,11 @@ export function GitChip({
         <GitDialog
           git={git}
           status={status}
-          onStatus={setStatus}
+          onStatus={(fresh) => {
+            // Newer than any status still being asked for.
+            request.current++
+            setStatus(fresh)
+          }}
           onRefresh={() => void load()}
           onClose={close}
           onNotice={onNotice}
@@ -219,14 +223,19 @@ function Changes({
   const typed = useRef(false)
   // Only the latest draft is used: one still on its way when a commit lands is for files already committed.
   const drafts = useRef(0)
+  // The files the message in the box was drafted for, so a selection that no longer matches can say so.
+  const [draftedFor, setDraftedFor] = useState<ReadonlySet<string> | null>(null)
   const draft = useCallback(
-    async (files: string[] | null) => {
+    async (files: string[] | null, shown: readonly string[]) => {
       const mine = ++drafts.current
       setDrafting(true)
       setDraftProblem(null)
       try {
         const { message: drafted } = await git.draftCommit(files)
-        if (mine === drafts.current && !typed.current) setText(drafted)
+        if (mine === drafts.current && !typed.current) {
+          setText(drafted)
+          setDraftedFor(new Set(shown))
+        }
       } catch (error) {
         if (mine === drafts.current) setDraftProblem(message(error))
       } finally {
@@ -237,11 +246,17 @@ function Changes({
   )
   const hasChanges = paths.length > 0
   useEffect(() => {
-    if (hasChanges) void draft(null)
+    if (hasChanges) void draft(null, [...known.current])
   }, [draft, hasChanges])
   const [confirmed, setConfirmed] = useState(false)
 
   const selected = paths.filter((path) => chosen.has(path))
+  // Only an untouched draft is known to describe other files: typing drops `draftedFor`.
+  const stale =
+    draftedFor !== null &&
+    text !== '' &&
+    selected.length > 0 &&
+    (draftedFor.size !== selected.length || selected.some((path) => !draftedFor.has(path)))
   const commit = () =>
     act(async () => {
       // The files shown, not whatever has changed since.
@@ -250,6 +265,7 @@ function Changes({
       setDrafting(false)
       typed.current = false
       setText('')
+      setDraftedFor(null)
       onStatus(done.status)
       onDone(done.message)
     })
@@ -298,7 +314,7 @@ function Changes({
                   disabled={busy || drafting || selected.length === 0}
                   onClick={() => {
                     typed.current = false
-                    void draft(selected.length === paths.length ? null : selected)
+                    void draft(selected.length === paths.length ? null : selected, selected)
                   }}
                 >
                   {drafting ? 'Drafting…' : 'Draft again'}
@@ -314,10 +330,17 @@ function Changes({
                 disabled={busy}
                 onChange={(event) => {
                   typed.current = true
+                  setDraftedFor(null)
                   setText(event.target.value)
                 }}
               />
             </label>
+            {stale && !drafting && (
+              <p className="dialog-hint">
+                This message was drafted for {draftedFor.size} {draftedFor.size === 1 ? 'file' : 'files'}; {selected.length}{' '}
+                {selected.length === 1 ? 'is' : 'are'} selected. Draft again to match.
+              </p>
+            )}
             {draftProblem && <p className="dialog-hint">Could not draft a message: {draftProblem}</p>}
             <div className="dialog-actions">
               <button
@@ -386,15 +409,17 @@ function PullRequest({
   const [drafting, setDrafting] = useState(true)
   const [draftProblem, setDraftProblem] = useState<string | null>(null)
   const [url, setUrl] = useState<string | null>(null)
-  const typed = useRef(false)
+  // The draft fills only the fields not typed in yet.
+  const typedTitle = useRef(false)
+  const typedBody = useRef(false)
   useEffect(() => {
     let current = true
     git
       .draftPullRequest()
       .then((draft) => {
-        if (!current || typed.current) return
-        setTitle(draft.title)
-        setBody(draft.body)
+        if (!current) return
+        if (!typedTitle.current) setTitle(draft.title)
+        if (!typedBody.current) setBody(draft.body)
       })
       .catch((error: unknown) => current && setDraftProblem(message(error)))
       .finally(() => current && setDrafting(false))
@@ -424,7 +449,7 @@ function PullRequest({
           placeholder={drafting ? 'The model is drafting a title…' : 'What the pull request does'}
           disabled={busy}
           onChange={(event) => {
-            typed.current = true
+            typedTitle.current = true
             setTitle(event.target.value)
           }}
         />
@@ -437,7 +462,7 @@ function PullRequest({
           value={body}
           disabled={busy}
           onChange={(event) => {
-            typed.current = true
+            typedBody.current = true
             setBody(event.target.value)
           }}
         />

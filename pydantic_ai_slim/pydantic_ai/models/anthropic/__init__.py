@@ -294,6 +294,7 @@ try:
     from ._message_passes import (
         anchor_system_messages,
         drop_unpaired_native_tool_calls,
+        end_tool_results_before_system_messages,
         place_system_messages_before_generation,
     )
     from ._native_tools import (
@@ -432,6 +433,13 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicVertex,
     AsyncAnthropicFoundry,
 )
+# Neither Bedrock API serves Anthropic's code execution tool. Verified live on every Claude model tried, with both
+# `code_execution_20250825` and `code_execution_20260120`: the legacy InvokeModel API (`AsyncAnthropicBedrock`) rejects
+# them with a 400 ("tool type ... is not supported for this model", or on older models "Input tag ... does not match
+# any of the expected tags"), and the Bedrock Messages API (`AsyncAnthropicBedrockMantle`) with a 400 ("tool type ...
+# is not supported for this model"). Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic` subclass) is a
+# separate transport and keeps the tool. https://github.com/pydantic/pydantic-ai/issues/11513
+_CODE_EXECUTION_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
 # Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
 # Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
 # fall back to the `<system>`-tagged user rendering. Verified on Bedrock rather than assumed: with
@@ -451,6 +459,17 @@ _MID_CONVERSATION_EFFORT_BETA = 'mid-conversation-output-config-2026-07-01'
 # Cache diagnostics are documented as Claude API only. Verified live: the Bedrock InvokeModel and Messages APIs
 # both reject the `diagnostics` field with a 400 ("Extra inputs are not permitted").
 _CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
+# The direct API's `count_tokens` accepts the web search, web fetch, code execution, tool search and advisor tools,
+# verified live 2026-10-27 on the Claude 5.5 models. These clients' count endpoints aren't verified to accept them, so
+# `anthropic_count_tokens_accepts_server_tools` stays off for them. The legacy Bedrock one rejects `defer_loading`
+# with a 400 whether or not the search tool is sent. Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic`
+# subclass) is documented to serve the Claude API's own endpoints, so it keeps the flag on, unverified.
+_COUNT_TOKENS_SERVER_TOOLS_UNVERIFIED_CLIENTS = (
     AsyncAnthropicBedrock,
     AsyncAnthropicBedrockMantle,
     AsyncAnthropicFoundry,
@@ -1036,6 +1055,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {WebFetchTool}
         if isinstance(client, _ADVISOR_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {AdvisorTool}
+        if isinstance(client, _CODE_EXECUTION_UNSUPPORTED_CLIENTS):
+            supported_native_tools = supported_native_tools - {CodeExecutionTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
@@ -1088,6 +1109,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `anthropic_supports_message_batches` follows the client class: only the Claude API's own client serves
         Message Batches, and not through the Pydantic AI Gateway, which doesn't serve them yet.
 
+        `anthropic_count_tokens_accepts_server_tools` is on for `AsyncAnthropic` clients and off for the platform
+        clients whose count endpoints aren't verified to accept server tools, unless the provider's profile already
+        sets it.
+
         The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
         from the Messages API infrastructure, so `supports_auto_cache` is narrowed by model on the legacy Bedrock
         client, and `anthropic_cache` and the unified `cache` setting place a breakpoint on the last block there
@@ -1105,6 +1130,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and not is_gateway_provider(self._provider)
             ),
         )
+        if 'anthropic_count_tokens_accepts_server_tools' not in profile:
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    anthropic_count_tokens_accepts_server_tools=not isinstance(
+                        client, _COUNT_TOKENS_SERVER_TOOLS_UNVERIFIED_CLIENTS
+                    )
+                ),
+            )
         if isinstance(client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
             self._model_name
         ):
@@ -1888,7 +1922,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return OMIT
         previous_message_id: str | None = None
         for message in reversed(messages):
-            if isinstance(message, ModelResponse) and message.provider_name == self.system:
+            if isinstance(message, ModelResponse) and self.accepts_server_state(message):
                 if (response_id := message.provider_response_id) and response_id.startswith('msg_'):
                     previous_message_id = response_id
                 break
@@ -1934,7 +1968,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return None, False
 
         for m in reversed(messages):
-            if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
+            if isinstance(m, ModelResponse) and self.accepts_server_state(m) and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
                     return cid, True
         return None, False
@@ -1945,32 +1979,46 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> BetaMessageTokensCount:
-        # Anthropic docs: https://platform.claude.com/docs/en/api/messages-count-tokens
-        # The `count_tokens` endpoint rejects server-side tools (`web_search`, `code_execution`,
-        # `web_fetch`, `tool_search`) and the `mcp_servers` param with a 400, so restrict the wire
-        # `tools` list to client-side tools like `MemoryTool`, which are accepted and contribute
-        # real tokens. This undercounts the prompt by the server tools' definitions, but it's the
-        # only way to get a count until Anthropic supports them.
-        # TODO: Remove this workaround if Anthropic starts accepting server tools on `count_tokens`.
-        # Recheck: POST /v1/messages/count_tokens with a web_search tool. Docs now list those tools: https://platform.claude.com/docs/en/api/messages/count_tokens
+        # Anthropic docs: https://platform.claude.com/docs/en/api/messages/count_tokens
+        # The wire `tools` list keeps client-side tools like `MemoryTool`, which contribute real tokens, and the
+        # server tools where `anthropic_count_tokens_accepts_server_tools` says the endpoint takes them. Verified
+        # 2026-10-27 on the Claude 5.5 models: with tool search, the advisor tool and its replayed history, or
+        # any web search, web fetch or code execution version the SDK lists, the count equals the real request's
+        # `input_tokens`, though https://platform.claude.com/docs/en/build-with-claude/token-counting says the
+        # endpoint rejects every server tool but the advisor. Without a server tool, a request whose function tools
+        # are all deferred can't be counted: the endpoint rejects a `tools` list in which every tool is deferred.
+        # Where the flag is off, server tools are dropped, as the endpoint once rejected them
+        # (https://github.com/pydantic/pydantic-ai/issues/5702), which undercounts the prompt by their definitions.
+        # TODO: Send `mcp_servers` once the endpoint accepts it. Rechecked 2026-10-27, it rejects the param with a
+        # 400: "The mcp_servers parameter is not supported on the count_tokens endpoint".
+        counted_native_tools: tuple[type[AbstractNativeTool], ...] = (
+            (MemoryTool, ToolSearchTool, WebSearchTool, WebFetchTool, CodeExecutionTool, AdvisorTool)
+            if self.profile.get('anthropic_count_tokens_accepts_server_tools', False)
+            else (MemoryTool,)
+        )
         count_tokens_parameters = replace(
             model_request_parameters,
-            native_tools=[tool for tool in model_request_parameters.native_tools if isinstance(tool, MemoryTool)],
+            native_tools=[
+                tool for tool in model_request_parameters.native_tools if isinstance(tool, counted_native_tools)
+            ],
         )
-        # Params that keep `ToolSearchTool` but drop `AdvisorTool`. Keeping tool search means the
+        # Params that keep `ToolSearchTool`, and `AdvisorTool` where the count keeps it. Keeping tool search means the
         # count describes the request we'd really send, deferred tools and all: `function_tools`
         # aren't stripped here, so they keep their `defer_loading` and the tool-search replay still
         # renders the same `tool_reference` wire shape as `/v1/messages`. The endpoint honors the flag
         # rather than ignoring it — one deferred 30-field tool counts 440 tokens with it and 1761
         # without on `claude-opus-4-8` — so this is the difference between counting the prompt and
         # counting the hidden schemas too.
-        # Dropping advisor makes `advisor_active` False so its call/result history blocks are stripped
-        # during replay — the advisor tool is a server tool that `count_tokens` rejects (and that
-        # `_add_native_tools` keeps off the wire below), and replaying advisor blocks without the tool
+        # Where the count drops advisor, dropping it here too makes `advisor_active` False so its
+        # call/result history blocks are stripped during replay: replaying them without the tool
         # definition would 400.
         map_parameters = replace(
             self._declare_newcomers_left_alone(model_settings, model_request_parameters),
-            native_tools=[tool for tool in model_request_parameters.native_tools if not isinstance(tool, AdvisorTool)],
+            native_tools=[
+                tool
+                for tool in model_request_parameters.native_tools
+                if not isinstance(tool, AdvisorTool) or isinstance(tool, counted_native_tools)
+            ],
         )
 
         # standalone function to make it easier to override
@@ -1980,8 +2028,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         revealed_tool_order = _revealed_deferred_tool_order(messages, map_parameters)
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters)
-        # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions are
-        # what the endpoint rejects, so they're the one thing that has to differ from the real request.
+        # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions left off
+        # the count are the one thing that has to differ from the real request.
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
         _append_revealed_tool_params(tools, revealed_tool_order)
 
@@ -2607,6 +2655,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         place_system_messages_before_generation(anthropic_messages)
         anchor_system_messages(anthropic_messages)
         self._add_container_uploads(anthropic_messages, model_request_parameters)
+        # After the container uploads, which skip turns of only tool results, so the block doesn't move them.
+        if self.profile.get('anthropic_distrusts_system_after_tool_result', False):
+            end_tool_results_before_system_messages(anthropic_messages)
         check_citations_tool_choice(
             model_settings, model_request_parameters, anthropic_messages, map_context.include_citations
         )
@@ -3075,6 +3126,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         Search, fetch and advisor results carry their state inline, encrypted where it's sensitive, so they're
         sent to any client that accepts the response's stateless data. Code execution and MCP results refer to
         state kept by the account that ran them, such as a container, so they only go back to the same provider.
+        They're judged by `provider_name` alone, not by `accepts_server_state`, until a live check against two
+        endpoints shows whether an endpoint rejects blocks from another: the one exception to judging server-side
+        state by endpoint. The container itself is judged by endpoint in `_get_container`.
         """
         if part.tool_name in _STATELESS_NATIVE_TOOL_KINDS:
             return self.accepts_stateless_artifacts(message, part)

@@ -501,6 +501,7 @@ async def main():
                     cost=Decimal('0.000182'), input_tokens=56, output_tokens=7
                 ),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -571,6 +572,7 @@ async def main():
                         cost=Decimal('0.000182'), input_tokens=56, output_tokens=7
                     ),
                     model_name='{{ openai:medium.name }}',
+                    model_id='{{ openai:medium }}',
                     timestamp=datetime.datetime(...),
                     run_id='...',
                     conversation_id='...',
@@ -1617,6 +1619,46 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+These system prompt functions run once, when a conversation starts. Register one with `dynamic=True` to have it run again for each later run of the conversation, when `message_history` is passed. By default, its part in the history is then rewritten in place with the new value. That changes the start of every later request, so the provider can't reuse the prompt it cached for the conversation, and the history reads as if the new value had been there from the start.
+
+### Appending system prompt changes {#appending-system-prompt-changes}
+
+For context that changes between runs of a conversation, we recommend [instructions with `on_change='append'`](#appending-instruction-changes): `@agent.instructions(name=..., on_change='append')`. Instructions are re-evaluated before every request, and only the current agent's are sent. If you need a system prompt instead, because the history is continued by other agents that should keep receiving it, register it with `on_change='append'`, which makes it dynamic:
+
+```python {title="system_prompt_changes.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import ModelRequest, SystemPromptPart
+from pydantic_ai.models.test import TestModel
+
+agent = Agent(TestModel(), deps_type=str)
+
+
+@agent.system_prompt(on_change='append')
+def user_name(ctx: RunContext[str]) -> str:
+    return f"The user's name is {ctx.deps}."
+
+
+first = agent.run_sync('Hi!', deps='Frank')
+second = agent.run_sync('Hi again!', deps='Bob', message_history=first.all_messages())
+prompts = [
+    part.content
+    for message in second.all_messages()
+    if isinstance(message, ModelRequest)
+    for part in message.parts
+    if isinstance(part, SystemPromptPart)
+]
+print(prompts)
+#> ["The user's name is Frank.", "The user's name is Bob."]
+```
+
+The first value stays where it was, and a changed value is added to the history as a new `SystemPromptPart` at the start of the run that saw it, so the start of the conversation stays the same. A run in which the value is unchanged adds nothing. Returning `None` or an empty string withdraws the prompt. The function still runs once per run, not before every request.
+
+The model gets the prompt with the same replacement semantics as [appending instruction changes](#appending-instruction-changes). Each statement is sent inside a `<context id="system_prompt:<name>">` element, and the model is told once per request that a later element with the same id replaces the earlier one. A change is sent as a new element with that id, and a withdrawal as an element saying the prompt is withdrawn. The model sees this id: `<name>` is the function's `__name__` unless you pass `name=` (which has no effect without `on_change='append'`), and must be unique among the agent's appending system prompts. Each part records its id as [`SystemPromptPart.context_id`][pydantic_ai.messages.SystemPromptPart.context_id], so an agent that continues the history without the function sends the parts the same way.
+
+Like any dynamic system prompt, the prompt is tied to existing histories by its function's `__qualname__` (recorded as [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref]), whether or not you pass `name=`. Renaming or moving the function disconnects it from them: the old part keeps its last value, and the renamed function isn't sent in conversations that continue them.
+
+Realtime sessions don't support this option: they warn and rewrite the prompt in place.
+
 ## Instructions
 
 Instructions are similar to system prompts. The main difference is that when an explicit `message_history` is provided
@@ -1911,7 +1953,7 @@ Whether a model accepts and follows an update is model-dependent: preserving the
 Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) compute themselves append their changes by default: the catalog of [on-demand capabilities](capabilities/on-demand.md) that the `load_capability` tool loads (keyed `capability:deferred_capabilities`), and the Harness [`SubAgents`](harness/subagents.md) listing (`capability:sub_agents`, or the capability's `id`), [`RepoContext`](harness/repo-context.md) context files (`capability:repo_context`, or the capability's `id`), and [`ManagedPrompt`](harness/managed-prompt.md) prompts (`capability:managed-prompt-<name>`, or the capability's `id`). [MCP server instructions](mcp/client.md#server-instructions) that an [`MCPToolset`][pydantic_ai.mcp.MCPToolset] includes do the same (`toolset:<id>`, where a URL toolset's `id` defaults to the server's hostname). A skill added to the workspace, a new sub-agent definition, an edited `AGENTS.md`, a new version of a managed prompt or a server's new instructions between runs of a conversation then extends the cached prompt rather than rewriting it. Instructions you write keep the `'rewrite'` default until you opt in.
 
 !!! note "Scope and trust"
-    Append delivery supports always-on agent, capability, and toolset instruction sources. A loaded [on-demand capability](capabilities/on-demand.md)'s instructions are stated in history, in the system voice, after the `load_capability` tool result rather than in the prefix, and their changes are always appended, whatever their `on_change` policy. Realtime sessions warn when given this opt-in and retain their existing delivery behavior; the framework's own appending blocks fall back to rewriting there without a warning. Legacy `system_prompt(dynamic=True)` is unchanged.
+    Append delivery supports always-on agent, capability, and toolset instruction sources. A loaded [on-demand capability](capabilities/on-demand.md)'s instructions are stated in history, in the system voice, after the `load_capability` tool result rather than in the prefix, and their changes are always appended, whatever their `on_change` policy. Realtime sessions warn when given this opt-in and retain their existing delivery behavior; the framework's own appending blocks fall back to rewriting there without a warning. A dynamic system prompt can append its changes too: see [appending system prompt changes](#appending-system-prompt-changes).
 
     [UI adapters](ui/overview.md) keep instruction baselines and changes in trusted server-side history. Client-submitted instruction delta and baseline parts are stripped with system prompts. Browser-only history therefore starts a new baseline; matching an old value to current text does not authenticate its origin.
 
@@ -1998,6 +2040,8 @@ We recommend [Pydantic Logfire](https://logfire.pydantic.dev/docs/), which has b
 
 ### Tracing with Logfire
 
+Run `uvx logfire-cli wizard --task pydantic-ai` once from your project. It signs you in, picks or creates a project, and has your coding agent add the following instrumentation. See [Using Logfire](logfire.md#using-logfire) for details.
+
 ```python
 import logfire
 
@@ -2042,7 +2086,7 @@ Evals let you define test cases, run them against your agent, and score the resu
 
 Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can send traces to any compatible backend. Even if you use the Logfire SDK for its convenience, you can configure it to send data to other backends. See [alternative backends](logfire.md#using-opentelemetry) for setup instructions.
 
-[Full Logfire integration guide →](logfire.md)
+[Full Logfire integration guide →](logfire.md#using-logfire)
 
 ## Model errors
 
@@ -2104,6 +2148,7 @@ with capture_run_messages() as messages:  # (2)!
                     cost=Decimal('0.000164'), input_tokens=62, output_tokens=4
                 ),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -2135,6 +2180,7 @@ with capture_run_messages() as messages:  # (2)!
                     cost=Decimal('0.000216'), input_tokens=68, output_tokens=8
                 ),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',

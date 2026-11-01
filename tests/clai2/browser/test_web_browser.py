@@ -3,6 +3,8 @@
 import asyncio
 import json
 import os
+import re
+import subprocess
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,8 +25,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.builtin_plugins.web.app import HEADER
+from pydantic_clai2.builtin_plugins.web.app import HEADER, ASGIApp, create_app
+from pydantic_clai2.builtin_plugins.web.server import WebServer
+from pydantic_clai2.plugins import InstallProgress
 from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
@@ -52,6 +57,9 @@ code a
 code b
 ```
 """
+
+MILLION_TOKEN_WINDOW = 1_000_000
+"""Beta's model's context window, as `claude-code:` models have."""
 
 LONG_LINES = 200
 PREVIEW_LINES = 8
@@ -147,6 +155,7 @@ class WebUI:
     """Saved in Gamma's folder, so it opens while Gamma is the default session, and not live until a test opens it."""
     moved: str
     """Saved in Gamma's folder too, and never opened: its tests pretend the folder went."""
+    fleet: Fleet
 
 
 @pytest.fixture(scope='module')
@@ -163,7 +172,13 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterator[W
             portal=portal,
             agents={
                 'alpha': Agent(TestModel(call_tools=[], custom_output_text=HOSTILE)),
-                'beta': Agent(TestModel(call_tools=[], custom_output_text='Beta answer')),
+                'beta': Agent(
+                    TestModel(
+                        call_tools=[],
+                        custom_output_text='Beta answer',
+                        profile=ModelProfile(context_window=MILLION_TOKEN_WINDOW),
+                    )
+                ),
                 'lines': Agent(TestModel(call_tools=[], custom_output_text=LINES)),
                 'gamma': Agent(TestModel(call_tools=[])),
                 'delta': failing_agent(),
@@ -219,6 +234,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterator[W
                     busy=busy.id,
                     saved=saved.id,
                     moved=moved.id,
+                    fleet=fleet,
                 )
         finally:
             fleet.exit()
@@ -287,6 +303,8 @@ async def test_single_line_breaks_survive_like_the_tui(page: Page, web_ui: WebUI
     assert (await sent.value).ok
     markdown = page.locator('.markdown').filter(has_text='One per line').last
     await expect(markdown).to_be_visible()
+    # The answer streams in: wait for its last chunk (this match ignores line breaks), then read it exactly.
+    await expect(markdown.locator('pre code')).to_have_text('code a code b')
     assert await markdown.locator('p').inner_text() == 'One per line\n2\n3'
     assert await markdown.locator('pre code').inner_text() == 'code a\ncode b'
     assert await markdown.locator('pre br').count() == 0
@@ -410,6 +428,13 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
     await expect(sidebar.get_by_role('button', name='Archive all sessions in this worktree')).to_be_disabled()
 
 
+async def test_a_million_token_window_reads_in_millions(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.topbar-status .context')).to_have_text(re.compile(r' / 1M$'))
+
+
 async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     # Capture real browser sockets while leaving their transport and handlers intact.
     await page.add_init_script("""
@@ -450,6 +475,32 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     await expect(page.locator('.markdown').filter(has_text='Beta answer', visible=True)).to_have_count(0)
 
 
+async def test_a_clai_restarted_as_a_new_version_reloads_the_page(page: Page, web_ui: WebUI) -> None:
+    """A page left open across `/update`'s restart loads the new CLAI's bundle rather than keep the old one."""
+    fleet = web_ui.fleet
+
+    def app(port: int) -> ASGIApp:
+        return create_app(service=fleet.service, token=TOKEN, hosts=frozenset({f'127.0.0.1:{port}'}))
+
+    server = fleet.portal.call(lambda: WebServer.serve(app, host='127.0.0.1', port=0))
+    port = server.port
+    version = fleet.service.version
+    try:
+        await page.goto(f'http://127.0.0.1:{port}/?token={TOKEN}')
+        await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
+        await page.evaluate('window.claiTestOldBundle = true')
+        fleet.portal.call(server.stop)
+        await expect(page.get_by_title('Reconnecting…', exact=True)).to_be_visible()
+        fleet.service.version = f'{version}+updated'
+        server = fleet.portal.call(lambda: WebServer.serve(app, host='127.0.0.1', port=port))
+        await expect(page.get_by_text(f'Updated CLAI to {version}+updated.')).to_be_visible()
+        await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
+        assert await page.evaluate('window.claiTestOldBundle ?? null') is None
+    finally:
+        fleet.service.version = version
+        fleet.portal.call(server.stop)
+
+
 async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
@@ -468,6 +519,50 @@ async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None
     await row.click()
     await expect(row).to_have_attribute('aria-expanded', 'true')
     await expect(diff).to_be_visible()
+
+
+async def test_side_panels_replace_each_other(page: Page, web_ui: WebUI) -> None:
+    """Changes, Monty, and a plugin's panel share the right-hand column: opening one closes the others."""
+    logfire = {
+        'plugin': 'observability',
+        'id': 'logfire',
+        'title': 'Logfire',
+        'icon': 'traces',
+        'url': None,
+        'note': 'Set up Logfire to see traces.',
+        'embed': False,
+    }
+    await page.route('**/api/panels', lambda route: route.fulfill(json=[logfire]))
+    await page.set_viewport_size({'width': 1280, 'height': 800})
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    changes = page.get_by_role('complementary', name='Changes')
+    plugin = page.get_by_role('complementary', name='Logfire')
+    monty = page.get_by_role('complementary', name='Monty, the run_code sandbox')
+    toggles = page.locator('header .monty-toggle')
+
+    async def only(panel: object) -> None:
+        for each in (changes, plugin, monty):
+            await expect(each).to_have_count(1 if each is panel else 0)
+        await expect(toggles.and_(page.locator('[aria-pressed="true"]'))).to_have_count(1)
+        chat = await page.locator('main').bounding_box()
+        assert chat is not None and chat['width'] >= 480, chat
+
+    await page.get_by_role('button', name=re.compile(r'^Changes')).click()
+    await only(changes)
+    await page.get_by_role('button', name=re.compile(r'^Show Logfire')).click()
+    await only(plugin)
+    await page.get_by_role('button', name=re.compile(r'^Show Monty')).click()
+    await only(monty)
+    await page.get_by_role('button', name=re.compile(r'^Changes')).click()
+    await only(changes)
+    await page.keyboard.press('ControlOrMeta+j')
+    await only(monty)
+    await page.keyboard.press('ControlOrMeta+Shift+L')
+    await only(plugin)
+    await page.get_by_role('button', name=re.compile(r'^Hide Logfire')).click()
+    await expect(toggles.and_(page.locator('[aria-pressed="true"]'))).to_have_count(0)
 
 
 async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
@@ -718,6 +813,70 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     assert '\\n' not in await body.inner_text()
 
 
+async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) -> None:
+    """Settings > About in a session the browser opened refuses Update…; its row must not claim it saved anything."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await page.evaluate("location.hash = '#settings/about'")
+    settings = page.get_by_role('dialog', name='Settings')
+    version = settings.locator('.setting').filter(has=page.locator('.setting-label', has_text='Version'))
+    async with page.expect_response(f'**/api/sessions/{web_ui.beta}/commands/update/fields/version/action') as acted:
+        await version.get_by_role('button', name='Update Version').click()
+    assert (await acted.value).status == 400
+    # Read with the toast in one page call: a badge renders with it, and a retry would pass once its timer clears it.
+    badge = await page.wait_for_function(
+        """() => {
+          if (!document.querySelector('.toast.error')?.textContent?.includes('/reload and /update restart CLAI.')) return null
+          const row = [...document.querySelectorAll('.setting')]
+            .find((setting) => setting.querySelector('.setting-label')?.textContent === 'Version')
+          return row.querySelector('.setting-state')?.textContent ?? 'none'
+        }"""
+    )
+    assert await badge.json_value() == 'none'
+
+
+async def test_settings_about_follows_an_update(page: Page, web_ui: WebUI) -> None:
+    """Settings > About, where Update… starts it, shows the install going, then what it updated from and to."""
+    await page.add_init_script("""
+      window.claiTestSockets = [];
+      const OriginalWebSocket = window.WebSocket;
+      window.WebSocket = class extends OriginalWebSocket {
+        constructor(...args) { super(...args); window.claiTestSockets.push(this); }
+      };
+    """)
+    service = web_ui.fleet.service
+    portal = web_ui.fleet.portal
+    before = service.version
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.evaluate("location.hash = '#settings/about'")
+    settings = page.get_by_role('dialog', name='Settings')
+    await expect(settings.locator('.setting-label', has_text='Version')).to_be_visible()
+    try:
+        portal.call(service.install_progress, InstallProgress(stage='installing', target='0.99.0'))
+        progress = settings.get_by_role('status')
+        await expect(progress).to_contain_text('Updating CLAI to 0.99.0…')
+        # A trial click checks nothing covers it, as the window once covered the session's progress, and that the
+        # navigation stays usable beside it.
+        await progress.click(trial=True)
+        await settings.get_by_role('button', name='Back to app').click(trial=True)
+        portal.call(service.install_progress, InstallProgress(stage='output', target='0.99.0', text='Resolved 3'))
+        await expect(progress).to_contain_text('Resolved 3')
+        portal.call(service.install_progress, InstallProgress(stage='restarting', target='0.99.0'))
+        await expect(progress).to_contain_text('Restarting CLAI…')
+        # The new build comes back at the same address; the page loads its bundle, About still open.
+        service.version, service.update = '0.99.0', None
+        await page.clock.install()
+        await page.evaluate('window.claiTestSockets[0].close()')
+        await page.clock.run_for(500)
+        await page.clock.resume()
+        await expect(progress).to_have_count(0)
+        await expect(settings).to_contain_text(f'Updated CLAI from {before} to 0.99.0.')
+    finally:
+        service.version, service.update = before, None
+
+
 async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     sidebar = page.locator('.sidebar')
@@ -863,6 +1022,23 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     await composer.press('ArrowLeft')
     await expect(composer).to_have_value('@READM')
     await expect(options).to_have_count(0)
+
+    # A file typed in full is offered first, and Enter sends it instead of swapping it for another of that name.
+    await composer.fill('see @README.md')
+    await expect(names).to_have_text(['README.md', 'README.md'])
+    await expect(options.first.locator('.suggestion-meta')).to_have_count(0)
+    async with page.expect_request(f'**/api/sessions/{web_ui.lines}/input') as typed_in_full:
+        await composer.press('Enter')
+    assert (await typed_in_full.value).post_data_json == {'text': 'see @README.md'}
+    # The first message moves the composer from the new-session hero to the bottom bar; type there.
+    await expect(page.locator('.user-bubble').filter(has_text='see @README.md')).to_be_visible()
+    await expect(composer).to_have_value('')
+    # A longer word under the caret is not the file typed in full, so Enter takes the suggestion instead.
+    await composer.fill('@README.mdx')
+    await composer.press('ArrowLeft')
+    await expect(names.first).to_have_text('README.md')
+    await composer.press('Enter')
+    await expect(composer).to_have_value('@README.md ')
 
     # Esc closes the list, and Enter then sends the mention as typed, for the agent to read with its tools.
     await composer.fill('read @READ')
@@ -1039,3 +1215,171 @@ async def test_opening_a_session_that_resolves_to_the_shown_one_ends_the_wait(pa
     await expect(page.locator('.opening-overlay')).to_have_count(0, timeout=2_000)
     await expect(page.locator('.session.opening')).to_have_count(0, timeout=2_000)
     await expect(current).to_have_text(shown)
+
+
+def git(*args: str) -> str:
+    return subprocess.run(['git', *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
+async def stay(workspace: str) -> None:
+    """A session's relocation that `clai2 --web` wires, which this test never reaches; only the dialog depends on it."""
+
+
+async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, tmp_path: Path) -> None:
+    repo = (tmp_path / 'repo').resolve()
+    git('init', '-b', 'main', str(repo))
+    git(
+        '-C',
+        str(repo),
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit',
+        '--allow-empty',
+        '-m',
+        'init',
+    )
+    opened = await page.request.post(
+        f'{web_ui.url}/api/sessions/new', headers={HEADER: TOKEN}, data={'workspace': str(repo)}
+    )
+    assert opened.ok, await opened.text()
+    root = repo / '.worktrees' / 'feature-x'
+    # As under `clai2 --web`, so New session asks where; the fixture's sessions stay where they are.
+    runtimes = web_ui.fleet.runtimes
+    runtimes['repo'].sessions.relocate = stay
+    try:
+        await page.goto(f'{web_ui.url}/?token={TOKEN}')
+        sidebar = page.locator('.sidebar')
+        dialog = page.get_by_role('dialog', name='New session')
+        new_worktree = dialog.get_by_role('listbox').get_by_role('button', name='New worktree of repo · main…')
+        await sidebar.get_by_role('button', name='New session').click()
+        await expect(dialog.get_by_role('option', name='repo · main')).to_be_visible()
+        await dialog.get_by_role('option', name='repo · main').hover()
+        await new_worktree.click()
+        await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
+        await dialog.get_by_label('Base').fill('main')
+        # A session that fails to start leaves the worktree made, and trying again starts one in it.
+        # Esc while the request runs keeps the form, as the disabled Back button does.
+        release = asyncio.Event()
+
+        async def busy(route: Route) -> None:
+            await release.wait()
+            await route.fulfill(status=409, json={'detail': 'Busy'})
+
+        await page.route('**/api/sessions/new', busy)
+        await dialog.get_by_role('button', name='Create and start').click()
+        await expect(dialog.get_by_role('button', name='Back')).to_be_disabled()
+        await page.keyboard.press('Escape')
+        await expect(dialog.get_by_label('Base')).to_be_visible()
+        release.set()
+        await expect(dialog.get_by_role('alert')).to_have_text('Busy')
+        await page.unroute('**/api/sessions/new')
+        await dialog.get_by_role('button', name='Create and start').click()
+        await expect(dialog).to_have_count(0)
+        await expect(page.locator(f'.workspace[title="{root}"]')).to_be_visible()
+        assert git('-C', str(root), 'branch', '--show-current') == 'feature-x'
+        # The next dialog lists it, offers no worktree of a folder outside Git, and refuses the same branch inline.
+        runtimes['feature-x'].sessions.relocate = stay
+        await page.reload()
+        await sidebar.get_by_role('button', name='New session').click()
+        await expect(dialog.get_by_role('option', name='repo · feature-x')).to_be_visible()
+        alpha = dialog.locator('.dialog-option-row').filter(has=page.get_by_role('option', name='alpha'))
+        await alpha.hover()
+        await expect(alpha.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
+        await dialog.get_by_role('option', name='repo · main').hover()
+        await new_worktree.click()
+        # Esc goes back to the list, and Esc there closes the dialog.
+        await page.keyboard.press('Escape')
+        await expect(dialog.get_by_label('Another directory')).to_be_visible()
+        await new_worktree.click()
+        await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
+        await dialog.get_by_role('button', name='Create and start').click()
+        await expect(dialog.get_by_role('alert')).to_have_text(
+            'Cannot create worktree: branch feature-x already exists. Pick another name.'
+        )
+    finally:
+        for name in ('repo', 'feature-x'):
+            if name in runtimes:
+                runtimes[name].sessions.relocate = None
+
+
+async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
+    page: Page, web_ui: WebUI, tmp_path: Path
+) -> None:
+    """Moving the pointer from a row to New worktree… crosses other rows, which must not change whose worktree it makes."""
+    names = ('north', 'south')
+    for name in names:
+        repo = (tmp_path / name).resolve()
+        git('init', '-b', 'main', str(repo))
+        git(
+            '-C',
+            str(repo),
+            '-c',
+            'user.name=Test',
+            '-c',
+            'user.email=test@example.com',
+            'commit',
+            '--allow-empty',
+            '-m',
+            'init',
+        )
+        opened = await page.request.post(
+            f'{web_ui.url}/api/sessions/new', headers={HEADER: TOKEN}, data={'workspace': str(repo)}
+        )
+        assert opened.ok, await opened.text()
+        # Saved, so New session lists the folder even when another one is current.
+        web_ui.fleet.portal.call(web_ui.fleet.runtimes[name].session.commit_messages, list[ModelMessage]())
+        renamed = await page.request.post(
+            f'{web_ui.url}/api/sessions/{(await opened.json())["id"]}/rename',
+            headers={HEADER: TOKEN},
+            data={'title': f'Browser {name.title()}'},
+        )
+        assert renamed.ok, await renamed.text()
+    # The page starts on the last session opened: one in a folder outside Git, so the list's cursor starts on a row
+    # without New worktree….
+    (tmp_path / 'plain').mkdir()
+    opened = await page.request.post(
+        f'{web_ui.url}/api/sessions/new', headers={HEADER: TOKEN}, data={'workspace': str(tmp_path / 'plain')}
+    )
+    assert opened.ok, await opened.text()
+    runtimes = web_ui.fleet.runtimes
+    for name in ('plain', *names):
+        runtimes[name].sessions.relocate = stay
+    try:
+        await page.goto(f'{web_ui.url}/?token={TOKEN}')
+        dialog = page.get_by_role('dialog', name='New session')
+        await page.locator('.sidebar').get_by_role('button', name='New session').click()
+        rows = {name: dialog.get_by_role('option', name=f'{name} · main') for name in names}
+        tops: dict[str, float] = {}
+        for name, row in rows.items():
+            await expect(row).to_be_visible()
+            box = await row.bounding_box()
+            assert box is not None
+            tops[name] = box['y']
+        # The pointer goes straight down from the upper row, across the lower one, to the dialog's buttons.
+        chosen, crossed = sorted(names, key=tops.__getitem__)
+        await rows[chosen].hover()
+        cancel = await dialog.get_by_role('button', name='Cancel').bounding_box()
+        assert cancel is not None
+        await page.mouse.move(cancel['x'] + cancel['width'] / 2, cancel['y'] + cancel['height'] / 2, steps=40)
+        # Crossing a row leaves the cursor, which the buttons below act on, where it was: on `plain`, outside Git.
+        await expect(rows[crossed]).not_to_have_attribute('aria-selected', 'true')
+        below = dialog.locator('.dialog-actions')
+        await expect(below.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
+        await dialog.get_by_role('button', name=f'New worktree of {chosen} · main…').click(timeout=2_000)
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {chosen} · main')).to_be_visible()
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed} · main')).to_have_count(0)
+        # From the keyboard, the button below makes a worktree of the row the arrow keys select.
+        await page.keyboard.press('Escape')
+        await dialog.get_by_role('listbox').focus()
+        for _ in range(await dialog.get_by_role('option').count()):
+            if await rows[crossed].get_attribute('aria-selected') == 'true':
+                break
+            await page.keyboard.press('ArrowDown')
+        await expect(rows[crossed]).to_have_attribute('aria-selected', 'true')
+        await below.get_by_role('button', name=f'New worktree of {crossed} · main…').click()
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed} · main')).to_be_visible()
+    finally:
+        for name in ('plain', *names):
+            runtimes[name].sessions.relocate = None

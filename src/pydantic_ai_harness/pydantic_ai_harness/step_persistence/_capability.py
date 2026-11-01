@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+import anyio
+
 from pydantic_ai import CallToolsNode, ModelRequestNode
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler
@@ -555,14 +557,17 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         tool call is resolved and `interrupted` otherwise. Interrupted
         snapshots stay off the default `latest_snapshot` read path.
         """
-        stashed = live_run_history.get()
-        if stashed is not None:
-            messages, step_index = stashed
-            captured = list(messages)
-            if _has_model_response(captured) or (self.capture_frontier and captured):
-                state: SnapshotState = 'complete' if is_provider_valid(captured) else 'interrupted'
-                await self._save_continuable_snapshot(ctx, captured, step_index, state)
-        await self._record_event(ctx, kind='run_failed', error=repr(error))
+        # Shielded so an `anyio` scope cancelling the run cannot cut these writes. No deadline: under
+        # Temporal, `anyio`'s deadline becomes a durable timer, which breaks replay of earlier histories.
+        with anyio.CancelScope(shield=True):
+            stashed = live_run_history.get()
+            if stashed is not None:
+                messages, step_index = stashed
+                captured = list(messages)
+                if _has_model_response(captured) or (self.capture_frontier and captured):
+                    state: SnapshotState = 'complete' if is_provider_valid(captured) else 'interrupted'
+                    await self._save_continuable_snapshot(ctx, captured, step_index, state)
+            await self._record_event(ctx, kind='run_failed', error=repr(error))
         raise error
 
     async def before_model_request(

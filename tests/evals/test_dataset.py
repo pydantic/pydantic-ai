@@ -106,6 +106,7 @@ class TaskOutput(BaseModel):
     confidence: float = 1.0
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_evaluate_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
     """`evaluate_sync` must replace a closed thread-current event loop.
 
@@ -125,6 +126,7 @@ def test_evaluate_sync_replaces_closed_event_loop(closed_event_loop: asyncio.Abs
     assert not asyncio.all_tasks(replacement_loop)
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_evaluate_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
     """`evaluate_sync` must create and install an event loop when the thread has none."""
     dataset = Dataset(name='test', cases=[Case(name='case', inputs='input')])
@@ -1221,10 +1223,10 @@ async def test_from_text_failure():
                 '2 error(s) loading evaluators from registry',
                 [
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ToolCorrectness', 'TrajectoryMatch', 'ArgumentCorrectness', 'MaxToolCalls', 'MaxModelRequests', 'GEval']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
+                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ToolCorrectness', 'TrajectoryMatch', 'ArgumentCorrectness', 'MaxToolCalls', 'MaxModelRequests', 'GEval']. If you are trying to use a custom evaluator, you must include it in the `custom_evaluator_types` argument."
                     ),
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ToolCorrectness', 'TrajectoryMatch', 'ArgumentCorrectness', 'MaxToolCalls', 'MaxModelRequests', 'GEval']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
+                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ToolCorrectness', 'TrajectoryMatch', 'ArgumentCorrectness', 'MaxToolCalls', 'MaxModelRequests', 'GEval']. If you are trying to use a custom evaluator, you must include it in the `custom_evaluator_types` argument."
                     ),
                 ],
             )
@@ -1970,6 +1972,7 @@ async def test_evaluate_async_logfire(
                             'n_cases': {},
                             'name': {},
                             'metadata': {'type': 'object'},
+                            'test.suite.name': {},
                             'logfire.experiment.metadata': {
                                 'type': 'object',
                                 'properties': {
@@ -1986,6 +1989,7 @@ async def test_evaluate_async_logfire(
                     },
                     'logfire.msg': 'evaluate mock_async_task',
                     'metadata': {'key': 'value'},
+                    'test.suite.name': 'example',
                     'logfire.msg_template': 'evaluate {name}',
                     'logfire.span_type': 'span',
                     'n_cases': 2,
@@ -2017,6 +2021,7 @@ async def test_evaluate_async_logfire(
                     'logfire.msg_template': 'case: {case_name}',
                     'logfire.msg': 'case: case1',
                     'logfire.span_type': 'span',
+                    'test.case.name': 'case1',
                     'output': {'answer': '4', 'confidence': 1.0},
                     'task_duration': _any_duration,
                     'metrics': {},
@@ -2056,6 +2061,7 @@ async def test_evaluate_async_logfire(
                                 'title': 'TaskOutput',
                                 'x-python-datatype': 'PydanticModel',
                             },
+                            'test.case.name': {},
                             'output': {'type': 'object', 'title': 'TaskOutput', 'x-python-datatype': 'PydanticModel'},
                             'task_duration': {},
                             'metrics': {'type': 'object'},
@@ -2088,6 +2094,7 @@ async def test_evaluate_async_logfire(
                     'logfire.msg_template': 'case: {case_name}',
                     'logfire.msg': 'case: case2',
                     'logfire.span_type': 'span',
+                    'test.case.name': 'case2',
                     'output': {'answer': 'Paris', 'confidence': 1.0},
                     'task_duration': _any_duration,
                     'metrics': {},
@@ -2127,6 +2134,7 @@ async def test_evaluate_async_logfire(
                                 'title': 'TaskOutput',
                                 'x-python-datatype': 'PydanticModel',
                             },
+                            'test.case.name': {},
                             'output': {'type': 'object', 'title': 'TaskOutput', 'x-python-datatype': 'PydanticModel'},
                             'task_duration': {},
                             'metrics': {'type': 'object'},
