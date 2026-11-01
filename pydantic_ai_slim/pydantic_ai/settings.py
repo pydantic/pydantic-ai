@@ -697,6 +697,7 @@ class ModelSettings(TypedDict, total=False):
     * Snowflake (sent, but Snowflake Cortex rejects `service_tier` with an error)
     * Z.AI
     * Bedrock Mantle
+    * xAI (the gRPC API supports only `default` and `priority`; other values are dropped)
 
     The OpenAI-derived model classes send the OpenAI value unchanged, so the OpenAI column of the
     mapping table applies to them.

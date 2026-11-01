@@ -1897,6 +1897,34 @@ async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
     assert result.output == 'test response'
 
 
+async def test_service_tier_priority_and_default_forwarded(allow_model_requests: None):
+    """Test that 'default' and 'priority' service tiers are passed through to the xAI SDK."""
+    for service_tier in ('priority', 'default'):
+        response = create_response(content='test response')
+        mock_client = MockXai.create_mock([response])
+        m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+        agent = Agent(m, model_settings=ModelSettings(service_tier=service_tier))
+        await agent.run('Hello')
+
+        # Check that the service tier was passed to the xAI SDK
+        kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+        assert kwargs['service_tier'] == service_tier
+
+
+async def test_service_tier_auto_and_flex_stay_unsupported(allow_model_requests: None):
+    """Test that 'auto' and 'flex' service tiers are silently dropped (no xAI gRPC equivalent)."""
+    for service_tier in ('auto', 'flex'):
+        response = create_response(content='test response')
+        mock_client = MockXai.create_mock([response])
+        m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+        agent = Agent(m, model_settings=ModelSettings(service_tier=service_tier))
+        await agent.run('Hello')
+
+        # The service tier has no xAI equivalent and is not forwarded to the SDK
+        kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+        assert 'service_tier' not in kwargs
+
+
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):
     """Test that instructions are passed through to xAI SDK as a system message."""
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
