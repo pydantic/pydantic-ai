@@ -1891,16 +1891,15 @@ class GeminiStreamedResponse(StreamedResponse):
                                 yield event
                         new_request_vendor_part_id = None
                     elif part.function_call:
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        for event in self._parts_manager.handle_tool_call_delta_events(
                             vendor_part_id=uuid4(),
                             tool_name=part.function_call.name,
                             args=part.function_call.args,
                             tool_call_id=part.function_call.id,
                             provider_name=self.provider_name if provider_details else None,
                             provider_details=provider_details,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
                     elif part.inline_data is not None:
                         if part.thought:  # pragma: no cover
                             # Per https://ai.google.dev/gemini-api/docs/image-generation#thinking-process:
@@ -1937,12 +1936,11 @@ class GeminiStreamedResponse(StreamedResponse):
                                 tool_response_part.tool_call_id = self._media_processing_tool_call_id
                             elif self._media_processing_tool_call_vendor_id is not None:
                                 # The response can supply an ID omitted by the call; notify stream consumers too.
-                                event = self._parts_manager.handle_tool_call_delta(
+                                for event in self._parts_manager.handle_tool_call_delta_events(
                                     vendor_part_id=self._media_processing_tool_call_vendor_id,
                                     tool_call_id=tool_response_part.tool_call_id,
-                                )
-                                assert event is not None
-                                yield event
+                                ):
+                                    yield event
                             self._media_processing_tool_call_id = None
                             self._media_processing_tool_call_vendor_id = None
                             yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
