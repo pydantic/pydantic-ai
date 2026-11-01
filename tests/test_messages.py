@@ -77,6 +77,7 @@ from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
     CachePoint,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     FileUrl,
     LoadCapabilityCallPart,
@@ -1172,6 +1173,7 @@ def test_file_part_serialization_roundtrip():
                     'cost': None,
                 },
                 'model_name': None,
+                'model_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': None,
@@ -3445,6 +3447,7 @@ def test_speech_part_serialization_roundtrip():
                     'cost': None,
                 },
                 'model_name': None,
+                'model_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': None,
@@ -3769,6 +3772,36 @@ def test_tool_availability_delta_otel_message_uses_system_role():
                 'role': 'system',
                 'parts': [{'type': 'text', 'content': 'Tool availability changed: +new_tool'}],
             }
+        ]
+    )
+
+
+def test_capability_load_delta_otel_message_names_the_capability():
+    """A capability loaded from code is named in traces, in the system role like a tool reveal."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open')])
+    ]
+
+    assert InstrumentationSettings().messages_to_otel_messages(messages) == snapshot(
+        [{'role': 'system', 'parts': [{'type': 'text', 'content': 'Loaded capabilities changed: +refunds'}]}]
+    )
+
+
+def test_capability_load_delta_round_trips_and_leaves_tool_deltas_unchanged():
+    """The part survives serialization under its own `part_kind`, and a tool reveal serializes as before."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open'),
+                ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
+            ]
+        )
+    ]
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
+    assert ModelMessagesTypeAdapter.dump_python(messages, mode='json')[0]['parts'] == snapshot(
+        [
+            {'loaded': ['refunds'], 'tool_call_id': 'open', 'part_kind': 'capability-load-delta'},
+            {'tools_added': ['refund_status'], 'tool_call_id': 'open', 'part_kind': 'tool-availability-delta'},
         ]
     )
 

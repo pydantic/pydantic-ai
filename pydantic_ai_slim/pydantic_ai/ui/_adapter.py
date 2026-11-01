@@ -31,6 +31,7 @@ from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    CapabilityLoadDeltaPart,
     CompactionPart,
     ForceDownloadMode,
     InstructionBaselinePart,
@@ -62,6 +63,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream
+from ._messages_builder import MessagesBuilder
 from ._utils import get_ui_message_id, set_ui_message_id, without_ui_message_id
 
 if TYPE_CHECKING:
@@ -97,6 +99,7 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
 _TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
+_CAPABILITY_LOAD_DELTA_PART_ADAPTER = TypeAdapter(CapabilityLoadDeltaPart)
 _MODEL_SETTINGS_DELTA_PART_ADAPTER = TypeAdapter(ModelSettingsDeltaPart)
 _RETRY_FEEDBACK_PART_ADAPTER = TypeAdapter(RetryFeedbackPart)
 
@@ -233,12 +236,13 @@ def enqueued_messages_for_client(
     return kept
 
 
-def compaction_payload(part: CompactionPart) -> dict[str, Any]:
+def compaction_payload(part: CompactionPart, *, canonical_system: str | None = None) -> dict[str, Any]:
     """Serialize a compaction part as a UI payload, omitting fields whose value is `None`.
 
     The payload is faithful — `provider_details` travels verbatim, provenance stamp included.
     Trust is enforced on the load side: client-submitted messages pass through
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages], which strips the stamp.
+    `canonical_system` is the response's, from `part_canonical_system`.
     """
     return {
         key: value
@@ -247,10 +251,45 @@ def compaction_payload(part: CompactionPart) -> dict[str, Any]:
             'id': part.id,
             'provider_name': part.provider_name,
             'provider_details': part.provider_details,
+            'canonical_system': canonical_system,
             'metadata': part.metadata,
         }.items()
         if value is not None
     }
+
+
+def part_canonical_system(response: ModelResponse, provider_name: str | None) -> str | None:
+    """The response's `canonical_system` to carry beside a part from `provider_name`, if it applies to that part.
+
+    [`ModelResponse.canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] applies to the parts
+    whose `provider_name` is the response's. UI protocols have no channel for the response's own provider
+    identity, so it rides with each part's `provider_name` instead, and `restore_canonical_system` puts it
+    back on load.
+    """
+    if provider_name is not None and provider_name == response.provider_name:
+        return response.canonical_system
+    return None
+
+
+def restore_canonical_system(builder: MessagesBuilder, provider_name: object, canonical_system: object) -> None:
+    """Restore the `canonical_system` a part just added to `builder` carried onto the response that holds it.
+
+    The response also gets that part's `provider_name`, which is what makes the stamp apply to the part. The claim
+    is client-echoed, like the part's own `provider_name`, `signature` and `provider_details` it sits beside: it
+    only decides which of the client's parts are sent to which system, never what they hold. Parts from two
+    responses can load into one; a part from another provider than the first claim's keeps being judged by
+    its name, and a conflicting claim for the same provider clears the stamp so its parts are too.
+    """
+    if not isinstance(provider_name, str) or not isinstance(canonical_system, str):
+        return
+    response = builder.messages[-1]
+    # A part with a `provider_name` always goes to a response.
+    assert isinstance(response, ModelResponse)
+    if response.provider_name is None:
+        response.provider_name = provider_name
+        response.canonical_system = canonical_system
+    elif response.provider_name == provider_name and response.canonical_system != canonical_system:
+        response.canonical_system = None
 
 
 def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart | None:
@@ -312,6 +351,11 @@ def is_request_compaction_part(part: CompactionPart) -> bool:
     return part.provider_name is None and part.id is None and part.provider_details is None
 
 
+def tool_availability_delta_payload(part: ToolAvailabilityDeltaPart) -> dict[str, Any]:
+    """Serialize a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] for a UI data channel."""
+    return {'added': part.tools_added, 'tool_call_id': part.tool_call_id}
+
+
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
     """Build a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] from a UI payload.
 
@@ -324,6 +368,36 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     except ValidationError:
         return ToolAvailabilityDeltaPart()
     part.tools_added = [name for name in part.tools_added if _TOOL_NAME_PATTERN.fullmatch(name)]
+    if part.tool_call_id is not None and not part.tool_call_id.strip():
+        part.tool_call_id = None
+    return part
+
+
+def capability_load_delta_payload(part: CapabilityLoadDeltaPart) -> dict[str, Any]:
+    """Serialize a [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] for a UI data channel.
+
+    The part rides through the client like a `ToolAvailabilityDeltaPart`, because it's what keeps a capability
+    loaded from code loaded: leaving it out would unload the capability on the request after a round trip.
+    """
+    return {'loaded': part.loaded, 'tool_call_id': part.tool_call_id}
+
+
+def capability_load_delta_from_payload(payload: Mapping[str, Any]) -> CapabilityLoadDeltaPart | None:
+    """Build a [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] from a UI payload, or `None` if it loads nothing.
+
+    Client-driven like `tool_availability_delta_from_payload`, and no more than a client could already do by
+    sending a `load_capability` call and its return: a capability ID isn't sent to the model, and one the run
+    doesn't register as an on-demand capability loads nothing.
+    """
+    try:
+        part = _CAPABILITY_LOAD_DELTA_PART_ADAPTER.validate_python(
+            {'loaded': payload.get('loaded'), 'tool_call_id': payload.get('tool_call_id')}
+        )
+    except ValidationError:
+        return None
+    part.loaded = [capability_id for capability_id in part.loaded if capability_id]
+    if not part.loaded:
+        return None
     if part.tool_call_id is not None and not part.tool_call_id.strip():
         part.tool_call_id = None
     return part
@@ -442,7 +516,7 @@ class _ServerHeldTurn:
     After a cut, it ends with a request holding the tool results the cut request carried, if it had any.
     """
     new_turn: list[ModelMessage]
-    """The client's new turn, without tool results for calls that aren't pending or compaction parts.
+    """The client's new turn, without tool results for calls that aren't pending, compaction parts, or capability loads.
 
     Not yet sanitized: `UIAdapter.sanitize_messages` still has to run on it.
     """
@@ -474,7 +548,10 @@ def _take_new_turn(
     Tool results in the new turn are kept only for calls the stored history's last response is still
     waiting on. Copies of the results kept from the cut request are dropped without a warning, as an
     honest client resubmits them too, and other results with one. Compaction parts are never kept, as
-    the client doesn't own the history they would cut off. See `_drop_compaction_parts`.
+    the client doesn't own the history they would cut off. See `_drop_compaction_parts`. Nor are
+    `CapabilityLoadDeltaPart`s: the stored history has the loads the server recorded, and a client-supplied one would
+    load a capability no part of the run loaded, as a client-made `load_capability` exchange would if it weren't
+    dropped with the response it's in.
     """
     last_response = max((i for i, m in enumerate(client_messages) if isinstance(m, ModelResponse)), default=-1)
     new_turn = client_messages[last_response + 1 :]
@@ -514,6 +591,8 @@ def _take_new_turn(
         assert isinstance(message, ModelRequest)
         parts: list[ModelRequestPart] = []
         for part in message.parts:
+            if isinstance(part, CapabilityLoadDeltaPart):
+                continue
             if _is_tool_result_part(part):
                 if part.tool_call_id not in pending:
                     dropped += part.tool_call_id not in resubmitted_results

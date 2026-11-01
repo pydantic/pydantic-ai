@@ -1,6 +1,6 @@
 # Agents Core
 
-Read this file when the user needs the core `Agent` workflow: creating agents, choosing output types, using dependencies, defining specs, selecting models, or choosing how to run/stream an agent.
+Read this file when the user needs the core `Agent` workflow: creating agents, choosing output types, using dependencies, defining specs, selecting models, reusing an OpenAI Responses WebSocket, or choosing how to run/stream an agent.
 
 ## Create a Basic Agent
 
@@ -231,6 +231,8 @@ result = agent.run_sync('Find recent papers on AI safety', deps=UserContext(user
 
 Template strings are part of the spec flow, so route template-string questions here too.
 
+A spec has the same authority as the code that builds the agent: it picks the model, the capabilities, and the endpoints they connect to, such as an `MCP` server URL, `localhost` and private addresses included. Load specs only from trusted sources; if users supply them, check each spec's capabilities (`name` and `kwargs`, such as an `MCP` `url`) against what that user may use before building the agent.
+
 ## Choose or Configure Models
 
 Model strings use the `"provider:model-name"` format.
@@ -247,6 +249,20 @@ Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/
 - `gateway/openai:gpt-6-sol`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
+
+## Reuse an OpenAI Responses WebSocket
+
+Install `pydantic-ai-slim[openai-realtime]`. Pass `OpenAIResponsesModelSettings(openai_transport='websocket')` as `settings=` on `OpenAIResponsesModel`, or as `model_settings=` on an agent or run. A plain dict fails type checking because `openai_transport` is not a `ModelSettings` key.
+Other models ignore the setting, so code that takes a model string doesn't change.
+Each run opens a socket on its first request that can use one and closes it at the end; wrap back-to-back runs, or an app's lifetime, in `async with agent:` or `async with model:` to keep one socket.
+WebSocket-mode requests, including HTTP overflow, default `openai_previous_response_id` to `'auto'`, continuing only from reachable state. A single-request run pays the handshake for nothing.
+Runs given the same model instance share one socket per event loop: on `api.openai.com` each concurrent request gets its own `stream_id` lane; other hosts run one at a time unless the profile sets `openai_responses_supports_websocket_stream_id=True`.
+These requests use HTTP without a warning: a direct `model.request()` outside a run or `async with`, durable execution units without an outer model or agent context on their loop, background or resumed requests, no free lane, and headers that differ from the handshake's. To share a connection across Temporal activities, enter the registered model around `Worker`; the activity result still checkpoints independently. Inspect `pydantic_ai.transport` on the `chat` span. Under Temporal, inspect the model activity span instead. WebSocket mode records `'websocket'` or `'http'`. HTTP-only mode leaves the attribute unset.
+Early rejection frames with status 408, 409, 429 or 5xx use the effective `max_retries` budget. Set it to zero when the durable engine owns retries; a disconnect or error after response events start propagates to the caller.
+A missing extra, non-asyncio backends, and models whose profile sets `openai_responses_supports_websocket=False` warn and use HTTP. `profile=OpenAIModelProfile(openai_responses_supports_websocket=True)` overrides the flag for Azure and the gateway with static credentials. The OAuth providers, `OpenAICodexModel`, and clients with API key callbacks, workload identities, Azure AD token providers or HTTP client authentication always use HTTP, so credentials resolve for every request.
+A closed or failed socket, or one nearing OpenAI's 60-minute limit, is replaced on the next request; a failure mid-request raises `ModelConnectionError`, so `ModelFallback` works.
+A response stored server-side (the default) continues from any socket or HTTP; with `openai_store=False`, keep the full message history, since only the socket that created it can continue from it.
+Use [OpenAI Responses WebSockets](https://pydantic.dev/docs/ai/models/openai/#responses-websockets) for the full list of fallbacks and limits.
 
 ## Run Methods and Streaming
 
@@ -327,7 +343,9 @@ agent = Agent(
 
 `fallback_on` defaults to `ModelAPIError`; it also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass and native tool factory call (with the candidate as `ctx.model`), so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
 
-In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError]}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
+Each step restarts the chain from the step's model. Pass `sticky=True` to keep a conversation on the candidate it fell back to, which keeps that provider's prompt cache warm and stops retrying a failing primary every step. The agent records the answering model as each response's `model_id` and a fallback as its `failed_attempts`, so stickiness carries over to later runs continuing that history. Only a fallback makes a conversation sticky: a candidate picked with `run(model=...)` that answered without one doesn't. It only replaces the agent's default model, not `run(model=...)`, `override(model=...)` or `SelectModel`, and if the sticky candidate fails, the chain continues after it and wraps around.
+
+In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError], sticky: true}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
 
 Good defaults:
 
@@ -365,3 +383,10 @@ by default; each model they try gets a fresh deadline. It applies to any model, 
 Temporal, a model's deadline runs as a workflow timer that cancels its model activity, including each model
 `ModelFallback` tries, as each attempt is an activity of its own; a `FallbackModel`'s per-model deadlines run inside
 its one activity instead.
+
+To fall back when a streamed response doesn't start in time, without cutting off a long response once it has, set
+`model_settings={'first_event_timeout': seconds}`. It bounds the wait from making a streamed request until its first
+event (a part starting or a delta, thinking included; OpenAI's `response.created` doesn't count), across SDK retries
+and the continuations of a paused or background response, and stops applying once that event arrives. Expiry raises
+`ModelRequestTimeout` with `setting='first_event_timeout'`, which `FallbackModel` and `ModelFallback` fall back on by
+default. With `request_timeout` also set, whichever passes first wins. It has no effect on non-streamed requests.

@@ -277,6 +277,11 @@ navigation:
           - "guides/production"
           - "deployment"
           - "deploy"
+      - page: "Enterprise"
+        path: "enterprise.md"
+        slug: "production/enterprise"
+        aliases:
+          - "enterprise"
       - page: "Observability"
         path: "logfire.md"
         slug: "integrations/logfire"
@@ -1095,6 +1100,13 @@ navigation:
           - "comparisons/google-adk"
           - "pydantic-ai-vs-google-adk"
           - "google-adk-vs-pydantic-ai"
+      - page: "vs Microsoft Agent Framework"
+        path: "comparisons/vs-microsoft-agent-framework.md"
+        slug: "comparisons/vs-microsoft-agent-framework"
+        aliases:
+          - "comparisons/microsoft-agent-framework"
+          - "pydantic-ai-vs-microsoft-agent-framework"
+          - "microsoft-agent-framework-vs-pydantic-ai"
       - page: "vs Mastra"
         path: "comparisons/vs-mastra.md"
         slug: "comparisons/vs-mastra"
@@ -1175,6 +1187,11 @@ navigation:
             slug: "api/pydantic-ai/conversation"
             aliases:
               - "api/conversation"
+          - page: "conversation_store"
+            path: "api/conversation_store.md"
+            slug: "api/pydantic-ai/conversation-store"
+            aliases:
+              - "api/conversation_store"
           - page: "direct"
             path: "api/direct.md"
             slug: "api/pydantic-ai/direct"

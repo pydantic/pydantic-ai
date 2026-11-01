@@ -21,27 +21,34 @@ from pydantic import BaseModel, Field
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'pr-gates.yml'
 REVIEW_WORKFLOW = WORKFLOW.with_name('pr-review-gates.yml')
+PATH = f'.github/api-compatibility-waivers/{"a" * 64}.json'
+OTHER_PATH = f'.github/api-compatibility-waivers/{"b" * 64}.json'
 ALLOWLIST = '.github/api-compatibility-allowlist.json'
 WAIVER = {
     'against': 'v2.59.0',
-    'fingerprint': 'a' * 64,
     'reason': 'Deprecated in v2.40, removed on schedule.',
     'pull_request': 'https://github.com/pydantic/pydantic-ai/pull/1',
 }
 
 
-def _allowlist(*waivers: dict[str, str]) -> str:
-    return json.dumps({'allowed_breakages': list(waivers)})
+def _waiver(**changes: str) -> str:
+    return json.dumps(WAIVER | changes)
+
+
+def _legacy_allowlist(against: str) -> str:
+    """An allowlist that still lists the waiver for `PATH` under `allowed_breakages`."""
+    return json.dumps({'allowed_breakages': [WAIVER | {'against': against, 'fingerprint': 'a' * 64}]})
 
 
 @dataclass
 class FakeGitHub:
-    files: list[str]
+    files: list[ChangedFile]
     current_labels: set[str] = field(default_factory=set[str])
-    texts: dict[str, str | None] = field(default_factory=dict[str, str | None])
+    # The text of each file at each ref; a file missing from a ref doesn't exist there.
+    texts: dict[tuple[str, str], str] = field(default_factory=dict[tuple[str, str], str])
 
     def changed_files(self) -> list[ChangedFile]:
-        return [ChangedFile(filename=path) for path in self.files]
+        return self.files
 
     def labels(self) -> set[str]:
         return set(self.current_labels)
@@ -50,37 +57,88 @@ class FakeGitHub:
         return 'merge-base'
 
     def file_text(self, path: str, ref: str) -> str | None:
-        assert path == ALLOWLIST
-        return self.texts.get(ref)
+        return self.texts.get((path, ref))
 
 
 @pytest.mark.parametrize(
-    ('head', 'base', 'labels', 'fails'),
+    ('file', 'texts', 'labels', 'fails'),
     [
-        pytest.param(_allowlist(WAIVER), _allowlist(), set[str](), True, id='new-waiver-unlabeled'),
-        pytest.param(_allowlist(WAIVER), _allowlist(), {'compatibility impact'}, False, id='new-waiver-labeled'),
-        # A file added by the PR has no version at the merge base.
-        pytest.param(_allowlist(WAIVER), None, set[str](), True, id='new-file'),
-        pytest.param(_allowlist(), _allowlist(WAIVER), set[str](), False, id='waiver-removed'),
-        pytest.param(_allowlist(WAIVER), _allowlist(WAIVER), set[str](), False, id='reformatted'),
-        pytest.param('{"allowed_breakages": [{}]}', _allowlist(), {'compatibility impact'}, True, id='invalid'),
+        pytest.param(ChangedFile(filename=PATH), {(PATH, 'head'): _waiver()}, set[str](), True, id='added-unlabeled'),
+        pytest.param(
+            ChangedFile(filename=PATH),
+            {(PATH, 'head'): _waiver()},
+            {'compatibility impact'},
+            False,
+            id='added-labeled',
+        ),
+        pytest.param(ChangedFile(filename=PATH), {(PATH, 'merge-base'): _waiver()}, set[str](), False, id='removed'),
+        pytest.param(
+            ChangedFile(filename=PATH),
+            {(PATH, 'head'): _waiver(reason='Reworded.'), (PATH, 'merge-base'): _waiver()},
+            set[str](),
+            False,
+            id='reworded',
+        ),
+        # Waiving the same finding against a newer release is a new waiver.
+        pytest.param(
+            ChangedFile(filename=PATH),
+            {(PATH, 'head'): _waiver(against='v2.60.0'), (PATH, 'merge-base'): _waiver()},
+            set[str](),
+            True,
+            id='rebased',
+        ),
+        pytest.param(
+            ChangedFile(filename=OTHER_PATH, previous_filename=PATH),
+            {(OTHER_PATH, 'head'): _waiver(), (PATH, 'merge-base'): _waiver()},
+            set[str](),
+            True,
+            id='renamed',
+        ),
+        pytest.param(
+            ChangedFile(filename=PATH),
+            {(PATH, 'head'): _waiver(), (ALLOWLIST, 'merge-base'): _legacy_allowlist('v2.59.0')},
+            set[str](),
+            False,
+            id='moved-from-legacy-list',
+        ),
+        pytest.param(
+            ChangedFile(filename=PATH),
+            {(PATH, 'head'): _waiver(), (ALLOWLIST, 'merge-base'): _legacy_allowlist('v2.58.0')},
+            set[str](),
+            True,
+            id='moved-from-legacy-list-against-a-newer-release',
+        ),
+        pytest.param(
+            ChangedFile(filename=PATH),
+            {(PATH, 'head'): '{}'},
+            {'compatibility impact'},
+            True,
+            id='invalid',
+        ),
+        pytest.param(
+            ChangedFile(filename='.github/api-compatibility-waivers/bad.json'),
+            {('.github/api-compatibility-waivers/bad.json', 'head'): _waiver()},
+            {'compatibility impact'},
+            True,
+            id='misnamed',
+        ),
     ],
 )
-def test_compatibility_waiver(head: str, base: str | None, labels: set[str], fails: bool):
-    github = FakeGitHub(files=[ALLOWLIST], current_labels=labels, texts={'head': head, 'merge-base': base})
+def test_compatibility_waiver(file: ChangedFile, texts: dict[tuple[str, str], str], labels: set[str], fails: bool):
+    github = FakeGitHub(files=[file], current_labels=labels, texts=texts)
 
     assert bool(compatibility_waiver(github, base_sha='base', head_sha='head').failures) is fails
 
 
-def test_an_untouched_allowlist_passes_without_reading_it():
-    github = FakeGitHub(files=['pydantic_ai_slim/pydantic_ai/agent.py'])
+def test_untouched_waivers_pass_without_reading_them():
+    github = FakeGitHub(files=[ChangedFile(filename='.github/api-compatibility-allowlist.json')])
 
     assert compatibility_waiver(github, base_sha='base', head_sha='head').failures == []
 
 
 def test_run_reports_failures_as_annotations_and_a_summary(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     summary = tmp_path / 'summary.md'
-    github = FakeGitHub(files=[ALLOWLIST], texts={'head': _allowlist(WAIVER), 'merge-base': _allowlist()})
+    github = FakeGitHub(files=[ChangedFile(filename=PATH)], texts={(PATH, 'head'): _waiver()})
 
     status = run(
         'compatibility-waiver', github, {'BASE_SHA': 'base', 'HEAD_SHA': 'head', 'GITHUB_STEP_SUMMARY': str(summary)}
@@ -106,8 +164,8 @@ def test_gh_cli_parses_github_responses(monkeypatch: pytest.MonkeyPatch):
         'repos/o/r/pulls/7/files?per_page=100': '[[{"filename": "a"}], [{"filename": "b", "previous_filename": "c"}]]',
         'repos/o/r/compare/x...y': '{"merge_base_commit": {"sha": "m"}}',
         'repos/o/r/issues/7/labels?per_page=100': '[[{"name": "compatibility impact"}]]',
-        f'repos/o/r/contents/{ALLOWLIST}?ref=y': '{}',
-        f'repos/o/r/contents/{ALLOWLIST}?ref=m': None,
+        f'repos/o/r/contents/{PATH}?ref=y': '{}',
+        f'repos/o/r/contents/{PATH}?ref=m': None,
     }
 
     def fake_run(args: list[str], **_: bool) -> subprocess.CompletedProcess[str]:
@@ -122,8 +180,8 @@ def test_gh_cli_parses_github_responses(monkeypatch: pytest.MonkeyPatch):
     assert github.changed_files() == [ChangedFile(filename='a'), ChangedFile(filename='b', previous_filename='c')]
     assert github.merge_base('x', 'y') == 'm'
     assert github.labels() == {'compatibility impact'}
-    assert github.file_text(ALLOWLIST, 'y') == '{}'
-    assert github.file_text(ALLOWLIST, 'm') is None
+    assert github.file_text(PATH, 'y') == '{}'
+    assert github.file_text(PATH, 'm') is None
 
     responses['repos/o/r/pulls/7'] = '{"changed_files": 3}'
     with pytest.raises(GateError, match='Retrieved only 2 of 3'):
@@ -254,6 +312,7 @@ def test_review_failure_reports_distinguish_cancellation_from_failure():
 def test_observer_cannot_choose_the_status_target():
     scenarios: list[tuple[str, str]] = [
         ('forged-title', 'active'),
+        ('review-comment', 'active'),
         ('empty-event-prs', 'active'),
         ('producer', 'active'),
         ('native', 'active'),
@@ -264,6 +323,10 @@ def test_observer_cannot_choose_the_status_target():
         ('ambiguous', 'error'),
         ('closed-association', 'error'),
         ('wrong-source', 'error'),
+        ('wrong-path', 'error'),
+        ('foreign-workflow-repository', 'error'),
+        ('observer-bot-event', 'error'),
+        ('producer-review-event', 'error'),
         ('api-error', 'error'),
         ('moved-while-queued', 'stale'),
         ('repository-changed', 'stale'),
@@ -283,7 +346,7 @@ const core = {setOutput: (name, value) => {outputs[name] = value;}};
 core.notice = () => {};
 const source = {number: 8, state: 'open', head: {sha: data.head, repo: {id: 888}}};
 const serverRun = {
-  name: 'PR Review Gates Events', event: 'pull_request_review',
+  name: 'PR Review Gates Events #7 @ ' + data.otherHead, event: 'pull_request_review',
   path: '.github/workflows/pr-review-gates-events.yml',
   repository: {full_name: 'pydantic/pydantic-ai'},
   head_sha: data.head, head_branch: 'attacker-branch',
@@ -303,10 +366,15 @@ if (data.scenario === 'moved-while-queued') live.head.sha = data.otherHead;
 if (data.scenario === 'repository-changed') live.head.repo.id = 777;
 if (data.scenario === 'closed-while-queued') live.state = 'closed';
 if (data.scenario === 'wrong-source') serverRun.event = 'workflow_dispatch';
-if (data.scenario === 'producer') {
+if (data.scenario === 'review-comment') serverRun.event = 'pull_request_review_comment';
+if (data.scenario === 'wrong-path') serverRun.path = '.github/workflows/untrusted.yml';
+if (data.scenario === 'foreign-workflow-repository') serverRun.repository.full_name = 'attacker/pydantic-ai';
+if (data.scenario === 'observer-bot-event') serverRun.event = 'pull_request_target';
+if (['producer', 'producer-review-event'].includes(data.scenario)) {
   serverRun.name = 'PR Bots'; serverRun.path = '.github/workflows/bots.yml';
   serverRun.event = 'pull_request_target';
 }
+if (data.scenario === 'producer-review-event') serverRun.event = 'pull_request_review';
 const context = {
   eventName: 'workflow_run', serverUrl: 'https://github.com', runId: 1,
   repo: {owner: 'pydantic', repo: 'pydantic-ai'},
@@ -407,7 +475,6 @@ console.log(JSON.stringify(results));
 HEAD = 'a' * 40
 OLD_HEAD = 'b' * 40
 BOT = review_gates.ReviewUser(id=1, login='github-actions[bot]', type='Bot')
-AUTHOR = review_gates.ReviewUser(id=2, login='author', type='User')
 MAINTAINER = review_gates.ReviewUser(id=3, login='maintainer', type='User')
 
 
@@ -438,7 +505,6 @@ class ReviewGitHub:
     labels: list[str] | None = None
     current_reviews: list[review_gates.Review] = field(default_factory=lambda: [review()])
     comments: list[review_gates.ReviewComment] = field(default_factory=list[review_gates.ReviewComment])
-    permissions: dict[str, review_gates.Permission] = field(default_factory=lambda: {'maintainer': 'write'})
     verified: bool = True
     head: str = HEAD
     repository: int = 888
@@ -453,7 +519,6 @@ class ReviewGitHub:
                 'state': 'closed' if self.closed else 'open',
                 'head': {'sha': self.head, 'repo': {'id': self.repository}},
                 'base': {'sha': OLD_HEAD},
-                'user': AUTHOR,
                 'changed_files': 1,
                 'labels': [{'name': label} for label in self.labels if label]
                 if self.labels is not None
@@ -469,9 +534,6 @@ class ReviewGitHub:
 
     def review_comments(self) -> list[review_gates.ReviewComment]:
         return self.comments.copy()
-
-    def permission(self, login: str) -> review_gates.Permission:
-        return self.permissions.get(login, 'read')
 
     def verified_review_run(self, run_id: int, head: str) -> bool:
         assert (run_id, head) == (20, HEAD)
@@ -492,8 +554,8 @@ def test_review_bar_by_size(size: review_gates.Size):
     github = ReviewGitHub(size_label=size, current_reviews=[])
     result = verdicts(github)
     assert bool(result['douwebot'].failures) is (size != 'size: S')
-    assert bool(result['human'].failures) is (size in ('size: L', 'size: XL'))
-    github.current_reviews = [review(), review(11, MAINTAINER, head=OLD_HEAD)]
+    assert set(result) == {'douwebot'}
+    github.current_reviews = [review()]
     assert all(not item.failures for item in verdicts(github).values())
 
 
@@ -515,12 +577,14 @@ def test_size_must_match_exactly_one_recomputed_label(labels: list[str]):
         review(body=f'Reviewed at {HEAD}\n\nNo findings.'),
     ],
 )
-def test_unqualified_bot_reviews_do_not_pass(candidate: review_gates.Review):
-    assert verdicts(ReviewGitHub(current_reviews=[candidate]))['douwebot'].failures
+@pytest.mark.parametrize('size', ['size: M', 'size: L', 'size: XL'])
+def test_unqualified_bot_reviews_do_not_pass(candidate: review_gates.Review, size: review_gates.Size):
+    assert verdicts(ReviewGitHub(size_label=size, current_reviews=[candidate]))['douwebot'].failures
 
 
-def test_run_marker_must_have_successful_trusted_workflow_provenance():
-    assert verdicts(ReviewGitHub(verified=False))['douwebot'].failures
+@pytest.mark.parametrize('size', ['size: M', 'size: L', 'size: XL'])
+def test_run_marker_must_have_successful_trusted_workflow_provenance(size: review_gates.Size):
+    assert verdicts(ReviewGitHub(size_label=size, verified=False))['douwebot'].failures
 
 
 @pytest.mark.parametrize('latest_incomplete', [False, True])
@@ -602,28 +666,6 @@ def test_other_review_receipt_does_not_count_as_douwebot_finding(workflow: str):
     assert not verdicts(github)['douwebot'].failures
 
 
-@pytest.mark.parametrize(
-    ('user', 'permission', 'states', 'passes'),
-    [
-        (MAINTAINER, 'write', ['APPROVED'], True),
-        (MAINTAINER, 'admin', ['APPROVED'], True),
-        (MAINTAINER, 'read', ['APPROVED'], False),
-        (AUTHOR, 'admin', ['APPROVED'], False),
-        (BOT, 'admin', ['APPROVED'], False),
-        (MAINTAINER, 'write', ['DISMISSED'], False),
-        (MAINTAINER, 'write', ['APPROVED', 'CHANGES_REQUESTED'], False),
-        (MAINTAINER, 'write', ['CHANGES_REQUESTED', 'APPROVED'], True),
-        (MAINTAINER, 'write', ['APPROVED', 'COMMENTED'], True),
-    ],
-)
-def test_human_approval_semantics(
-    user: review_gates.ReviewUser, permission: review_gates.Permission, states: list[str], passes: bool
-):
-    github = ReviewGitHub(size_label='size: L', permissions={user.login: permission})
-    github.current_reviews += [review(11 + index, user, state, OLD_HEAD, '') for index, state in enumerate(states)]
-    assert bool(verdicts(github)['human'].failures) is not passes
-
-
 ENV = {
     'HEAD_SHA': HEAD,
     'EXPECTED_HEAD_SHA': HEAD,
@@ -636,25 +678,28 @@ ENV = {
 
 def test_reevaluation_replaces_a_failure_with_success_on_the_live_head():
     github = ReviewGitHub(current_reviews=[])
-    assert review_gates.reconcile_reviews(github, ENV) == 1
+    assert review_gates.reconcile_reviews(github, ENV) == 0
+    assert github.statuses == [(HEAD, 'douwebot', 'failure')]
     github.current_reviews = [review()]
     assert review_gates.reconcile_reviews(github, ENV) == 0
     assert github.statuses == [
         (HEAD, 'douwebot', 'failure'),
-        (HEAD, 'human', 'success'),
         (HEAD, 'douwebot', 'success'),
-        (HEAD, 'human', 'success'),
     ]
 
 
-def test_errors_and_changing_snapshots_fail_closed():
+@pytest.mark.parametrize(
+    'error',
+    [GateError('API unavailable'), review_gates.ValidationError('ReviewComment', []), OSError('Cannot read metadata')],
+)
+def test_errors_and_changing_snapshots_fail_closed(error: Exception):
     class Unreachable(ReviewGitHub):
         def review_comments(self) -> list[review_gates.ReviewComment]:
-            raise GateError('API unavailable')
+            raise error
 
     github = Unreachable()
     assert review_gates.reconcile_reviews(github, ENV) == 1
-    assert all(state == 'failure' for _, _, state in github.statuses[-2:])
+    assert github.statuses == [(HEAD, 'douwebot', 'failure')]
 
     class Moving(ReviewGitHub):
         def pull_request(self) -> review_gates.ReviewPullRequest:
@@ -663,7 +708,18 @@ def test_errors_and_changing_snapshots_fail_closed():
 
     moving = Moving(current_reviews=[])
     assert review_gates.reconcile_reviews(moving, ENV) == 1
-    assert all(state == 'failure' for _, _, state in moving.statuses[-2:])
+    assert moving.statuses == [(HEAD, 'douwebot', 'failure')]
+
+
+def test_review_status_publication_errors_propagate():
+    class Unwritable(ReviewGitHub):
+        def status(
+            self, head: str, gate: review_gates.ReviewGate, state: review_gates.CommitStatus, description: str, url: str
+        ) -> None:
+            raise GateError('Cannot publish status')
+
+    with pytest.raises(GateError, match='Cannot publish status'):
+        review_gates.reconcile_reviews(Unwritable(current_reviews=[]), ENV)
 
 
 @pytest.mark.parametrize('change', ['head', 'repository', 'closed'])
@@ -693,14 +749,14 @@ def test_no_snapshot_cannot_write_to_an_unverified_environment_head():
     assert github.statuses == []
 
 
-def test_merge_group_skips_metadata_and_reports_both_contexts():
+def test_merge_group_skips_metadata_and_reports_douwebot_context():
     class NoMetadata(ReviewGitHub):
         def pull_request(self) -> review_gates.ReviewPullRequest:
             raise AssertionError('Merge groups do not inspect queue members')
 
     github = NoMetadata()
     assert review_gates.reconcile_reviews(github, {**ENV, 'MERGE_GROUP_SHA': OLD_HEAD}) == 0
-    assert github.statuses == [(OLD_HEAD, 'douwebot', 'success'), (OLD_HEAD, 'human', 'success')]
+    assert github.statuses == [(OLD_HEAD, 'douwebot', 'success')]
 
 
 def test_publisher_binds_inline_comments_to_one_marked_review():
