@@ -66,6 +66,12 @@ class Trip(BaseModel):
     nights: int
 
 
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    """jupyter-client starts a kernel with synchronous file I/O: it writes the connection file and reads config."""
+    return False
+
+
 @pytest.fixture(scope='module')
 async def kernel() -> AsyncIterator[IPythonKernel]:
     async with IPythonKernel() as kernel:

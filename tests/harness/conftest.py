@@ -66,13 +66,6 @@ def anyio_backend() -> str:
 
 
 @pytest.fixture
-def blockbuster_enabled() -> bool:
-    """Not yet: the suite predates the detector, and inside a Temporal workflow it turns Code Mode's portal
-    startup failure into a hang. https://github.com/pydantic/pydantic-ai/issues/8821"""
-    return False
-
-
-@pytest.fixture
 def test_model() -> TestModel:
     """A fresh `TestModel` instance for each test."""
     return TestModel()
