@@ -749,8 +749,10 @@ def test_google_gemini_3_pro():
                 'application/pdf',
                 'text/plain',
             ),
+            'google_supports_minimal_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_thinking_levels': frozenset({'HIGH', 'LOW', 'MEDIUM'}),
         }
     )
 
@@ -1452,8 +1454,10 @@ def test_openrouter_google_gemini_3_pro():
                 'application/pdf',
                 'text/plain',
             ),
+            'google_supports_minimal_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_thinking_levels': frozenset({'HIGH', 'LOW', 'MEDIUM'}),
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1673,8 +1677,10 @@ def test_github_copilot_google_gemini_3_pro():
                 'application/pdf',
                 'text/plain',
             ),
+            'google_supports_minimal_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_thinking_levels': frozenset({'HIGH', 'LOW', 'MEDIUM'}),
             'openai_chat_supports_max_completion_tokens': True,
             'openai_chat_thinking_field': 'reasoning_text',
         }
@@ -2622,8 +2628,10 @@ def test_vercel_vertex_gemini():
                 'application/pdf',
                 'text/plain',
             ),
+            'google_supports_minimal_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_thinking_levels': frozenset({'HIGH', 'LOW', 'MEDIUM'}),
         }
     )
 
