@@ -296,6 +296,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().task_models is True
     # Databases from before `/system_prompt` add no instructions of the user's own.
     assert store.load().instructions == ''
+    assert store.load().repo_context_walk_up_root == '~'
+    assert store.load().repo_context_autoload_symlink_roots == []
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
     assert store.plugins() == [PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})]
     assert store.models() == []
@@ -414,6 +416,8 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         ('run.speculative_code_mode', '"yes"'),
         ('run.instructions', '42'),
         ('accounts.pool', '"off"'),
+        ('repo_context.walk_up_root', '"relative"'),
+        ('repo_context.autoload_symlink_roots', '["~other-user/shared"]'),
     ],
 )
 def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, key: str, value_json: str) -> None:
@@ -1196,6 +1200,91 @@ async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(
     reopened = SettingsStore(store.path)
     assert reopened.plugins()[0].settings['delegate_models'] == original
     assert reopened.plugins()[0].settings['review_agent'] is True
+
+
+def test_repo_context_boundaries_survive_a_build_without_them(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    saved: dict[str, JsonValue] = {
+        'repo_context.walk_up_root': '/offline mount/projects',
+        'repo_context.autoload_symlink_roots': ['~/shared tooling', '/offline mount/instructions'],
+    }
+    for key, value in saved.items():
+        store.set(key, value)
+    store.set('model', 'test')
+    plugin = PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})
+    store.save_plugin(plugin)
+    store.add_model(name='test')
+    store.save_model_settings('test', {'max_tokens': 64})
+    older = {key: name for key, name in SETTING_FIELDS.items() if key not in saved}
+    with monkeypatch.context() as build:
+        build.setattr('pydantic_clai2.config.SETTING_FIELDS', older)
+        build.setattr('pydantic_clai2.config.settings_store.SETTING_FIELDS', older)
+        store = SettingsStore(path)
+        assert store.overrides() == {'model': 'test'}
+        store.set('display.thinking', False)
+        store.reset('display.thinking')
+    reopened = SettingsStore(path)
+    assert reopened.overrides() == saved | {'model': 'test'}
+    assert reopened.plugins() == [plugin]
+    assert reopened.models() == ['test']
+    assert reopened.model_settings('test') == {'max_tokens': 64}
+    with closing(sqlite3.connect(path)) as connection:
+        snapshot = list(connection.iterdump())
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+    SettingsStore(path)
+    with closing(sqlite3.connect(path)) as connection:
+        assert list(connection.iterdump()) == snapshot
+
+
+@pytest.mark.parametrize(
+    ('key', 'value'),
+    [
+        ('repo_context.walk_up_root', ''),
+        ('repo_context.walk_up_root', '   '),
+        ('repo_context.walk_up_root', 'relative/path'),
+        ('repo_context.walk_up_root', '.'),
+        ('repo_context.walk_up_root', './'),
+        ('repo_context.walk_up_root', '~another-user'),
+        ('repo_context.walk_up_root', '~another-user/path'),
+        ('repo_context.walk_up_root', '$HOME/projects'),
+        ('repo_context.walk_up_root', '/bad\x00path'),
+        ('repo_context.walk_up_root', 42),
+        ('repo_context.walk_up_root', ['/']),
+        ('repo_context.autoload_symlink_roots', '/'),
+        ('repo_context.autoload_symlink_roots', [1]),
+        ('repo_context.autoload_symlink_roots', ['']),
+        ('repo_context.autoload_symlink_roots', ['/bad\x00path']),
+        ('repo_context.autoload_symlink_roots', ['relative']),
+        ('repo_context.autoload_symlink_roots', ['.']),
+        ('repo_context.autoload_symlink_roots', ['./']),
+        ('repo_context.autoload_symlink_roots', ['~another-user/path']),
+        ('repo_context.autoload_symlink_roots', ['/', 'bad']),
+    ],
+)
+def test_invalid_repo_context_boundary_writes_preserve_data(tmp_path: Path, key: str, value: JsonValue) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.set('repo_context.walk_up_root', '~/projects')
+    store.set('repo_context.autoload_symlink_roots', ['/offline/shared'])
+    store.set('model', 'test')
+    snapshot = store.path.read_bytes()
+    with pytest.raises(ValidationError):
+        store.set(key, value)
+    assert store.path.read_bytes() == snapshot
+
+
+@pytest.mark.parametrize('path', ['~', '~/offline mount', '/offline mount'])
+def test_repo_context_paths_are_stored_without_requiring_existence(tmp_path: Path, path: str) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    config_command(store, ['set', 'repo_context.walk_up_root', path])
+    config_command(store, ['set', 'repo_context.autoload_symlink_roots', f'["{path}"]'])
+    settings = SettingsStore(store.path).load()
+    assert settings.repo_context_walk_up_root == path
+    assert settings.repo_context_autoload_symlink_roots == [path]
+    config_command(store, ['reset', 'repo_context.walk_up_root'])
+    config_command(store, ['reset', 'repo_context.autoload_symlink_roots'])
+    assert store.load().repo_context_walk_up_root == '~'
+    assert store.load().repo_context_autoload_symlink_roots == []
 
 
 def test_worktree_command_setting_validation(tmp_path: Path) -> None:
