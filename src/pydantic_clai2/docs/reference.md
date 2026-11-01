@@ -953,6 +953,15 @@ instead of falling back, so a missing login is not hidden. Older CLAI builds kee
 the rest of your settings, but cannot run a profile, `@*`, `@default`, or chain
 model, and run a model without an account on the default account only.
 
+### Long subscription retry waits
+
+With a `claude-code:` model, when Claude asks CLAI to wait more than a minute before
+retrying (usually because your subscription limit was reached), CLAI shows the error
+at once instead of waiting silently. The error says about how long Claude asked you
+to wait. Try again later, or pick another model or a chain with `/model`.
+
+For response-header details, see the [plugin contract](../PLUGINS.md#run-models-under-your-own-prefix-get_model_providers).
+
 ### vllm connection
 
 Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks. The connection is saved like Codex's, see [Codex authentication](#codex-authentication).
