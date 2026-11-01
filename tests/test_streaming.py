@@ -6821,6 +6821,31 @@ async def test_deferred_tool_validation_event_in_stream():
     assert tool_call_events[0].args_valid is True
 
 
+async def test_stream_text_yields_to_event_loop_per_event():
+    """A model stream that never awaits still gives other tasks a turn for each event."""
+    text = ' '.join(['word'] * 200)
+    agent = Agent(TestModel(custom_output_text=text))
+    ticks = 0
+    stop = asyncio.Event()
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while not stop.is_set():
+            ticks += 1
+            await asyncio.sleep(0)
+
+    task = asyncio.create_task(ticker())
+    deltas: list[str] = []
+    async with agent.run_stream('Hello') as result:
+        async for delta in result.stream_text(delta=True, debounce_by=None):
+            deltas.append(delta)
+    stop.set()
+    await task
+
+    assert ''.join(deltas) == text
+    assert ticks >= len(deltas)
+
+
 # region: Stream cancellation tests
 
 

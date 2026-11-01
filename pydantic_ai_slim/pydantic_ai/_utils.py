@@ -735,7 +735,9 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         # `aclose()` closes it. A debounced consumer (`group_by_temporal`) prefetches the next item in a background
         # task, so the source generator can be mid-`anext` when the stream is abandoned; closing it concurrently
         # would raise `RuntimeError: aclose(): asynchronous generator is already running`.
-        self._source_lock = anyio.Lock()
+        # `fast_acquire` skips the event loop yield on an uncontended acquire, which would otherwise cost a loop
+        # iteration per item; cancellation is still checked.
+        self._source_lock = anyio.Lock(fast_acquire=True)
         self._pull_scopes: set[anyio.CancelScope] = set()
 
     async def peek(self) -> T | Unset:
