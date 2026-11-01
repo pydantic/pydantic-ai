@@ -138,6 +138,12 @@ to a store, releasing a shared lock, or emitting a metric, can also land during 
 Loop-bound resources are isolated: the next invocation gets a fresh loop, so the abandoned cleanup
 cannot touch resources such as that invocation's provider HTTP client.
 
+At the end of the grace period the abandoned cleanup is cancelled again, and the retired loop stops
+a few event-loop iterations later; on Python 3.11 it first waits for jobs already submitted to its
+default executor to finish. A cleanup that suppresses that cancellation, or is still awaiting
+something by then, is left unfinished. A cleanup that cancels every task on its loop is not
+cancelled again: the retired loop stops at the deadline whether or not that cleanup has finished.
+
 Loop reuse has one more consequence: do not detach background work from a tool with
 `asyncio.create_task()` or by leaving executor work unawaited. Detached work is not checkpointed and
 is not covered by durable execution's guarantees, and it can outlive the invocation that started it.

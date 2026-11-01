@@ -1098,7 +1098,7 @@ class TestBridgeFailureModes:
                     try:
                         await asyncio.sleep(10)
                     except asyncio.CancelledError:
-                        continue  # pragma: lax no cover - usually the forced deadline closes the loop first
+                        continue
 
         agent = build_agent(act)
         abandoned = loops.get()
@@ -1139,6 +1139,61 @@ class TestBridgeFailureModes:
         del abandoned_run
         shutdown(replacement, owner=replacement_thread)
         gc.collect()
+
+    def test_a_cleanup_still_running_at_the_grace_deadline_finishes_on_the_retired_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """At the grace deadline the retirement cancels a cleanup that is still running, and the
+        retired loop keeps running until that cancellation has been delivered. A cleanup that
+        honours it finishes on the loop's own thread instead of being left pending on a closed loop."""
+        loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
+        monkeypatch.setattr(_bridge, '_agent_loop', loops)
+        monkeypatch.setattr(_bridge, '_RETIRED_LOOP_GRACE_SECONDS', 0.05)
+
+        class Suspend(BaseException):
+            pass
+
+        class SuspendingContext(FakeDurableContext):
+            def step(self, func, name=None, config=None):  # type: ignore[no-untyped-def]
+                raise Suspend('retry scheduled')
+
+        unwinding = threading.Event()
+        abandoned_runs: list[asyncio.Task[Any]] = []
+        cleanup_threads: list[threading.Thread] = []
+
+        agent = build_agent(act)
+
+        async def run_with_slow_cleanup() -> str:
+            try:
+                return await agent.run('go')  # type: ignore[return-value]
+            finally:
+                task = asyncio.current_task()
+                assert task is not None
+                abandoned_runs.append(task)
+                unwinding.set()
+                # Outlive the handler's cancel and the grace period: only the retirement's cancel
+                # at the grace deadline ends this cleanup.
+                with suppress(asyncio.CancelledError):
+                    await asyncio.Event().wait()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cleanup_threads.append(threading.current_thread())
+
+        retired = loops.get()
+        thread = loops._thread  # pyright: ignore[reportPrivateUsage]
+        assert thread is not None
+        cancel_held = hold_cancel_until_unwinding(retired, unwinding, monkeypatch)
+
+        with pytest.raises(Suspend):
+            run_durable(run_with_slow_cleanup, context=SuspendingContext(), cancel_timeout=0.01)
+
+        assert cancel_held.is_set()
+        thread.join(timeout=_READINESS_WAIT_TIMEOUT)
+        assert not thread.is_alive()
+        assert retired.is_closed()
+        assert cleanup_threads == [thread]
+        assert [run.done() for run in abandoned_runs] == [True]
 
     def test_an_unwind_that_finishes_within_the_cancel_timeout_keeps_the_loop_warm(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1338,24 +1393,55 @@ class TestBridgeFailureModes:
         assert task_started.wait(timeout=5)
         assert task_holder
 
-        # Keep the forced-stop timer from winning the race with the cleanup coroutine. The cleanup
-        # still has a zero budget and stops the loop itself after cancelling its timed-out waiters.
-        original_stop = loop.stop
-        forced_stop_called = False
-
-        def stop_after_cleanup() -> None:
-            nonlocal forced_stop_called
-            if not forced_stop_called:
-                forced_stop_called = True
-                return
-            original_stop()
-
-        monkeypatch.setattr(loop, 'stop', stop_after_cleanup)
-
         loops.retire(loop, task_holder[0])
 
         thread.join(timeout=5)
         assert task_cancelled.is_set()
+        assert loop.is_closed()
+        assert not thread.is_alive()
+
+    def test_retirement_stops_the_loop_at_the_grace_deadline_when_its_cleanup_is_cancelled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An abandoned task's cleanup that cancels every other task on its loop also cancels the
+        retirement's own cleanup, which would otherwise be what stops the loop."""
+        loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
+        monkeypatch.setattr(_bridge, '_RETIRED_LOOP_GRACE_SECONDS', 0.05)
+        loop = loops.get()
+        thread = loops._thread  # pyright: ignore[reportPrivateUsage]
+        assert thread is not None
+        task_started = threading.Event()
+        retiring = asyncio.Event()
+        cancelled_others: list[int] = []
+        task_holder: list[asyncio.Task[None]] = []
+
+        async def cancel_every_other_task() -> None:
+            task_started.set()
+            await retiring.wait()
+            current = asyncio.current_task()
+            others = [other for other in asyncio.all_tasks() if other is not current]
+            for other in others:
+                other.cancel()
+            cancelled_others.append(len(others))
+
+        loop.call_soon_threadsafe(lambda: task_holder.append(loop.create_task(cancel_every_other_task())))
+        assert task_started.wait(timeout=_READINESS_WAIT_TIMEOUT)
+        schedule = loop.call_soon_threadsafe
+
+        def release_after(callback: Callable[..., object], *args: Any) -> asyncio.Handle:
+            # Queue the release right behind the retirement's shutdown callback, so the retirement's
+            # cleanup task already exists, well before the grace deadline, when this one runs.
+            handle = schedule(callback, *args)
+            schedule(retiring.set)
+            return handle
+
+        monkeypatch.setattr(loop, 'call_soon_threadsafe', release_after)
+
+        loops.retire(loop, task_holder[0])
+
+        thread.join(timeout=_READINESS_WAIT_TIMEOUT)
+        assert cancelled_others == [1]
+        assert task_holder[0].done()
         assert loop.is_closed()
         assert not thread.is_alive()
 
