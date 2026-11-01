@@ -62,6 +62,7 @@ Size S remains a manual judgment; review enforcement skips merge groups after ad
 
 A flake fix makes a nondeterministic test failure deterministic.
 Once its head meets the merge bar, add a flake fix to the merge queue yourself.
+Enqueue it after the final metadata check. Skip the second-opinion choice for a flake fix.
 The trivial-S exception does not apply: require a clean douwebot approval.
 All of these must hold:
 
