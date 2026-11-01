@@ -528,6 +528,13 @@ RepoContext(home_dir='..', nested_traversal=True)  # walk up one level; follow t
 
 `home_dir=None` (default) scans only the working directory; set it to walk up to that ancestor. It is
 a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserError`.
+Use keyword-only `autoload_symlink_roots=()` to authorize shared instruction
+targets for autoload only; the default is empty. Authorize only a directory of
+trusted instructions, not `/` or all of home; repository links can select readable
+files beneath it. See
+[Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
+for resolution, labels, and backend requirements.
+
 `nested_traversal=True` surfaces the instruction files between the working directory and whatever
 `FileSystem` reads or lists, shallowest first, each directory once while its note is in the
 conversation (`nested_inject='pointer'` or `'contents'`), in the message tail so the cached prefix
