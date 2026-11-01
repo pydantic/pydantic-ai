@@ -477,11 +477,11 @@ HISTORY_CONTAINER_CASES = [
     ),
     HistoryContainerCase('bedrock', 'bedrock', 'us.anthropic.claude-sonnet-4-6', container_sent=False),
     HistoryContainerCase('vertex', 'vertex', 'claude-sonnet-4-6', container_sent=False),
-    HistoryContainerCase('mantle', 'mantle', 'anthropic.claude-sonnet-4-6', container_sent=True),
+    HistoryContainerCase('mantle', 'mantle', 'anthropic.claude-sonnet-4-6', container_sent=False),
     HistoryContainerCase('foundry', 'foundry', 'claude-sonnet-4-6', container_sent=False),
     HistoryContainerCase('api-suspended', 'api', 'claude-sonnet-4-6', container_sent=False, suspended=True),
     HistoryContainerCase(
-        'mantle-suspended', 'mantle', 'anthropic.claude-sonnet-4-6', container_sent=True, suspended=True
+        'mantle-suspended', 'mantle', 'anthropic.claude-sonnet-4-6', container_sent=False, suspended=True
     ),
     HistoryContainerCase(
         'api-extra-body-tools',
@@ -502,9 +502,8 @@ async def test_anthropic_history_container_without_code_execution_by_client(
     That includes the container of a suspended response the run resumes. A web tool counts as code execution when
     code execution may call it: a `20260209` version without `allowed_callers`, which Anthropic calls from code
     execution by default, or any version whose `allowed_callers` names a code execution caller. One limited to
-    `['direct']` doesn't count. The direct API rejects the container. The Bedrock
-    Messages API hasn't been verified, so it keeps sending it, and the legacy Bedrock, Vertex AI and Foundry clients
-    don't send container ids at all. Tools passed in `extra_body` aren't read, so such a request sends it.
+    `['direct']` doesn't count. The direct API rejects the container. The legacy Bedrock, Vertex AI and Foundry
+    clients don't send container ids at all. Tools passed in `extra_body` aren't read, so such a request sends it.
 
     Unit test: recording the other clients needs their credentials, recording a suspended response needs a live
     `pause_turn`, and the claim is the request shape.

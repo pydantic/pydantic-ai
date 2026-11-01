@@ -480,18 +480,6 @@ _COUNT_TOKENS_SERVER_TOOLS_UNVERIFIED_CLIENTS = (
 # Anthropic's explicit strict-schema limits were verified live on the Messages API and on both Bedrock clients. Vertex
 # and Foundry weren't reachable with our credentials, so they keep sending such requests for the API to judge.
 _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS = (AsyncAnthropicFoundry, AsyncAnthropicVertex)
-# A `container` on a request without code execution was verified live to be rejected by the Claude API
-# (`Container identifier can only be provided when using the code execution tool`). Claude Platform on AWS
-# (`AsyncAnthropicAWS`) and Claude Platform on Google Cloud (`AsyncAnthropicGoogleCloud`) weren't probed: they serve the
-# Claude API through `AsyncAnthropic` subclasses, so they're treated as it is. The legacy Bedrock InvokeModel API
-# rejects any `container`. Vertex and the Bedrock Messages API couldn't be reached to check, and Foundry wasn't tried.
-# Vertex and Foundry send no container at all (`_FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS`), so this only keeps the
-# Bedrock Messages API sending the history container.
-_CONTAINER_WITHOUT_CODE_EXECUTION_UNVERIFIED_CLIENTS = (
-    AsyncAnthropicBedrockMantle,
-    AsyncAnthropicFoundry,
-    AsyncAnthropicVertex,
-)
 
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
@@ -1166,8 +1154,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         Anthropic's strict-schema limits are only checked on the clients they were verified on, and a user whose
         Vertex or Foundry deployment is known to enforce them can opt in with `anthropic_enforces_strict_schema_limits`.
-        Likewise, a history container is only withheld from a request without code execution on the clients where the
-        API was verified to reject it; `anthropic_rejects_container_without_code_execution` opts the others in.
         """
         client = self._provider.client
         profile = merge_profile(
@@ -1192,10 +1178,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             profile = merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
         if isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS):
             profile = merge_profile(profile, AnthropicModelProfile(anthropic_enforces_strict_schema_limits=False))
-        if isinstance(client, _CONTAINER_WITHOUT_CODE_EXECUTION_UNVERIFIED_CLIENTS):
-            profile = merge_profile(
-                profile, AnthropicModelProfile(anthropic_rejects_container_without_code_execution=False)
-            )
         return profile
 
     @property
@@ -2002,10 +1984,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         working. History-based reuse is always sent as the raw id string since we
         never have skills to attach there.
 
-        An id from history, including a `pause_turn` reconnect id, isn't sent on a request without code execution
-        where the API rejects it (`anthropic_rejects_container_without_code_execution`), such as a follow-up with no
-        tools. `extra_body['tools']` replaces `tools` on the wire but isn't read: a request that carries it keeps the
-        container.
+        An id from history, including a `pause_turn` reconnect id, isn't sent on a request without code execution,
+        such as a follow-up with no tools, since the API rejects it there. `extra_body['tools']` replaces `tools` on
+        the wire but isn't read: a request that carries it keeps the container.
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
@@ -2016,11 +1997,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
             return None, False
         extra_body = model_settings.get('extra_body')
-        if (
-            self.profile.get('anthropic_rejects_container_without_code_execution', True)
-            and not (_is_str_mapping(extra_body) and 'tools' in extra_body)
-            and not provisions_code_execution(tools)
-        ):
+        if not (_is_str_mapping(extra_body) and 'tools' in extra_body) and not provisions_code_execution(tools):
             return None, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models
