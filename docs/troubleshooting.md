@@ -1,5 +1,5 @@
 ---
-description: "Debug Pydantic AI agent runs and fix common errors involving event loops, API keys, upgrades, model profiles, provider requests, retries, message history, and durable execution."
+description: "Debug Pydantic AI agent runs and fix common errors involving event loops, API keys, missing provider prefixes, upgrades, model profiles, provider requests, retries, message history, and durable execution."
 ---
 
 # Troubleshooting
@@ -114,6 +114,23 @@ If you already installed the extra the error names, install the missing package 
 
 ## Model Providers
 
+### [`UserError`][pydantic_ai.exceptions.UserError]: `Unknown model: <name>. Did you mean '<provider>:<name>'?`
+
+In Pydantic AI, string model identifiers require an explicit provider prefix (for example, `'{{ openai:medium }}'`). If you pass an unadorned model name such as `'{{ openai:medium.name }}'`, Pydantic AI does not guess the provider and raises this error, suggesting the matching known model identifier.
+
+To resolve this, specify the provider prefix explicitly, or instantiate the concrete model class:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+# Option 1: Specify provider prefix
+agent = Agent('{{ openai:medium }}')
+
+# Option 2: Instantiate concrete model
+agent = Agent(OpenAIResponsesModel('{{ openai:medium.name }}'))
+```
+
 ### [`UserError`][pydantic_ai.exceptions.UserError]: `Native structured output is not supported by this model.` {#stale-model-profiles}
 
 A new or unrecognized model can be rejected or quietly get the wrong capabilities when your installed model profiles are stale. You may instead see `Tool output is not supported by this model.`, or find that a supported setting has no effect.
@@ -135,6 +152,25 @@ For tool and structured-output schemas, check the provider's supported JSON Sche
 To handle specific failures, catch the error categories rather than matching on the message text, which differs between providers: [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] for "maximum context length" or "prompt is too long", [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] for rate limits, [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] for exhausted credits or billing, and [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] for a 401 or 403. An HTTP error in one of these categories is still a `ModelHTTPError` too, so existing `except ModelHTTPError` blocks keep working. The first three arrived in v2.59.0 and `ModelAuthenticationError` in v2.62.0. See [Handling Model API Errors](models/overview.md#handling-model-api-errors).
 
 To inspect the provider request and response, pass a custom `httpx2` or legacy `httpx` client to the provider. Logfire's [HTTPX integration](logfire.md#monitoring-http-requests) records the request, response and headers.
+
+## Tools and Capabilities
+
+### [`UserError`][pydantic_ai.exceptions.UserError]: `Prepare function 'filter_tools' returned None`; return `[]` to expose no tools, ...
+
+When defining a custom `prepare_tools` hook or [`PrepareTools`](capabilities/prepare-tools.md) capability to dynamically filter tools before a model turn, the hook must return a list of tool definitions (`list[ToolDefinition]`), even if no tools should be active for that step. Returning `None` raises this error.
+
+Return an empty list `[]` instead of `None`. This differs from the [per-tool `prepare` function](tools-advanced.md#tool-prepare), where returning `None` omits just that one tool:
+
+```python {test="skip"}
+from pydantic_ai import RunContext
+from pydantic_ai.tools import ToolDefinition
+
+
+async def filter_tools(ctx: RunContext[None], tools: list[ToolDefinition]) -> list[ToolDefinition]:
+    if ctx.retry > 0:
+        return []  # Return empty list, not None
+    return tools
+```
 
 ## Usage Limits and Retries
 
