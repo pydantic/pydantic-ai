@@ -90,6 +90,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _enabled_server_tool_names: frozenset[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _history_fetched_pages: Sequence[tuple[str, str]] = ()
+    _report_inference_geo: bool = False
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with map_api_errors(self._model_name, self._model_id_namespace):
@@ -124,6 +125,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.message.diagnostics is not None:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['cache_diagnostics'] = event.message.diagnostics.model_dump(mode='json')
+                    # Where the request ran is only reported on the opening message's usage.
+                    if self._report_inference_geo and event.message.usage.inference_geo is not None:
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['inference_geo'] = event.message.usage.inference_geo
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
