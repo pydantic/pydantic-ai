@@ -6471,7 +6471,8 @@ AUTO_THINKING_BACKFILL_CASES = [
         ],
         assistant_turns=snapshot([{'tool_calls': ['get_weather']}]),
     ),
-    # An `OpenAIResponsesModel` reasoning item replayed through Chat: its id is not a Chat thinking field.
+    # An `OpenAIResponsesModel` reasoning item replayed through Chat: its id is not a Chat thinking field,
+    # so it goes back as tags in `content` and the request carries no field to backfill.
     AutoThinkingBackfillCase(
         id='responses_reasoning_id',
         history=[
@@ -6486,7 +6487,7 @@ AUTO_THINKING_BACKFILL_CASES = [
         ],
         assistant_turns=snapshot(
             [
-                {'tool_calls': ['get_weather'], 'rs_0123abcd': 'Paris first.'},
+                {'tool_calls': ['get_weather']},
                 {'tool_calls': ['get_weather']},
             ]
         ),
@@ -6522,8 +6523,9 @@ async def test_auto_mode_thinking_backfill(allow_model_requests: None, case: Aut
 
     DeepSeek in thinking mode 400s on a tool-calling assistant turn after the last user message that omits
     `reasoning_content`, and a generic OpenAI-compatible provider leaves the mode at `'auto'`. The negative
-    cases pin what stays unchanged: earlier user turns, a request carrying no thinking field or two of them,
-    and a key that isn't a Chat thinking field. A mock transport stands in for a cassette because the claim is
+    cases pin what stays unchanged: earlier user turns, and a request carrying no thinking field or two of
+    them. Thinking whose id isn't a Chat thinking field goes back as tags in `content`, so those requests
+    carry no field to backfill. A mock transport stands in for a cassette because the claim is
     the request each synthetic history produces, which no provider response affects;
     `test_deepseek.py::test_deepseek_auto_mode_thinking_backfill` is the live counterpart.
     """
@@ -6559,6 +6561,84 @@ async def test_auto_mode_thinking_backfill(allow_model_requests: None, case: Aut
             extra = {key: value for key, value in sent.items() if key not in ('role', 'content', 'tool_calls')}
             assistant_turns.append({'tool_calls': tool_names, **extra})
     assert assistant_turns == case.assistant_turns
+
+
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+async def test_auto_mode_replayed_responses_reasoning_id_not_sent_as_key(allow_model_requests: None):
+    """A replayed `OpenAIResponsesModel` reasoning item id is not sent as an assistant message field.
+
+    The Responses API identifies reasoning items by id and the Chat Completions API has no such field, so
+    `'auto'` renders the thinking as tags in `content` instead of putting the id on the wire as a key.
+    """
+    request_bodies: list[bytes] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request_bodies.append(request.content)
+        return httpx2.Response(
+            200,
+            json=completion_message(ChatCompletionMessage(content='Sunny.', role='assistant')).model_dump(mode='json'),
+        )
+
+    history = [
+        _WEATHER_PROMPT,
+        ModelResponse(
+            parts=[_thinking('Paris first.', id='rs_0123abcd'), TextPart('Rain in Paris.')],
+            provider_name='openai',
+        ),
+    ]
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = OpenAIChatModel(
+            'deepseek-v4-flash',
+            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
+        )
+        await Agent(model).run('What about London?', message_history=history)
+
+    body = TypeAdapter(dict[str, JsonValue]).validate_json(request_bodies[0])
+    (assistant,) = [msg for msg in json_objects(body['messages']) if msg['role'] == 'assistant']
+    assert 'rs_0123abcd' not in assistant
+    assert assistant['content'] == snapshot('<think>\nParis first.\n</think>\n\nRain in Paris.')
+
+
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+async def test_auto_mode_encrypted_only_responses_reasoning_not_sent(allow_model_requests: None):
+    """An encrypted-only replayed Responses reasoning item is sent back as an empty tag wrapper, not a field.
+
+    Chat Completions has no channel for the item's encrypted payload and its id is not an assistant-message
+    field, and with no plaintext `content` there is nothing to render inside the tags, so only an empty
+    wrapper reaches the wire in `content`.
+    """
+    request_bodies: list[bytes] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request_bodies.append(request.content)
+        return httpx2.Response(
+            200,
+            json=completion_message(ChatCompletionMessage(content='Sunny.', role='assistant')).model_dump(mode='json'),
+        )
+
+    history = [
+        _WEATHER_PROMPT,
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='', id='rs_0123abcd', signature='<encrypted>', provider_name='openai'),
+                TextPart('Rain in Paris.'),
+            ],
+            provider_name='openai',
+        ),
+    ]
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = OpenAIChatModel(
+            'deepseek-v4-flash',
+            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
+        )
+        await Agent(model).run('What about London?', message_history=history)
+
+    body = TypeAdapter(dict[str, JsonValue]).validate_json(request_bodies[0])
+    (assistant,) = [msg for msg in json_objects(body['messages']) if msg['role'] == 'assistant']
+    assert 'rs_0123abcd' not in assistant
+    assert assistant['content'] == snapshot('<think>\n\n</think>\n\nRain in Paris.')
 
 
 async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):
