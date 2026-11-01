@@ -1274,7 +1274,7 @@ async def test_anthropic_file_and_container_ids_by_client(case: AnthropicClientC
         ModelResponse(parts=[TextPart('ok')], provider_name='anthropic', provider_details={'container_id': 'cntr_1'}),
         ModelRequest(parts=[UserPromptPart('again')]),
     ]
-    container, from_history = model._get_container(history, {})  # pyright: ignore[reportPrivateUsage]
+    container, from_history = model._get_container(history, {}, params)  # pyright: ignore[reportPrivateUsage]
     assert (container, from_history) == (('cntr_1', True) if case.accepts_ids else (None, False))
     assert model._container_upload_file_ids(tool) == (['file_1'] if case.accepts_ids else [])  # pyright: ignore[reportPrivateUsage]
 
@@ -1298,7 +1298,7 @@ async def test_anthropic_file_and_container_ids_by_client(case: AnthropicClientC
             state='suspended',
         ),
     ]
-    assert model._get_container(paused, {}) == (('cntr_2', False) if case.accepts_ids else (None, False))  # pyright: ignore[reportPrivateUsage]
+    assert model._get_container(paused, {}, params) == (('cntr_2', False) if case.accepts_ids else (None, False))  # pyright: ignore[reportPrivateUsage]
 
 
 # `OpenAICompatibleProvider`.

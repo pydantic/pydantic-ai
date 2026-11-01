@@ -1691,7 +1691,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_choice = settle_tool_choice(tool_choice)
             output_config = settle_output_config(output_config)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        container, container_from_history = self._get_container(messages, model_settings)
+        container, container_from_history = self._get_container(messages, model_settings, model_request_parameters)
         recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
         initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
             thinking_with_stale_block_history(
@@ -1929,7 +1929,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return BetaDiagnosticsParam(previous_message_id=previous_message_id)
 
     def _get_container(
-        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[BetaContainerParams | str | None, bool]:
         """Resolve the `container` request parameter, and whether we resolved it from history.
 
@@ -1950,6 +1953,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         the Skills path (`{"skills": ...}` / `{"id": ..., "skills": ...}`) keeps
         working. History-based reuse is always sent as the raw id string since we
         never have skills to attach there.
+
+        A container recovered from history is only sent on a request that enables code
+        execution; Anthropic rejects it anywhere else with
+        `Container identifier can only be provided when using the code execution tool`
+        (https://github.com/pydantic/pydantic-ai/issues/11761).
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
@@ -1966,12 +1974,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if messages[-1].provider_details:
                 return messages[-1].provider_details.get('container_id'), False
             return None, False
+        if not self._request_enables_code_execution(model_request_parameters):
+            return None, False
 
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and self.accepts_server_state(m) and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
                     return cid, True
         return None, False
+
+    def _request_enables_code_execution(self, model_request_parameters: ModelRequestParameters) -> bool:
+        """Whether a request enables code execution, the only request shape Anthropic accepts a container on."""
+        native_tools = model_request_parameters.native_tools
+        if any(isinstance(tool, CodeExecutionTool) for tool in native_tools):
+            return True
+        # The 20260209 web tools provision code execution for dynamic filtering server-side.
+        return self.profile.get('anthropic_supports_dynamic_filtering', False) and any(
+            isinstance(tool, WebSearchTool | WebFetchTool) for tool in native_tools
+        )
 
     async def _messages_count_tokens(
         self,

@@ -15784,11 +15784,11 @@ async def test_anthropic_container_setting_dict_with_skills_passed_through(allow
 
 
 async def test_anthropic_container_from_message_history(allow_model_requests: None):
-    """Test that container_id from message history is passed to subsequent requests."""
+    """Test that container_id from message history is passed to subsequent requests with code execution."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock([c, c])
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Create a message history with a container_id in provider_details
     history: list[ModelMessage] = [
@@ -15808,6 +15808,49 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'native_tools', 'expected_container'),
+    [
+        pytest.param('claude-sonnet-4-6', [], OMIT, id='no-native-tools'),
+        pytest.param('claude-sonnet-4-6', [CodeExecutionTool()], 'container_from_history', id='code-execution'),
+        pytest.param('claude-sonnet-4-6', [WebSearchTool()], 'container_from_history', id='web-tools-20260209'),
+        pytest.param('claude-haiku-4-5', [WebSearchTool()], OMIT, id='web-tools-20250305'),
+    ],
+)
+async def test_anthropic_history_container_needs_code_execution(
+    allow_model_requests: None,
+    model_name: str,
+    native_tools: list[AbstractNativeTool],
+    expected_container: object,
+):
+    """A `container_id` from history is only sent on a request that enables code execution.
+
+    The Anthropic API answers any other request carrying one with a 400 (`Container identifier
+    can only be provided when using the code execution tool`), so a follow-up without the code
+    execution tool failed every time (https://github.com/pydantic/pydantic-ai/issues/11761).
+    The `20260209` web tools count because they run code execution server-side; the `20250305`
+    variant doesn't. This is a unit test rather than a VCR one: reproducing the 400 needs a
+    recorded conversation whose second turn drops the tool, which no cassette holds.
+    """
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(tool) for tool in native_tools])
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(
+            parts=[TextPart(content='world')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'container_from_history'},
+        ),
+    ]
+    await agent.run('follow up', message_history=history)
+
+    container = get_mock_chat_completion_kwargs(mock_client)[0].get('container')
+    assert container == expected_container
+
+
+@pytest.mark.parametrize(
     'base_url', ['https://gateway-a.example', 'https://gateway-b.example'], ids=['same-endpoint', 'other-endpoint']
 )
 async def test_anthropic_container_from_history_scoped_by_endpoint(allow_model_requests: None, base_url: str):
@@ -15821,13 +15864,19 @@ async def test_anthropic_container_from_history_scoped_by_endpoint(allow_model_r
         ).model_copy(update={'container': BetaContainer(id='container_a', expires_at=datetime(2025, 1, 1))})
     )
     cast(MockAnthropic, producer_client).base_url = 'https://gateway-a.example'
-    producer = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=producer_client)))
+    producer = Agent(
+        AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=producer_client)),
+        capabilities=[NativeTool(CodeExecutionTool())],
+    )
     history = (await producer.run('hello')).all_messages()
 
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     cast(MockAnthropic, mock_client).base_url = base_url
-    agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
+    agent = Agent(
+        AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[NativeTool(CodeExecutionTool())],
+    )
     await agent.run('follow up', message_history=history)
 
     container = get_mock_chat_completion_kwargs(mock_client)[0].get('container')
