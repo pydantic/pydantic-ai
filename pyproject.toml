@@ -372,6 +372,8 @@ include = [
     ".github/scripts/test_feature_digest.py",
     ".github/scripts/agentic_workflow_guard.py",
     ".github/scripts/test_agentic_workflow_guard.py",
+    ".github/scripts/weekly_ce_audit.py",
+    ".github/scripts/test_weekly_ce_audit.py",
     ".github/scripts/agent_spend_report.py",
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",

@@ -9,16 +9,15 @@ from typing import NoReturn
 
 import pytest
 
-import pydantic_ai.capabilities.local_workspace
-import pydantic_ai_harness.coder
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Capability, LocalWorkspace
+from pydantic_ai.capabilities import Capability, LocalWorkspace, local_workspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef
+from pydantic_ai_harness import coder
 from pydantic_ai_harness.coder import FILE_TOOL_NAMES, Coder, coder_agent
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
@@ -75,7 +74,7 @@ async def test_coder_agent_imports_on_a_non_posix_host(monkeypatch: pytest.Monke
     # `LocalWorkspace` refuses a non-POSIX host when constructed; the bundled agent must still import there.
     import pydantic_ai_harness.coder._agent as module
 
-    monkeypatch.setattr(pydantic_ai.capabilities.local_workspace, 'LocalWorkspaceBackend', _posix_only)
+    monkeypatch.setattr(local_workspace, 'LocalWorkspaceBackend', _posix_only)
     try:
         agent = importlib.reload(module).coder_agent
     finally:
@@ -100,7 +99,7 @@ def test_coder_agent_export_is_lazy() -> None:
 
 def test_coder_unknown_export() -> None:
     with pytest.raises(AttributeError, match='has no attribute'):
-        pydantic_ai_harness.coder.__getattr__('missing')
+        coder.__getattr__('missing')
 
 
 def test_coder_members_and_parameters() -> None:
