@@ -6,7 +6,7 @@ description: "Make Pydantic AI agents durable with Restate, journaling model cal
 
 [Restate](https://restate.dev) is a lightweight durable execution runtime with first-class support for AI agents. The Pydantic AI integration is provided via the [Restate Python SDK](https://github.com/restatedev/sdk-python/tree/main/python/restate/ext/pydantic).
 
-Visit the [Restate documentation](https://docs.restate.dev/ai/patterns/durable-agents) for more information.
+Visit the [Restate documentation](https://docs.restate.dev/ai/patterns/durable-agents) for more information, or read [Build durable agents with Restate and Pydantic AI](https://pydantic.dev/articles/restate-durable-execution-pydanticai) on the Pydantic blog.
 
 ## Durable Execution
 
@@ -21,6 +21,8 @@ A durable agent has three building blocks:
 3. **Tool executions**: wrapped in durable steps so a completed step is not re-executed on recovery.
 
 A step interrupted before its result was journaled runs again on retry, even if its external side effect already happened. Make side-effecting tools idempotent, for example by passing an idempotency key to the external service.
+
+[Batched model requests](../batch.md#durable-execution) aren't journaled, so recovery submits a request that was waiting on its batch again, in a new batch that's billed too.
 
 ```text
                   Clients

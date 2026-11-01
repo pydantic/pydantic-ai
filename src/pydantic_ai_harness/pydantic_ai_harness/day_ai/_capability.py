@@ -18,15 +18,14 @@ Re-check by fetching both metadata documents and sending an unauthenticated `ini
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._combine import one_per_id
-from pydantic_ai_harness._mcp import credential, per_run_connection
+from pydantic_ai_harness._mcp import credential, one_connection, per_run_connection, prefixed_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -67,9 +66,17 @@ class DayAI(AbstractCapability[AgentDepsT]):
     description: str | None = _DEFAULT_DESCRIPTION
     """Routing description used when the capability is loaded on demand."""
 
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """A Day AI access token, `'oauth'` to sign in through the browser locally, or a function of the run context
-    that returns a token.
+    tool_prefix: str | None = 'day_ai'
+    """Prepended with `_` to the server's tool names, as in `day_ai_<tool>`, so they don't collide with other tools.
+
+    Give two instances distinct prefixes to use both. `None` keeps the names the server gives its tools.
+    """
+
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """A Day AI access token, `'oauth'` to sign in through the browser locally, or a sync or async function
+    of the run context that returns a token.
 
     Unset, it uses `DAY_AI_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no
     Day AI tools.
@@ -88,16 +95,20 @@ class DayAI(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_per_id(capabilities)
+        return one_connection(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Day AI MCP tools."""
         id = self.id or _ID
         if self.client is not None:
-            return MCPToolset(self.client, id=id, include_instructions=self.include_instructions)
-        if callable(self.auth):
-            return per_run_connection(self.auth, self._connect, id=id, expects='an access token')
-        return self._connect(self.auth)
+            toolset: AbstractToolset[AgentDepsT] = MCPToolset(
+                self.client, id=id, include_instructions=self.include_instructions
+            )
+        elif callable(self.auth):
+            toolset = per_run_connection(self.auth, self._connect, id=id, expects='an access token')
+        else:
+            toolset = self._connect(self.auth)
+        return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(

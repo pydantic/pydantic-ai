@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextvars
 import dataclasses
 import weakref
 from collections import deque
@@ -24,7 +25,11 @@ from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._framing import SYSTEM_TAG, wrap
 from .._instrumentation import annotate_tool_call_otel_metadata
-from .._run_context import context_window_fraction
+from .._run_context import (
+    _CURRENT_RUN_CONTEXT,  # pyright: ignore[reportPrivateUsage]
+    RealtimeEventBuffer,
+    context_window_fraction,
+)
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -48,6 +53,8 @@ from ..messages import (
     BinaryAudio,
     BinaryContent,
     BinaryImage,
+    CapabilityEvent,
+    CustomEvent,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     EnqueuedMessagesEvent,
@@ -116,7 +123,9 @@ from ._instrumentation import (
 from ._lifecycle import LifecycleEvent, ResponseStarted, StaleEvent
 from ._retained_audio import RetainedAudioBudget
 from ._utils import (
+    SystemPromptContext,
     SystemPromptText,
+    replay_recorded_system_prompts_in_place,
     seed_pcm_audio,
 )
 from .codec import (
@@ -129,6 +138,7 @@ from .codec import (
     CreateResponse,
     InputRejected,
     InputTranscript,
+    OutputSpeechTimestamps,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
@@ -171,6 +181,8 @@ RealtimeEvent = TypeAliasType(
     | DeferredToolRequestsEvent
     | DeferredToolResultsEvent
     | EnqueuedMessagesEvent
+    | CustomEvent
+    | CapabilityEvent
     | RealtimeTurnCompleteEvent
     | RealtimeInputSpeechStartEvent
     | RealtimeResponseInterruptedEvent
@@ -195,7 +207,10 @@ other shared message parts, including [`TextPart`][pydantic_ai.messages.TextPart
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], deferred calls and their resolution
 as [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /
 [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], enqueued-message delivery
-as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], and the rest as realtime
+as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], events emitted with
+[`RunContext.emit`][pydantic_ai.tools.RunContext.emit] as the
+[`CustomEvent`][pydantic_ai.messages.CustomEvent] or
+[`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] that was emitted, and the rest as realtime
 control-plane events.
 """
 
@@ -250,6 +265,7 @@ _WAV_MEDIA_TYPE = 'audio/wav'
 _FULL_PROFILE = RealtimeModelProfile(
     supports_image_input=True,
     supports_text_output=True,
+    supports_audio_output=True,
     supports_manual_turn_control=True,
     supports_interruption=True,
     supports_output_truncation=True,
@@ -405,6 +421,7 @@ class _AudioTap:
 _TranslatableEvent: TypeAlias = (
     AudioDelta
     | OutputTranscript
+    | OutputSpeechTimestamps
     | InputTranscript
     | ResponseDone
     | RealtimeInputSpeechStartEvent
@@ -506,9 +523,11 @@ def _user_prompt_text(part: UserPromptPart) -> str | None:
 def _pending_message_text(pending: PendingMessage) -> str:
     """Render enqueued messages down to the text a realtime session can deliver.
 
-    Text-only parts join across messages, and a mid-conversation `SystemPromptPart` is delivered as
-    `<system>`-tagged user text — the same degradation `Model.prepare_messages` applies for a
-    standard run's non-leading system prompts. Anything else can't cross the live input channel.
+    Text-only parts join across messages. System prompts alone become a `SystemPromptText`, which the
+    connection delivers on its channel for the operator's own text, as `send(SystemPromptPart(...))` does;
+    next to user text they're `<system>`-tagged within the user turn, as `Model.prepare_messages` does for a
+    standard run's non-leading system prompts on a model without a system role. Anything else can't cross
+    the live input channel.
     """
     error = UserError(
         '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support text prompts '
@@ -516,6 +535,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
         'be delivered over the live input channel.'
     )
     texts: list[str] = []
+    system_prompts: list[str] = []
     from_user = False
     for message in pending.messages:
         if not isinstance(message, ModelRequest):
@@ -527,22 +547,25 @@ def _pending_message_text(pending: PendingMessage) -> str:
                 from_user = True
             elif isinstance(part, SystemPromptPart):
                 texts.append(wrap(SYSTEM_TAG, part.content))
+                system_prompts.append(part.content)
             else:
                 raise error
     if not texts:
         raise error
-    text = '\n\n'.join(texts)
-    return text if from_user else SystemPromptText(text)
+    return '\n\n'.join(texts) if from_user else SystemPromptText('\n\n'.join(system_prompts))
 
 
 def _pending_message_record(pending: PendingMessage) -> list[ModelRequestPart] | None:
-    """The parts to record for a delivered message that carries `TextContent`, so its metadata survives.
+    """The parts to record for a delivered message of system prompts alone, or one that carries `TextContent`.
 
-    A capability recognizes content it enqueued, such as a background task's report, by that metadata, so
-    the history keeps the enqueued user prompt parts as they were. Any other message is recorded as the one
-    text part it was sent as. That includes one with a `SystemPromptPart`, which is sent as `<system>` text.
+    System prompts alone are delivered as system prompts, so they're recorded as they were. A capability
+    recognizes content it enqueued, such as a background task's report, by its `TextContent` metadata, so
+    the history keeps those enqueued user prompt parts as they were too. Any other message is recorded as the
+    one text part it was sent as, with its system prompts `<system>`-tagged in it.
     """
     parts = [part for message in pending.messages if isinstance(message, ModelRequest) for part in message.parts]
+    if all(isinstance(part, SystemPromptPart) for part in parts):
+        return parts
     if all(isinstance(part, UserPromptPart) for part in parts) and any(
         isinstance(part, UserPromptPart)
         and not isinstance(part.content, str)
@@ -562,6 +585,10 @@ class _RealtimePendingMessages(PendingMessageQueue):
 
     def bind(self, on_append: Callable[[PendingMessagePriority], None]) -> None:
         self._on_append = on_append
+
+    def unbind(self) -> None:
+        """Drop the callback, which holds a bound method back to the session."""
+        self._on_append = None
 
     def append(self, pending: PendingMessage) -> None:
         _pending_message_text(pending)
@@ -689,6 +716,10 @@ class RealtimeSession:
         self._provider_url = model.base_url if model is not None else None
         self._agent_name = agent_name
         self._conversation_id = conversation_id
+        # The revision of the stored conversation the session continues, set by `AgentRealtime.session`.
+        self._conversation_revision: str | None = None
+        # The last conversation `conversation` handed out, whose revision a store's `save` may have advanced.
+        self._last_conversation: Conversation | None = None
         self._run_id = run_id
         # The request parameters and settings the session was opened with. Unlike a classic run — where
         # each model request can vary — a realtime session sends these once at connect, so they belong on
@@ -820,9 +851,6 @@ class RealtimeSession:
         # Where the audio of the current connection began: a reconnect's fresh conversation holds the items
         # before it only as replayed text, so a barge-in can't truncate them there, and history doesn't cut them.
         self._connection_audio_start_bytes = 0
-        # Transcript accumulated per streamed part index, so a `TranscriptUpdate` can carry the whole
-        # turn so far and a renderer can replace rather than append.
-        self._transcript_so_far: dict[int, str] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._pending_messages = _RealtimePendingMessages()
         self._pending_messages_lock = Lock()
@@ -834,6 +862,14 @@ class RealtimeSession:
         self._send_lock = Lock()
         if self._tool_manager.ctx is not None:
             self._tool_manager.ctx.pending_messages = self._pending_messages
+        # Shared by reference with every copy of the run's context, so it must be the one the run was
+        # created with (`before_run` may have emitted into it already); a session built around a context
+        # that has none gets its own.
+        ctx = self._tool_manager.ctx
+        buffer = ctx._event_stream_buffer if ctx is not None else None  # pyright: ignore[reportPrivateUsage]
+        self._event_buffer = buffer if isinstance(buffer, RealtimeEventBuffer) else RealtimeEventBuffer()
+        if ctx is not None:
+            ctx._event_stream_buffer = self._event_buffer  # pyright: ignore[reportPrivateUsage]
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
         # calls the model abandoned (e.g. on barge-in) without touching the others.
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
@@ -881,6 +917,7 @@ class RealtimeSession:
             run_id=run_id,
             responses_are_requests=self._responses_are_requests,
             answers_tool_calls_per_response=connection._answers_tool_calls_per_response,  # pyright: ignore[reportPrivateUsage]
+            speech_spans_tool_calls=connection._speech_spans_tool_calls,  # pyright: ignore[reportPrivateUsage]
             tracks_tool_rounds=connection._prunes_tool_calls,  # pyright: ignore[reportPrivateUsage]
             input_transcription_enabled=connection.input_transcription_enabled,
             retain_input_audio=self._retain_input,
@@ -894,6 +931,14 @@ class RealtimeSession:
             annotate_response=self._annotate_response,
         )
 
+    def _replayable_messages(self) -> Sequence[ModelMessage]:
+        """The conversation for a reconnect to replay, with a system prompt sent mid-session kept where it was sent."""
+        messages = self._core.replayable_messages()
+        if self._opening is not None or any(isinstance(message, ModelRequest) for message in self._seeded):
+            # The first request is one the session opened with, so only its standing system prompt is taken for one.
+            return messages
+        return replay_recorded_system_prompts_in_place(messages)
+
     async def __aenter__(self) -> RealtimeSession:
         if self._entered or self._closed:
             raise UserError('This realtime session cannot be entered more than once.')
@@ -904,9 +949,10 @@ class RealtimeSession:
             # Offer the conversation for replay, so a provider that keeps no state across sessions can
             # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
             # support because that is the mechanism, and a no-op where the provider resumes natively.
-            self._connection.set_message_history(self._core.replayable_messages)
+            self._connection.set_message_history(self._replayable_messages)
 
         self._session_instrumentation.start_session_span()
+        self._event_buffer.bind(self._queue_put)
 
         return self
 
@@ -948,6 +994,7 @@ class RealtimeSession:
             return
         if self._teardown is None:
             self._pending_messages.close()
+            self._event_buffer.unbind()
             self._closed = True
             self._finish_taps(discard_pending=True)
             self._exchange_progress.set()
@@ -970,7 +1017,12 @@ class RealtimeSession:
                 self._apply_core(event)
             self._apply_core(Closed())
             self._end_chat_spans_left_open()
-            self._teardown = asyncio.create_task(self._finish_teardown())
+            # The teardown runs in a copy of the caller's context, so its end-of-session and hang-up requests
+            # stay under the caller's span. Only `_CURRENT_RUN_CONTEXT` is cleared: the finished task keeps its
+            # context, and that run context holds the session (via `realtime_session`) and its deps.
+            teardown_context = contextvars.copy_context()
+            teardown_context.run(_CURRENT_RUN_CONTEXT.set, None)
+            self._teardown = asyncio.create_task(self._finish_teardown(), context=teardown_context)
         elif asyncio.current_task() in self._background_tasks:
             # A tool closing the session is cancelled by the teardown, at the wait below of its own
             # `close()` call. One that swallows that cancellation and calls `close()` again would wait
@@ -1098,6 +1150,16 @@ class RealtimeSession:
                 _chain_context(hang_up_error, self._close_error)
             self._close_error = hang_up_error
 
+        # Break the cycles that would otherwise keep the session, and the deps it holds, alive until a
+        # cyclic collection: the core's bound annotator, the pending-messages callback, the tool
+        # manager's run context, and the pump task's captured context.
+        self._pending_messages.unbind()
+        self._core.release_annotator()
+        self._pump_task = None
+        # Drop the manager's run context, whose `realtime_session` points back here. `realtime_session` itself
+        # stays set, since `after_run` hooks still read it; `ctx.tool_manager.ctx` is `None` from here on.
+        self._tool_manager.ctx = None
+
     async def _record_final_usage(self) -> None:
         """End the provider session, recording the usage it reports only as it ends.
 
@@ -1223,6 +1285,7 @@ class RealtimeSession:
         `new_messages()` agree. `_output_tool_name` stays `None`: plain text never came from a tool.
         """
         state.message_history = self.all_messages()
+        state.conversation_revision = self._current_conversation_revision()
         return AgentRunResult(
             self._final_result_text() or '',
             None,
@@ -1383,10 +1446,11 @@ class RealtimeSession:
         Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
         over; it also returns if the session closes or ends (a response passed a usage limit), if the
-        exchange fails so the reply can no longer come (a tool raised and its failure did not go to the
-        model, or its result would pass a usage limit), or if the provider refuses the request for the
-        reply (reported as a
-        [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
+        exchange fails so the reply can no longer come (a tool's result would pass a usage limit, or a
+        failed tool's result could not be sent), or if the provider refuses the request for the reply
+        (reported as a [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
+        A tool that raises doesn't end the exchange: the model is told the call failed, and this waits
+        for its answer (see [Tools](../realtime/tools.md#function-tools)).
 
         This is the wait `async for event in session` would otherwise be written out to perform, and
         unlike that loop it can run while something else is iterating the session, so a caller that
@@ -1541,6 +1605,14 @@ class RealtimeSession:
         conversation its seeded history belongs to, or starting a new one — and keeps it, so every
         bundle taken from the session and every message it records shares one identity to store the
         conversation under.
+
+        Each access builds a new conversation, carrying the
+        [`revision`][pydantic_ai.conversation.Conversation.revision] of the one before it, so a
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can save
+        `session.conversation` again as the session goes on. Take the next one after the previous
+        save has finished: one taken while a save is still in flight carries the revision from
+        before it, so saving it, or any taken after it, raises
+        [`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict].
         """
         if self._conversation_id is None:
             self._conversation_id = _agent_graph.resolve_conversation_id(None, self._seeded)
@@ -1551,11 +1623,18 @@ class RealtimeSession:
             # The session span was opened before this id existed too, and has to agree for the
             # session to correlate with the text run that continues it.
             self._session_instrumentation.set_conversation_id(self._conversation_id)
-        return Conversation(
+        self._last_conversation = Conversation(
             messages=self.all_messages(),
             usage=copy(self.usage),
             conversation_id=self._conversation_id,
+            revision=self._current_conversation_revision(),
         )
+        return self._last_conversation
+
+    def _current_conversation_revision(self) -> str | None:
+        if self._last_conversation is not None:
+            return self._last_conversation.revision
+        return self._conversation_revision
 
     def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:
         """Create a request carrying the framework-managed session metadata."""
@@ -1572,17 +1651,23 @@ class RealtimeSession:
         `create_response()`: that asks for two responses. An image is added as context without
         soliciting a response, while audio is streamed into the input buffer.
 
-        Set `respond=False` to add text or an image as context without soliciting a response. Set
-        `respond=True` to solicit a response to text or an image; this requires manual turn control
-        for images. `respond=True` cannot be used with audio. For a sequence, an explicit `respond` value
+        A [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is a system prompt added
+        mid-session, such as a note from the application about what just happened: it goes out on the
+        provider's channel for the operator's own text where there is one (a `system` message on OpenAI
+        and Azure), and as `<system>`-tagged user text otherwise, and is recorded in history as the
+        `SystemPromptPart` it is. Like text, it solicits a response unless `respond=False`.
+
+        Set `respond=False` to add text, a system prompt, or an image as context without soliciting a
+        response. Set `respond=True` to solicit a response to text, a system prompt, or an image; this
+        requires manual turn control for images. `respond=True` cannot be used with audio. For a sequence, an explicit `respond` value
         adds every item except the last as context and applies that value to the last item. With the
         default `respond=None`, each item keeps its usual behavior.
 
-        Accepts the shared message vocabulary: plain text as a `str`, image/audio
+        Accepts the shared message vocabulary: plain text as a `str`, a `SystemPromptPart`, image/audio
         [`BinaryContent`][pydantic_ai.messages.BinaryContent] (including
         [`BinaryImage`][pydantic_ai.messages.BinaryImage] and
         [`BinaryAudio`][pydantic_ai.messages.BinaryAudio]), or a sequence of these inputs, dispatched
-        in order. Text and retained images are recorded in session history; audio is recorded later
+        in order. Text, system prompts, and retained images are recorded in session history; audio is recorded later
         through its transcript and/or `audio_retention`. `retain_images_every_n=1` records every image,
         while larger values keep the first image and then one of every `N`; `retain_images_max` bounds
         how many stay recorded, evicting the oldest first. Sending an image is gated on the model
@@ -1597,6 +1682,8 @@ class RealtimeSession:
         self._ensure_can_send()
         if isinstance(content, str):
             await self._send_text(content, respond=respond is not False)
+        elif isinstance(content, SystemPromptPart):
+            await self._send_text(SystemPromptText(content.content), respond=respond is not False, parts=[content])
         elif isinstance(content, BinaryContent):
             if content.is_image:
                 await self._send_image(content, respond=respond is True)
@@ -1629,7 +1716,17 @@ class RealtimeSession:
         """Send *content* as a text turn, recording *parts* for it when given, else one `UserPromptPart`."""
         # (History records plain text, not what marks it for the connection.)
         request = self._new_request(parts if parts is not None else [UserPromptPart(content=str(content))])
-        await self._send_frame(content if respond else TextContext(content), request=request)
+        if isinstance(content, SystemPromptText) and not self._profile.get('supports_system_messages', False):
+            # A model without a channel for the operator's own text gets the `<system>`-tagged text as any other.
+            content = str(content)
+        frame: RealtimeInput
+        if respond:
+            frame = content
+        elif isinstance(content, SystemPromptText):
+            frame = SystemPromptContext(content, system_prompt=content.system_prompt)
+        else:
+            frame = TextContext(content)
+        await self._send_frame(frame, request=request)
         return request
 
     def enqueue(
@@ -1649,15 +1746,18 @@ class RealtimeSession:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items. Realtime
                 delivery supports text (a `str` or [`TextContent`][pydantic_ai.messages.TextContent])
                 and [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, which are joined into
-                one user turn. System parts use the `<system>…</system>` convention to indicate that
-                the text is not the person speaking; that marks where it came from, not that it should
-                be handled silently. The model still gets a turn and decides whether to reply, call a
-                tool, or move on. To add context without prompting a turn at all, use
-                [`send(..., respond=False)`][pydantic_ai.realtime.RealtimeSession.send]. The delivered
-                turn is recorded in history as a
-                [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Calling with no positional
-                arguments is a no-op. A message holding `TextContent` and only user prompt parts is
-                recorded as those parts instead, so their metadata, which isn't sent, stays in history.
+                one turn. System prompts alone are delivered and recorded as
+                [`send(SystemPromptPart(...))`][pydantic_ai.realtime.RealtimeSession.send] delivers and
+                records them. Next to text, they're joined into the user turn using the
+                `<system>…</system>` convention to indicate that the text is not the person speaking.
+                Either way, that marks where it came from, not that it should be handled silently: the
+                model still gets a turn and decides whether to reply, call a tool, or move on. To add
+                context without prompting a turn at all, use
+                [`send(..., respond=False)`][pydantic_ai.realtime.RealtimeSession.send]. A turn with
+                text is recorded in history as a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart].
+                Calling with no positional arguments is a no-op. A message holding `TextContent` and
+                only user prompt parts is recorded as those parts instead, so their metadata, which
+                isn't sent, stays in history.
             priority: When to deliver:
                 `'asap'` (default) — as soon as no reply is being generated; a reply already in
                     progress is allowed to finish first.
@@ -2150,15 +2250,15 @@ class RealtimeSession:
     def _park_error(self, error: BaseException, *, abandons_exchange: bool = True) -> None:
         """Park a background failure for iteration or close, ending receive-only views if nobody is iterating.
 
-        `abandons_exchange` is `False` for a tool failure whose result went out anyway (see
-        `_sends_failed_tool_results`): the model got what it needs and answers it, so the exchange goes on.
+        `abandons_exchange` is `False` for a tool failure whose result went out anyway (see `_send_failed_result`):
+        the model got what it needs and answers it, so the exchange goes on.
         """
         self._parked_errors.append(error)
         self._queue_put(error)
         if abandons_exchange:
-            # A tool that raised, or a usage limit tripped by the request its result would make, stops the model from
-            # getting what it needs, so the exchange waiting on it is over: a caller in `wait_for_reply()` is done
-            # waiting for it.
+            # A tool failure that couldn't go out, or a usage limit tripped by the request a result would make, stops
+            # the model from getting what it needs, so the exchange waiting on it is over: a caller in
+            # `wait_for_reply()` is done waiting for it.
             self._apply_core(ExchangeAbandoned())
         if not self._iterator_active and self._pump_task is not None:
             self._receive_ending = True
@@ -2348,7 +2448,7 @@ class RealtimeSession:
         if isinstance(event, OutputTranscript):
             self._session_instrumentation.set_output_type('text' if event.output_text else 'speech')
             return []
-        if isinstance(event, (InputTranscript, ResponseDone, PartStartEvent, PartEndEvent)):
+        if isinstance(event, (InputTranscript, OutputSpeechTimestamps, ResponseDone, PartStartEvent, PartEndEvent)):
             # (What they make streams as the core applies them.)
             return []
         if isinstance(event, RealtimeInputSpeechEndEvent):
@@ -2508,12 +2608,15 @@ class RealtimeSession:
     async def _send_failed_result(
         self, call_part: ToolCallPart, result_part: ToolReturnPart, error: BaseException
     ) -> bool:
-        """Send the failure history records for a call that couldn't settle, if the connection needs it; whether it did.
+        """Send the failure history records for a call that couldn't settle, as its result; whether it went out.
 
-        Only for a connection whose model can't move on without it (see `_sends_failed_tool_results`). A usage limit
+        Sent on every provider, so the model hears the call failed and answers it, and the exchange goes on. Left
+        unanswered, a call stays open: Gemini 2.5 keeps waiting on a blocking call and answers no later turn, Gemini 3.8
+        makes the call again on every later input, Live delegates nothing more once a delegation can't continue, and
+        the OpenAI-protocol models and ElevenLabs agents never speak to the call at all (checked live). A usage limit
         stops the exchange instead: its result must not ask for another request.
         """
-        if not self._connection._sends_failed_tool_results or isinstance(error, UsageLimitExceeded):  # pyright: ignore[reportPrivateUsage]
+        if isinstance(error, UsageLimitExceeded):
             return False
         output, _ = result_part.model_response_str_and_user_content()
         try:
@@ -3066,21 +3169,20 @@ class RealtimeSession:
                     self._emitted_audio_bytes += len(delta.audio_chunk)
                     for tap in self._audio_taps:
                         self._audio_tap_drops += tap.put(delta.audio_chunk)
-            if delta.transcript is not None and delta.speaker is not None:
+            if self._transcript_delta_taps and delta.transcript is not None and delta.speaker is not None:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
-                # gating on that would drop the very correction a caption UI needs.
-                text = delta.transcript_delta or ''
-                transcript = delta.transcript or self._transcript_so_far.get(event.index, '') + text
-                self._transcript_so_far[event.index] = transcript
-                if self._transcript_delta_taps:
-                    update = TranscriptUpdate(
-                        index=event.index, speaker=delta.speaker, delta=text, transcript=transcript
-                    )
-                    for queue in self._transcript_delta_taps:
-                        if _put_tap(queue, update) is not None:
-                            self._transcript_tap_drops += 1
+                # gating on that would drop the very correction a caption UI needs. An empty transcript
+                # is such a correction too, so it's passed on as is rather than treated as missing.
+                update = TranscriptUpdate(
+                    index=event.index,
+                    speaker=delta.speaker,
+                    delta=delta.transcript_delta or '',
+                    transcript=delta.transcript,
+                )
+                for queue in self._transcript_delta_taps:
+                    if _put_tap(queue, update) is not None:
+                        self._transcript_tap_drops += 1
         elif isinstance(event, PartEndEvent) and isinstance(part := event.part, SpeechPart):
-            self._transcript_so_far.pop(event.index, None)
             if part.transcript:
                 for queue in self._transcript_taps:
                     if _put_tap(queue, part) is not None:

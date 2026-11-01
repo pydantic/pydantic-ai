@@ -43,7 +43,7 @@ from pydantic_ai_harness.step_persistence import (
     StepPersistence,
     ToolEffectRecord,
 )
-from tests.harness.step_persistence._histories import growing_histories
+from tests.harness.step_persistence._histories import growing_histories, history_with_unordered_keys
 
 
 def _mock_client() -> AsyncMongoClient[dict[str, object]]:
@@ -512,6 +512,16 @@ class TestStepPersistenceLazyExport:
 
 
 class TestMongoStepStoreStoresEachMessageOnce:
+    async def test_dict_key_order_round_trips(self) -> None:
+        """A reloaded history keeps its dict key order, so the next request sends the provider the same bytes."""
+        store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
+        history = history_with_unordered_keys()
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=history))
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert ModelMessagesTypeAdapter.dump_json(snap.messages) == ModelMessagesTypeAdapter.dump_json(history)
+
     async def test_stores_each_message_once_and_restores_every_snapshot(self) -> None:
         client = _mock_client()
         store = MongoStepStore(client=client, database='t', media_store=None)

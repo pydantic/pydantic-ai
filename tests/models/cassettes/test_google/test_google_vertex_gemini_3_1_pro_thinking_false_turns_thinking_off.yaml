@@ -1,0 +1,82 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-3.1-pro-preview:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "259"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: >-
+              A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball.
+              How much does the ball cost?
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+          thinkingConfig:
+            thinking_budget: 0
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            role: model
+            parts:
+            - text: |+
+                Let the cost of the ball be x.
+                Then the cost of the bat is x + 1.00.
+                The total cost of the bat and the ball is 1.10.
+                So, we can set up the equation:
+                x + (x + 1.00) = 1.10
+                2x + 1.00 = 1.10
+                2x = 1.10 - 1.00
+                2x = 0.10
+                x = 0.10 / 2
+                x = 0.05
+                So, the cost of the ball is $0.05.
+
+          finishReason: STOP
+        usageMetadata:
+          promptTokenCount: 34
+          candidatesTokenCount: 144
+          totalTokenCount: 178
+          trafficType: ON_DEMAND
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 34
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 144
+        modelVersion: gemini-3.1-pro-preview
+        createTime: 2026-10-23T02:11:11.396096Z
+        responseId: P8LaasCWGPyH3dAP_JrzyAE
+  recorded_at: 2026-10-23T02:11:14.366187+00:00

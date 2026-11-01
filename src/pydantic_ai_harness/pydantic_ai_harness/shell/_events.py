@@ -39,6 +39,6 @@ class CommandFinishedEvent(CapabilityEvent, namespace=SHELL_EVENTS, name='comman
     status_path: str
     exit_code: int | None
     truncated: bool
-    """Whether output beyond the per-call event budget was left in the log."""
+    """Whether output beyond the per-call event budget was left in the log, or `max_log_bytes` emptied it."""
     total_lines: int | None = 0
-    """Logical lines in the log up to 1 MiB; `None` for larger logs, which are not scanned."""
+    """Logical lines in the log up to 1 MiB; `None` for larger logs, which are not scanned, and emptied ones."""

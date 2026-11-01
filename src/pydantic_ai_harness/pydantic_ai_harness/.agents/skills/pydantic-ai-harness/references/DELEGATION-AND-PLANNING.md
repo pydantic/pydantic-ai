@@ -21,9 +21,12 @@ Start with `SubAgents` when unsure; its sub-agents move to a `DynamicWorkflow` c
 
 ## Planning
 
-Gives the model plan tools and re-shows the current plan as an ephemeral reminder at the tail of each
-request (never written to `message_history`, never in the system prompt), so plan edits do not break
-the prompt cache.
+Gives the model plan tools and keeps the current plan in front of it: every tool that changes the plan
+ends its result with the whole plan in a `<plan_reminder>` tag, and a fixed note in the static
+instructions says what the tag holds. Only when the latest plan isn't visible (after compaction, in a
+run started without it, or after an outside store change) does `Planning` record it as user-channel
+data. The plan never goes in system voice, and the history only grows, so plan edits don't break the
+prompt cache or preserved thinking.
 
 ```python
 from pydantic_ai import Agent
@@ -60,7 +63,8 @@ Key parameters:
 - `guidance=None`: `None` = built-in guidance, `''` = none, a string replaces it.
 - `store=None`: `None` = fresh in-memory plan per run. Pass a `PlanStore` to persist.
 - `store_resolver=None`: `Callable[[RunContext], PlanStore]`, wins over `store` (per-tenant stores).
-- `enable_subtasks=False`, `inject=True` (the tail reminder), `cache_ttl='5m'` (`'5m'` or `'1h'`).
+- `enable_subtasks=False`, `inject=True` (show the model the plan). `cache_ttl` is deprecated and ignored
+  (an explicit `'5m'`/`'1h'` warns); turn on caching on the model (such as `anthropic_cache_messages`).
 - `tools=None`: allowlist, e.g. `tools=['write_plan']`. Naming a tool the mode does not register
   raises `ValueError`; so does an unknown key in `descriptions`.
 
@@ -141,6 +145,12 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
 - `shared_capabilities=()`: capabilities applied to every child run.
 - `models={}`: menu of `key -> model | ModelOption(model, description=, settings=)`. When set,
   `delegate_task` gains a `model` enum argument; `SubAgent(models=['fast'])` restricts a delegate.
+- `workspace_resolver=None`: an async `(ctx, request: DelegationWorkspaceRequest) -> Workspace`
+  callback enables `delegate_task(working_directory=...)`. Import `DelegationWorkspaceRequest` from
+  `pydantic_ai_harness.subagents`. Validate permitted delegates and paths in the callback.
+  Keep returned workspaces alive until background children finish. Parent/delegate read-only restrictions
+  still apply; supply trusted read-only tools too. Managed tasks save the resolved directory and reject
+  directory changes on resume. Remote and durable delegations reject this argument.
 - `include_self=False`: `True` lists the running agent as delegate `self` (fresh run with all bound
   capabilities). `max_depth=3` caps nesting, counting the top-level run.
 - `tool_retries=2`, `contain_errors=False`, `event_stream_handler=None`, `tool_name='delegate_task'`.
@@ -152,16 +162,55 @@ Gotchas:
 - Every delegate needs a name (the agent's `name` or `SubAgent(name=...)`), else `ValueError` at
   construction. Duplicate names raise; with `include_self=True`, so does a delegate named `self` (a disk agent named
   `self` is skipped with a warning).
-- Children receive the parent's `deps` (same `AgentDepsT`) and run in the parent's workspace.
+- Children receive the parent's `deps` (same `AgentDepsT`) and inherit its workspace unless a directory is selected.
 - In tests, override a child's model by nesting overrides:
   `with parent.override(model=m1), child.override(model=m2):` (`SubAgent` runs the same `Agent`).
 - Timeout, own-budget exhaustion, `max_calls` exhaustion, and a child run that ends with
-  `DeferredToolRequests` (the parent cannot resume it) are soft: a steering message comes back as the
-  tool result. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
+  `DeferredToolRequests` or `PendingModelResponse` (the parent cannot resume it) are soft: a steering
+  message (or `on_failure`) comes back as the tool result, with outcome `failed`. A model request the
+  child left pending (e.g. in a `BatchModelRequests` batch) is cancelled first, best effort, on a
+  remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,
   `DelegationEndEvent` (`outcome` is `ok`/`timeout`/`budget`/`failed`/`contained`).
+
+### Task control
+
+`SubAgents(task_control=TaskControl())` turns delegations into tasks the model manages. Off by default.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness.subagents import SubAgent, SubAgents, TaskControl
+
+researcher = Agent('test', name='researcher', description='Researches a topic.')
+orchestrator = Agent(
+    'test',
+    capabilities=[SubAgents(agents=[SubAgent(researcher)], task_control=TaskControl(max_running_tasks=4))],
+)
+```
+
+- `delegate_task` takes `background=True` and `resume=<task_id>`; the model also gets `list_tasks`,
+  `message_task`, `answer_task`, and `cancel_task(force=False)`. Sub-agents get `ask_parent`
+  (`SubAgent(can_ask_questions=False)` removes it; `SubAgent(resumable=False)` makes one one-shot, as
+  `DelegationTasks(one_shot=...)` does by name for an owner the application binds).
+- Without a bound `DelegationTasks`, each run opens its own owner: background reports arrive as
+  `<task_output>` data and questions as `<task_question>` data, the top-level run waits for its background tasks before it ends, and
+  tasks still running when it ends are cancelled. Bind a `DelegationTasks` to keep tasks across runs;
+  its observer then gets every task event as `DelegationTaskEvent(event=...)`.
+- `TaskControl` fields `auto_background_after=None`, `max_running_tasks=None`, `forward_events=False`
+  are opt-in.
+- Every step is a `SubAgentMessage` capability event (`TaskAssignedEvent`, `TaskQuestionEvent`,
+  `TaskCompletedEvent`, ...) plus `TaskBackgroundedEvent`; `@on_event` listeners can rewrite or
+  `veto()` the ones sent to a task, and answer a `TaskQuestionEvent` by setting `answer`.
+- Remote agents: `TaskControl(remote_agents=[RemoteSubAgent(name=...)], transport=...)` (`SubAgentTransport`;
+  `InMemoryTransport` in process), served by `SubAgentWorker(agents={name: agent}, transport=..., deps=...)`
+  in the other process. `accept_timeout=30.0` fails a task no worker picks up.
+- `dynamic_agents=DynamicAgents(models=['fast'])` adds `create_agent`, with a vetoable
+  `AgentCreatedEvent`; works with or without task control.
+- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Both raise `UserError` under a
+  durability capability; don't use them with the deprecated wrapper agents (`TemporalAgent`, ...) either.
 
 ## DelegationReports
 
@@ -232,12 +281,14 @@ Gotchas:
 - Agent `name` must be a valid Python identifier; `WorkflowAgent(agent, name=..., description=...)`
   (from `pydantic_ai_harness.dynamic_workflow`) renames without editing the agent.
 - `task` is keyword-only in the script. A structured `output_type` arrives as a `dict`: `r['field']`.
-- The parent `run(usage_limits=...)` is not forwarded into children; use `sub_agent_usage_limits` or
-  `max_agent_calls`. With shared usage and concurrent fan-out, token limits are best-effort.
+- Without `sub_agent_usage_limits`, children sharing usage run under the parent `run(usage_limits=...)`;
+  with `forward_usage=False` they get pydantic-ai's default `request_limit=50`. For an exact ceiling use
+  `max_agent_calls`. With shared usage and concurrent fan-out, limits are best-effort.
 - Workflows do not nest: do not give catalog agents `DynamicWorkflow`.
 - Sandbox: no third-party imports, no clock/randomness/filesystem/env. A child failure raises
   `RuntimeError` in the script; uncaught, the whole script retries. A child run that ends with
-  `DeferredToolRequests` is a failure too, and the catalog leaves that type out of its signature.
+  `DeferredToolRequests` or `PendingModelResponse` is a failure too (a model request it left pending is
+  cancelled first, best effort), and the catalog leaves both types out of its signature.
 - Past `max_agent_calls` a call raises in the script, and whatever the script does next (even a
   `try`/`except` that finishes), `run_workflow` returns `{'error': '...exhausted its sub-agent call
   budget...', 'last_error': ..., 'completed': [...]}`; later calls in that run are refused.
@@ -291,8 +342,10 @@ Gotchas:
   `mode='native'`, `mode='native'` without an `anthropic:`/`openrouter:` string, OpenRouter native
   with `max_uses`. `mode='native'` with an executor on a different provider raises `UserError` at run time.
 - A `Model` instance, a non-default `output_type`, or `max_uses` on OpenRouter select local execution.
-- Local path: the advisor sees only the consultation prompt (plus completed history with
-  `forward_history=True`), never the executor's deps or tools. Its usage counts toward parent limits.
+- Local path: the advisor sees only the consultation prompt (plus completed history, including
+  `system_prompt` parts, tool calls, and results, with `forward_history=True`), never the executor's
+  deps or tools. Its usage counts toward parent limits. A failed consultation still counts toward
+  `max_uses`.
 - An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
   other instance's value, two list `output_type`s combining, and any other option the later one's.
   For durable runs use `mode='native'`; local execution is unsupported there.

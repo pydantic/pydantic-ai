@@ -6,6 +6,7 @@ describer calls, set model profiles by hand and control concurrency, none of whi
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, patch
 
 import anyio
@@ -22,11 +23,14 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.capabilities import FileUnderstanding
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.capabilities import FileUnderstanding, ModelFallback
+from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
+from pydantic_ai.messages import sanitize_messages
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -36,7 +40,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
-from .conftest import try_import
+from .conftest import IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -344,8 +348,8 @@ async def test_a_url_is_not_described_twice_within_a_run():
     assert describer.calls == 1
 
 
-async def test_a_file_is_described_every_time_without_a_history_to_record_it_in():
-    """With no request in the run's history, a description is reused only within the request it was made for.
+async def test_the_same_file_twice_in_one_request_is_described_once():
+    """With no request in the history to record on, each call describes the file again, but only once per call.
 
     An agent run always has its request in the history, so this calls the hook directly with a bare `RunContext`.
     """
@@ -360,9 +364,10 @@ async def test_a_file_is_described_every_time_without_a_history_to_record_it_in(
         model_request_parameters=ModelRequestParameters(),
     )
 
-    for _ in range(2):
-        await capability.before_model_request(ctx, request_context)
-    assert describer.calls == 2, 'the same URL twice in one request is described once, and again in the next'
+    await capability.prepare_model_request(ctx, request_context)
+    assert describer.calls == 1
+    await capability.prepare_model_request(ctx, request_context)
+    assert describer.calls == 2, 'with no history to record in, the next call describes the file again'
     assert ctx.usage.requests == 2
 
 
@@ -391,8 +396,9 @@ async def test_a_file_only_in_the_request_is_recorded_on_the_latest_request():
         model_request_parameters=ModelRequestParameters(),
     )
 
-    await capability.before_model_request(ctx, request_context)
-    await capability.before_model_request(ctx, request_context)
+    await capability.prepare_model_request(ctx, request_context)
+    # A fresh run reads the description from the history it was recorded in.
+    await (await capability.for_run(ctx)).prepare_model_request(ctx, request_context)
     assert describer.calls == 1
     [request] = history
     assert isinstance(request, ModelRequest)
@@ -486,6 +492,48 @@ async def test_a_url_is_described_once_across_the_turns_of_a_conversation():
     )
 
 
+async def test_descriptions_in_untrusted_history_are_not_used():
+    """History a client sent back goes through `sanitize_messages`, which drops the recorded descriptions.
+
+    So a file is described again, here one a tool returns, rather than replaced with text from the client's history.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def call_tool_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('get_chart', {})])
+
+    describer = Describer()
+    text_only = FunctionModel(call_tool_then_answer, profile=ModelProfile(supports_image_input=False))
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
+
+    @agent.tool_plain
+    def get_chart() -> BinaryContent:
+        return _png('chart')
+
+    first = await agent.run('Show me the chart.')
+    assert describer.calls == 1
+    # The client sends the history back with different text recorded for the chart.
+    [recorded] = [m for m in first.all_messages() if isinstance(m, ModelRequest) and m.metadata]
+    assert recorded.metadata is not None
+    records = recorded.metadata['__pydantic_ai__']['file_understanding']['file_understanding']
+    recorded.metadata['__pydantic_ai__']['file_understanding']['file_understanding'] = dict.fromkeys(
+        records, 'Not the chart.'
+    )
+    client_json = ModelMessagesTypeAdapter.dump_json(first.all_messages())
+
+    with pytest.warns(UserWarning, match='`__pydantic_ai__` metadata was dropped from 1 client-submitted message'):
+        history = sanitize_messages(ModelMessagesTypeAdapter.validate_json(client_json))
+    await agent.run('Show me the chart again.', message_history=history)
+
+    assert describer.calls == 2
+    sent = ModelMessagesTypeAdapter.dump_json(seen[-1]).decode()
+    assert 'Not the chart.' not in sent
+    assert 'A description of chart.' in sent
+
+
 async def test_a_file_is_described_once_across_the_requests_of_a_run():
     """A tool call makes a second request in the same run, which reads the description from the history."""
     describer = Describer()
@@ -518,13 +566,123 @@ async def test_a_real_adapter_that_cannot_read_a_video_gets_a_real_description(
     allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str, video_content: BinaryContent
 ):
     # Claude takes no video, so without the capability this request raises in the Anthropic adapter.
-    claude = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    gemini = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    claude = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    gemini = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(claude, capabilities=[FileUnderstanding(fallback_subagent_model=gemini)])
 
     result = await agent.run(['What happens in this video? Answer in one short sentence.', video_content])
 
     assert result.output == snapshot(
-        'A professional camera rig records a scenic desert landscape with a winding path leading toward distant snowy mountains during golden hour.'
+        'This file describes a still photograph, not a video, showing a camera on a tripod in a red rock canyon, with its screen displaying a dirt road leading toward distant mountains.'
     )
     assert result.usage.requests == 2
+
+
+async def test_each_attempt_is_judged_by_the_model_serving_it():
+    """With `ModelFallback`, a candidate that reads a file gets it, and only one that can't gets its description.
+
+    The description made for the fallback is recorded in the history when it's made, so the next turn reuses it.
+    """
+    describer = Describer()
+    item = ImageUrl('https://example.com/cat.png')
+    primary_saw: list[list[object]] = []
+    backup_saw: list[list[ModelMessage]] = []
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        primary_saw.append(last_prompt([messages]))
+        raise ModelAPIError(model_name='primary', message='down')
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        backup_saw.append(messages)
+        return ModelResponse(parts=[TextPart('a cat')])
+
+    agent = Agent(
+        FunctionModel(primary),
+        capabilities=[
+            ModelFallback(FunctionModel(backup, profile=ModelProfile(supports_image_input=False))),
+            FileUnderstanding(fallback_subagent_model=FunctionModel(describer)),
+        ],
+    )
+    first = await agent.run(['What is this?', item])
+    assert primary_saw == [['What is this?', item]]
+    assert last_prompt(backup_saw) == ['What is this?', IsStr(regex='(?s).*A description of .*')]
+    assert describer.calls == 1
+
+    request = first.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.metadata == snapshot(
+        {
+            '__pydantic_ai__': {
+                'file_understanding': {
+                    'file_understanding': {'url:https://example.com/cat.png': 'A description of 750ff4.'}
+                }
+            }
+        }
+    )
+
+    await agent.run('And now?', message_history=first.all_messages())
+    assert describer.calls == 1, 'the recorded description is reused on the next turn'
+    # The first turn's request goes out with the same parts as before, so the cached prefix holds.
+    first_sent, again_sent = backup_saw[0][0], backup_saw[-1][0]
+    assert isinstance(first_sent, ModelRequest) and isinstance(again_sent, ModelRequest)
+    assert again_sent.parts == first_sent.parts
+
+
+async def test_a_description_is_made_once_across_the_attempts_of_a_step():
+    """An attempt that fails after its file was described leaves the description for the next one."""
+    describer = Describer()
+    no_images = ModelProfile(supports_image_input=False)
+    sent: list[list[object]] = []
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(last_prompt([messages]))
+        raise ModelAPIError(model_name='primary', message='down')
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(last_prompt([messages]))
+        return ModelResponse(parts=[TextPart('a cat')])
+
+    agent = Agent(
+        FunctionModel(primary, profile=no_images),
+        capabilities=[
+            ModelFallback(FunctionModel(backup, profile=no_images)),
+            FileUnderstanding(fallback_subagent_model=FunctionModel(describer)),
+        ],
+    )
+    await agent.run(['What is this?', ImageUrl('https://example.com/cat.png')])
+    assert describer.calls == 1
+    assert sent[0] == sent[1]
+
+
+async def test_a_streamed_run_records_its_descriptions_for_the_next_turn():
+    describer = Describer()
+    seen: list[list[ModelMessage]] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(messages)
+        yield 'a cat'
+
+    agent = Agent(
+        FunctionModel(stream_function=stream, profile=ModelProfile(supports_image_input=False)),
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))],
+    )
+    async with agent.run_stream(['What is this?', ImageUrl('https://example.com/cat.png')]) as first:
+        assert await first.get_output() == 'a cat'
+    request = first.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.metadata == snapshot(
+        {
+            '__pydantic_ai__': {
+                'file_understanding': {
+                    'file_understanding': {'url:https://example.com/cat.png': 'A description of 750ff4.'}
+                }
+            }
+        }
+    )
+
+    async with agent.run_stream('And now?', message_history=first.all_messages()) as second:
+        await second.get_output()
+    assert describer.calls == 1
+    first_sent, again_sent = seen[0][0], seen[-1][0]
+    assert isinstance(first_sent, ModelRequest) and isinstance(again_sent, ModelRequest)
+    assert again_sent.parts == first_sent.parts

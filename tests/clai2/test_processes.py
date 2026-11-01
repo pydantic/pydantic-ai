@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from pydantic_clai2.runtime._processes import kill_process_tree
+from pydantic_clai2.runtime.processes import kill_process_tree
 
 
 class StubProcess(asyncio.subprocess.Process):
@@ -50,8 +50,8 @@ async def test_posix_process_group(monkeypatch: pytest.MonkeyPatch, missing: boo
         if missing:
             raise ProcessLookupError
 
-    monkeypatch.setattr('pydantic_clai2.runtime._processes.sys.platform', 'linux')
-    monkeypatch.setattr('pydantic_clai2.runtime._processes.os.killpg', killpg, raising=False)
+    monkeypatch.setattr('pydantic_clai2.runtime.processes.sys.platform', 'linux')
+    monkeypatch.setattr('pydantic_clai2.runtime.processes.os.killpg', killpg, raising=False)
     process = StubProcess()
     await kill_process_tree(StubTransport(process) if as_transport else process)
     assert signals == [(12345, signal.SIGKILL)]
@@ -74,7 +74,7 @@ async def test_windows_process_tree(
         return StubProcess(code=0 if outcome == 'success' else 1)
 
     monkeypatch.setenv('SystemRoot', r'D:\Win')
-    monkeypatch.setattr('pydantic_clai2.runtime._processes.sys.platform', 'win32')
-    monkeypatch.setattr('pydantic_clai2.runtime._processes.asyncio.create_subprocess_exec', taskkill)
+    monkeypatch.setattr('pydantic_clai2.runtime.processes.sys.platform', 'win32')
+    monkeypatch.setattr('pydantic_clai2.runtime.processes.asyncio.create_subprocess_exec', taskkill)
     await kill_process_tree(StubTransport(process) if as_transport else process)
     assert process.killed is (outcome != 'success')

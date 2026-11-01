@@ -456,7 +456,7 @@ def _parse_zai_quota(value: object) -> Quota:
         ):
             return _unknown_quota('invalid_percentage')
         reset_millis = entry.get('nextResetTime')
-        if 'nextResetTime' in entry and reset_millis is None and consumed_value == 0:
+        if reset_millis is None and consumed_value == 0:
             reset = None
             reset_millis_value = None
         elif isinstance(reset_millis, bool) or not isinstance(reset_millis, int):

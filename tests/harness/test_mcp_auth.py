@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import pytest
@@ -43,25 +44,32 @@ def token_from_deps(ctx: RunContext[str | None]) -> str | None:
     return ctx.deps
 
 
+async def token_from_deps_async(ctx: RunContext[str | None]) -> str | None:
+    return ctx.deps
+
+
 def must_not_connect(token: str) -> FunctionToolset[str | None]:
     raise AssertionError('`oauth` must not connect')  # pragma: no cover
 
 
-async def test_per_run_connection_connects_with_each_run_token() -> None:
+@pytest.mark.parametrize('auth', [token_from_deps, token_from_deps_async], ids=['sync', 'async'])
+async def test_per_run_connection_connects_with_each_run_token(
+    auth: Callable[[RunContext[str | None]], str | None | Awaitable[str | None]],
+) -> None:
     tokens: list[str] = []
 
     def connect(token: str) -> FunctionToolset[str | None]:
         tokens.append(token)
         return FunctionToolset[str | None]()
 
-    toolset = per_run_connection(token_from_deps, connect, id='whoami')
+    toolset = per_run_connection(auth, connect, id='whoami')
     for deps in ['alice', None, '', 'bob']:
         await toolset.for_run(run_context(deps))
     assert (toolset.id, tokens) == ('whoami', ['alice', 'bob'])
 
 
 async def test_per_run_connection_rejects_oauth() -> None:
-    toolset = per_run_connection(token_from_deps, must_not_connect, id=None)
+    toolset = per_run_connection(token_from_deps_async, must_not_connect, id=None)
     with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
         await toolset.for_run(run_context('oauth'))
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import posixpath
 import warnings
@@ -10,12 +11,15 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, TypeGuard
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
+    LoadCapabilityReturnPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnContent,
+    ToolSearchReturnPart,
     UserContent,
 )
 from pydantic_ai.models import AbstractModel, Model
@@ -53,6 +57,16 @@ READ_TOOL_NAME = 'read_tool_result'
 
 READ_TOOL_RESULT_KIND = ToolKind('tool_output_limits', 'read_tool_result')
 """The kind of the `read_tool_result` tool, whatever it is named. Its returns are exempt from reduction."""
+
+_EXEMPT_KINDS = frozenset(
+    {READ_TOOL_RESULT_KIND.id, LoadCapabilityReturnPart.tool_kind, ToolSearchReturnPart.tool_kind}
+)
+"""Kinds whose returns are never reduced, whatever `tool_filter` says.
+
+Besides `read_tool_result`, these are core's `load_capability` and `search_tools`: core re-reads their
+structured content from history to decide which capabilities are loaded and which tools are revealed,
+so a reduced return would leave those locked.
+"""
 
 _DEFAULT_THRESHOLD = 10_000
 """Default band threshold (characters) -- below this, returns pass through untouched."""
@@ -200,6 +214,26 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         self._bands = self._prepare_bands(self.bands)
         self._per_tool = {name: self._prepare_bands(bands) for name, bands in self.per_tool.items()}
 
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the configuration, with the later band winning a shared threshold, then re-derive from it.
+
+        `_store`, `_bands`, and `_per_tool` are derived in `__post_init__`, which merging skips, so
+        they are rebuilt from the merged configuration: a merged band list keeps the largest-first
+        order a single instance has, and a stated `store` is the one spills go to.
+        """
+        limits = [capability for capability in capabilities if isinstance(capability, ToolOutputLimits)]
+        assert len(limits) == len(capabilities)
+        merged = super().combine(capabilities)
+        assert isinstance(merged, cls)
+        bands: list[Band] = []
+        for capability in limits:
+            thresholds = {band.over for band in capability.bands}
+            bands = [band for band in bands if band.over not in thresholds] + list(capability.bands)
+        merged = replace_no_init(merged, bands=bands)
+        merged.__post_init__()
+        return merged
+
     @staticmethod
     def _prepare_bands(bands: Sequence[Band]) -> list[Band]:
         """Validate thresholds and order bands largest-first so first-match means largest-fit."""
@@ -291,7 +325,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Reduce the tool result -- both `return_value` and model-visible `content`."""
         original: object = result
-        if tool_def.tool_kind == READ_TOOL_RESULT_KIND.id or await _reads_a_spill(ctx, tool_def, args):
+        if tool_def.tool_kind in _EXEMPT_KINDS or await _reads_a_spill(ctx, tool_def, args):
             return original
         if not await matches_tool_selector(self.tool_filter, ctx, tool_def):
             return original
@@ -479,21 +513,41 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         unit: _Unit,
     ) -> tuple[str | None, str | None]:
         key = _handle_key(ctx, call, unit.suffix)
-        try:
-            handle = await self._store_for(ctx).write(key, unit.data)
-        except (UserError, WorkspaceReadOnlyError) as error:
-            # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
-            # say so rather than degrading quietly.
-            warnings.warn(f'ToolOutputLimits: could not spill a {call.tool_name!r} result: {error}', stacklevel=2)
-            return await self._fallback(ctx, call, action.then, unit)
-        except Exception as exc:
-            _log_fallback('Spilling', call.tool_name, action.then, exc)
+        # Text crosses the durable boundary as is; only binary needs base64 to travel as JSON.
+        if unit.binary:
+            payload = base64.b64encode(unit.data).decode('ascii')
+        else:
+            assert unit.text is not None
+            payload = unit.text
+        handle = await self._write_spill(ctx, call.tool_name, key, payload, unit.binary, _fallback_label(action.then))
+        if handle is None:
             return await self._fallback(ctx, call, action.then, unit)
 
         preview = _build_spill_preview(
             handle, unit, action.preview_chars, over_tokens=self.over_tokens, read_hint=self._read_hint(ctx, handle)
         )
         return preview, handle
+
+    # A durable operation, so a replay returns the recorded outcome instead of writing again: a
+    # second write could return a different handle, or succeed where the first failed.
+    @durable_operation('spill')
+    async def _write_spill(
+        self, ctx: RunContext[AgentDepsT], tool_name: str, key: str, payload: str, binary: bool, fallback: str
+    ) -> str | None:
+        """Write a spill and return its handle, or `None` when the store could not take it.
+
+        `payload` is the text, or base64 when `binary`: a durable engine may carry it to another worker as JSON.
+        """
+        data = base64.b64decode(payload) if binary else payload.encode('utf-8')
+        try:
+            return await self._store_for(ctx).write(key, data)
+        except (UserError, WorkspaceReadOnlyError) as error:
+            # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
+            # say so rather than degrading quietly.
+            warnings.warn(f'ToolOutputLimits: could not spill a {tool_name!r} result: {error}', stacklevel=3)
+        except Exception as exc:
+            _log_fallback('Spilling', tool_name, fallback, exc)
+        return None
 
     def _read_hint(self, ctx: RunContext[AgentDepsT], handle: str) -> str:
         """How the model reads a spill back, naming the tools by the names they have in this run."""
@@ -524,7 +578,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             # the user's to fix, not something to mask by silently truncating instead.
             raise
         except Exception as exc:
-            _log_fallback('Summarizing', call.tool_name, action.then, exc)
+            _log_fallback('Summarizing', call.tool_name, _fallback_label(action.then), exc)
             return await self._fallback(ctx, call, action.then, unit)
         return summary, None
 
@@ -639,13 +693,13 @@ def _fallback_label(then: Action | None) -> str:
     return 'the unreduced output' if then is None else type(then).__name__
 
 
-def _log_fallback(operation: str, tool_name: str, then: Action | None, exc: Exception) -> None:
+def _log_fallback(operation: str, tool_name: str, fallback: str, exc: Exception) -> None:
     logger.warning(
         '%s output of tool %r failed (%s); falling back to %s',
         operation,
         tool_name,
         type(exc).__name__,
-        _fallback_label(then),
+        fallback,
         exc_info=exc,
     )
 

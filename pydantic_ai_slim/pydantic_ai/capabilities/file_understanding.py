@@ -48,11 +48,13 @@ _DEFAULT_INSTRUCTIONS = (
 class FileUnderstanding(AbstractCapability[AgentDepsT]):
     """Describe the files the agent's model cannot read, with a model that can.
 
-    Before each request, every image, document, audio file or video in a user prompt or a tool result that
-    the model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] says it does not accept is replaced by a
-    text description of it, written by `fallback_subagent_model`. The agent's model sees the description in
-    the file's place; files it accepts are sent as they are. Without this capability, a file a tool returned
-    that the model cannot read is replaced by a note saying so instead.
+    Before each attempt at a request, every image, document, audio file or video in a user prompt or a tool
+    result that the [`ModelProfile`][pydantic_ai.profiles.ModelProfile] of the model serving that attempt says
+    it does not accept is replaced by a text description of it, written by `fallback_subagent_model`. The model
+    sees the description in the file's place; files it accepts are sent as they are. With
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback], each candidate is judged by its own profile, so
+    one that reads the file gets it and only one that can't gets the description. Without this capability, a
+    file a tool returned that the model cannot read is replaced by a note saying so instead.
 
     ```python
     from pydantic_ai import Agent, DocumentUrl
@@ -78,7 +80,8 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     downloaded again. A turn that continues from `message_history`, another worker serving the next turn, and a
     durable run replaying its history all see the same description, so earlier requests keep the same content and
     the describer is not paid for twice. The UI adapters leave that namespace out of the history they send to a
-    client, so a conversation whose history the client holds describes the file again each turn, and a new
+    client, and [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops it from history a client sends
+    back, so a conversation whose history the client holds describes the file again each turn, and a new
     description can differ, which changes earlier requests and costs the cached prefix.
 
     The distinct files a request needs described are described concurrently. Each describing call is a run of its
@@ -106,15 +109,20 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
     """
 
-    async def before_model_request(
+    async def prepare_model_request(
         self,
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
+        """Describe the files the model serving this attempt can't read, and send the descriptions in their place.
+
+        Each attempt is judged by its own model, so with `ModelFallback` a candidate that reads a file gets the file
+        and only one that can't gets its description.
+        """
         try:
             profile = request_context.model.profile
         except NotImplementedError:
-            # A `FallbackModel` has no profile of its own; which model answers is not known yet.
+            # A `FallbackModel` has no profile of its own; which of its models answers is not known.
             return request_context
 
         # Every file is found first, so the distinct ones can be described at once rather than one after another.
@@ -141,7 +149,10 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
         if pending:
             await self._describe_pending(ctx, pending, descriptions)
-            self._record(ctx.messages, {identity: descriptions[identity] for identity in pending})
+            new = {identity: descriptions[identity] for identity in pending}
+            # Through `ctx.messages`, which persists, unlike `request_context`: a description depends on the file and
+            # `instructions`, not on the attempt, so a later attempt, request or turn reuses it.
+            self._record(ctx.messages, new)
 
         messages = [_substitute(message, profile, descriptions) for message in request_context.messages]
         return replace(request_context, messages=messages)

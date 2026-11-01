@@ -9,12 +9,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.workspaces import Workspace
 
-# TODO: switch to `pydantic_ai._framing.wrap()` once it lands (https://github.com/pydantic/pydantic-ai/pull/10547),
-# adding `context-file` to its tags. Until then this matches its semantics: only the `<` of a closing tag is escaped,
-# in any case, with whitespace around the `/`, or carrying attributes; a longer tag name is left alone.
-_CONTEXT_FILE_CLOSING_TAG_OPENER = re.compile(r'<(?=\s*/\s*context-file(?=[\s/>]))', re.IGNORECASE)
+# TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
+# `context-file` as a framing tag there.
+# The `<` of an opening or closing `context-file` tag, in any case, with whitespace around the `/`, carrying
+# attributes, or cut off at the end of the content, where the frame's own end tag would complete it; a longer tag
+# name is left alone. Core's own framing tags are left to `neutralize_tags`.
+_CONTEXT_FILE_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?context-file(?=[\s/>]|$))', re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -31,23 +34,24 @@ class ContextFile:
     """The file's text content."""
 
 
-def _walk_dirs(workspace_dir: Path, home_dir: Path | None) -> list[Path]:
-    """Directories to scan, ancestor-first (home first, workspace last).
+def directories_up_to(directory: Path, top: Path | None) -> list[Path]:
+    """`directory` and each of its ancestors up to `top` inclusive, ancestor-first.
 
-    Walk up from `workspace_dir` to `home_dir` inclusive. When `home_dir` is
-    `None`, or is not an ancestor of `workspace_dir`, only `workspace_dir` is
-    scanned. The workspace backend handles filesystem path behavior.
+    When `top` is `None`, or is not an ancestor of `directory`, only `directory` is
+    returned. The walk-up scans these with `top` as the home directory, and nested
+    traversal with `top` as the working directory. The workspace backend handles
+    filesystem path behavior.
     """
-    if home_dir is None:
-        return [workspace_dir]
-    chain: list[Path] = [workspace_dir]
-    if workspace_dir != home_dir:
-        for parent in workspace_dir.parents:
+    if top is None:
+        return [directory]
+    chain: list[Path] = [directory]
+    if directory != top:
+        for parent in directory.parents:
             chain.append(parent)
-            if parent == home_dir:
+            if parent == top:
                 break
         else:
-            return [workspace_dir]
+            return [directory]
     return list(reversed(chain))
 
 
@@ -91,7 +95,7 @@ async def discover_instruction_files(
     seen_paths: set[Path] = set()
     seen_hashes: set[str] = set()
     found: list[ContextFile] = []
-    for directory in _walk_dirs(workspace_dir, home_dir):
+    for directory in directories_up_to(workspace_dir, home_dir):
         for filename in filenames:
             candidate = await _real_file(workspace, directory / filename)
             if candidate is None or candidate in seen_paths:
@@ -106,31 +110,37 @@ async def discover_instruction_files(
     return found
 
 
-async def find_dir_context_file(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> ContextFile | None:
-    """Return the first existing instruction file in `directory`, or `None`."""
+async def dir_context_file_path(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> Path | None:
+    """Return the path of the first existing instruction file in `directory`, without reading it."""
     for filename in filenames:
         candidate = await _real_file(workspace, directory / filename)
         if candidate is not None:
-            return ContextFile(
-                directory=directory,
-                path=candidate,
-                content=(await workspace.read_bytes(str(candidate))).decode('utf-8', errors='replace'),
-            )
+            return candidate
     return None
+
+
+async def find_dir_context_file(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> ContextFile | None:
+    """Return the first existing instruction file in `directory`, or `None`."""
+    path = await dir_context_file_path(workspace, directory, filenames)
+    if path is None:
+        return None
+    content = (await workspace.read_bytes(str(path))).decode('utf-8', errors='replace')
+    return ContextFile(directory=directory, path=path, content=content)
 
 
 def render_context_file(file: ContextFile, *, label: str) -> str:
     """Render one file as a labeled block.
 
-    The file and its path come from the repository, so neither can end the block: a closing
-    `</context-file>` in the content is escaped as `&lt;/context-file>`, and the label is
-    attribute-escaped. Everything else goes in as written.
+    The file and its path come from the repository, so neither can end the block: the `<` of every
+    opening or closing `context-file` tag and of every framing tag core writes (`<system>`, `<context>`,
+    `<tool_result>` and the rest) is escaped as `&lt;`, and the label is attribute-escaped. Everything
+    else goes in as written.
 
     The closing tag sits on its own line, so the content's trailing line terminators go: keeping them
     would put a blank line before the tag for every file that ends the way a text file should. Only the
     terminators -- trailing spaces and tabs stay, being a hard line break in Markdown.
     """
-    content = _CONTEXT_FILE_CLOSING_TAG_OPENER.sub('&lt;', file.content.rstrip('\r\n'))
+    content = _CONTEXT_FILE_TAG_OPENER.sub('&lt;', neutralize_tags(file.content.rstrip('\r\n')))
     return f'<context-file path="{html.escape(label)}">\n{content}\n</context-file>'
 
 
@@ -141,13 +151,18 @@ def render_context_file_path(label: str) -> str:
 
 def render_context_files(files: Sequence[ContextFile], *, relative_to: Path) -> str:
     """Render discovered files as labeled blocks in precedence order."""
-    blocks = [render_context_file(file, label=_label(file.path, relative_to)) for file in files]
+    blocks = [render_context_file(file, label=context_file_label(file.path, relative_to)) for file in files]
     return '\n\n'.join(blocks)
 
 
-def _label(path: Path, relative_to: Path) -> str:
-    """A stable display label: relative to `relative_to` when possible."""
-    try:
+def context_file_label(path: Path, relative_to: Path) -> str:
+    """A stable display label: relative to `relative_to`, with `..` steps for a file in one of its ancestors.
+
+    An ancestor's file is labeled `../AGENTS.md` rather than by its absolute path, so the label doesn't
+    carry the host's directory layout into the instructions or vary between machines.
+    """
+    if path.is_relative_to(relative_to):
         return path.relative_to(relative_to).as_posix()
-    except ValueError:
-        return path.as_posix()
+    if relative_to.is_relative_to(path.parent):
+        return '../' * len(relative_to.relative_to(path.parent).parts) + path.name
+    return path.as_posix()

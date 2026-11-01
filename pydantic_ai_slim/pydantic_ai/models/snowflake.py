@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, Iterable
+from collections.abc import AsyncIterable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -232,6 +232,13 @@ class SnowflakeModel(OpenAIChatModel):
         return super()._translate_thinking(model_settings, model_request_parameters)
 
     @override
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # On models that take the `reasoning` object, an explicit one replaces the unified mapping.
+        if self._resolved_profile.get('snowflake_supports_reasoning', False):
+            return ('snowflake_reasoning',) if 'snowflake_reasoning' in model_settings else ()
+        return super()._settings_overriding_thinking(model_settings)
+
+    @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _SnowflakeChatCompletion:
         # Cortex returns an empty `finish_reason` for Claude models, which would fail validation.
         for choice in response.choices:
@@ -269,7 +276,7 @@ class SnowflakeModel(OpenAIChatModel):
 
         @override
         def _map_response_thinking_part(self, item: ThinkingPart) -> None:
-            if item.provider_name == self._model.system and (reasoning_detail := into_reasoning_detail(item)):
+            if self.accepts_stateless_artifacts(item) and (reasoning_detail := into_reasoning_detail(item)):
                 self.reasoning_details.append(reasoning_detail.model_dump())
             else:
                 super()._map_response_thinking_part(item)

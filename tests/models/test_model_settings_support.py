@@ -19,15 +19,19 @@ every probe aborts before a response. For the same reason it doesn't use the `re
 that records only path, body and headers on a live transport, while `timeout` is observable only in
 `Request.extensions` and the probe needs a `MockTransport` to fail the call without a network.
 
-`tool_choice` and `thinking` are excluded and stay hand-maintained, for different reasons:
+`citations`, `tool_choice`, and `thinking` are excluded and stay hand-maintained, for different reasons:
+
+- `citations` changes only requests that contain an inline document or Web Fetch tool, while this harness
+  deliberately uses one plain text request for every model. The provider-specific tests assert the request shapes
+  for Anthropic, Bedrock, and xAI.
 
 - `tool_choice` reaches every adapter through `resolve_tool_choice`, and the adapters that cannot
   express a named subset honor it by *filtering the tool list* instead (Cohere, Mistral). A payload
   diff therefore cannot tell "sent `tool_choice`" from "dropped tools", and no single probe value
   stands in for a field whose value space spans a scalar, a list of names, and `ToolOrOutput`.
 - `thinking` is gated per model *name*, not per model class: `Model.prepare_request` only forwards it
-  when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model (Cohere,
-  Mistral's magistral) supports it while sending nothing at all. "Payload unchanged" is therefore not
+  when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model with no
+  effort setting (Mistral's dated magistral ids) supports it while sending nothing at all. "Payload unchanged" is therefore not
   evidence of non-support, which is exactly what this harness reads it as.
 - `cache` is excluded for the same reason as `thinking`: it is gated per model name via
   `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
@@ -159,8 +163,11 @@ WARNED_SETTINGS = frozenset(
 )
 """The settings a model warns with `UnsupportedSettingWarning` about ignoring, rather than ignoring silently."""
 
-HAND_MAINTAINED = frozenset({'tool_choice', 'thinking', 'cache'})
+HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
+
+FRAMEWORK_ENFORCED = frozenset({'request_timeout', 'first_event_timeout'})
+"""Fields Pydantic AI enforces itself for every model, so no model sends them or declares that it ignores them."""
 
 ATTEMPT_COUNTED = frozenset({'max_retries'})
 """Fields that change how many times a request is sent rather than what it carries; see `RETRY_CASES`."""
@@ -172,6 +179,7 @@ PROBE_VALUES: dict[str, tuple[object, ...]] = {
     'top_k': (4242,),
     'timeout': (987.654,),
     'request_timeout': (876.543,),
+    'first_event_timeout': (765.432,),
     'parallel_tool_calls': (False, True),
     'seed': (424242,),
     'presence_penalty': (0.345678,),
@@ -296,6 +304,12 @@ class Observed:
     """The settings the model declares it ignores."""
     warned: frozenset[str]
     """The settings an `UnsupportedSettingWarning` named while the request was made."""
+    warning_messages: tuple[str, ...]
+    """Every warning message recorded while the request was made.
+
+    Warnings other than `UnsupportedSettingWarning` are recorded only when the caller's filters let them through: the
+    suite's `error` filter makes one abort the request instead.
+    """
 
 
 @dataclass(frozen=True)
@@ -309,10 +323,10 @@ _WARNED_SETTING = re.compile(r'^The `(\w+)` setting is not supported')
 
 
 async def _observe(model: Model, request: Awaitable[object]) -> Observed:
-    """Await `request`, swallowing its inevitable failure, and record the `UnsupportedSettingWarning`s it emits.
+    """Await `request`, swallowing its inevitable failure, and record the warnings it emits.
 
-    Recording them instead of letting the suite's `filterwarnings = error` raise them lets the request still
-    reach the wire, so a probe sees both what the model sends and what it warns about.
+    Recording `UnsupportedSettingWarning`s instead of letting the suite's `filterwarnings = error` raise them lets the
+    request still reach the wire, so a probe sees both what the model sends and what it warns about.
     """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always', UnsupportedSettingWarning)
@@ -326,7 +340,11 @@ async def _observe(model: Model, request: Awaitable[object]) -> Observed:
         if issubclass(warning.category, UnsupportedSettingWarning)
         and (match := _WARNED_SETTING.match(str(warning.message)))
     }
-    return Observed(unsupported=model._unsupported_settings(), warned=frozenset(warned))  # pyright: ignore[reportPrivateUsage]
+    return Observed(
+        unsupported=model._unsupported_settings(),  # pyright: ignore[reportPrivateUsage]
+        warned=frozenset(warned),
+        warning_messages=tuple(str(warning.message) for warning in caught),
+    )
 
 
 async def run_probe_request(model: Model, settings: ModelSettings) -> Observed:
@@ -445,28 +463,39 @@ def legacy_http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
     return probe
 
 
-async def bedrock_probe(settings: ModelSettings) -> ProbeResult:
+def botocore_probe(build: Callable[[], BedrockConverseModel]) -> Probe:
     """Probe Bedrock through botocore's `before-send` event — there is no httpx client to inject."""
-    recorder = Recorder()
-    model = BedrockConverseModel(
+
+    async def probe(settings: ModelSettings) -> ProbeResult:
+        recorder = Recorder()
+        model = build()
+
+        def handle(request: Any, **_: Any) -> None:
+            body = request.body
+            recorder.record(
+                {
+                    'body': body.decode('utf8', 'replace') if isinstance(body, bytes) else str(body),
+                    'headers': sorted(
+                        f'{k}:{v}' for k, v in request.headers.items() if k.lower() not in BEDROCK_VOLATILE
+                    ),
+                }
+            )
+            raise ProbeAborted
+
+        for operation in ('Converse', 'ConverseStream'):
+            model.client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', handle)
+        observed = await run_probe_request(model, settings)
+        return ProbeResult(recorder.first, observed)
+
+    return probe
+
+
+bedrock_probe = botocore_probe(
+    lambda: BedrockConverseModel(
         'anthropic.claude-sonnet-4-5-20250929-v1:0',
         provider=BedrockProvider(aws_access_key_id=PROBE_KEY, aws_secret_access_key=PROBE_KEY, region_name='us-east-1'),
     )
-
-    def handle(request: Any, **_: Any) -> None:
-        body = request.body
-        recorder.record(
-            {
-                'body': body.decode('utf8', 'replace') if isinstance(body, bytes) else str(body),
-                'headers': sorted(f'{k}:{v}' for k, v in request.headers.items() if k.lower() not in BEDROCK_VOLATILE),
-            }
-        )
-        raise ProbeAborted
-
-    for operation in ('Converse', 'ConverseStream'):
-        model.client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', handle)
-    observed = await run_probe_request(model, settings)
-    return ProbeResult(recorder.first, observed)
+)
 
 
 async def huggingface_probe(settings: ModelSettings) -> ProbeResult:
@@ -482,12 +511,18 @@ async def huggingface_probe(settings: ModelSettings) -> ProbeResult:
     )
 
 
-async def xai_probe(settings: ModelSettings) -> ProbeResult:
+def xai_sdk_probe(build: Callable[[AsyncXaiClient], Model]) -> Probe:
     """Probe xAI at the SDK call — its transport is gRPC, so there is no HTTP request to read."""
-    recorder = MockXai(responses=[ProbeAborted()])
-    model = XaiModel('grok-4', provider=XaiProvider(xai_client=cast(AsyncXaiClient, recorder)))
-    observed = await run_probe_request(model, settings)
-    return ProbeResult(canonical(recorder.chat_create_kwargs[0]) if recorder.chat_create_kwargs else None, observed)
+
+    async def probe(settings: ModelSettings) -> ProbeResult:
+        recorder = MockXai(responses=[ProbeAborted()])
+        observed = await run_probe_request(build(cast(AsyncXaiClient, recorder)), settings)
+        return ProbeResult(canonical(recorder.chat_create_kwargs[0]) if recorder.chat_create_kwargs else None, observed)
+
+    return probe
+
+
+xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4', provider=XaiProvider(xai_client=client)))
 
 
 async def mcp_sampling_probe(settings: ModelSettings) -> ProbeResult:
@@ -808,7 +843,7 @@ async def test_supported_by_lists_match_the_wire(case: Case, allow_model_request
     undocumented = {
         name
         for name in [*PROBE_VALUES, *ATTEMPT_COUNTED]
-        if name != 'request_timeout' and not set(SUPPORTED_BY_LISTS[name]) & set(case.names)
+        if name not in FRAMEWORK_ENFORCED and not set(SUPPORTED_BY_LISTS[name]) & set(case.names)
     }
     unsupported = baseline_result.observed.unsupported
     assert unsupported == undocumented - case.holds_without_sending, (
@@ -833,7 +868,15 @@ def test_every_documented_name_is_probed():
 
 
 _NOT_API_BACKED = frozenset(
-    {'WrapperModel', 'InstrumentedModel', 'ConcurrencyLimitedModel', 'FallbackModel', 'FunctionModel', 'TestModel'}
+    {
+        'WrapperModel',
+        'InstrumentedModel',
+        'ConcurrencyLimitedModel',
+        'FallbackModel',
+        'FunctionModel',
+        'TestModel',
+        'BatchedModel',
+    }
 )
 """Model classes that wrap or stand in for another model, so they have no wire of their own to probe."""
 
@@ -936,7 +979,7 @@ def _google_with_client_retries(client: httpx2.AsyncClient) -> Model:
 def _mistral_with_client_retries(client: httpx2.AsyncClient) -> Model:
     """Mistral makes no retries by default; give the client a `retry_config` bounded by elapsed time."""
     retry_config = MistralRetryConfig('backoff', BackoffStrategy(1, 1, 1.0, 50), retry_connection_errors=True)
-    mistral = Mistral(api_key=PROBE_KEY, async_client=client, retry_config=retry_config)  # pyright: ignore[reportArgumentType]
+    mistral = Mistral(api_key=PROBE_KEY, async_client=client, retry_config=retry_config)
     return MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mistral))
 
 

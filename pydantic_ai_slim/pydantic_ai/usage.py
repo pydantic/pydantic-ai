@@ -11,10 +11,17 @@ from typing import Annotated, Any, Literal, cast
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import SchemaSerializer, core_schema
+from typing_extensions import deprecated
 
 from . import _utils
+from ._gateway_cost import gateway_reported_cost
 from ._genai_prices import iter_provider_references
-from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning, UsageLimitUnavailableWarning
+from ._warnings import (
+    CostNotFoundWarning,
+    PydanticAIDeprecationWarning,
+    UsageExtractionFailedWarning,
+    UsageLimitUnavailableWarning,
+)
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -159,6 +166,9 @@ class UsageBase:
     Calculated with [genai-prices](https://github.com/pydantic/genai-prices). `None` (rather than zero) when the
     model or provider can't be priced, so "unknown" stays distinguishable from a genuine zero cost. Models released
     after your install can be priced by calling [`update_in_background()`][pydantic_ai.prices.update_in_background].
+
+    Requests made through the [Pydantic AI Gateway](../gateway.md#request-cost) use the cost the gateway reported,
+    when it reports one.
     """
 
     def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
@@ -361,6 +371,7 @@ class RequestUsage(UsageBase):
             details: Becomes the `details` field on the returned `RequestUsage` for convenience.
         """
         details = details or {}
+        cost = gateway_reported_cost(data)
         extraction_error: Exception | None = None
         for provider_id, provider_api_url in iter_provider_references(
             provider_api_url=provider_url, provider_id=provider, provider_fallback=provider_fallback
@@ -375,7 +386,12 @@ class RequestUsage(UsageBase):
 
             try:
                 _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
-                return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
+                request_usage = cls(
+                    **{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details
+                )
+                if cost is not None:
+                    request_usage.cost = cost
+                return request_usage
             except Exception as e:
                 extraction_error = e
 
@@ -385,7 +401,7 @@ class RequestUsage(UsageBase):
                 UsageExtractionFailedWarning,
                 stacklevel=2,
             )
-        return cls(details=details)
+        return cls(details=details, cost=cost)
 
 
 @dataclass(repr=False, init=False, eq=False)
@@ -396,14 +412,17 @@ class RunUsage(UsageBase):
     """
 
     requests: int = 0
-    """Number of model responses the agent acted on, one per step of the agent loop.
+    """Number of model responses committed to the run's history, one per step of the agent loop.
+
+    That includes a response the run stopped on before acting on it, because it crossed a token or cost limit.
 
     This is what [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit] bounds. It can be
     lower than the number of requests sent to the provider: attempts a
-    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moved on from, the continuation requests that
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability moved on from, the continuation requests that
     complete a suspended response, and retries made by the provider SDK or HTTP transport aren't counted.
-    The tokens and cost of a response a `FallbackModel` rejected, and of continuation requests, are still added
-    to this usage. The attempts before a response are listed in its
+    The tokens and cost of a rejected response, and of continuation requests, are still added to this usage.
+    The attempts before a response are listed in its
     [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts].
     """
 
@@ -467,6 +486,18 @@ class RunUsage(UsageBase):
         new_usage.cost = self.cost - (other.cost or 0) if self.cost is not None and self.cost != other.cost else None
         return new_usage
 
+    @deprecated(
+        '`usage` is a property, not a method: use `.usage` instead of `.usage()`.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def __call__(self) -> RunUsage:
+        """Return this usage, so that V1-style `result.usage()` keeps working, with a deprecation warning.
+
+        Without this, the call raises `TypeError: 'RunUsage' object is not callable`, which code that wraps
+        its usage accounting in `except Exception` turns into silently zero usage.
+        """
+        return self
+
 
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
     if incr_usage.cost is not None:
@@ -514,7 +545,7 @@ class UsageLimits:
     cost_limit: Decimal | None = None
     """The maximum cost allowed in USD."""
     request_limit: int | None = 50
-    """The maximum number of model responses the agent acts on, as counted by [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests].
+    """The maximum number of model responses committed to the run's history, as counted by [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests].
 
     This bounds the number of turns of the agent loop, not the number of requests sent to the provider: attempts a
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moved on from, continuation requests, and

@@ -9,6 +9,7 @@ Append-only record of decisions made during this PR's lifecycle that weren't obv
 - Decision: <one line>
 - Why: <one line>
 - Source: <link to comment/thread/issue/commit — mandatory>
+- Session: <harness session id — written by the script when the harness sets one>
 - Supersedes: <earlier entry title, if applicable>
 ```
 

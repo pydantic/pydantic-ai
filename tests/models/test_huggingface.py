@@ -218,6 +218,7 @@ Hello! 👋 How can I help you today?\
             ],
             usage=RequestUsage(input_tokens=4, output_tokens=197, cost=Decimal('0.001391')),
             model_name='deepseek-ai/DeepSeek-R1',
+            model_id='huggingface:deepseek-ai/DeepSeek-R1',
             timestamp=IsDatetime(),
             provider_name='huggingface',
             provider_url='https://router.huggingface.co/together',
@@ -276,6 +277,7 @@ async def test_request_structured_response(allow_model_requests: None, huggingfa
                 ],
                 usage=RequestUsage(input_tokens=19, output_tokens=29, cost=Decimal('0.000260')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -431,6 +433,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='hf-model',
+                model_id='huggingface:hf-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
@@ -468,6 +471,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='hf-model',
+                model_id='huggingface:hf-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
@@ -497,6 +501,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
+                model_id='huggingface:hf-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
@@ -626,6 +631,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                 ],
                 usage=RequestUsage(input_tokens=269, output_tokens=27, cost=Decimal('0.00008750')),
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
+                model_id='huggingface:Qwen/Qwen2.5-VL-72B-Instruct',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/nebius',
@@ -735,6 +741,66 @@ async def test_model_transport_error(
     assert type(exc_info.value.__cause__).__name__ == cause_name
 
 
+def _completion_body(message: dict[str, Any]) -> dict[str, Any]:
+    return {
+        'id': '1',
+        'object': 'chat.completion',
+        'created': 0,
+        'model': 'm',
+        'system_fingerprint': 'x',
+        'choices': [{'index': 0, 'message': message, 'finish_reason': 'stop'}],
+        'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
+    }
+
+
+async def test_tool_call_arguments_sent_in_message_history(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool call in the history goes back to the model with its `arguments`.
+
+    `huggingface_hub` serializes the request body from its own types, so the body is read off a mock transport:
+    the `MockHuggingFace` client skips that serialization, and a cassette match ignores the body.
+
+    https://github.com/pydantic/pydantic-ai/issues/11125
+    """
+    tool_call = {'id': 'call_0', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{"q": "a"}'}}
+    responses = iter(
+        [
+            _completion_body({'role': 'assistant', 'content': None, 'tool_calls': [tool_call]}),
+            _completion_body({'role': 'assistant', 'content': 'done'}),
+        ]
+    )
+    request_bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=next(responses))
+
+    monkeypatch.setattr(
+        huggingface_hub.utils._http,
+        '_GLOBAL_ASYNC_CLIENT_FACTORY',
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    hf_client = AsyncInferenceClient(base_url='http://localhost/v1', api_key='test-key')
+    agent = Agent(HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=hf_client, api_key='test-key')))
+
+    @agent.tool_plain
+    def lookup(q: str) -> str:
+        return q
+
+    result = await agent.run('Look it up')
+    assert result.output == 'done'
+    assert request_bodies[1]['messages'][1]['tool_calls'] == snapshot(
+        [
+            {
+                'function': {'arguments': '{"q":"a"}', 'name': 'lookup', 'description': None},
+                'id': 'call_0',
+                'type': 'function',
+            }
+        ]
+    )
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     error = HfHubHTTPError(
         message='test_error',
@@ -838,6 +904,7 @@ That's correct! Paris is not only the political center but also the cultural, ec
                 ],
                 usage=RequestUsage(input_tokens=16, output_tokens=216, cost=Decimal('0.001560')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -933,6 +1000,7 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
                 parts=[TextPart(content='invalid-response')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
+                model_id='huggingface:test-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
@@ -961,6 +1029,7 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
                 parts=[TextPart(content='final-response')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
+                model_id='huggingface:test-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
                 provider_url='https://api-inference.huggingface.co',
@@ -1142,6 +1211,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=995, cost=Decimal('0.006995')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -1185,6 +1255,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 ],
                 usage=RequestUsage(input_tokens=32, output_tokens=1425, cost=Decimal('0.010071')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',
@@ -1236,6 +1307,7 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=955, cost=Decimal('0.006715')),
                 model_name='deepseek-ai/DeepSeek-R1',
+                model_id='huggingface:deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/together',

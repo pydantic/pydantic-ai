@@ -104,6 +104,14 @@ async def test_foreign_reference_is_rejected(fake_e2b: FakeE2B) -> None:
 def test_non_string_env_fails_at_construction(env: dict[object, object]) -> None:
     with pytest.raises(TypeError, match='env keys and values must be strings'):
         E2BSandboxBackend(env=env)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(UserError, match=r'^`env` keys and values must be strings\.$'):
+        E2BSandbox(env=env)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize('sandbox_timeout', [0, -1, 1.5, True])
+def test_backend_rejects_an_invalid_sandbox_timeout(sandbox_timeout: object) -> None:
+    with pytest.raises(ValueError, match='sandbox_timeout must be an integer of at least 1'):
+        E2BSandboxBackend(sandbox_timeout=sandbox_timeout)  # pyright: ignore[reportArgumentType]
 
 
 @pytest.mark.parametrize(
