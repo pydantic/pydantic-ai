@@ -714,7 +714,8 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """Where model inference runs for this request, sent as Anthropic's `inference_geo` parameter.
 
     `'us'` keeps inference on US-based infrastructure, at 1.1x the standard price; `'global'` lets it run in any
-    available geography. When unset, the workspace's default inference geo applies. Where the request ran is reported
+    available geography. Other values are sent as given, for the API to accept or reject. When unset, the
+    workspace's default inference geo applies. Where the request ran is reported
     in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'inference_geo'`.
 
     It's sent on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic managed), and in
@@ -1944,7 +1945,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         inference_geo = model_settings.get('anthropic_inference_geo')
         if inference_geo is None:
             return OMIT
-        if anthropic_profile.get('anthropic_supports_inference_geo', False):
+        if self._sends_inference_geo(model_settings, anthropic_profile):
             return inference_geo
         warnings.warn(
             f'`anthropic_inference_geo` is not supported on this client, where the endpoint decides the inference '
@@ -1953,6 +1954,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             stacklevel=2,
         )
         return OMIT
+
+    @staticmethod
+    def _sends_inference_geo(model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile) -> bool:
+        """Whether the request carries `inference_geo`, so where it ran is reported in `provider_details`."""
+        return model_settings.get('anthropic_inference_geo') is not None and anthropic_profile.get(
+            'anthropic_supports_inference_geo', False
+        )
 
     def _client_supports_fast_speed(self, anthropic_profile: AnthropicModelProfile) -> bool:
         """Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry)."""
@@ -2306,7 +2314,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if response.diagnostics is not None:
             provider_details = provider_details or {}
             provider_details['cache_diagnostics'] = response.diagnostics.model_dump(mode='json')
-        if 'anthropic_inference_geo' in model_settings and response.usage.inference_geo is not None:
+        if self._sends_inference_geo(model_settings, self.profile) and response.usage.inference_geo is not None:
             provider_details = provider_details or {}
             provider_details['inference_geo'] = response.usage.inference_geo
 
@@ -2380,7 +2388,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _provider_url=self._provider.base_url,
             _enabled_server_tool_names=self._get_enabled_server_tool_names(model_request_parameters, model_settings),
             _history_fetched_pages=history_fetched_pages,
-            _report_inference_geo='anthropic_inference_geo' in model_settings,
+            _report_inference_geo=self._sends_inference_geo(model_settings, self.profile),
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         return streamed_response

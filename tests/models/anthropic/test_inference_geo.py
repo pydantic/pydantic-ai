@@ -2,7 +2,8 @@
 
 Mocked at the HTTP transport, so each test pins the request body as the SDK sent it and feeds back the `usage` shape
 Anthropic answers with: `inference_geo` on a non-streamed message, and on `message_start` only for a stream (the
-recorded streams in this suite carry it nowhere else).
+recorded streams in this suite carry it nowhere else). The Bedrock, Vertex AI and Foundry clients can't be recorded
+here, and a mocked response is what lets those tests echo a geo the request didn't ask for.
 """
 
 from __future__ import annotations as _annotations
@@ -192,12 +193,14 @@ async def test_inference_geo_request_field_by_client(
         )
         if expected is None:
             with pytest.warns(UserWarning, match='`anthropic_inference_geo` is not supported on this client'):
-                await agent.run('Reply with exactly: OK')
+                messages = (await agent.run('Reply with exactly: OK')).all_messages()
         else:
-            await agent.run('Reply with exactly: OK')
+            messages = (await agent.run('Reply with exactly: OK')).all_messages()
 
     [body] = bodies
     assert body.get('inference_geo') == expected
+    # The mocked response always reports a geo; it's only surfaced when the request carried one.
+    assert ('inference_geo' in (_last_response(messages).provider_details or {})) is (expected is not None)
 
 
 async def test_inference_geo_profile_override(allow_model_requests: None):
