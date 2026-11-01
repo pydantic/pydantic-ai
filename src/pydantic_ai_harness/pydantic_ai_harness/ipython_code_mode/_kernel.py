@@ -313,8 +313,9 @@ class IPythonKernel:
             await self._shutdown_kernel(self._manager)
 
     async def _shutdown_kernel(self, manager: _KernelManager) -> None:
-        # jupyter-client's manager tracks one shutdown at a time: one overlapping another, as when the run holding the
-        # lock finds the kernel `_kill()` is still stopping gone and stops it too, fails with `InvalidStateError`.
+        # jupyter-client's manager handles one shutdown at a time: two overlapping calls fail with `InvalidStateError`.
+        # They overlap when `shutdown()`'s `_kill()` is still stopping the kernel and the run holding `_lock` finds the
+        # process gone and stops it too.
         async with self._shutdown_lock:
             await manager.shutdown_kernel(now=True)
 

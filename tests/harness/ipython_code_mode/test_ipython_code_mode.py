@@ -229,12 +229,16 @@ class TestIPythonCodeMode:
         returns: list[Any] = []
         async with anyio.create_task_group() as tg:
             tg.start_soon(pass_the_timeout_once_running)
-            returns = await _run(
-                IPythonCodeMode(kernel=kernel, timeout=0.5),
-                "survives_timeout = 'yes'",
-                f"print('working')\nopen({str(running)!r}, 'w').close()\nimport time\ntime.sleep(30)",
-                'survives_timeout',
-            )
+            try:
+                returns = await _run(
+                    IPythonCodeMode(kernel=kernel, timeout=0.5),
+                    "survives_timeout = 'yes'",
+                    f"print('working')\nopen({str(running)!r}, 'w').close()\nimport time\ntime.sleep(30)",
+                    'survives_timeout',
+                )
+            finally:
+                # Ends a read still waiting, as a run that fails before that cell would leave it.
+                os.close(os.open(running, os.O_RDWR))
         (stored, retry, after) = returns
         assert stored == {}
         assert retry.startswith('working\n')
