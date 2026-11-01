@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, cast, get_args
+from typing import TYPE_CHECKING, Any
 
-from pydantic_ai import exceptions
-from pydantic_ai._fallback import FallbackChain, FallbackOn, FallbackPredicates
+from pydantic_ai._fallback import (
+    FallbackChain,
+    FallbackOn,
+    FallbackPredicates,
+    SpecModelError,
+    spec_error_types,
+    spec_list,
+)
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -20,28 +26,6 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 __all__ = ('ModelFallback',)
-
-_SpecFallbackError = Literal[
-    'ModelAPIError',
-    'ModelHTTPError',
-    'ModelRateLimitError',
-    'ModelQuotaExceededError',
-    'ModelUnavailableError',
-    'ModelOverloadedError',
-    'ModelServerError',
-    'ModelConnectionError',
-    'ModelTimeoutError',
-    'ModelRequestRejectedError',
-    'ModelContextWindowExceededError',
-    'ModelAuthenticationError',
-    'ModelNotFoundError',
-    'ModelRequestTimeout',
-]
-"""The exceptions an agent spec can name in `ModelFallback`'s `fallback_on`: every public `ModelAPIError` class."""
-
-_SPEC_FALLBACK_ERRORS: dict[str, type[ModelAPIError]] = {
-    name: getattr(exceptions, name) for name in get_args(_SpecFallbackError)
-}
 
 
 @dataclass(init=False)
@@ -344,7 +328,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         cls,
         models: KnownModelName | str | Sequence[KnownModelName | str],
         *,
-        fallback_on: _SpecFallbackError | Sequence[_SpecFallbackError] = 'ModelAPIError',
+        fallback_on: SpecModelError | Sequence[SpecModelError] = 'ModelAPIError',
         sticky: bool = False,
     ) -> ModelFallback[Any]:
         """Build from an agent spec, which names the models and the exceptions to fall back on.
@@ -367,36 +351,13 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         """
         # Spec arguments reach here unvalidated: the annotations above are what the published spec schema
         # advertises, not something that rejects other values on the way in.
-        given_models = _spec_list(models, 'models')
+        given_models = spec_list(models, owner='ModelFallback', param='models')
         model_names = [model for model in given_models if isinstance(model, str)]
         if len(model_names) != len(given_models):
             invalid = [model for model in given_models if not isinstance(model, str)]
             raise UserError(f'`ModelFallback` in an agent spec takes model names, got {invalid!r}.')
-        given_errors = _spec_list(fallback_on, 'fallback_on')
-        error_types = [
-            _SPEC_FALLBACK_ERRORS[name]
-            for name in given_errors
-            if isinstance(name, str) and name in _SPEC_FALLBACK_ERRORS
-        ]
-        if len(error_types) != len(given_errors):
-            unknown = [name for name in given_errors if not (isinstance(name, str) and name in _SPEC_FALLBACK_ERRORS)]
-            raise UserError(
-                f'`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, '
-                f'got {unknown!r}. Valid names: {", ".join(_SPEC_FALLBACK_ERRORS)}.'
-            )
-        return cls(*model_names, fallback_on=tuple(error_types), sticky=sticky)
-
-
-def _spec_list(value: object, name: str) -> Sequence[object]:
-    """A `ModelFallback` spec argument given as one name or a list of them, as a list.
-
-    Anything else, like a mapping, whose keys iterating would silently take as the names, is rejected.
-    """
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, Sequence):
-        return cast(Sequence[object], value)
-    raise UserError(f'`ModelFallback` `{name}` in an agent spec must be a name or a list of names, got {value!r}.')
+        error_types = spec_error_types(fallback_on, owner='ModelFallback', param='fallback_on')
+        return cls(*model_names, fallback_on=error_types, sticky=sticky)
 
 
 def _pin_id(model: Model | str) -> str:

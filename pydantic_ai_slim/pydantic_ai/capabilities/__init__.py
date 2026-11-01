@@ -59,6 +59,7 @@ from .process_event_stream import ProcessEventStream
 from .process_history import ProcessHistory
 from .reinject_system_prompt import ReinjectSystemPrompt
 from .resolve_model_id import ModelIdResolver, ResolveModelId
+from .retry_on_model_errors import RetryOnModelErrors
 from .select_model import SelectModel
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
@@ -96,6 +97,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         PrepareTools,
         ProcessHistory,
         ReinjectSystemPrompt,
+        RetryOnModelErrors,
         SetToolMetadata,
         Thinking,
         ToolSearch,
@@ -158,6 +160,7 @@ __all__ = [
     'ProcessHistory',
     'ReinjectSystemPrompt',
     'ResolveModelId',
+    'RetryOnModelErrors',
     'ModelFallback',
     'SelectModel',
     'SetToolMetadata',

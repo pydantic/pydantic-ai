@@ -704,8 +704,13 @@ class _FailedAttempts:
         request_context: ModelRequestContext,
         failure: Exception | _messages.ModelResponse,
         start: AttemptStart,
+        retry: exceptions.RetryModelRequest | None = None,
     ) -> None:
-        """Record that the attempt started at `start` failed with `failure`, an error or a rejected response."""
+        """Record that the attempt started at `start` failed with `failure`, an error or a rejected response.
+
+        `retry` is what a hook raised to move on from it, if it asked for another attempt: one without a model
+        retried the same model, and is recorded as a retry rather than a fallback.
+        """
         ledger = request_context._usage_response_ledger  # pyright: ignore[reportPrivateUsage]
         if isinstance(failure, _messages.ModelResponse):
             # Described by what the provider billed for it, recorded just before the hook rejected it: a copy
@@ -719,6 +724,7 @@ class _FailedAttempts:
             start,
             parent=policy.span if policy else None,
             tracer=policy.tracer if policy else None,
+            kind='retry' if retry is not None and retry.model is None else 'fallback',
         )
         if isinstance(failure, _messages.ModelResponse):
             # The rejected response now has its own span, which reports its usage, so the `chat` span
@@ -2854,8 +2860,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 return await ctx.deps.root_capability.after_model_request(
                     run_context, request_context=request_context, response=response
                 )
-        except exceptions.RetryModelRequest:
-            failed.record(request_context, outcome, start)
+        except exceptions.RetryModelRequest as retry:
+            failed.record(request_context, outcome, start, retry)
             await self._cancel_rejected_job(request_context, outcome, state)
             raise
         except exceptions.FallbackExceptionGroup as unrecovered:
@@ -3648,8 +3654,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return await root_capability.on_model_request_error(
                 run_context, request_context=request_context, error=error
             )
-        except exceptions.RetryModelRequest:
-            failed.record(request_context, error, start)
+        except exceptions.RetryModelRequest as retry:
+            failed.record(request_context, error, start, retry)
             raise
         except exceptions.FallbackExceptionGroup as unrecovered:
             failed.record_exhausted(request_context, error, start, unrecovered)
