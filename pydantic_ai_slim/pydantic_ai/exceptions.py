@@ -221,6 +221,9 @@ class SkipModelRequest(Exception):
         self.response = response
         super().__init__()
 
+    def __reduce__(self) -> tuple[type, tuple[ModelResponse]]:
+        return self.__class__, (self.response,)
+
 
 class RetryModelRequest(Exception):
     """Exception to raise in model request hooks to attempt the request again.
@@ -285,6 +288,9 @@ class SkipToolValidation(Exception):
         self.validated_args = validated_args
         super().__init__()
 
+    def __reduce__(self) -> tuple[type, tuple[dict[str, Any]]]:
+        return self.__class__, (self.validated_args,)
+
 
 class SkipToolExecution(Exception):
     """Exception to raise in before/wrap tool execute hooks to skip execution.
@@ -297,6 +303,9 @@ class SkipToolExecution(Exception):
     def __init__(self, result: Any):
         self.result = result
         super().__init__()
+
+    def __reduce__(self) -> tuple[type, tuple[Any]]:
+        return self.__class__, (self.result,)
 
 
 class UserError(RuntimeError):
