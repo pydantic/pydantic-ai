@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
-from contextlib import AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, ClassVar, Literal
 
-from durabletask.task import RetryPolicy, get_name
+from durabletask.task import RetryPolicy
 from durabletask.worker import TaskHubGrpcWorker
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
@@ -149,39 +149,12 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         return self._backend
 
     @contextmanager
-    def register(
-        self,
-        worker: TaskHubGrpcWorker,
-        *,
-        previous_versions: Mapping[str, AbstractAgent[Any, Any]] | None = None,
-    ) -> Generator[None]:
+    def register(self, worker: TaskHubGrpcWorker) -> Generator[None]:
         """Register activities and own their runtime until the worker has stopped and drained.
 
         Use the bound capability returned by `AzureDurableTaskDurability.from_agent(agent)`.
-        `previous_versions` retains older agents' activity implementations under their
-        original, distinct names. Configure SDK worker version admission and dispatch
-        your own orchestrator on `ctx.version`; this method stamps no versions.
-        Overlapping activity names fail before any activity registration.
         """
-        backends = [self.get_durable_operation_backend()]
-        for version, agent in (previous_versions or {}).items():
-            capability = AzureDurableTaskDurability.from_agent(agent)
-            if capability is None:
-                raise UserError(f'Retained version {version!r} needs an agent with `AzureDurableTaskDurability`.')
-            backends.append(capability.get_durable_operation_backend())
-        names: set[str] = set()
-        for backend in backends:
-            for activity in backend.registrations():
-                name = get_name(activity)
-                if name in names:
-                    raise UserError(
-                        f'Retained Azure Durable Task activity name {name!r} is not unique. '
-                        'Keep old agent names unchanged and choose a distinct name for each retained version.'
-                    )
-                names.add(name)
-        with ExitStack() as stack:
-            for backend in backends:
-                stack.enter_context(backend.worker_scope(worker))
+        with self.get_durable_operation_backend().worker_scope(worker):
             yield
 
     async def before_model_request(

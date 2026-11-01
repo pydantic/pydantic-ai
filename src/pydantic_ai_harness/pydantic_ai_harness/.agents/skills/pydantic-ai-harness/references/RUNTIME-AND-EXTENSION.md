@@ -57,9 +57,10 @@ async-state checkpointing.
 
 Configure SDK `VersioningOptions`, client `version=` and `ctx.version` dispatch
 yourself, using numeric versions such as `1.0`, not `v1`. Use
-`register(worker, previous_versions={'1.0': old_agent})` to retain old activity
-implementations under their original names; every retained version needs distinct
-generated names. Native `CURRENT_OR_OLDER` supports drain-in-place; `STRICT` and
+stacked `old_durability.register(worker)` and `new_durability.register(worker)` contexts
+to retain old activities under their original names. Keep the contexts open until the
+worker stops and drains; the SDK rejects duplicate names. Native `CURRENT_OR_OLDER`
+supports drain-in-place; `STRICT` and
 `REJECT` support separate fleets. Explicit paused migration uses a bound application
 event and `continue_as_new(new_version=...)`, retaining pending calls but advancing
 review identity and requiring fresh decisions. There is no agent/run/client wrapper.

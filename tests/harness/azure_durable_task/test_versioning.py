@@ -51,9 +51,10 @@ class TestNativeVersioning:
             )
         )
         durable_worker.add_orchestrator(workflow)
+        old_capability = AzureDurableTaskDurability.from_agent(old)
         capability = AzureDurableTaskDurability.from_agent(new)
-        assert capability is not None
-        with capability.register(durable_worker, previous_versions={'1.0': old}):
+        assert old_capability is not None and capability is not None
+        with old_capability.register(durable_worker), capability.register(durable_worker):
             old_id = durable_worker.client.schedule_new_orchestration(workflow, input='old', version='1.0')
             new_id = durable_worker.client.schedule_new_orchestration(workflow, input='new', version='2.0')
             assert completed(durable_worker, old_id) == 'old code'
@@ -102,28 +103,19 @@ class TestNativeVersioning:
                     completed(durable_worker, instance_id)
         assert durable_worker.activity_calls == (['admission____model.request'] if failure == 'REJECT' else [])
 
-    @pytest.mark.parametrize('kind', ['identical', 'missing'])
-    def test_retained_names_fail_before_worker_mutation(
-        self, durable_worker: InMemoryWorker, kind: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        old = Agent(
-            TestModel(),
-            name='version',
-            capabilities=[] if kind == 'missing' else [AzureDurableTaskDurability()],
-        )
-        new = Agent(
-            TestModel(),
-            name='version',
-            capabilities=[AzureDurableTaskDurability()],
-        )
+    def test_sdk_rejects_duplicate_activity_names(self, durable_worker: InMemoryWorker) -> None:
+        old = Agent(TestModel(), name='version', capabilities=[AzureDurableTaskDurability()])
+        new = Agent(TestModel(), name='version', capabilities=[AzureDurableTaskDurability()])
+        old_capability = AzureDurableTaskDurability.from_agent(old)
         capability = AzureDurableTaskDurability.from_agent(new)
-        assert capability is not None
-        registrations: list[object] = []
-        monkeypatch.setattr(durable_worker, 'add_activity', registrations.append)
-        with ExitStack() as stack:
-            with pytest.raises(UserError, match=r'not unique|needs an agent'):
-                stack.enter_context(capability.register(durable_worker, previous_versions={'1.0': old}))
-        assert registrations == []
+        assert old_capability is not None and capability is not None
+        with pytest.raises(ValueError, match=r"A 'version____[^']+' activity already exists"):
+            with ExitStack() as stack:
+                stack.enter_context(old_capability.register(durable_worker))
+                stack.enter_context(capability.register(durable_worker))
+        with old_capability.register(InMemoryWorker()), capability.register(InMemoryWorker()):
+            assert old_capability.get_durable_operation_backend().registrations()
+            assert capability.get_durable_operation_backend().registrations()
 
     def test_registration_scope_rolls_back_after_failure(self, durable_worker: InMemoryWorker) -> None:
         old = Agent(TestModel(), name='scope-old', capabilities=[AzureDurableTaskDurability()])
@@ -132,13 +124,13 @@ class TestNativeVersioning:
         capability = AzureDurableTaskDurability.from_agent(new)
         assert old_capability is not None and capability is not None
         replacement = InMemoryWorker()
-        with ExitStack() as stack:
-            stack.enter_context(old_capability.register(durable_worker))
+        with old_capability.register(durable_worker):
             with pytest.raises(UserError, match='already registered'):
-                stack.enter_context(capability.register(replacement, previous_versions={'1.0': old}))
-        # The new backend was entered first and must have been released when the old one failed.
-        with capability.register(durable_worker):
-            assert capability.get_durable_operation_backend().registrations()
+                with ExitStack() as stack:
+                    stack.enter_context(capability.register(replacement))
+                    stack.enter_context(old_capability.register(replacement))
+            with capability.register(durable_worker):
+                assert capability.get_durable_operation_backend().registrations()
 
     @pytest.mark.parametrize('fixture', ['pr1-history.json', 'pr1-escaped-history.json'])
     def test_renamed_activity_breaks_recorded_replay(self, durable_worker: InMemoryWorker, fixture: str) -> None:

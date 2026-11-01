@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Protocol
 from uuid import uuid4
 
@@ -35,14 +35,14 @@ class LiveHub(Protocol):
 @contextmanager
 def worker_scope(
     hub: LiveHub,
-    durability: AzureDurableTaskDurability[None],
-    *,
-    previous_versions: dict[str, Agent[None, str | DeferredToolRequests]] | None = None,
+    *durabilities: AzureDurableTaskDurability[None],
 ) -> Generator[TaskHubGrpcWorker]:
     """Keep activity runtimes alive until this test's filtered SDK worker stops."""
     worker = TaskHubGrpcWorker(host_address=hub.endpoint, metadata=hub.metadata(), secure_channel=False)
     worker.use_work_item_filters()
-    with durability.register(worker, previous_versions=previous_versions):
+    with ExitStack() as stack:
+        for durability in durabilities:
+            stack.enter_context(durability.register(worker))
         try:
             yield worker
         finally:
@@ -170,7 +170,7 @@ class TestLiveGenerations:
                 time.sleep(0.05)
             else:
                 pytest.fail('Old instance did not reach its paused review')
-        with worker_scope(hub, capability, previous_versions={'1.0': old}) as worker:
+        with worker_scope(hub, old_capability, capability) as worker:
             worker.use_versioning(
                 VersioningOptions(
                     version='2.0',
