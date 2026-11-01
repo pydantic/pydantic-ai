@@ -286,6 +286,8 @@ capability to see post-compaction usage, before it to see what triggered compact
   back. Summaries leave load exchanges out. `preserve_loaded_capabilities=False` unloads them instead and
   leaves a note naming them.
   Provider-native compaction still unloads them.
+- The same strategies keep tool search discoveries (a `search_tools` exchange, a native search result or a
+  `ToolReturn.tools` reveal) by recording them again after the summary as a `ToolAvailabilityDeltaPart`.
 - `receipts=True` on `SlidingWindowCompaction` / `SummarizingCompaction` appends a note saying
   history was compacted; with `StepPersistence` attached it includes the run handle.
 - `await compact_now(strategy, history, model=..., focus=..., conversation_id=...)` (plus `deps=` for typed deps) runs a

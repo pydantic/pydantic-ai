@@ -41,7 +41,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness._message_text import tool_return_text
 from pydantic_ai_harness._usage import reserved_usage_limits
-from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_capability_loads
+from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -516,7 +516,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             protected_tail=len(tail),
             insert_at=len(head) + len(added),
         )
-        return keep_capability_loads(
+        return keep_loaded_state(
             messages,
             compacted,
             kept_from=len(compacted) - len(tail),
