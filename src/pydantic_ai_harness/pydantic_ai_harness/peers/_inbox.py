@@ -1,10 +1,9 @@
-"""Per-peer inbox: persist before accepting, enqueue during a run, remove only after delivery acknowledgement."""
+"""Per-peer inbox: persist before accepting, hand messages to the reading run, remove only after acknowledgement."""
 
 from __future__ import annotations
 
 import os
 import secrets
-from collections.abc import Callable
 from pathlib import Path
 
 from anyio import Lock
@@ -12,14 +11,19 @@ from anyio.to_thread import run_sync
 from pydantic import TypeAdapter
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import UserPromptPart
-from pydantic_ai_harness.peers._message import make_peer_message
-from pydantic_ai_harness.peers._types import MAX_MESSAGE_BYTES, MAX_PENDING, PeerDelivery, PeerMessage
+from pydantic_ai_harness.peers._types import (
+    MAX_MESSAGE_BYTES,
+    MAX_PENDING,
+    DeliveryStatus,
+    PeerDelivery,
+    PeerInbox,
+    PeerMessage,
+)
 
 _MESSAGES = TypeAdapter(list[PeerMessage])
 
 
-class PeerInbox:
+class LocalPeerInbox(PeerInbox):
     """Incoming peer messages, in memory or in an atomically replaced JSON file.
 
     Bind one inbox to one recipient. The application supplies a path scoped to that recipient;
@@ -46,13 +50,13 @@ class PeerInbox:
         self._messages: dict[str, PeerMessage] = {}
         self._loaded = False
         self._lock = Lock()
-        self._enqueue: Callable[[UserPromptPart], str] | None = None
-        self._inflight: dict[str, str] = {}
+        self._reader: str | None = None
+        self._taken: set[str] = set()
 
     @property
     def running(self) -> bool:
-        """Whether this inbox is attached to a run that can receive messages now."""
-        return self._enqueue is not None
+        """Whether a run is reading this inbox, so it reads new messages at its next model request."""
+        return self._reader is not None
 
     async def _load(self) -> None:
         if self._loaded:
@@ -83,20 +87,12 @@ class PeerInbox:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def _deliver(self, message: PeerMessage) -> None:
-        if self._enqueue is not None and message.id not in self._inflight:
-            self._inflight[message.id] = self._enqueue(make_peer_message(message))
-
     async def receive(self, message: PeerMessage) -> PeerDelivery:
         """Accept once by message id; refuse oversized messages or a full or disabled inbox."""
         async with self._lock:
             await self._load()
             if message.id in self._messages:
-                return PeerDelivery(
-                    message_id=message.id,
-                    status='delivered' if message.id in self._inflight else 'queued',
-                    pending=len(self._messages),
-                )
+                return PeerDelivery(message_id=message.id, status=self._status, pending=len(self._messages))
             reason = (
                 'does not accept messages'
                 if not self.accepting
@@ -111,12 +107,11 @@ class PeerInbox:
             updated = {**self._messages, message.id: message}
             await self._save(updated)
             self._messages = updated
-            self._deliver(message)
-            return PeerDelivery(
-                message_id=message.id,
-                status='delivered' if message.id in self._inflight else 'queued',
-                pending=len(self._messages),
-            )
+            return PeerDelivery(message_id=message.id, status=self._status, pending=len(self._messages))
+
+    @property
+    def _status(self) -> DeliveryStatus:
+        return 'delivered' if self.running else 'queued'
 
     async def pending(self) -> list[PeerMessage]:
         """Undelivered messages, oldest first."""
@@ -124,30 +119,32 @@ class PeerInbox:
             await self._load()
             return list(self._messages.values())
 
-    async def _attach(self, enqueue: Callable[[UserPromptPart], str]) -> bool:
-        """Attach one run, enqueue pending messages in order. A nested run leaves the outer run attached."""
+    async def take(self, run_id: str) -> list[PeerMessage]:
+        """Claim the inbox for `run_id` if no run holds it; return its messages not yet taken, oldest first."""
         async with self._lock:
             await self._load()
-            if self._enqueue is not None:
-                return False
-            self._enqueue = enqueue
-            for message in self._messages.values():
-                self._deliver(message)
-            return True
+            if self._reader is None:
+                self._reader = run_id
+            if self._reader != run_id:
+                return []
+            taken = [message for message in self._messages.values() if message.id not in self._taken]
+            self._taken.update(message.id for message in taken)
+            return taken
 
-    def _detach(self) -> None:
-        """Forget an ended run's enqueue IDs; its unacknowledged messages stay pending."""
-        self._enqueue = None
-        self._inflight.clear()
-
-    async def _acknowledge(self, enqueue_id: str) -> None:
-        """Remove a message only after core confirms it entered the conversation history."""
+    async def acknowledge(self, message_id: str) -> None:
+        """Remove a message once it entered the conversation history."""
         async with self._lock:
-            message_id = next((key for key, value in self._inflight.items() if value == enqueue_id), None)
-            if message_id is None:
+            if message_id not in self._messages:
                 return
             updated = self._messages.copy()
             del updated[message_id]
             await self._save(updated)
             self._messages = updated
-            del self._inflight[message_id]
+            self._taken.discard(message_id)
+
+    async def release(self, run_id: str) -> None:
+        """End `run_id`'s claim; unacknowledged messages stay pending for the next run."""
+        async with self._lock:
+            if self._reader == run_id:
+                self._reader = None
+                self._taken.clear()
