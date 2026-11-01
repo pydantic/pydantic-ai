@@ -139,6 +139,26 @@ def test_get_unwrapped_function_name_callable_class():
     )
 
 
+@pytest.mark.parametrize('wrapped', [False, True])
+def test_get_unwrapped_function_name_partial_callable_instance(wrapped: bool):
+    class CallableClass:
+        def __call__(self, value: int, offset: int = 0) -> int:
+            return value + offset
+
+    task: Callable[[int], int] = partial(CallableClass(), offset=2)
+    if wrapped:
+
+        @functools.wraps(task)
+        def wrapped_task(value: int) -> int:
+            return value + 2
+
+        task = wrapped_task
+
+    assert get_unwrapped_function_name(task) == (
+        'test_get_unwrapped_function_name_partial_callable_instance.<locals>.CallableClass.__call__'
+    )
+
+
 def test_get_unwrapped_function_name_method():
     """Test get_unwrapped_function_name with method."""
 
