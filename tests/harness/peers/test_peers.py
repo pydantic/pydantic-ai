@@ -346,6 +346,7 @@ class TestPeers:
       "cost": null
     },
     "model_name": "function:respond:stream",
+    "model_id": "function:function:respond:stream",
     "timestamp": "<datetime>",
     "kind": "response",
     "provider_name": null,
@@ -784,9 +785,8 @@ class TestPeers:
             ctx: RunContext[object], *content: EnqueueContent, priority: Literal['asap', 'when_idle'] = 'asap'
         ) -> str | None:
             enqueue_id = original_enqueue(ctx, *content, priority=priority)
-            if content and isinstance(content[0], UserPromptPart) and read_peer_message(content[0]) is not None:
-                assert enqueue_id is not None
-                enqueue_ids.append(enqueue_id)
+            assert enqueue_id is not None
+            enqueue_ids.append(enqueue_id)
             return enqueue_id
 
         monkeypatch.setattr(RunContext, 'enqueue', enqueue)
