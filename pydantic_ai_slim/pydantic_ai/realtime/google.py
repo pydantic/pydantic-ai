@@ -51,6 +51,7 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -669,6 +670,7 @@ async def _seed_request_parts(
                 InstructionDeltaPart,
                 InstructionBaselinePart,
                 ToolAvailabilityDeltaPart,
+                CapabilityLoadDeltaPart,
                 ModelSettingsDeltaPart,
             ),
         ):
@@ -1537,6 +1539,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
                 text_output=settings.get('output_modality', 'audio') == 'text',
+                vertexai=client.vertexai,
             )
             yield connection
         finally:
@@ -1617,8 +1620,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         async_tool_calls: bool = False,
         provider_url: str = '',
         text_output: bool = False,
+        vertexai: bool = False,
     ) -> None:
         self._session = session
+        # Whether the session is on Vertex AI rather than the Gemini Developer API, whose SDK refuses a function
+        # response without the call's id. A connection built without it assumes the stricter Developer API.
+        self._vertexai = vertexai
         # Whether the session asked for text rather than audio (`output_modality='text'`). A text-only model
         # streams its text answer as `output_transcription` (`gemini-robotics-er-2-streaming-preview`, verified
         # live), which is then the answer itself, written rather than spoken.
@@ -2000,7 +2007,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         # result sent while re-dialing went to the dead socket, so the call is still owed.
                         for call_id, call in lost_tool_calls.items():
                             self._tool_calls.pop(call_id, None)
-                            if state_resumed:
+                            if state_resumed and self._can_answer(call):
                                 self._unanswered_lost_tool_calls.append(call)
                         reconnect_frame.append(ToolCallCancelled(tool_call_ids=list(lost_tool_calls)))
                     if self._turn_open:
@@ -2041,6 +2048,16 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 yield [*lost, error]
                 return
             # `receive()` returned normally → the turn ended; loop for the next one.
+
+    def _can_answer(self, call: tuple[str, str | None]) -> bool:
+        """Whether a lost call can be answered on the resumed session.
+
+        The Gemini Developer API only takes a function response carrying the call's id (`google-genai`
+        raises before sending one without), so an id-less call can't be answered there and is left
+        unanswered rather than ending the event stream. On Vertex AI the SDK sends one without an id.
+        """
+        _, gemini_id = call
+        return gemini_id is not None or self._vertexai
 
     async def _answer_lost_tool_calls(self) -> None:
         """Answer calls a resumed session lost with an error, so they don't swallow the next input.

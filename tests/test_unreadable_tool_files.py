@@ -324,6 +324,10 @@ def _openai_chat() -> Model:
     return OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='test'))
 
 
+def _openai_chat_audio() -> Model:
+    return OpenAIChatModel('gpt-audio-mini', provider=OpenAIProvider(api_key='test'))
+
+
 def _openai_chat_without_documents() -> Model:
     return OpenAIChatModel(
         'gpt-5',
@@ -365,6 +369,11 @@ def _bedrock() -> Model:
     return BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=provider)
 
 
+def _bedrock_claude() -> Model:
+    provider = BedrockProvider(region_name='us-east-1', aws_access_key_id='test', aws_secret_access_key='test')
+    return BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=provider)
+
+
 def _google() -> Model:
     return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test'))
 
@@ -388,9 +397,15 @@ def _google() -> Model:
         ),
         pytest.param(
             _openai_chat,
-            ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': True, 'video': False}),
+            ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': False, 'video': False}),
             marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
             id='openai_chat',
+        ),
+        pytest.param(
+            _openai_chat_audio,
+            ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': True, 'video': False}),
+            marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
+            id='openai_chat_audio_model',
         ),
         pytest.param(
             _openai_chat_without_documents,
@@ -399,7 +414,7 @@ def _google() -> Model:
                     'image': True,
                     'document': True,
                     'document_media_types': ['text/csv', 'text/html', 'text/markdown', 'text/plain'],
-                    'audio': True,
+                    'audio': False,
                     'video': False,
                 }
             ),
@@ -469,6 +484,12 @@ def _google() -> Model:
             ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': False, 'video': True}),
             marks=pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed'),
             id='bedrock',
+        ),
+        pytest.param(
+            _bedrock_claude,
+            ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': False, 'video': False}),
+            marks=pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed'),
+            id='bedrock_claude',
         ),
         pytest.param(
             _google,

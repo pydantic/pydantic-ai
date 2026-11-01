@@ -333,6 +333,34 @@ async def test_deferred_instruction_capability_loads_through_the_tool() -> None:
     assert 'Speak like a pirate at all times.' in str(result_part.content)
 
 
+async def test_load_capability_from_tool_is_rejected_in_a_session() -> None:
+    """Loading a capability from code isn't supported in a session; the model's `load_capability` tool is.
+
+    The `UserError` ends the session, like any other `UserError` a session tool raises.
+    """
+
+    class Pirate(AbstractCapability[None]):
+        id = 'pirate'
+        defer_loading = True
+
+        def get_instructions(self) -> str | None:
+            return 'Speak like a pirate at all times.'  # pragma: no cover
+
+    agent = Agent()
+
+    @agent.tool
+    async def open_case(ctx: RunContext[object]) -> str:
+        ctx.load_capability('pirate')
+        return 'Case opened.'  # pragma: no cover
+
+    model = _RecordingModel(
+        connection_events=[ToolCall(tool_call_id='tc_1', tool_name='open_case', args='{}'), ResponseDone()],
+    )
+
+    with pytest.raises(UserError, match=r'`ctx.load_capability\(\)` is not supported in a realtime session\.'):
+        await _drain(agent, model, capabilities=[Pirate()])
+
+
 async def test_deferred_capability_without_instructions_loads_with_only_the_message() -> None:
     """A deferred capability with nothing to say still loads in a session, with no `instructions` in the return."""
 
@@ -1339,6 +1367,22 @@ async def test_capability_with_uncalled_hook_warns() -> None:
         await _drain(Agent[None, str](capabilities=[_ModelRequestCap()], deps_type=type(None)), _RecordingModel())
     assert [str(warning.message) for warning in record] == [
         _uncalled_hooks_warning('`_ModelRequestCap`', '`before_model_request`')
+    ]
+
+
+async def test_prepare_model_request_hook_warns() -> None:
+    """A session makes no model request attempts, so a `prepare_model_request` hook never runs."""
+
+    async def prepare(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        return request_context  # pragma: no cover
+
+    with pytest.warns(UserWarning) as record:
+        await _drain(
+            Agent[None, str](capabilities=[Hooks(prepare_model_request=prepare)], deps_type=type(None)),
+            _RecordingModel(),
+        )
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning('`Hooks`', '`prepare_model_request`')
     ]
 
 

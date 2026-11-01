@@ -15,6 +15,8 @@ model you choose: any Pydantic AI model works, and a [decision model](../models/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls smart_search with a plain-English query. SmartSearch lists the files in the workspace with rg --files, chunks them into snippets, shortlists up to 128 snippets with BM25, and sends each one to the judge model you chose. Snippets whose relevance reaches the threshold come back to the model as a SmartSearchResult with file, line range and a short excerpt, plus coverage figures and warnings.](../img/harness/smart-search.svg)
+
 ## The problem
 
 A coding agent dropped into an unfamiliar repository spends its first turns locating code: guessing

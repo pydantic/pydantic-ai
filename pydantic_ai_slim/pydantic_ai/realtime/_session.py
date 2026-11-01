@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextvars
 import dataclasses
 import weakref
 from collections import deque
@@ -24,7 +25,11 @@ from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._framing import SYSTEM_TAG, wrap
 from .._instrumentation import annotate_tool_call_otel_metadata
-from .._run_context import RealtimeEventBuffer, context_window_fraction
+from .._run_context import (
+    _CURRENT_RUN_CONTEXT,  # pyright: ignore[reportPrivateUsage]
+    RealtimeEventBuffer,
+    context_window_fraction,
+)
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -133,6 +138,7 @@ from .codec import (
     CreateResponse,
     InputRejected,
     InputTranscript,
+    OutputSpeechTimestamps,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
@@ -415,6 +421,7 @@ class _AudioTap:
 _TranslatableEvent: TypeAlias = (
     AudioDelta
     | OutputTranscript
+    | OutputSpeechTimestamps
     | InputTranscript
     | ResponseDone
     | RealtimeInputSpeechStartEvent
@@ -579,6 +586,10 @@ class _RealtimePendingMessages(PendingMessageQueue):
     def bind(self, on_append: Callable[[PendingMessagePriority], None]) -> None:
         self._on_append = on_append
 
+    def unbind(self) -> None:
+        """Drop the callback, which holds a bound method back to the session."""
+        self._on_append = None
+
     def append(self, pending: PendingMessage) -> None:
         _pending_message_text(pending)
         super().append(pending)
@@ -705,6 +716,10 @@ class RealtimeSession:
         self._provider_url = model.base_url if model is not None else None
         self._agent_name = agent_name
         self._conversation_id = conversation_id
+        # The revision of the stored conversation the session continues, set by `AgentRealtime.session`.
+        self._conversation_revision: str | None = None
+        # The last conversation `conversation` handed out, whose revision a store's `save` may have advanced.
+        self._last_conversation: Conversation | None = None
         self._run_id = run_id
         # The request parameters and settings the session was opened with. Unlike a classic run — where
         # each model request can vary — a realtime session sends these once at connect, so they belong on
@@ -1002,7 +1017,12 @@ class RealtimeSession:
                 self._apply_core(event)
             self._apply_core(Closed())
             self._end_chat_spans_left_open()
-            self._teardown = asyncio.create_task(self._finish_teardown())
+            # The teardown runs in a copy of the caller's context, so its end-of-session and hang-up requests
+            # stay under the caller's span. Only `_CURRENT_RUN_CONTEXT` is cleared: the finished task keeps its
+            # context, and that run context holds the session (via `realtime_session`) and its deps.
+            teardown_context = contextvars.copy_context()
+            teardown_context.run(_CURRENT_RUN_CONTEXT.set, None)
+            self._teardown = asyncio.create_task(self._finish_teardown(), context=teardown_context)
         elif asyncio.current_task() in self._background_tasks:
             # A tool closing the session is cancelled by the teardown, at the wait below of its own
             # `close()` call. One that swallows that cancellation and calls `close()` again would wait
@@ -1130,6 +1150,16 @@ class RealtimeSession:
                 _chain_context(hang_up_error, self._close_error)
             self._close_error = hang_up_error
 
+        # Break the cycles that would otherwise keep the session, and the deps it holds, alive until a
+        # cyclic collection: the core's bound annotator, the pending-messages callback, the tool
+        # manager's run context, and the pump task's captured context.
+        self._pending_messages.unbind()
+        self._core.release_annotator()
+        self._pump_task = None
+        # Drop the manager's run context, whose `realtime_session` points back here. `realtime_session` itself
+        # stays set, since `after_run` hooks still read it; `ctx.tool_manager.ctx` is `None` from here on.
+        self._tool_manager.ctx = None
+
     async def _record_final_usage(self) -> None:
         """End the provider session, recording the usage it reports only as it ends.
 
@@ -1255,6 +1285,7 @@ class RealtimeSession:
         `new_messages()` agree. `_output_tool_name` stays `None`: plain text never came from a tool.
         """
         state.message_history = self.all_messages()
+        state.conversation_revision = self._current_conversation_revision()
         return AgentRunResult(
             self._final_result_text() or '',
             None,
@@ -1574,6 +1605,14 @@ class RealtimeSession:
         conversation its seeded history belongs to, or starting a new one — and keeps it, so every
         bundle taken from the session and every message it records shares one identity to store the
         conversation under.
+
+        Each access builds a new conversation, carrying the
+        [`revision`][pydantic_ai.conversation.Conversation.revision] of the one before it, so a
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can save
+        `session.conversation` again as the session goes on. Take the next one after the previous
+        save has finished: one taken while a save is still in flight carries the revision from
+        before it, so saving it, or any taken after it, raises
+        [`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict].
         """
         if self._conversation_id is None:
             self._conversation_id = _agent_graph.resolve_conversation_id(None, self._seeded)
@@ -1584,11 +1623,18 @@ class RealtimeSession:
             # The session span was opened before this id existed too, and has to agree for the
             # session to correlate with the text run that continues it.
             self._session_instrumentation.set_conversation_id(self._conversation_id)
-        return Conversation(
+        self._last_conversation = Conversation(
             messages=self.all_messages(),
             usage=copy(self.usage),
             conversation_id=self._conversation_id,
+            revision=self._current_conversation_revision(),
         )
+        return self._last_conversation
+
+    def _current_conversation_revision(self) -> str | None:
+        if self._last_conversation is not None:
+            return self._last_conversation.revision
+        return self._conversation_revision
 
     def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:
         """Create a request carrying the framework-managed session metadata."""
@@ -2402,7 +2448,7 @@ class RealtimeSession:
         if isinstance(event, OutputTranscript):
             self._session_instrumentation.set_output_type('text' if event.output_text else 'speech')
             return []
-        if isinstance(event, (InputTranscript, ResponseDone, PartStartEvent, PartEndEvent)):
+        if isinstance(event, (InputTranscript, OutputSpeechTimestamps, ResponseDone, PartStartEvent, PartEndEvent)):
             # (What they make streams as the core applies them.)
             return []
         if isinstance(event, RealtimeInputSpeechEndEvent):

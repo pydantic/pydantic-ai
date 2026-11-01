@@ -194,7 +194,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   renderers, and status segments are consulted in, so `coder`'s guidance leads
   the prompt.
 - **Integrations are deferred.** Only the coding loop and run plumbing are eager.
-  The customization guide (`clai_customization`) and every hosted integration
+  The agent docs capability (`clai_customization`) and every hosted integration
   plugin pass `defer_loading=True` on the capability they build (on the one a
   `for_run` function returns, never on the `DynamicCapability`), so each costs one
   catalog line until the model calls `load_capability`. A new integration does the same.
@@ -481,6 +481,12 @@ and `PLUGINS.md` in the same PR. The README is the PyPI page, so its links and
 images are absolute URLs on `main`; `scripts/screenshots/capture.sh` regenerates
 the images in `docs/images/`. Plain
 language, short sentences, no jargon a first-time plugin author would not know.
+
+Agent-readable docs are indexed by `clai_docs._CLAI_DOCS`. Docs outside
+`pydantic_clai2/` ship through `pyproject.toml`'s wheel `force-include` and sdist
+`include`. The catalog and packaging guards in `tests/clai2/test_clai_docs.py`
+reject new docs missing from either surface. If a new feature falls outside the
+existing discovery triggers, update `clai_docs._DESCRIPTION` and `_HINT`.
 
 The resume browser is a focused exception to the single `MenuBuilder` convention:
 it needs independently focused projects/sessions and two-line cards. Keep its

@@ -1,0 +1,5 @@
+{
+  "against": "v2.60.0",
+  "reason": "The `iban` pattern in the harness `DEFAULT_PII_PATTERNS` gains a `(?=[A-Za-z]{2}\\d{2})` lookahead ahead of its country-code alternation; it matches exactly the same text and only skips the alternation at positions that cannot start an IBAN.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10841"
+}

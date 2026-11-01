@@ -46,6 +46,8 @@ from _pytest.mark import ParameterSet
 from pytest_examples import CodeExample, find_examples
 from ruff.__main__ import find_ruff_bin
 
+from pydantic_ai import _framing
+
 _ROOT = Path(__file__).parents[2]
 _HARNESS = 'pydantic_ai_harness'
 
@@ -173,9 +175,12 @@ def _doc_snippets() -> Iterable[ParameterSet]:
 
 
 @pytest.mark.parametrize('example', list(_doc_snippets()))
-def test_doc_snippet_valid(example: CodeExample) -> None:
+def test_doc_snippet_valid(example: CodeExample, monkeypatch: pytest.MonkeyPatch) -> None:
     if example.prefix_settings().get('test', '').startswith('skip'):
         pytest.skip('illustrative signature block; not runnable Python')
+    # A harness module a snippet imports registers its framing tags at module level, as on a fresh import: don't warn
+    # that registration came after other tests escaped text (same as `tests/test_examples.py`).
+    monkeypatch.setattr(_framing, '_data_tag_openers_used', False)
     problem = _snippet_problem(example.source)
     assert problem is None, (
         f'{example.path}:{example.start_line} {problem}. '

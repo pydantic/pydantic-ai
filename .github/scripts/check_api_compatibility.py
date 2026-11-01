@@ -7,10 +7,10 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 
 PACKAGES = {
     'pydantic_ai': 'pydantic_ai_slim',
@@ -35,13 +35,17 @@ GRIFFECLI_VERSION = '2.3.0'
 GRIFFE_PUBLIC_REDUNDANT_ALIASES_VERSION = '0.3.2'
 _FINDING_RE = re.compile(r'^(?P<path>.*):(?P<line>\d+): (?P<message>.*)$')
 _ATTRIBUTE_VALUE_CHANGED = ': Attribute value was changed: '
+# One file per waiver, so PRs that each add one never conflict.
+WAIVERS = '.github/api-compatibility-waivers'
+_WAIVER_FILE_RE = re.compile(r'(?P<fingerprint>[0-9a-f]{64})\.json')
 
 
 class Waiver(BaseModel):
+    """A reviewed compatibility impact, stored in `WAIVERS` as `<fingerprint>.json`."""
+
     model_config = ConfigDict(extra='forbid', frozen=True)
 
     against: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    fingerprint: Annotated[str, StringConstraints(pattern=r'^[0-9a-f]{64}$')]
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     pull_request: Annotated[str, StringConstraints(pattern=r'^https://github\.com/pydantic/pydantic-ai/pull/\d+$')]
 
@@ -62,6 +66,9 @@ class ModelNameLiteral(BaseModel):
 class GrowingCollection(BaseModel):
     """A public `dict` or `set` constant that registers entries, such as CLAI's settings, which can gain entries without a waiver.
 
+    The constant can also be a comprehension over a tuple or list of names, such as the capability types registry,
+    which then gains entries when a name is added to that sequence.
+
     Removing an entry or changing an entry's value still needs a waiver.
     """
 
@@ -74,7 +81,6 @@ class GrowingCollection(BaseModel):
 class Allowlist(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
-    allowed_breakages: list[Waiver]
     model_name_literals: list[ModelNameLiteral] = []
     growing_collections: list[GrowingCollection] = []
 
@@ -103,12 +109,19 @@ def main() -> None:
         '--allowlist',
         type=Path,
         default=Path('.github/api-compatibility-allowlist.json'),
-        help='Exact reviewed compatibility-impact waivers.',
+        help='Model-name aliases and growing collections whose permitted changes need no waiver.',
+    )
+    parser.add_argument(
+        '--waivers',
+        type=Path,
+        default=Path(WAIVERS),
+        help='Directory of exact reviewed compatibility-impact waivers, one `<fingerprint>.json` file each.',
     )
     args = parser.parse_args()
 
-    waivers, model_name_literals, growing_collections = load_allowlist(args.allowlist)
-    used_waivers: set[tuple[str, str]] = set()
+    model_name_literals, growing_collections = load_allowlist(args.allowlist)
+    waivers = load_waivers(args.waivers)
+    used_waivers: set[str] = set()
     failed = False
     for package, search_path in PACKAGES.items():
         findings = run_griffe(package, search_path, args.against)
@@ -140,26 +153,31 @@ def main() -> None:
                 )
                 emit_annotation('notice', finding, message)
                 continue
-            waiver_key = (args.against, finding.fingerprint)
-            waiver = waivers.get(waiver_key)
-            if waiver is None:
+            waiver = waivers.get(finding.fingerprint)
+            if waiver is None or waiver.against != args.against:
                 failed = True
-                emit_annotation(
-                    'error',
-                    finding,
+                path = f'{args.waivers / finding.fingerprint}.json'
+                message = (
                     f'{finding.message} [fingerprint: {finding.fingerprint}]. '
-                    'Preserve compatibility or follow the allowed compatibility-impact process.',
+                    'Preserve compatibility or follow the allowed compatibility-impact process, '
+                    f'with a waiver in `{path}`.'
                 )
+                if waiver is not None:
+                    message += (
+                        f' `{path}` waives it against {waiver.against}; '
+                        f'replace its contents with a waiver against {args.against}.'
+                    )
+                emit_annotation('error', finding, message)
             else:
-                used_waivers.add(waiver_key)
+                used_waivers.add(finding.fingerprint)
                 emit_annotation(
                     'warning',
                     finding,
                     f'{finding.message} Allowed by {waiver.pull_request}: {waiver.reason}',
                 )
 
-    unused_waivers = {key for key in waivers if key[0] == args.against} - used_waivers
-    for _, fingerprint in sorted(unused_waivers):
+    current_waivers = {fingerprint for fingerprint, waiver in waivers.items() if waiver.against == args.against}
+    for fingerprint in sorted(current_waivers - used_waivers):
         failed = True
         print(f'::error::Unused API compatibility waiver for {args.against}: {fingerprint}')
 
@@ -173,21 +191,31 @@ def is_excluded(finding: Finding, search_path: str) -> bool:
     return any(path.is_relative_to(Path(search_path, *package.split('.'))) for package in EXCLUDED_PACKAGES)
 
 
-def load_allowlist(
-    path: Path,
-) -> tuple[dict[tuple[str, str], Waiver], set[tuple[str, str]], set[tuple[str, str]]]:
+def load_allowlist(path: Path) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
     allowlist = Allowlist.model_validate_json(path.read_text(encoding='utf-8'))
-    waivers: dict[tuple[str, str], Waiver] = {}
-    for waiver in allowlist.allowed_breakages:
-        key = (waiver.against, waiver.fingerprint)
-        if key in waivers:
-            raise ValueError(f'{path}: duplicate waiver for {waiver.against}: {waiver.fingerprint}')
-        waivers[key] = waiver
     return (
-        waivers,
         {(entry.path, entry.symbol) for entry in allowlist.model_name_literals},
         {(entry.path, entry.symbol) for entry in allowlist.growing_collections},
     )
+
+
+def load_waivers(directory: Path) -> dict[str, Waiver]:
+    """The waivers in `directory`, by fingerprint. Any other file in it is an error."""
+    # Git doesn't track an empty directory, so it is missing from a checkout once every waiver is pruned.
+    if not directory.exists():
+        return {}
+    return dict(read_waiver(path, path.read_text(encoding='utf-8')) for path in sorted(directory.iterdir()))
+
+
+def read_waiver(path: PurePath, text: str) -> tuple[str, Waiver]:
+    """The fingerprint that the name of the waiver file at `path` holds, and the waiver that its `text` holds."""
+    match = _WAIVER_FILE_RE.fullmatch(path.name)
+    if match is None:
+        raise ValueError(f'{path}: a waiver file must be named `<fingerprint>.json`')
+    try:
+        return match.group('fingerprint'), Waiver.model_validate_json(text)
+    except ValidationError as error:
+        raise ValueError(f'{path}: {error}') from error
 
 
 def literal_member_changes(message: str) -> tuple[set[str], set[str]] | None:
@@ -209,6 +237,8 @@ def literal_member_changes(message: str) -> tuple[set[str], set[str]] | None:
 def collection_entry_changes(message: str) -> tuple[list[str], list[str]] | None:
     """Return the entries a value change adds and removes, if both sides are `dict` or `set` literals of one kind.
 
+    Both sides can also be the same comprehension over a tuple or list literal, whose items are then the entries.
+
     An entry whose value changed counts as removed, with its new value added.
     """
     _, _, values = message.partition(_ATTRIBUTE_VALUE_CHANGED)
@@ -226,8 +256,20 @@ def collection_entry_changes(message: str) -> tuple[list[str], list[str]] | None
 
 
 def _collection_entries(value: str) -> tuple[str, set[str]] | None:
-    """The kind of a `dict`, `set`, or `frozenset` literal, and its entries as source text."""
+    """The kind of a `dict`, `set`, or `frozenset` literal, and its entries as source text.
+
+    For a comprehension over one tuple or list literal, the entries are the sequence's items, and the kind is the
+    rest of the comprehension, which has to be unchanged for a change to add or remove entries.
+    """
     node = ast.parse(value, mode='eval').body
+    if (
+        isinstance(node, ast.DictComp | ast.SetComp)
+        and len(node.generators) == 1
+        and isinstance(sequence := node.generators[0].iter, ast.Tuple | ast.List)
+    ):
+        entries = {ast.unparse(item) for item in sequence.elts}
+        node.generators[0].iter = ast.Tuple(elts=[], ctx=ast.Load())
+        return ast.dump(node), entries
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)

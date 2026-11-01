@@ -109,10 +109,9 @@ from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.prompt.terminal import Terminal
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.history import render_history
-from pydantic_clai2.ui.rendering.rendering import StreamRenderer
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer, print_prompt
 from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
-from pydantic_clai2.ui.rendering.tool_output import terminal_text
 from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
 from pydantic_clai2.ui.rendering.welcome import print_welcome
 
@@ -430,7 +429,12 @@ def create_shell(
             handler=lambda args: shell.update(args),
             complete=lambda args: ('now',) if len(args) <= 1 else (),
             menu=lambda: update_menu(
-                context, updates, run=lambda text: shell.send_input(text), refusal=lambda: shell.restart_refusal()
+                context,
+                updates,
+                run=lambda text: shell.send_input(text),
+                refusal=lambda: shell.restart_refusal(),
+                # Every `host.command_menu('update')` caller is a remote UI; the terminal builds its own menu.
+                raise_refusal=True,
             ),
         )
     )
@@ -1141,8 +1145,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self._steering.send_nowait(text)
         else:
             # Direct session users have no active stream renderer to serialize against.
-            self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
-            self.console.print()
+            print_prompt(self.console, text)
         return True
 
     def _released(self) -> AbstractAsyncContextManager[None]:
@@ -1187,8 +1190,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _run_mid_turn(self, text: str) -> None:
         async with self.screen.overlay():
-            self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
-            self.console.print()
+            print_prompt(self.console, text)
             if await self._refused(text):
                 return
             with self._without_terminal(text):
@@ -1271,8 +1273,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 continue
             # A line-mode prompt shows the line as it was typed; other input is echoed like the editor's.
             if self.prompt is None:
-                self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
-            self.console.print()
+                print_prompt(self.console, text)
+            else:
+                self.console.print()
             with self._handling_input():
                 if await self._dispatch_input(text):
                     return 'exit'

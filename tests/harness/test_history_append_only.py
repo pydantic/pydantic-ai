@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, ToolSearch, Toolset
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -71,6 +72,7 @@ from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.peers import InMemoryPeerNetwork
+from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.subagents import (
@@ -81,7 +83,7 @@ from pydantic_ai_harness.subagents import (
     SubAgents,
     is_task_report,
 )
-from pydantic_ai_harness.system_reminders import LLMReminder
+from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 from ..append_only import (
     CLOCK,
@@ -299,6 +301,13 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
+    # A lasting reminder is recorded on each firing and sent again on every later request, so it only ever appends.
+    "SystemReminders(scope='conversation')": (
+        lambda _: SystemReminders(
+            reminders=[Reminder('Cite your sources.', interval=2, tag=None, scope='conversation')]
+        ),
+        Scenario(),
+    ),
     # Each firing records a framework note and the generated text for good, so they must only ever be appended.
     'SystemReminders(LLMReminder)': (
         lambda _: SystemReminders(
@@ -359,11 +368,20 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
         ],
         _code_mode_discoveries(_SEARCH_TIDES, ('tides', {'port': 'Brest'})),
     ),
-    # One deferred tool sandboxed, another kept native: the native one keeps the native search on the wire.
+    # One deferred tool sandboxed, another kept native: `search_tools` searches both, and the native search isn't sent.
     'CodeMode(tools=not-tides)+ToolSearch': (
         lambda _: [
             CodeMode(tools=lambda ctx, td: td.name != 'tides'),
             ToolSearch(strategy='keywords'),
+            _deferred_forecast_and_tides(),
+        ],
+        _code_mode_discoveries(_SEARCH_TIDES, ('tides', {'port': 'Brest'})),
+    ),
+    # The same with the default strategy, which uses the provider's native tool search where there is one.
+    'CodeMode(tools=not-tides)+ToolSearch()': (
+        lambda _: [
+            CodeMode(tools=lambda ctx, td: td.name != 'tides'),
+            ToolSearch(),
             _deferred_forecast_and_tides(),
         ],
         _code_mode_discoveries(_SEARCH_TIDES, ('tides', {'port': 'Brest'})),
@@ -450,13 +468,6 @@ ALLOWED: dict[str, Allowed] = {
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
     # `keep_pairs`: one on the third request and one on the fifth.
     'TieredCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
-    'Planning': Allowed(
-        f'Request-only plan reminder at the end of each request, behind a cache breakpoint ({_PULLS}10257)',
-        # Anthropic adds it to the last tool result message; the OpenAI APIs send it as a user message.
-        (('messages', 'tool-return'), ('messages', 'user-prompt')),
-        tail=True,
-        records=('request-only user prompt',),
-    ),
     'WarnNearLimits': Allowed(
         f'Request-scoped system prompt ({_PULLS}10561): sent for one request, then left out. Anthropic clears it '
         'natively with `clear_at`; elsewhere it is a request-only tail',
@@ -496,20 +507,17 @@ ALLOWED: dict[str, Allowed] = {
         (('tools', 'tool:run_code'), ('deferred-tools', 'tool:forecast'), ('deferred-tools', 'tool:tides')),
         max_moves=2,
     ),
-    # docs/harness/code-mode.md#tool-search-interaction: a `tools` selector that keeps another deferred tool native
-    # keeps the native search on the wire, so the sandboxed deferred tool is declared to it and dropped once found.
-    # On Chat Completions there is no native search: the native tool's reveal adds it to `tools`, as below.
-    'CodeMode(tools=not-tides)+ToolSearch': Allowed(
-        'A deferred tool kept native keeps the native tool search, as documented',
-        (
-            ('deferred-tools', 'tool:forecast'),
-            ('deferred-tools', 'tool:tides'),
-            ('tools', 'tool:forecast'),
-            ('tools', 'tool:tides'),
-            ('tools', 'tool:run_code'),
-            ('tools', 'tool:search_tools'),
-        ),
-    ),
+    # docs/harness/code-mode.md#tool-search-interaction: a selector that sandboxes one deferred tool and keeps
+    # another native has `search_tools` search both, so neither is declared before it's found. Chat Completions
+    # has no deferred-tool channel, so the native `tides` is added to `tools` when it's found (docs/tools-advanced.md).
+    **{
+        name: Allowed(
+            'Chat Completions has no native tool search, so a native reveal adds the tool to `tools`, as documented',
+            (('tools', 'tool:search_tools'), ('tools', 'tool:run_code')),
+            providers=('openai-chat',),
+        )
+        for name in ('CodeMode(tools=not-tides)+ToolSearch', 'CodeMode(tools=not-tides)+ToolSearch()')
+    },
     # docs/tools-advanced.md: the local `search_tools` fallback reveals a tool by adding it to `tools`.
     'CodeMode(tools=not-in-corpus)+ToolSearch': Allowed(
         'Chat Completions has no native tool search, so each native reveal adds the tool to `tools`, as documented',
@@ -521,6 +529,7 @@ ALLOWED: dict[str, Allowed] = {
 """Documented prefix movers, checked exactly."""
 
 OPTIONAL_DEPENDENCIES: dict[str, str] = {
+    'BoxdSandbox': 'boxd',
     'BoxLiteSandbox': 'boxlite',
     'BrowserUse': 'browser_use',
     'DaytonaSandbox': 'daytona',
@@ -624,6 +633,21 @@ def test_every_capability_has_a_case():
     ) | OPTIONAL_DEPENDENCIES.keys()
     stale = (tables | CONVERSATIONS.keys()) - CAPABILITIES.keys() - VARIANTS.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
+
+
+@pytest.mark.parametrize('name', sorted(CAPABILITIES.keys() - EXEMPT.keys()))
+def test_only_coder_repairs_tool_arguments_by_default(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """`Coder` is the one capability that turns `RepairToolArguments` on; every other one leaves arguments as sent."""
+    skip_unless_installed(name, OPTIONAL_DEPENDENCIES)
+    for key, value in ENV.get(name, {}).items():
+        monkeypatch.setenv(key, value)
+    if name in CONVERSATIONS:
+        capabilities = CONVERSATIONS[name](tmp_path)[0]
+    else:
+        capabilities = build_capabilities(name, CAPABILITIES[name].load, FIXTURES.get(name), tmp_path)
+    leaves = [leaf for capability in capabilities for leaf in leaf_capabilities(capability)]
+    repairs = any(isinstance(leaf, RepairToolArguments) for leaf in leaves)
+    assert repairs == (name in {'Coder', 'RepairToolArguments'})
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)

@@ -111,11 +111,17 @@ class ModelResolver:
             return self.codex_auth().model(name)
         if (provider := self.plugins().get(ref.provider)) is not None:
             if ref.profile is None:
-                return await to_thread.run_sync(provider.resolve, ref.name, abandon_on_cancel=True)
-            if provider.resolve_profile is None:
+                resolve = partial(provider.resolve, ref.name)
+            elif provider.resolve_profile is not None:
+                resolve = partial(provider.resolve_profile, ref.name, ref.profile)
+            else:
                 raise UserError(f'{ref.provider} does not support profiles. Use {ref.provider}:{ref.name}.')
-            resolve = partial(provider.resolve_profile, ref.name, ref.profile)
-            return await to_thread.run_sync(resolve, abandon_on_cancel=True)
+            model = await to_thread.run_sync(resolve, abandon_on_cancel=True)
+            if ref.provider == 'claude-code':
+                from pydantic_clai2.models._retry_after import limit_retry_after
+
+                limit_retry_after(model=model)
+            return model
         if ref.profile is not None:
             from pydantic_clai2.models import key_profiles
 

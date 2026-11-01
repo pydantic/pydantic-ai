@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import functools
+import socket
+import threading
 import typing
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Iterator, Mapping, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -18,6 +20,7 @@ from pydantic_core import to_json
 from typing_extensions import ParamSpec, TypedDict
 
 try:
+    import botocore
     from botocore.client import BaseClient
     from botocore.eventstream import ParserError as EventStreamParserError
     from botocore.exceptions import (
@@ -127,7 +130,7 @@ from pydantic_ai.models._tool_choice import (
 from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.output import StructuredOutputMode
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
@@ -298,7 +301,7 @@ _EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
 _EXTRA_HEADERS_CONTEXT_KEY = 'pydantic_ai_extra_headers'
 _EXTRA_HEADERS_OPERATIONS = ('Converse', 'ConverseStream', 'CountTokens')
 _extra_headers_var: ContextVar[_ExtraHeadersState | None] = ContextVar('_extra_headers_var', default=None)
-_BedrockCallResult = TypeVar('_BedrockCallResult')
+_BedrockCallResult = TypeVar('_BedrockCallResult', bound=Mapping[str, object])
 
 
 def _claim_extra_headers(client_id: int, context: dict[str, Any], **_: Any) -> None:
@@ -344,14 +347,38 @@ async def _call_bedrock(
     _register_extra_headers(client)
     headers = dict(extra_headers or {})
 
+    # botocore blocks its thread until the provider answers or its `read_timeout` passes, so a request that's
+    # cancelled, like one its `request_timeout` ran out on, gives up on the thread rather than wait for it. What the
+    # thread then gets, like a `ConverseStream` response's open event stream, is closed rather than left open: by the
+    # thread when it sees the request was given up on, or by the request when the thread had already finished. Both
+    # may close it, which is harmless; neither can miss it.
+    abandoned = threading.Event()
+    results: list[_BedrockCallResult] = []
+
+    def close_abandoned_result(result: Mapping[str, object]) -> None:
+        if (stream := result.get('stream')) is not None:
+            cast('EventStream[Any]', stream).close()
+
     def call() -> _BedrockCallResult:
         context_token = _extra_headers_var.set(_ExtraHeadersState(id(client), headers))
         try:
-            return method(**params)
+            result = method(**params)
         finally:
             _extra_headers_var.reset(context_token)
+        results.append(result)
+        if abandoned.is_set():
+            close_abandoned_result(result)
+        return result
 
-    return await anyio.to_thread.run_sync(call)
+    try:
+        return await anyio.to_thread.run_sync(call, abandon_on_cancel=True)
+    except anyio.get_cancelled_exc_class():
+        abandoned.set()
+        # Only when the thread finished just as the request was cancelled, which a test can't arrange reliably.
+        for result in results:  # pragma: lax no cover
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(close_abandoned_result, result)
+        raise
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
@@ -963,6 +990,19 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
+    @functools.cached_property
+    def profile(self) -> ModelProfile:
+        """The model profile.
+
+        `supports_json_schema_output` is narrowed when the installed `botocore` can't send `outputConfig`, so that a
+        structured `output_type` that doesn't pick an output mode uses the mode it would for a model without Native
+        Output, rather than failing before the request is sent.
+        """
+        _profile = super().profile
+        if _profile.get('supports_json_schema_output', False) and not self._botocore_supports_output_config:
+            _profile = merge_profile(_profile, ModelProfile(supports_json_schema_output=False))
+        return _profile
+
     @property
     def canonical_system(self) -> str:
         """`'anthropic'` for Claude models, whose thinking signatures the Anthropic API verifies too, otherwise the provider's.
@@ -1080,6 +1120,12 @@ class BedrockConverseModel(Model[BaseClient]):
         model_request_parameters = model_request_parameters.with_default_output_mode(
             self._default_structured_output_mode(settings, model_request_parameters)
         )
+        if model_request_parameters.output_mode == 'native' and not self._botocore_supports_output_config:
+            raise UserError(
+                f'The installed `botocore` ({botocore.__version__}) is too old to send Native Output to Bedrock, as it '
+                "predates Converse's `outputConfig`. Upgrade `boto3`/`botocore`; on AWS Lambda, the runtime's bundled "
+                '`botocore` may be shadowing a newer one from your layer.'
+            )
         if (
             model_request_parameters.output_mode == 'tool'
             and not model_request_parameters.allow_text_output
@@ -1181,6 +1227,16 @@ class BedrockConverseModel(Model[BaseClient]):
         tool_spec_shape = self.client.meta.service_model.shape_for('ToolSpecification')
         return isinstance(tool_spec_shape, StructureShape) and 'strict' in tool_spec_shape.members
 
+    @property
+    def _botocore_supports_output_config(self) -> bool:
+        """Whether the installed `botocore` knows Converse's `outputConfig`, which carries Native Output.
+
+        Like `strict` on tools, `botocore` rejects it with a `ParamValidationError` when its bundled service model
+        predates it.
+        """
+        request_shape = self.client.meta.service_model.shape_for('ConverseRequest')
+        return not isinstance(request_shape, StructureShape) or 'outputConfig' in request_shape.members
+
     def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
 
@@ -1263,7 +1319,8 @@ class BedrockConverseModel(Model[BaseClient]):
             'messages': bedrock_messages,
             'system': system_prompt,
         }
-        # No native-tool strip is needed here (unlike Anthropic's count_tokens, which must drop server tools):
+        # No native-tool strip is needed here (unlike Anthropic's count_tokens, which drops the native tools its
+        # count endpoints reject or aren't verified to accept):
         # count-tokens-capable models (Claude) don't support native tools, and native-tool-capable models
         # (Nova-2) don't support count_tokens, so a `systemTool` can never reach this request.
         tool_config = self._map_tool_config(model_request_parameters, settings, bedrock_messages)
@@ -2362,6 +2419,14 @@ class BedrockStreamedResponse(StreamedResponse):
         return (BotoCoreError, ClientError, Urllib3HTTPError)
 
     async def close_stream(self) -> None:
+        # A read a cancellation gave up on keeps its thread blocked until botocore's `read_timeout` passes, and holds
+        # the response's lock meanwhile, so closing the stream would wait for it too. Shutting down the socket first
+        # wakes it. Best effort, and a no-op for a stream that isn't botocore's (`TypeError`, `KeyError`), one whose
+        # connection was already released once it was read through (`AttributeError`), or one whose socket is already
+        # closed (`OSError`).
+        with suppress(TypeError, KeyError, AttributeError, OSError):
+            raw_stream: Any = vars(self._event_stream)['_raw_stream']
+            raw_stream.connection.sock.shutdown(socket.SHUT_RDWR)
         await anyio.to_thread.run_sync(self._event_stream.close)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
@@ -2562,7 +2627,9 @@ class _AsyncIteratorWrapper(Generic[T]):
 
     async def __anext__(self) -> T:
         try:
-            return await anyio.to_thread.run_sync(next, self.sync_iterator)
+            # Given up on when the read is cancelled, rather than waited for until botocore's `read_timeout` passes;
+            # closing the stream, as `BedrockStreamedResponse.close_stream` does on the way out, ends the read.
+            return await anyio.to_thread.run_sync(next, self.sync_iterator, abandon_on_cancel=True)
         except RuntimeError as e:
             if type(e.__cause__) is StopIteration:
                 raise StopAsyncIteration

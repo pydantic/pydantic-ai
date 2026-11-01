@@ -34,7 +34,9 @@ from pydantic_ai.capabilities import (
     DynamicCapability,
     FileUnderstanding,
     HandleDeferredToolCalls,
+    Hooks,
     LocalWorkspace,
+    ModelFallback,
     NativeTool,
     PrefixTools,
     PrepareOutputTools,
@@ -136,6 +138,8 @@ FIXTURES: dict[str, Fixture] = {
     'HandleDeferredToolCalls': lambda _: HandleDeferredToolCalls(lambda ctx, requests: requests.build_results()),
     'LocalWorkspace': lambda tmp_path: LocalWorkspace(tmp_path),
     'MCP': lambda _: MCP(local=MCPToolset(_mcp_server())),
+    # The step's model answers, so the fallback model is never sent anything.
+    'ModelFallback': lambda _: ModelFallback(TestModel()),
     'NativeTool': lambda _: NativeTool(CodeExecutionTool()),
     'PrefixTools': lambda _: PrefixTools(Toolset(FunctionToolset([_no_op_tool])), prefix='extra'),
     'PrepareOutputTools': lambda _: PrepareOutputTools(lambda ctx, tools: tools),
@@ -174,14 +178,15 @@ UNSUPPORTED: dict[tuple[str, Provider], str] = {
 }
 """(capability, provider) pairs where the capability refuses the provider, so there is no conversation to check."""
 
-KNOWN: dict[str, tuple[Known, ...]] = {
-    'agent:dynamic_system_prompt': (
-        Known('prefix', 'https://github.com/pydantic/pydantic-ai/issues/10521', 'system', 'system-prompt'),
-    ),
-}
+KNOWN: dict[str, tuple[Known, ...]] = {}
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
 ALLOWED: dict[str, Allowed] = {
+    'agent:dynamic_system_prompt': Allowed(
+        'docs/agent.md: by default, a dynamic system prompt that changes is rewritten in place in the history, so '
+        "the start of every later request changes; `on_change='append'` keeps it (#10521)",
+        (('system', 'system-prompt'),),
+    ),
     'agent:effort_change': Allowed(
         'docs/capabilities/thinking.md: an API without a mid-conversation effort channel gets each change as the request-level '
         'effort, which is part of the cache key',
@@ -213,6 +218,12 @@ ALLOWED: dict[str, Allowed] = {
         tuple(('tools', f'tool:{name}') for name in ('write_note', 'read_note', 'delete_note')),
         providers=('openai-chat',),
     ),
+    'deferred:loaded_from_code': Allowed(
+        'docs/capabilities/on-demand.md: Chat Completions has no deferred-tool channel, so a load adds the '
+        "capability's tools to `tools`, like #9405's mid-run newcomers",
+        tuple(('tools', f'tool:{name}') for name in ('write_note', 'read_note', 'delete_note')),
+        providers=('openai-chat',),
+    ),
     # Since #10938, a `no_output` retry leaves out the request-scoped prompt no user message would clear, so
     # Anthropic drops it from the tail like the OpenAI APIs.
     'retry:no-output-retry+request-scoped': Allowed(
@@ -232,6 +243,22 @@ def _dynamic_system_prompt(agent: Agent[Any, Any], clock: Clock) -> None:
         return f'The time is {clock.now:%H:%M}.'
 
 
+def _dynamic_system_prompt_append(agent: Agent[Any, Any], clock: Clock) -> None:
+    @agent.system_prompt(dynamic=True, on_change='append')
+    def now() -> str:
+        return f'The time is {clock.now:%H:%M}.'
+
+
+def _dynamic_system_prompt_withdrawal(agent: Agent[Any, Any], clock: Clock) -> None:
+    calls = 0
+
+    @agent.system_prompt(dynamic=True, on_change='append')
+    def now() -> str | None:
+        nonlocal calls
+        calls += 1
+        return f'The time is {clock.now:%H:%M}.' if calls == 1 else None
+
+
 def _dynamic_instructions(agent: Agent[Any, Any], clock: Clock) -> None:
     @agent.instructions
     def now() -> str:
@@ -246,6 +273,8 @@ def _effort_by_step(ctx: RunContext[Any]) -> ModelSettings:
 
 AGENT_FEATURES: dict[str, Scenario] = {
     'agent:dynamic_system_prompt': Scenario(configure=_dynamic_system_prompt, check_ids=False),
+    'agent:dynamic_system_prompt_append': Scenario(configure=_dynamic_system_prompt_append, check_ids=False),
+    'agent:dynamic_system_prompt_withdrawal': Scenario(configure=_dynamic_system_prompt_withdrawal, check_ids=False),
     'agent:dynamic_instructions': Scenario(configure=_dynamic_instructions, check_ids=False),
     # The models whose APIs can change effort mid-conversation (#10385); Chat Completions can't.
     'agent:effort_change': Scenario(
@@ -385,6 +414,47 @@ def _timekeeping() -> list[AbstractCapability[Any]]:
     return [capability]
 
 
+def _notes() -> list[AbstractCapability[Any]]:
+    return [
+        Capability[Any](
+            id='notes',
+            description='Notes.',
+            instructions='Keep notes short.',
+            tools=[write_note, read_note, delete_note],
+            defer_loading=True,
+        )
+    ]
+
+
+def _open_notes(agent: Agent[Any, Any], clock: Clock) -> None:
+    @agent.tool
+    async def open_notes(ctx: RunContext[Any]) -> str:
+        """Open the notes."""
+        ctx.load_capability('notes')
+        return 'Opened.'
+
+
+def _notes_loaded_before_run() -> list[AbstractCapability[Any]]:
+    hooks = Hooks[Any]()
+
+    @hooks.on.before_run
+    async def load_notes(ctx: RunContext[Any]) -> None:
+        ctx.load_capability('notes')
+
+    return [*_notes(), hooks]
+
+
+def _notes_loaded_before_model_request() -> list[AbstractCapability[Any]]:
+    hooks = Hooks[Any]()
+
+    @hooks.on.before_model_request
+    async def load_notes(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        ctx.load_capability('notes')
+        return request_context
+
+    return [*_notes(), hooks]
+
+
 LOADED_CAPABILITY_CASES: dict[str, tuple[Callable[[], list[AbstractCapability[Any]]], Scenario]] = {
     # The clock moves on every request, so every request after the load records a change to its instructions.
     'deferred:dynamic_instructions': (
@@ -400,8 +470,42 @@ LOADED_CAPABILITY_CASES: dict[str, tuple[Callable[[], list[AbstractCapability[An
             serialize_history=True,
         ),
     ),
+    # A tool loads the capability with `ctx.load_capability`, which records it without a `load_capability` call.
+    'deferred:loaded_from_code': (
+        _notes,
+        Scenario(
+            configure=_open_notes,
+            turns=(
+                Turn(calls=(('open_notes', {}),)),
+                Turn(calls=(('write_note', {'content': 'Weather is sunny.'}),)),
+                Turn(text='Noted.'),
+                Turn(calls=(('look_up', {'topic': 'sports'}),)),
+                Turn(text='Here is more.'),
+            ),
+            serialize_history=True,
+        ),
+    ),
+    # A `before_run` or `before_model_request` hook loads the capability, which takes effect on that request.
+    **{
+        f'deferred:loaded_{hook}': (
+            capabilities,
+            Scenario(
+                turns=(
+                    Turn(calls=(('write_note', {'content': 'Weather is sunny.'}),)),
+                    Turn(text='Noted.'),
+                    Turn(calls=(('look_up', {'topic': 'sports'}),)),
+                    Turn(text='Here is more.'),
+                ),
+                serialize_history=True,
+            ),
+        )
+        for hook, capabilities in (
+            ('before_run', _notes_loaded_before_run),
+            ('before_model_request', _notes_loaded_before_model_request),
+        )
+    },
 }
-"""Deferred capabilities the model loads mid-conversation, whose instructions then change."""
+"""Deferred capabilities loaded mid-conversation, by the model or from code, whose instructions may then change."""
 
 RETRY_CASES: dict[str, tuple[Scenario, bool]] = {
     **{f'retry:{name}': (scenario, False) for name, scenario in RETRY_SCENARIOS.items()},
@@ -633,7 +737,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
                 'example',
                 (('messages', 'tool-return'),),
                 tail=True,
-                records=('request-only user prompt',),
+                records=('request-scoped system prompt',),
             ),
             'fail',
             'request 2 rewrote the last message of request 1',
@@ -646,7 +750,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
                 'example',
                 (('messages', 'tool-return'), ('messages', 'user-prompt')),
                 tail=True,
-                records=('request-only user prompt',),
+                records=('request-scoped system prompt',),
             ),
             'fail',
             'dropped UserPromptPart (persisted history) from the last message of request 0',

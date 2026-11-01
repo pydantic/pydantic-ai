@@ -9,6 +9,8 @@ Guardrails run a callable you supply at three points of a run: the user prompt b
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Guardrails run your guard functions at the edges of a run. InputGuardrail checks the prompt in wrap_model_request before the model sees it. ToolGuardrail checks tool arguments in before_tool_execute and tool results in after_tool_execute. OutputGuardrail checks the final output in after_output_process before the caller gets it. A table shows what allow, block, replace, retry and approve do at each point.](../img/harness/guardrails.svg)
+
 ## How it works
 
 Three capabilities -- `InputGuardrail`, `OutputGuardrail`, and `ToolGuardrail` -- each wrap a `guard` callable you supply. The guard inspects a value and returns one of five outcomes. For the run's two edges:

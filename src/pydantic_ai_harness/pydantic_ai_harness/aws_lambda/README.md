@@ -12,6 +12,8 @@ checkpointing, a resumed run would repeat every model request and tool call.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![A Lambda handler decorated with durable_execution and durable_agent_handler runs an agent named support that has the AWSLambdaDurability capability. In the first invocation, each model request and tool call runs as a durable step, and Lambda records its result in the checkpoint log under a step name such as support__model.request; the invocation times out during the second model request. The resumed invocation runs the handler again from the top: the two completed steps return their recorded results without calling the model or the tool again, and only the unfinished model request runs, is recorded, and finishes the run.](https://pydantic.dev/docs/ai/img/harness/aws-lambda.svg)
+
 ## Installation
 
 uv:
@@ -146,6 +148,12 @@ state between the agent run and the handler. An external side effect from cleanu
 to a store, releasing a shared lock, or emitting a metric, can also land during a later invocation.
 Loop-bound resources are isolated: the next invocation gets a fresh loop, so the abandoned cleanup
 cannot touch resources such as that invocation's provider HTTP client.
+
+At the end of the grace period the abandoned cleanup is cancelled again, and the retired loop stops
+a few event-loop iterations later; on Python 3.11 it first waits for jobs already submitted to its
+default executor to finish. A cleanup that suppresses that cancellation, or is still awaiting
+something by then, is left unfinished. A cleanup that cancels every task on its loop is not
+cancelled again: the retired loop stops at the deadline whether or not that cleanup has finished.
 
 Loop reuse has one more consequence: do not detach background work from a tool with
 `asyncio.create_task()` or by leaving executor work unawaited. Detached work is not checkpointed and

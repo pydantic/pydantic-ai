@@ -11,7 +11,7 @@ import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from pytest_mock import MockerFixture
@@ -20,8 +20,11 @@ from .conftest import try_import
 from .realtime_connections import InferredConnection
 
 with try_import() as imports_successful:
-    from examples.pydantic_ai_examples import realtime_voice
-    from examples.pydantic_ai_examples.realtime_camera import app as realtime_camera
+    # These tests exercise example helpers, not application-wide telemetry setup.
+    # Importing the runnable apps must not configure global exporters during collection.
+    with patch('logfire.configure'), patch('logfire.instrument_pydantic_ai'):
+        from examples.pydantic_ai_examples import realtime_voice
+        from examples.pydantic_ai_examples.realtime_camera import app as realtime_camera
     from pydantic_ai.messages import BinaryAudio, RealtimeInputSpeechStartEvent
     from pydantic_ai.realtime.codec import (
         AudioDelta,
