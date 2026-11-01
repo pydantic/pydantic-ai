@@ -8,7 +8,7 @@ const { test } = require('node:test');
 const source = fs.readFileSync(path.join(__dirname, '../workflows/shared/engine-zai.md'), 'utf8');
 const body = source.split('      script: |\n')[1].split('\nsafe-outputs:')[0]
   .split('\n').map(line => line.replace(/^ {8}/, '')).join('\n');
-const execute = new (Object.getPrototypeOf(async function () {}).constructor)('require', 'process', body);
+const execute = new (Object.getPrototypeOf(async function () {}).constructor)('require', 'process', 'fetch', 'core', body);
 
 async function forward(content, regular = true) {
   const sent = [];
@@ -36,13 +36,15 @@ async function forward(content, regular = true) {
       assert.equal(name, '/runner/gh-aw/actions/send_otlp_span.cjs');
       return {
         parseOTLPEndpoints: () => endpoints,
-        sendOTLPToAllEndpoints: async (destinations, payload, options) => {
-          assert.equal(destinations, endpoints);
-          assert.deepEqual(options, { skipJSONL: true });
-          sent.push(payload);
-        },
+        parseOTLPHeaders: value => { assert.equal(value, 'host-only'); return { Authorization: value }; },
       };
-    }, { env: { RUNNER_TEMP: '/runner' } });
+    }, { env: { RUNNER_TEMP: '/runner' } }, async (url, options) => {
+      assert.equal(url, 'https://collector.invalid/v1/traces');
+      assert.equal(options.method, 'POST');
+      assert.equal(options.headers.Authorization, 'host-only');
+      sent.push(JSON.parse(options.body));
+      return { ok: true, status: 200 };
+    }, { warning: () => assert.fail('unexpected export failure') });
   } catch (caught) {
     error = caught;
   }
@@ -50,7 +52,9 @@ async function forward(content, regular = true) {
 }
 
 test('private workflow spans use host destinations without an artifact mirror', async () => {
-  const payload = { resourceSpans: [{ scopeSpans: [{ spans: [{ name: 'invoke_agent', traceId: '1'.repeat(32) }] }] }] };
+  const messages = JSON.stringify({ content: 'private probe '.repeat(400) });
+  const payload = { resourceSpans: [{ scopeSpans: [{ spans: [{ name: 'invoke_agent', traceId: '1'.repeat(32),
+    attributes: [{ key: 'gen_ai.input.messages', value: { stringValue: messages } }] }] }] }] };
   const result = await forward(JSON.stringify(payload) + '\n');
   assert.deepEqual(result, { sent: [payload], closed: true, removed: true, error: undefined });
 });
@@ -65,6 +69,13 @@ test('invalid diagnostic input is removed without exporting it', async () => {
   assert.equal(result.closed, true);
   assert.equal(result.removed, true);
   assert.match(result.error.message, /Invalid workflow span payload/);
+});
+
+test('malformed private JSON never appears in the reported error', async () => {
+  const result = await forward('private-sentinel');
+  assert.equal(result.sent.length, 0);
+  assert.equal(result.removed, true);
+  assert.equal(result.error.message.includes('private-sentinel'), false);
 });
 
 test('the host refuses non-regular diagnostic files', async () => {

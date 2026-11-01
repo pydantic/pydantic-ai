@@ -23,7 +23,7 @@
 #   imports:
 #     - shared/engine-zai.md
 imports:
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@5f462569c2b7467e070c7f6c82d5e92bda50fffe
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@1b7b49074bf7c4b2ac3bbcdfc4068dec649f7a6c
 runtimes:
   uv: {}
 # Keep existing configurable budgets. AWF also has a fixed 10,000-credit cap.
@@ -75,11 +75,13 @@ post-steps:
     if: always()
     continue-on-error: true
     uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+    env:
+      NODE_USE_ENV_PROXY: '1'
     with:
       script: |
         const fs = require('fs');
         const path = require('path');
-        const { parseOTLPEndpoints, sendOTLPToAllEndpoints } = require(path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions', 'send_otlp_span.cjs'));
+        const { parseOTLPEndpoints, parseOTLPHeaders } = require(path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions', 'send_otlp_span.cjs'));
         // Diagnostic input only. It cannot supply health decisions or canonical usage.
         // Keep content-bearing spans out of otel.jsonl and uploaded agent artifacts.
         const source = '/tmp/gh-aw/pydantic-ai-private-otel.jsonl';
@@ -89,9 +91,31 @@ post-steps:
           if (!fs.fstatSync(descriptor).isFile()) throw new Error('Workflow telemetry must be a regular file');
           const endpoints = parseOTLPEndpoints();
           for (const line of fs.readFileSync(descriptor, 'utf8').split('\n').filter(Boolean)) {
-            const payload = JSON.parse(line);
-            if (!Array.isArray(payload.resourceSpans)) throw new Error('Invalid workflow span payload');
-            await sendOTLPToAllEndpoints(endpoints, payload, { skipJSONL: true });
+            let payload;
+            try { payload = JSON.parse(line); }
+            catch { throw new Error('Invalid workflow span payload'); }
+            if (!payload || !Array.isArray(payload.resourceSpans)) throw new Error('Invalid workflow span payload');
+            // Preserve SDK-scrubbed private attributes, including long JSON values.
+            // gh-aw's infrastructure sender truncates strings and mirrors by default.
+            await Promise.all(endpoints.map(async endpoint => {
+              let delivered = false;
+              for (let attempt = 0; attempt < 3; attempt++) {
+                if (attempt) await new Promise(resolve => setTimeout(resolve, 100 * 2 ** (attempt - 1)));
+                try {
+                  const response = await fetch(endpoint.url.replace(/\/$/, '') + '/v1/traces', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...parseOTLPHeaders(endpoint.headers || '') },
+                    body: line,
+                    signal: AbortSignal.timeout(120000),
+                  });
+                  if (response.ok) { delivered = true; break; }
+                  if (response.status === 401 || response.status === 403) break;
+                } catch {
+                  // Report the outcome without logging private payloads or credentials.
+                }
+              }
+              if (!delivered) core.warning('Private workflow telemetry export failed for a configured collector');
+            }));
           }
         } finally {
           fs.closeSync(descriptor);

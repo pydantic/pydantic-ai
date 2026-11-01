@@ -22,7 +22,7 @@ const save = (name, value) => fs.writeFileSync(path.join(evidence, name), JSON.s
   const shared = fs.readFileSync(path.join(__dirname, '../../workflows/shared/engine-zai.md'), 'utf8');
   const forwardBody = shared.split('      script: |\n')[1].split('\nsafe-outputs:')[0]
     .split('\n').map(line => line.replace(/^ {8}/, '')).join('\n');
-  const forward = new (Object.getPrototypeOf(async function () {}).constructor)('require', 'process', forwardBody);
+  const forward = new (Object.getPrototypeOf(async function () {}).constructor)('require', 'process', 'fetch', 'core', forwardBody);
   const forwarded = [];
   await forward(name => {
     if (name === 'fs') return fs;
@@ -30,13 +30,14 @@ const save = (name, value) => fs.writeFileSync(path.join(evidence, name), JSON.s
     assert.equal(name, path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions', 'send_otlp_span.cjs'));
     return {
       parseOTLPEndpoints: () => [{ url: 'https://collector.invalid', headers: 'host-only' }],
-      sendOTLPToAllEndpoints: async (endpoints, payload, options) => {
-        assert.deepEqual(endpoints, [{ url: 'https://collector.invalid', headers: 'host-only' }]);
-        assert.deepEqual(options, { skipJSONL: true });
-        forwarded.push(payload);
-      },
+      parseOTLPHeaders: value => { assert.equal(value, 'host-only'); return { Authorization: value }; },
     };
-  }, process);
+  }, process, async (url, options) => {
+    assert.equal(url, 'https://collector.invalid/v1/traces');
+    assert.equal(options.headers.Authorization, 'host-only');
+    forwarded.push(JSON.parse(options.body));
+    return { ok: true, status: 200 };
+  }, { warning: () => assert.fail('unexpected export failure') });
   assert(forwarded.length > 0, 'native sandbox did not export Python spans');
   assert(!fs.existsSync('/tmp/gh-aw/pydantic-ai-private-otel.jsonl'), 'host forwarding retained private content');
   const spanNames = forwarded.flatMap(payload => payload.resourceSpans.flatMap(resource => resource.scopeSpans.flatMap(scope => scope.spans.map(span => span.name))));
