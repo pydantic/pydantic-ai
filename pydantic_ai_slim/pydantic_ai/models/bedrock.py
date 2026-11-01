@@ -413,6 +413,22 @@ Converse accepts `none`, `low`, `medium`, and `high`, but only `high` produced r
 folds up to it rather than sending a level that doesn't reason.
 """
 
+_HIGH_ONLY_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    False: 'none',
+    True: 'high',
+    'minimal': 'high',
+    'low': 'high',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+    'max': 'high',
+}
+"""Maps unified thinking values to `reasoning_effort` for models where only `high` reasons on Converse.
+
+Used for Z.AI GLM-4.7/GLM-5 and DeepSeek V3.2: Converse accepts `none`, `low`, `medium`, and `high`, but in live checks
+only `high` produced reasoning, so every enabled level folds up to it.
+"""
+
 _GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     # Grok always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`, so `thinking=False` and `minimal`
     # reason as little as it can and `max` folds to `xhigh`. `True` picks `medium` like the other always-on
@@ -613,6 +629,9 @@ LatestBedrockModelNames = Literal[
     'zai.glm-4.7',
     'zai.glm-4.7-flash',
     'zai.glm-5',
+    # Z.AI GLM (require a cross-region inference profile)
+    'us.zai.glm-5.3',
+    'global.zai.glm-5.3',
     # Moonshot AI Kimi
     'moonshot.kimi-k2-thinking',
     'moonshotai.kimi-k2.5',
@@ -1060,7 +1079,7 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         if (
             (variant == 'anthropic' and ('thinking' in fields or effort_replaced))
-            or (variant == 'openai' and 'reasoning_effort' in fields)
+            or (variant in ('openai', 'deepseek', 'zai') and 'reasoning_effort' in fields)
             or (variant == 'openai_responses' and 'reasoning' in fields)
             or (variant == 'qwen' and 'reasoning_config' in fields)
             or (variant == 'xai' and 'reasoning' in fields)
@@ -1500,7 +1519,7 @@ class BedrockConverseModel(Model[BaseClient]):
         fill_gateway_header_cost(model_response, response.get('ResponseMetadata', {}).get('HTTPHeaders'))
         return model_response
 
-    def _build_additional_model_request_fields(
+    def _build_additional_model_request_fields(  # noqa: C901
         self,
         model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -1554,6 +1573,10 @@ class BedrockConverseModel(Model[BaseClient]):
             else:
                 effort = OPENAI_REASONING_EFFORT_MAP[thinking]
             existing['reasoning'] = {'effort': effort}
+        elif variant == 'zai' and 'reasoning_effort' not in existing:
+            _add_zai_thinking_fields(existing, thinking, profile)
+        elif variant == 'deepseek' and 'reasoning_effort' not in existing:
+            existing['reasoning_effort'] = _HIGH_ONLY_REASONING_EFFORT_MAP[thinking]
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             existing['reasoning_config'] = _QWEN_REASONING_CONFIG_MAP[thinking]
         elif variant == 'xai' and 'reasoning' not in existing:
@@ -2674,6 +2697,25 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
         existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
 
+def _add_zai_thinking_fields(existing: dict[str, Any], thinking: ThinkingLevel, profile: ModelProfile) -> None:
+    """Translate unified `thinking` into the `reasoning_effort` request field for Z.AI GLM models.
+
+    Bedrock ignores Z.AI's `thinking.type`, so `reasoning_effort` is the only toggle. The merged profile carries
+    the Z.AI flag for models with effort levels, plus the Bedrock-specific substitutions for levels they reject.
+    """
+    if not profile.get('zai_supports_reasoning_effort', False):
+        existing['reasoning_effort'] = _HIGH_ONLY_REASONING_EFFORT_MAP[thinking]
+    else:
+        if thinking is False and profile.get('thinking_always_enabled', False):
+            # GLM-5.3 can't turn thinking off, so it thinks as little as it can instead, as on Z.AI's API.
+            thinking = 'minimal'
+        # A plain `thinking=True` leaves `reasoning_effort` unset so the model applies its own default, as on
+        # Z.AI's API.
+        if isinstance(thinking, str):
+            mapping = profile.get('zai_reasoning_effort_mapping', {})
+            existing['reasoning_effort'] = mapping.get(thinking, thinking)
+
+
 def _effective_thinking_type(
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters | None,
@@ -2717,12 +2759,16 @@ def _thinking_rejects_tool_forcing(
 ) -> bool:
     """Whether this request's thinking rejects the forced tool choice Tool Output relies on.
 
-    Extended thinking and thinking on the non-Anthropic variants do, except two. xAI Grok always reasons, and Converse
-    accepts a forced `toolChoice` with Grok 4.6 while it reasons (Grok 4.7 is assumed to match). OpenAI GPT-5.6 and
-    GPT-6 accept output tools while they think, offered without a forced `toolChoice` as their profile doesn't enable
-    forcing.
+    Extended thinking and thinking on the non-Anthropic variants do, except three. xAI Grok always reasons, and Converse
+    accepts a forced `toolChoice` with Grok 4.6 while it reasons (Grok 4.7 is assumed to match). Z.AI GLM also accepts
+    a forced `toolChoice` while it reasons. OpenAI GPT-5.6 and GPT-6 accept output tools while they think, offered
+    without a forced `toolChoice` as their profile doesn't enable forcing.
     """
-    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in ('xai', 'openai_responses')
+    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in (
+        'openai_responses',
+        'xai',
+        'zai',
+    )
 
 
 def _support_tool_forcing(
