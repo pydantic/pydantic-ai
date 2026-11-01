@@ -47,7 +47,7 @@ print(result.output)
 
 `LocalWorkspace('.')` is where the agent works: its file tools and commands run on your machine, in this directory. It is not a sandbox, so commands can reach anything you can. To run the same agent in an isolated cloud machine, swap it for a sandbox capability (Modal, E2B, Sprites, Daytona, or boxd); see [Workspaces](#workspaces).
 
-With [Modal](docs/modal-sandbox.md), for example:
+With [Modal](../../docs/harness/modal-sandbox.md), for example:
 
 ```python
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
