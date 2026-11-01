@@ -1,6 +1,7 @@
 """Workspace API, backend protocols, and implementations."""
 
 from .local import LocalWorkspaceBackend
+from .mounts import Mount, MountError, SupportsMounts
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -24,6 +25,8 @@ __all__ = (
     'CommandResult',
     'FileEntry',
     'LocalWorkspaceBackend',
+    'Mount',
+    'MountError',
     'ReadOnlyWorkspace',
     'Workspace',
     'WrapperWorkspace',
@@ -37,6 +40,7 @@ __all__ = (
     'WorkspaceUnavailableError',
     'SupportsCommands',
     'SupportsFilesystem',
+    'SupportsMounts',
     'SupportsRealpath',
     'UnavailableWorkspace',
 )
