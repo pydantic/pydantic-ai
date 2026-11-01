@@ -2511,7 +2511,8 @@ def _dump_error_details(errors: list[pydantic_core.ErrorDetails]) -> list[dict[s
     `retry_feedback_payload`, which dumps the part rather than rendering it.
 
     The result is plain JSON data rather than `ErrorDetails`: dropping a key the `TypedDict` requires
-    leaves a shape that is not one any more.
+    leaves a shape that is not one any more. An `input` JSON can't represent, like the `ArgsKwargs` a
+    dataclass's `__post_init__` error carries, is rendered with `str` rather than ending the run.
     """
     exclude: dict[int, set[str]] = {index: {'ctx'} for index in range(len(errors))}
     root_input: object = None
@@ -2524,7 +2525,7 @@ def _dump_error_details(errors: list[pydantic_core.ErrorDetails]) -> list[dict[s
             seen_root_error = True
         elif detail.get('input') == root_input:
             exclude[index].add('input')
-    return error_details_ta.dump_python(errors, mode='json', exclude=exclude)
+    return error_details_ta.dump_python(errors, mode='json', exclude=exclude, fallback=str)
 
 
 # TODO(v3): remove RetryPromptPart
