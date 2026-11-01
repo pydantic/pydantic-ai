@@ -2386,7 +2386,8 @@ class OpenAILiveModel(RealtimeModel):
         self._backend_model = backend_model or None
         if isinstance(provider, str):
             provider = cast('Provider[AsyncOpenAI]', infer_provider(provider))
-        if isinstance(provider, AzureProvider):
+        # By type, so a renamed `AzureProvider` is caught, and by name, for another provider pointed at Azure.
+        if isinstance(provider, AzureProvider) or provider.name == 'azure':
             raise UserError(
                 'Azure OpenAI does not serve GPT-Live. Use `AzureRealtimeModel` (or the `azure:` prefix) '
                 'for Azure OpenAI realtime models.'

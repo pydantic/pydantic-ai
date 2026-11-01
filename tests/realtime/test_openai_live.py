@@ -116,6 +116,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
     from pydantic_ai.realtime import openai_live as live_module
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel
     from pydantic_ai.realtime.openai_live import (
@@ -208,7 +209,8 @@ def test_websocket_url_is_the_live_endpoint(model: OpenAILiveModel) -> None:
     assert model._live_url() == snapshot('wss://api.openai.com/v1/live/sessions')  # pyright: ignore[reportPrivateUsage]
 
 
-def test_azure_is_rejected() -> None:
+@pytest.mark.parametrize('kind', ['azure', 'renamed-azure', 'compatible-named-azure'])
+def test_azure_is_rejected(kind: str) -> None:
     """Azure does not serve GPT-Live, so pointing at it fails with a pointer to what does."""
 
     class RenamedAzureProvider(AzureProvider):
@@ -216,13 +218,17 @@ def test_azure_is_rejected() -> None:
         def name(self) -> str:
             return 'my-azure'
 
-    names: set[str] = set()
-    for provider_cls in (AzureProvider, RenamedAzureProvider):
-        provider = provider_cls(azure_endpoint='https://example.openai.azure.com', api_key='k', api_version='v')
-        names.add(provider.name)
-        with pytest.raises(UserError, match='Azure OpenAI does not serve GPT-Live'):
-            OpenAILiveModel('gpt-live-1', provider=provider)
-    assert names == {'azure', 'my-azure'}
+    endpoint = 'https://example.openai.azure.com'
+    provider: Provider[AsyncOpenAI]
+    if kind == 'azure':
+        provider = AzureProvider(azure_endpoint=endpoint, api_key='k', api_version='v')
+    elif kind == 'renamed-azure':
+        provider = RenamedAzureProvider(azure_endpoint=endpoint, api_key='k', api_version='v')
+        assert provider.name == 'my-azure'
+    else:
+        provider = OpenAICompatibleProvider('azure', base_url=f'{endpoint}/openai/v1/', api_key='k')
+    with pytest.raises(UserError, match='Azure OpenAI does not serve GPT-Live'):
+        OpenAILiveModel('gpt-live-1', provider=provider)
 
 
 def test_agent_instructions_and_tools_configure_the_backend(model: OpenAILiveModel) -> None:

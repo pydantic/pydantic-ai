@@ -1555,7 +1555,8 @@ class OpenAIRealtimeModel(RealtimeModel):
         """Resolve the `provider=` argument; a protocol clone (Azure) overrides which providers it takes."""
         if isinstance(provider, str):
             provider = cast('Provider[AsyncOpenAI]', infer_provider(provider))
-        if isinstance(provider, AzureProvider):
+        # By type, so a renamed `AzureProvider` is caught, and by name, for another provider pointed at Azure.
+        if isinstance(provider, AzureProvider) or provider.name == 'azure':
             raise UserError(
                 'Azure OpenAI is not supported through `OpenAIRealtimeModel`: its realtime endpoint uses a '
                 'different URL and authentication scheme. Use `AzureRealtimeModel` (or the '

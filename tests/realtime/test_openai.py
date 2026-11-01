@@ -137,8 +137,11 @@ with try_import() as imports_successful:
     from openai.types.realtime.realtime_audio_config_output import Voice as SDKVoice, VoiceID
 
     from pydantic_ai.models.openai import _map_usage as _map_standard_usage  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.providers import Provider
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
     from pydantic_ai.realtime import openai as rt_openai
     from pydantic_ai.realtime.openai import (
         KnownOpenAIRealtimeVoiceName,
@@ -4588,21 +4591,26 @@ async def test_custom_provider_base_url_derives_websocket_url(monkeypatch: pytes
     assert fake_connect.headers == {'Authorization': 'Bearer k'}
 
 
-def test_azure_provider_is_rejected() -> None:
-    from pydantic_ai.providers.azure import AzureProvider
+@pytest.mark.parametrize('kind', ['azure', 'renamed-azure', 'compatible-named-azure'])
+def test_azure_provider_is_rejected(kind: str) -> None:
+    """An `AzureProvider`, renamed or not, and any other provider named `azure` are pointed at `AzureRealtimeModel`."""
 
     class RenamedAzureProvider(AzureProvider):
         @property
         def name(self) -> str:
             return 'my-azure'
 
-    names: set[str] = set()
-    for provider_cls in (AzureProvider, RenamedAzureProvider):
-        provider = provider_cls(azure_endpoint='https://res.openai.azure.com/openai/v1/', api_key='k')
-        names.add(provider.name)
-        with pytest.raises(UserError, match='Azure OpenAI is not supported'):
-            OpenAIRealtimeModel('gpt-realtime', provider=provider)
-    assert names == {'azure', 'my-azure'}
+    endpoint = 'https://res.openai.azure.com/openai/v1/'
+    provider: Provider[AsyncOpenAI]
+    if kind == 'azure':
+        provider = AzureProvider(azure_endpoint=endpoint, api_key='k')
+    elif kind == 'renamed-azure':
+        provider = RenamedAzureProvider(azure_endpoint=endpoint, api_key='k')
+        assert provider.name == 'my-azure'
+    else:
+        provider = OpenAICompatibleProvider('azure', base_url=endpoint, api_key='k')
+    with pytest.raises(UserError, match='Azure OpenAI is not supported'):
+        OpenAIRealtimeModel('gpt-realtime', provider=provider)
 
 
 def test_profile() -> None:
