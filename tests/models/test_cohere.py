@@ -1090,3 +1090,60 @@ async def test_tool_call_without_function_skipped(allow_model_requests: None):
     assert result.output == 'hello back'
     parts = [part for message in result.all_messages() for part in message.parts]
     assert not any(isinstance(part, ToolCallPart) for part in parts)
+
+
+def test_finish_reason_timeout_maps_to_error(allow_model_requests: None):
+    """TIMEOUT normalizes to 'error' while the raw value is preserved in `provider_details`."""
+    c = ChatResponse(
+        id='123',
+        finish_reason='TIMEOUT',
+        message=AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = agent.run_sync('hello')
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.finish_reason == 'error'
+    assert response.provider_details == {'finish_reason': 'TIMEOUT'}
+
+
+@pytest.mark.parametrize(
+    ('finish_reason', 'expected'),
+    [
+        ('COMPLETE', 'stop'),
+        ('STOP_SEQUENCE', 'stop'),
+        ('MAX_TOKENS', 'length'),
+        ('TOOL_CALL', 'tool_call'),
+        ('ERROR', 'error'),
+        ('TIMEOUT', 'error'),
+    ],
+)
+def test_finish_reason_map_covers_all_sdk_values(
+    finish_reason: cohere.ChatFinishReason, expected: str, allow_model_requests: None
+):
+    """Every `ChatFinishReason` value the SDK defines normalizes without dropping the raw value."""
+    c = ChatResponse(
+        id='123',
+        finish_reason=finish_reason,
+        message=AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = agent.run_sync('hello')
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.finish_reason == expected
+    assert response.provider_details == {'finish_reason': finish_reason}
