@@ -562,7 +562,7 @@ class TestPeers:
             'api has no active run: message queued (1 pending). It reads it at its next model request. id m2'
         )
         if disappears:
-            assert 'no longer available' in returned[0]
+            assert returned[0] == snapshot('{"error":"Peer \'api\' is no longer available. Call `list_peers` again."}')
         else:
             assert returned[0] == snapshot('api refused the message: inbox full')
         assert network.sent == [('api-id', 'same', None)] * 2
@@ -613,9 +613,12 @@ class TestPeers:
     @pytest.mark.parametrize(
         'args, expected',
         [
-            ({'to': 'api', 'text': '  '}, 'must not be empty'),
-            ({'to': 'api', 'text': 'éé'}, 'at most 3 UTF-8 bytes'),
-            ({'to': 'self', 'text': 'hi'}, 'No peer'),
+            ({'to': 'api', 'text': '  '}, snapshot('{"error":"A peer message must not be empty."}')),
+            ({'to': 'api', 'text': 'éé'}, snapshot('{"error":"A peer message must be at most 3 UTF-8 bytes."}')),
+            (
+                {'to': 'self', 'text': 'hi'},
+                snapshot('{"error":"No peer \'self\'. Call `list_peers` for current names."}'),
+            ),
         ],
     )
     async def test_bad_message_arguments_retry_without_sending(self, args: dict[str, str], expected: str) -> None:
@@ -623,7 +626,7 @@ class TestPeers:
         result = await Agent(
             tool_model('send_message', args), capabilities=[Peers(network=network, max_message_bytes=3)]
         ).run('send')
-        assert expected in tool_results(result.all_messages())[0]
+        assert tool_results(result.all_messages())[0] == expected
         assert network.sent == []
 
     async def test_messages_after_first_response_go_directly_to_the_running_turn(self) -> None:

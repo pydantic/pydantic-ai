@@ -27,7 +27,9 @@ class LocalPeerInbox(PeerInbox):
     """Incoming peer messages, in memory or in an atomically replaced JSON file.
 
     Bind one inbox to one recipient. The application supplies a path scoped to that recipient;
-    its directory is private to the user. An idle inbox never starts an agent run.
+    its directory is private to the user. An idle inbox never starts an agent run. Once the inbox
+    is bound to `Peers`, leave `take`, `acknowledge` and `release` to it: a run ID the host claims
+    with `take` holds the inbox until it is released.
     """
 
     accepting: bool
