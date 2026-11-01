@@ -201,9 +201,13 @@ All routes in `docs/navigation.yml` are relative to the Pydantic AI documentatio
 page its complete canonical route in `slug`; use `aliases` only for redirect sources. Do not prefix
 either value with `/ai` or a leading slash.
 
-To validate navigation changes, ask a maintainer to add the `trigger:docs-preview` label to the pull request.
-This checks the navigation manifest, referenced Markdown files, routes, aliases, and redirects in
-`pydantic/unified-docs` and posts the result on the PR. It does not build a rendered preview.
+When you need to check navigation, visuals, links, or other rendered behavior, ask a maintainer to add
+the `trigger:docs-preview` label to the pull request. This checks the navigation manifest, referenced
+Markdown files, routes, aliases, and redirects in `pydantic/unified-docs`. Same-repository PRs also get
+a rendered preview; fork PRs receive navigation validation only. `pydantic-docs[bot]` posts separate
+navigation and preview results on the PR. Check that the reported SHA matches the head you want to
+inspect, and use the preview's **this commit** link for that source head. The stable **latest** link
+points to the latest deployed preview; re-add the label after source changes to request a new preview.
 
 CI checks that every link between doc pages resolves, anchor included, and fails on `Cannot find
 fragment`. A heading's anchor is generated from its text, so renaming one silently breaks every link
