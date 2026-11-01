@@ -98,7 +98,7 @@ async def _streamed_and_complete(
     return _comparable(streamed.get()), _comparable(complete)
 
 
-# Each test compares every `_STRIDE`th stream, so its share stays inside the per-test budget as cassettes are added.
+# Each test compares every `_STRIDE`th stream, which keeps it well inside the per-test budget.
 _STRIDE = 8
 
 
