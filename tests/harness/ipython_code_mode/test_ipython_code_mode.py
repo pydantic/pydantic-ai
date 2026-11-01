@@ -88,6 +88,26 @@ def _scripted(*codes: str | dict[str, Any], seen: list[AgentInfo] | None = None)
     return FunctionModel(respond)
 
 
+@dataclass
+class _KernelClock:
+    """The clock `IPythonKernel` times cells by, standing still so a timeout passes only when a test moves it on.
+
+    On the real clock, a loaded runner can make a cell that should finish well within a test's short timeout overrun it.
+    """
+
+    now: float = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def kernel_clock(monkeypatch: pytest.MonkeyPatch) -> _KernelClock:
+    clock = _KernelClock()
+    monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel.time', clock)
+    return clock
+
+
 def _assert_process_gone(pid: int) -> None:
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
@@ -195,13 +215,28 @@ class TestIPythonCodeMode:
         with pytest.raises(Exception, match='exceeded max retries count of 1'):
             await agent.run('Run the code')
 
-    async def test_timeout_interrupts_the_code_and_keeps_the_state(self, kernel: IPythonKernel) -> None:
-        (_, retry, after) = await _run(
-            IPythonCodeMode(kernel=kernel, timeout=0.5),
-            "survives_timeout = 'yes'",
-            "print('working')\nimport time\ntime.sleep(30)",
-            'survives_timeout',
-        )
+    async def test_timeout_interrupts_the_code_and_keeps_the_state(
+        self, kernel: IPythonKernel, kernel_clock: _KernelClock, tmp_path: Path
+    ) -> None:
+        # The cell opens and closes this pipe once it is running, which is when the test lets its timeout pass.
+        running = tmp_path / 'running'
+        os.mkfifo(running)
+
+        async def pass_the_timeout_once_running() -> None:
+            await anyio.to_thread.run_sync(running.read_bytes)
+            kernel_clock.now += 1
+
+        returns: list[Any] = []
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(pass_the_timeout_once_running)
+            returns = await _run(
+                IPythonCodeMode(kernel=kernel, timeout=0.5),
+                "survives_timeout = 'yes'",
+                f"print('working')\nopen({str(running)!r}, 'w').close()\nimport time\ntime.sleep(30)",
+                'survives_timeout',
+            )
+        (stored, retry, after) = returns
+        assert stored == {}
         assert retry.startswith('working\n')
         assert 'KeyboardInterrupt' in retry
         assert retry.endswith(
@@ -225,9 +260,11 @@ class TestIPythonCodeMode:
         )
         assert retry.startswith('caught\n\nThe code ran longer than the 0.5-second timeout and was interrupted.')
 
-    async def test_time_in_tool_calls_does_not_count_toward_the_timeout(self, kernel: IPythonKernel) -> None:
+    async def test_time_in_tool_calls_does_not_count_toward_the_timeout(
+        self, kernel: IPythonKernel, kernel_clock: _KernelClock
+    ) -> None:
         async def slow() -> str:
-            await asyncio.sleep(0.6)
+            kernel_clock.now += 0.6
             return 'slow'
 
         assert await _run(IPythonCodeMode(kernel=kernel, timeout=0.5), 'slow()', tools=[Tool(slow, name='slow')]) == [
@@ -622,6 +659,8 @@ class TestIPythonCodeModeKernelLifecycle:
     ) -> None:
         # Long enough for an interrupted cell to format its traceback and finish within the first escalation.
         monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._SHUTDOWN_WAIT_SECS', 1.0)
+        # The run then finds a killed kernel gone while `shutdown()` is still stopping it, and stops it too.
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._LIVENESS_POLL_SECS', 0.005)
         pids: list[int] = []
         started = anyio.Event()
 
