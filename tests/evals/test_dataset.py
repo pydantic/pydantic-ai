@@ -1702,6 +1702,17 @@ def test_evaluate_sync_wrapped_partial_task_name():
     assert report.name == 'add'
 
 
+def test_evaluate_sync_partial_callable_instance_task_name():
+    class Task:
+        def __call__(self, value: int, offset: int = 0) -> int:
+            return value + offset
+
+    dataset = Dataset(name='example', cases=[Case(name='case', inputs=3)])
+    report = dataset.evaluate_sync(partial(Task(), offset=2), progress=False)
+    assert report.cases[0].output == 5
+    assert report.name == 'test_evaluate_sync_partial_callable_instance_task_name.<locals>.Task.__call__'
+
+
 async def test_dataset_evaluate_with_no_expected_output(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset with no expected output."""
     case = Case(
