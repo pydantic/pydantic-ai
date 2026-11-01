@@ -21,14 +21,18 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
+    BinaryImage,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.media import DiskMediaStore, SqliteMediaStore
 from pydantic_ai_harness.step_persistence import (
@@ -426,14 +430,15 @@ class TestFileStepStoreMedia:
         assert binary.data == payload
         assert binary.media_type == 'image/jpeg'
 
-    async def test_below_threshold_stays_inline(self, tmp_path: Path) -> None:
+    async def test_below_threshold_text_stays_inline_and_binary_does_not(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path / 'runs', media_threshold_bytes=64 * 1024)
         await store.register_run(RunRecord(run_id='r1'))
         await store.save_snapshot(
             ContinuableSnapshot(run_id='r1', step_index=0, messages=_sample_messages_with_media(1_024))
         )
-        media_dir = tmp_path / 'runs' / 'media'
-        assert not media_dir.exists() or list(media_dir.glob('*.bin')) == []
+        assert [blob.read_bytes() for blob in (tmp_path / 'runs' / 'media').glob('*.bin')] == [b'\xab' * 1_024]
+        snap_text = next((tmp_path / 'runs' / 'r1' / 'snapshots').glob('*.json')).read_text(encoding='utf-8')
+        assert '"analyze this"' in snap_text and '"done"' in snap_text
 
     async def test_opt_out_keeps_bytes_inline(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path / 'runs', media_store=None)
@@ -587,6 +592,44 @@ class TestEndToEndMediaWithAgent:
         # On disk: one media blob, no inlined base64 in any snapshot json.
         blobs = list((tmp_path / 'runs' / 'media').glob('*.bin'))
         assert len(blobs) == 1
+
+    async def test_images_below_the_threshold_are_written_once_not_into_every_snapshot(self, tmp_path: Path) -> None:
+        """Each `FileStepStore` snapshot repeats the history, so an inline image would be written again at every step."""
+        screenshots = [bytes([n]) * 40_000 for n in range(3)]
+        shots = iter(screenshots)
+
+        def look() -> ToolReturn:
+            return ToolReturn('Looked.', content=[BinaryImage(data=next(shots), media_type='image/png')])
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            looks = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+            if looks < len(screenshots):
+                return ModelResponse(parts=[ToolCallPart('look', {})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        store = FileStepStore(tmp_path / 'runs')
+        agent = Agent(FunctionModel(model), tools=[look], capabilities=[StepPersistence(store=store)])
+        await agent.run('Look three times.')
+
+        snapshots = list((tmp_path / 'runs').glob('*/snapshots/*.json'))
+        written = [path.read_text(encoding='utf-8') for path in snapshots]
+        for screenshot in screenshots:
+            assert not any(base64.b64encode(screenshot).decode('ascii') in text for text in written)
+        assert sorted(blob.read_bytes() for blob in (tmp_path / 'runs' / 'media').glob('*.bin')) == screenshots
+
+        # And they come back.
+        (run,) = await store.list_runs()
+        snapshot = await store.latest_snapshot(run_id=run.run_id)
+        assert snapshot is not None
+        restored = [
+            item.data
+            for message in snapshot.messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and isinstance(part.content, list)
+            for item in part.content
+            if isinstance(item, BinaryContent)
+        ]
+        assert restored == screenshots
 
     @pytest.mark.parametrize(
         'tool_output',
