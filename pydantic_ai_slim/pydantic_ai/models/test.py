@@ -181,7 +181,10 @@ class TestModel(InMemoryBatchModel):
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
-        """TestModel supports all native tools for testing flexibility.
+        """TestModel accepts all native tools for testing flexibility.
+
+        They're recorded on `last_model_request_parameters` but never called, so responses
+        contain no native tool calls or results.
 
         `ToolSearchTool` is excluded because TestModel can't emulate provider-native
         tool search. Auto-injected `ToolSearch` capabilities work transparently thanks
@@ -251,9 +254,6 @@ class TestModel(InMemoryBatchModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        if model_request_parameters.native_tools:
-            raise UserError('TestModel does not support built-in tools')
-
         tool_calls = self._get_tool_calls(model_request_parameters)
         output_wrapper = self._get_output(model_request_parameters)
         output_tools = model_request_parameters.output_tools

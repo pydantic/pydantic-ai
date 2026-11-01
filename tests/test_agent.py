@@ -12465,17 +12465,16 @@ def test_agent_native_tools_runtime_vs_agent_level():
     )
 
     # Runtime tool with same unique ID should override agent-level tool
-    with pytest.raises(Exception, match='TestModel does not support built-in tools'):
-        agent.run_sync(
-            'Hello',
-            capabilities=[
-                NativeTool(WebSearchTool(search_context_size='high')),
-                NativeTool(MCPServerTool(id='example', url='https://mcp.example.com/mcp')),
-                NativeTool(
-                    MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token')
-                ),
-            ],
-        )
+    agent.run_sync(
+        'Hello',
+        capabilities=[
+            NativeTool(WebSearchTool(search_context_size='high')),
+            NativeTool(MCPServerTool(id='example', url='https://mcp.example.com/mcp')),
+            NativeTool(
+                MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token')
+            ),
+        ],
+    )
 
     assert model.last_model_request_parameters is not None
     assert model.last_model_request_parameters.native_tools == snapshot(
@@ -12507,10 +12506,7 @@ def test_agent_override_native_tools_replaces_agent_level_tools():
     model = TestModel()
     agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
-    with (
-        agent.override(native_tools=[CodeExecutionTool()]),
-        pytest.raises(UserError, match='TestModel does not support built-in tools'),
-    ):
+    with agent.override(native_tools=[CodeExecutionTool()]):
         agent.run_sync('Hello')
 
     assert model.last_model_request_parameters is not None
@@ -12522,10 +12518,7 @@ def test_agent_override_native_tools_preserves_runtime_additive_tools():
     model = TestModel()
     agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
-    with (
-        agent.override(native_tools=[CodeExecutionTool()]),
-        pytest.raises(UserError, match='TestModel does not support built-in tools'),
-    ):
+    with agent.override(native_tools=[CodeExecutionTool()]):
         agent.run_sync(
             'Hello',
             capabilities=[NativeTool(MCPServerTool(id='example', url='https://mcp.example.com/mcp'))],
@@ -12555,8 +12548,8 @@ def test_agent_rejects_conflicting_agent_level_native_tool_ids():
 def test_agent_allows_identical_agent_level_native_tools():
     """Identical duplicates within a layer are allowed and collapsed by the model-layer dedup.
 
-    Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
-    `TestModel` pre-request guard, which no cassette would reliably catch.
+    Unit test rather than VCR: it pins the `native_tools` request parameters, which no
+    cassette would reliably catch.
     """
     model = TestModel()
     agent = Agent(
@@ -12567,8 +12560,7 @@ def test_agent_allows_identical_agent_level_native_tools():
         ],
     )
 
-    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        agent.run_sync('Hello')
+    agent.run_sync('Hello')
 
     assert model.last_model_request_parameters is not None
     assert model.last_model_request_parameters.native_tools == snapshot(
@@ -12687,8 +12679,8 @@ def test_agent_override_native_tools_preserves_dynamic_capability_tools(instrume
     With `instrument=True`, the Instrumentation capability joins the resolved layers as part of
     the baseline, and must not be attributed to the preserved per-run layer.
 
-    Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
-    `TestModel` pre-request guard, which no cassette would reliably catch.
+    Unit test rather than VCR: it pins the `native_tools` request parameters, which no
+    cassette would reliably catch.
     """
     model = TestModel()
     agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
@@ -12697,10 +12689,7 @@ def test_agent_override_native_tools_preserves_dynamic_capability_tools(instrume
     def dynamic_cap(ctx: RunContext) -> AbstractCapability:
         return NativeTool(MCPServerTool(id='example', url='https://mcp.example.com/mcp'))
 
-    with (
-        agent.override(native_tools=[CodeExecutionTool()]),
-        pytest.raises(UserError, match='TestModel does not support built-in tools'),
-    ):
+    with agent.override(native_tools=[CodeExecutionTool()]):
         agent.run_sync('Hello', capabilities=[dynamic_cap])
 
     assert model.last_model_request_parameters is not None
@@ -12857,8 +12846,7 @@ async def test_dynamic_native_tool_configured():
 
     user_context = UserContext(location='London')
 
-    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        await agent.run('Hello', deps=user_context)
+    await agent.run('Hello', deps=user_context)
 
     assert model.last_model_request_parameters is not None
     tools = model.last_model_request_parameters.native_tools
@@ -12894,8 +12882,7 @@ async def test_mixed_static_and_dynamic_native_tools():
     )
 
     # Case 1: Dynamic tool returns None
-    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        await agent.run('Hello', deps=UserContext(location=None))
+    await agent.run('Hello', deps=UserContext(location=None))
 
     assert model.last_model_request_parameters is not None
     tools = model.last_model_request_parameters.native_tools
@@ -12903,8 +12890,7 @@ async def test_mixed_static_and_dynamic_native_tools():
     assert tools[0] == static_tool
 
     # Case 2: Dynamic tool returns a tool
-    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        await agent.run('Hello', deps=UserContext(location='Paris'))
+    await agent.run('Hello', deps=UserContext(location='Paris'))
 
     assert model.last_model_request_parameters is not None
     tools = model.last_model_request_parameters.native_tools
@@ -12925,8 +12911,7 @@ async def test_sync_dynamic_tool():
     model = TestModel()
     agent = Agent(model, capabilities=[NativeTool(sync_dynamic_tool)], deps_type=UserContext)
 
-    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        await agent.run('Hello', deps=UserContext(location='London'))
+    await agent.run('Hello', deps=UserContext(location='London'))
 
     assert model.last_model_request_parameters is not None
     tools = model.last_model_request_parameters.native_tools
@@ -12940,8 +12925,7 @@ async def test_dynamic_tool_in_run_call():
     model = TestModel()
     agent = Agent(model, deps_type=UserContext)
 
-    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-        await agent.run('Hello', deps=UserContext(location='Berlin'), capabilities=[NativeTool(prepared_web_search)])
+    await agent.run('Hello', deps=UserContext(location='Berlin'), capabilities=[NativeTool(prepared_web_search)])
 
     assert model.last_model_request_parameters is not None
     tools = model.last_model_request_parameters.native_tools

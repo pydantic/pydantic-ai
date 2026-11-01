@@ -39,7 +39,6 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.messages import CapabilityEvent
 from pydantic_ai.models import (
     Model,
-    ModelRequestParameters,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -394,15 +393,6 @@ class _BuiltinToolModel(TestModel):
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         return cls.SUPPORTED_TOOLS
-
-    def _request(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        # Override to skip TestModel._request's builtin tools rejection
-        return ModelResponse(parts=[TextPart(self.custom_output_text or '')], model_name=self.model_name)
 
 
 class _WebSearchOnlyModel(_BuiltinToolModel):
