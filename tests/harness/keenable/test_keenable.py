@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.models.test import TestModel
@@ -305,6 +306,14 @@ def test_the_toolset_validates_budgets_when_built_directly(kwargs: dict[str, Any
 def test_from_spec_sets_a_distinct_id():
     assert KeenableSearch[None].from_spec().id == 'keenable_search'
     assert KeenableSearch[None].from_spec(id='docs_search').id == 'docs_search'
+
+
+def test_from_spec_sets_the_base_capability_fields():
+    """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+    definitions = AgentSpec.model_json_schema_with_capabilities([KeenableSearch])['$defs']
+    assert {'id', 'description', 'defer_loading'} <= definitions['spec_params_KeenableSearch']['properties'].keys()
+    capability = KeenableSearch[None].from_spec(id='second', description='The second one.', defer_loading=True)
+    assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
 
 
 def test_from_spec_builds_the_default_client():

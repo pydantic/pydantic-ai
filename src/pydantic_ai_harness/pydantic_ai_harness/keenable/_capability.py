@@ -171,6 +171,8 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
         max_page_chars: int = 10_000,
         guidance: str | None = None,
         id: str | None = 'keenable_search',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> KeenableSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -183,4 +185,6 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
             max_page_chars=max_page_chars,
             guidance=guidance,
             id=id,
+            description=description,
+            defer_loading=defer_loading,
         )
