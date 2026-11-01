@@ -74,6 +74,20 @@ def test_agent_output_with_validation_context(output_type: OutputSpec[Value]):
     assert result.output.x == snapshot(10)
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize('validation_context', [None, 0, 10])
+async def test_agent_with_static_validation_context(validation_context: int | None) -> None:
+    agent = Agent('test', output_type=Value, validation_context=validation_context)
+
+    @agent.output_validator
+    async def check_context(ctx: RunContext[object], value: Value) -> Value:
+        assert ctx.validation_context == validation_context
+        return value
+
+    result = await agent.run('hello')
+    assert result.output.x == (validation_context or 0)
+
+
 def test_agent_tool_call_with_validation_context():
     """Test that the argument passed to the tool call is validated using the validation context."""
 
