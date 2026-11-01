@@ -549,6 +549,7 @@ markers = [
     "sprites_live: runs against a real Sprites control plane; needs credentials",
     "daytona_live: runs against a real Daytona control plane; needs credentials",
     "boxd_live: runs against a real boxd control plane; needs credentials",
+    "opensandbox_live: runs against a real OpenSandbox server; needs one running",
     "smol_live: boots real smolvm VMs; needs a host that can run them",
     "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
     "docker_live: starts real containers; needs a Docker daemon",
