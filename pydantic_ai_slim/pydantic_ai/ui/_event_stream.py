@@ -387,6 +387,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             # type is recorded.
             record_exception(get_current_span(), complete_error, include_content=False, escaped=False)
             raise
+
     async def _end_open_part(self) -> AsyncIterator[EventT]:
         """End the message part currently tracked as open, emitting its protocol end event.
 
