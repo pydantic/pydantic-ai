@@ -140,6 +140,18 @@ re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary
 contain `{messages}` and no other replacement field; any other prompt emits a `HarnessDeprecationWarning`
 and will raise `ValueError` in a future release), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
+
+`max_summary_tokens=None` leaves existing output limits unchanged. Setting a positive budget is
+recommended to limit summary growth: it is stated in the prompt and caps the `max_tokens` in the
+summary agent's merged settings (the summary model's defaults, `model_settings` and summarization
+capabilities). Defaults on the models inside a `FallbackModel` aren't considered, so a smaller limit
+there can be raised to the budget.
+Incremental summaries are rewritten within the same budget. Smaller budgets can lose details;
+they do not cap retained recent messages. A length-stopped summary is retried once with its
+output budget restated; if that retry also hits the limit, it raises `UnexpectedModelBehavior`
+rather than replacing history.
+Configure `FallbackCompaction(fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded), ...)`
+to move to the next strategy on summary failure or exhausted usage.
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 On its own trigger, a summary whose compacted history is not estimated smaller than the original
 is discarded and the history left unchanged (a `compact_messages` span with
