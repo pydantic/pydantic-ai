@@ -490,9 +490,7 @@ def _assert_vercel_no_part_open_at_finish(events: list[dict[str, Any]]) -> None:
 
 @pytest.mark.parametrize('part_kind', ['thinking', 'tool-call'])
 @pytest.mark.parametrize('protocol', ['ag-ui', 'vercel-ai'])
-async def test_event_stream_restarted_part_ends_open_part_in_real_encoders(
-    protocol: str, part_kind: str
-) -> None:
+async def test_event_stream_restarted_part_ends_open_part_in_real_encoders(protocol: str, part_kind: str) -> None:
     """A republished `PartStartEvent` ends the still-open part under the real encoders. #11734
 
     Beyond the dummy-stream text case above, the issue names a thinking part and a tool call
@@ -515,14 +513,10 @@ async def test_event_stream_restarted_part_ends_open_part_in_real_encoders(
                 return ToolCallPart(tool_name='get_time', args=args, tool_call_id='call_0')
 
             yield PartStartEvent(index=0, part=call_part('{"tz": '))
-            yield PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}')
-            )
+            yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}'))
             # The activity retry republishes its part start with no `PartEndEvent` before it.
             yield PartStartEvent(index=0, part=call_part('{"tz": '))
-            yield PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}')
-            )
+            yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}'))
             yield PartEndEvent(index=0, part=call_part('{"tz": "UTC"}'))
             yield FunctionToolCallEvent(part=call_part('{"tz": "UTC"}'), args_valid=True)
             yield FunctionToolResultEvent(
@@ -546,6 +540,13 @@ async def test_event_stream_restarted_part_ends_open_part_in_real_encoders(
             resume=None,
         )
         event_stream = AGUIEventStream(run_input=run_input)
+        # The stream is consumed inside each protocol branch so the receiver stays a concrete
+        # type; a union-typed receiver makes `encode_stream`'s parameter unsolvable for pyright.
+        events = [
+            json.loads(event.removeprefix('data: '))
+            async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+            if '[DONE]' not in event
+        ]
     else:
         from pydantic_ai.ui.vercel_ai import VercelAIEventStream
         from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
@@ -555,12 +556,11 @@ async def test_event_stream_restarted_part_ends_open_part_in_real_encoders(
             messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])],
         )
         event_stream = VercelAIEventStream(run_input=run_input)
-
-    events = [
-        json.loads(event.removeprefix('data: '))
-        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
-        if '[DONE]' not in event
-    ]
+        events = [
+            json.loads(event.removeprefix('data: '))
+            async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+            if '[DONE]' not in event
+        ]
 
     if protocol == 'ag-ui':
         _assert_ag_ui_no_start_open_at_run_finished(events)
