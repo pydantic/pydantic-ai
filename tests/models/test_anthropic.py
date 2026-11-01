@@ -15784,11 +15784,11 @@ async def test_anthropic_container_setting_dict_with_skills_passed_through(allow
 
 
 async def test_anthropic_container_from_message_history(allow_model_requests: None):
-    """Test that container_id from message history is passed to subsequent requests."""
+    """Test that container_id from message history is passed to subsequent requests with code execution."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock([c, c])
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Create a message history with a container_id in provider_details
     history: list[ModelMessage] = [
@@ -15827,7 +15827,10 @@ async def test_anthropic_container_from_history_scoped_by_endpoint(allow_model_r
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     cast(MockAnthropic, mock_client).base_url = base_url
-    agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
+    agent = Agent(
+        AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[NativeTool(CodeExecutionTool())],
+    )
     await agent.run('follow up', message_history=history)
 
     container = get_mock_chat_completion_kwargs(mock_client)[0].get('container')
@@ -15839,7 +15842,7 @@ async def test_anthropic_container_setting_false_ignores_history(allow_model_req
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Create a message history with a container_id
     history: list[ModelMessage] = [
