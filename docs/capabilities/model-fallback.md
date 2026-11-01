@@ -197,6 +197,10 @@ A [`request_timeout`](../timeouts.md#model-request-deadlines) in the model setti
 
 On a streamed request, [`first_event_timeout`](../timeouts.md#waiting-for-the-first-event) also bounds each model's wait for its first output, and whichever deadline passes first applies: a model that hasn't started streaming in time raises `ModelRequestTimeout` too, and `ModelFallback` moves on to the next model, which gets a fresh deadline. Once a response has started, the setting no longer applies, so a long response isn't cut off.
 
+## Pydantic AI Gateway
+
+A [Pydantic AI Gateway endpoint](../gateway.md#falling-back-across-api-formats) can fall back to a model in another API format, which the agent follows automatically. That happens before `ModelFallback` gets to see the error: its chain only moves on once the model the Gateway handed the request to has failed too.
+
 ## Batching
 
 With [`BatchModelRequests`](../batch.md), every attempt is batched with the model that serves it, so when the first model's batch request fails, the request goes into a batch on the next model. Batching submits a request again itself after a transient failure, so `ModelFallback` only sees a batch failure once resubmitting is used up, or one resubmitting wouldn't fix.

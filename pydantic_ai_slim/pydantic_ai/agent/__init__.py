@@ -94,6 +94,7 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
+from ..capabilities._gateway_fallback import GatewayFallback
 from ..capabilities._ordering import collect_leaves, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.abstract import (
@@ -5180,6 +5181,7 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
 _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
     ToolSearchCap,
     PendingMessageDrainCapability,
+    GatewayFallback,
 )
 """Infrastructure capabilities auto-injected when not already present."""
 

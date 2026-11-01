@@ -248,6 +248,8 @@ Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/
 - `gateway/anthropic:claude-fable-5-1`
 - `gateway/openai:gpt-6-sol`
 
+Fallbacks configured on a Gateway endpoint can cross API formats (OpenAI to Anthropic or Bedrock, say): the agent follows them automatically, rebuilding the request for the model the Gateway names, so no capability or code change is needed. A `ModelFallback` on the agent only takes over once the Gateway's own chain has failed.
+
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
 ## Reuse an OpenAI Responses WebSocket

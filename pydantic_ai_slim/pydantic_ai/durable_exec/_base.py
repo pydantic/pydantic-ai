@@ -1046,9 +1046,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 # The workflow side applied the capabilities' model wrappers to its own copy of the model, which
                 # doesn't send requests, so they're applied again to the model that does.
                 root_capability = ctx.root_capability
-                serving_model = (
-                    root_capability.get_wrapper_model(active_model) if serving and root_capability is not None else None
-                )
+                # Inside the unit's scope whatever the engine, so a wrapper can tell the unit's model from the run's.
+                with durable_unit_scope():
+                    serving_model = (
+                        root_capability.get_wrapper_model(active_model)
+                        if serving and root_capability is not None
+                        else None
+                    )
                 if serving_model is None:
                     yield active_model, ctx
                     return

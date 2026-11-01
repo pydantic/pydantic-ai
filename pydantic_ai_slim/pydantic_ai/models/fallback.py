@@ -161,7 +161,7 @@ class FallbackModel(Model):
 
     @property
     def provider(self) -> None:
-        return None  # pragma: no cover
+        return None
 
     @property
     def model_name(self) -> str:
