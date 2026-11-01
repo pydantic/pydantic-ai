@@ -359,6 +359,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'max_tokens': 'max_tokens',
     'stop_sequences': 'stop',
     'parallel_tool_calls': 'parallel_tool_calls',
+    'service_tier': 'service_tier',
     'presence_penalty': 'presence_penalty',
     'frequency_penalty': 'frequency_penalty',
     'seed': 'seed',
@@ -379,9 +380,7 @@ class XaiModel(Model[AsyncClient]):
     # The xAI SDK has no audio or video content.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
 
-    unsupported_settings = frozenset(
-        {'extra_body', 'extra_headers', 'logit_bias', 'max_retries', 'service_tier', 'timeout', 'top_k'}
-    )
+    unsupported_settings = frozenset({'extra_body', 'extra_headers', 'logit_bias', 'max_retries', 'timeout', 'top_k'})
 
     _model_name: str
     _provider: Provider[AsyncClient]
@@ -1444,6 +1443,9 @@ def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
         _XAI_MODEL_SETTINGS_MAPPING[key]: value
         for key, value in model_settings.items()
         if key in _XAI_MODEL_SETTINGS_MAPPING
+        # Only 'default' and 'priority' have xAI gRPC equivalents; the other unified
+        # values ('auto', 'flex') have no equivalent and are dropped.
+        if key != 'service_tier' or value in ('default', 'priority')
     }
 
 
