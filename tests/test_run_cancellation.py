@@ -68,7 +68,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .conftest import IsNow, IsStr
+from .conftest import IsNow, IsStr, no_leaked_tasks
 
 READINESS_WAIT_TIMEOUT = 5
 
@@ -1239,9 +1239,8 @@ def test_run_sync_keyboard_interrupt_preserves_nested_cleanup_errors():
     final_error = RuntimeError('cleanup recovery failed')
     agent = _fast_then_slow_tool_agent(started)
     loop = get_event_loop()
-    tasks_before = asyncio.all_tasks(loop)
 
-    with _interrupt_sync_run_once(started), pytest.MonkeyPatch.context() as mp:
+    with no_leaked_tasks(loop), _interrupt_sync_run_once(started), pytest.MonkeyPatch.context() as mp:
         run_until_complete = loop.run_until_complete
 
         def failing_cleanup(future: Any) -> Any:
@@ -1266,7 +1265,6 @@ def test_run_sync_keyboard_interrupt_preserves_nested_cleanup_errors():
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
     assert _tool_returns(cancelled) == ['fast done']
-    assert asyncio.all_tasks(loop) == tasks_before
 
 
 def test_run_stream_sync_keyboard_interrupt_before_final_result_carries_run_state():

@@ -1133,7 +1133,10 @@ class TestBridgeFailureModes:
         # The cleanup was still refusing to finish, so the grace deadline is what stopped the loop.
         (abandoned_run,) = abandoned_runs
         assert not abandoned_run.done()
+        # Drop this test's references to the pending run so the `gc.collect()` below destroys it here, rather
+        # than logging `Task was destroyed but it is pending!` into whichever test collects it next.
         abandoned_runs.clear()
+        del abandoned_run
         shutdown(replacement, owner=replacement_thread)
         gc.collect()
 
