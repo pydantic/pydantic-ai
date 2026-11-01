@@ -79,10 +79,16 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
   driver-neutral `PostgresPool` protocol); no harness extra, and you own the pool lifecycle. `table`
   is a prefix of at most 40 characters. It creates its tables on first use, so the role needs
   `CREATE` on the schema.
+- `RedisStepStore(client, *, prefix=..., expire_seconds=None)`: `client` is your own
+  `redis.asyncio.Redis` (the `RedisClient` protocol); no harness extra, and you own the client
+  lifecycle. Each write is one Lua script over the run's `{run_id}`-tagged keys, so the server needs
+  `EVAL`. `expire_seconds` expires a whole run that long after its last write. `run_id` must not be
+  empty or start with `}`, and `prefix` must not contain braces.
 
 File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part of 64 KiB or more to a
 `MediaStore` (disk, same DB, same Mongo client, or same pool by default). Pass `media_store=None` to keep them
-inline, or `media_store=S3MediaStore(...)` from `pydantic_ai_harness.media`.
+inline, or `media_store=S3MediaStore(...)` from `pydantic_ai_harness.media`. `RedisStepStore` defaults to
+`media_store=None` and keeps parts inline unless you pass one.
 
 Reading back:
 
@@ -128,8 +134,8 @@ Gotchas:
 - A derived `run_id` longer than 200 characters raises `ValueError`, so keep `agent_name` short.
   `FileStepStore` only accepts ids matching `[A-Za-z0-9_.-]{1,200}`.
 - Events are never pruned. Snapshots are pruned only with `max_snapshots_per_run`, and pruning never
-  deletes media blobs. `PostgresStepStore` and `MongoStepStore` store each message once too, but keep
-  stored messages when the snapshots referencing them are pruned.
+  deletes media blobs. `PostgresStepStore`, `MongoStepStore`, and `RedisStepStore` store each message
+  once too, but keep stored messages when the snapshots referencing them are pruned.
 - Put `StepPersistence` before capabilities whose `after_run` rewrites history. After-hooks run in
   reverse order.
 - The default `id` is `'step_persistence'`, and store writes are durable operations, so it works
