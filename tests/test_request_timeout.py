@@ -7,7 +7,6 @@ happens when a request takes too long, which a recording can't reproduce on dema
 
 from __future__ import annotations
 
-import asyncio
 import json
 import pickle
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
@@ -56,7 +55,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
 from .clock_utils import LONG_TIMEOUT, Clock
-from .conftest import try_import
+from .conftest import no_leaked_tasks, try_import
 from .continuation_utils import ScriptedStreamedResponse, StreamSegment
 
 with try_import() as openai_available:
@@ -562,15 +561,12 @@ async def test_nested_fallback_gives_each_inner_model_a_deadline():
 async def test_no_tasks_leak_after_timeout(anyio_backend: str):
     stream = StreamThatHangs()
     agent = Agent(FunctionModel(hang, stream_function=stream), model_settings={'request_timeout': SHORT_TIMEOUT})
-    tasks_before = asyncio.all_tasks()
-
-    with pytest.raises(ModelRequestTimeout):
-        await agent.run('hello')
-    with pytest.raises(ModelRequestTimeout):
-        async with agent.run_stream('hello') as result:
-            await result.get_output()
-
-    assert asyncio.all_tasks() == tasks_before
+    with no_leaked_tasks():
+        with pytest.raises(ModelRequestTimeout):
+            await agent.run('hello')
+        with pytest.raises(ModelRequestTimeout):
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
 
 
 async def test_direct_model_request():

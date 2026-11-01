@@ -1,6 +1,5 @@
 """Malformed and unmatched tool events remain safe to display."""
 
-import asyncio
 import io
 from dataclasses import dataclass
 
@@ -29,6 +28,7 @@ from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEve
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.rendering import theme
+from tests.conftest import no_leaked_tasks
 
 
 @dataclass(kw_only=True)
@@ -139,36 +139,35 @@ async def test_a_part_follows_its_console_to_another_file() -> None:
 @pytest.mark.parametrize('thinking', [False, True])
 async def test_echo_prompt_resumes_active_part(thinking: bool, terminal: bool) -> None:
     """Steering drains pending Markdown, then keeps same-index deltas and later parts."""
-    tasks = asyncio.all_tasks()
-    output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output, force_terminal=terminal), stop_loading=lambda: None)
-    part = ThinkingPart('before\nunfinished') if thinking else TextPart('before\nunfinished')
-    await renderer.on_stream_event(PartStartEvent(index=7, part=part))
-    await renderer.echo_prompt('[bold]steer[/bold]\x1b[2J\r\x00')
-    echoed = Text.from_ansi(output.getvalue()).plain
-    assert 'before' in echoed
-    assert 'unfinished' in echoed
-    assert '> [bold]steer[/bold]\\x1b[2J\\x0d\\x00' in echoed
-    assert output.getvalue().endswith('\n\n')
-    assert echoed.index('before') < echoed.index('unfinished') < echoed.index('> ')
+    with no_leaked_tasks():
+        output = io.StringIO()
+        renderer = StreamRenderer(Console(file=output, force_terminal=terminal), stop_loading=lambda: None)
+        part = ThinkingPart('before\nunfinished') if thinking else TextPart('before\nunfinished')
+        await renderer.on_stream_event(PartStartEvent(index=7, part=part))
+        await renderer.echo_prompt('[bold]steer[/bold]\x1b[2J\r\x00')
+        echoed = Text.from_ansi(output.getvalue()).plain
+        assert 'before' in echoed
+        assert 'unfinished' in echoed
+        assert '> [bold]steer[/bold]\\x1b[2J\\x0d\\x00' in echoed
+        assert output.getvalue().endswith('\n\n')
+        assert echoed.index('before') < echoed.index('unfinished') < echoed.index('> ')
 
-    # A delta for another index must not enter the restarted pipeline.
-    await renderer.on_stream_event(PartDeltaEvent(index=6, delta=TextPartDelta('wrong index')))
-    delta = ThinkingPartDelta(content_delta='continued') if thinking else TextPartDelta('continued')
-    await renderer.on_stream_event(PartDeltaEvent(index=7, delta=delta))
-    await renderer.on_stream_event(PartEndEvent(index=7, part=part))
-    await renderer.on_stream_event(PartDeltaEvent(index=7, delta=TextPartDelta('ended part')))
-    await renderer.on_stream_event(PartStartEvent(index=8, part=TextPart('future')))
-    await renderer.on_stream_event(PartDeltaEvent(index=8, delta=TextPartDelta(' delta')))
-    await renderer.finish()
-    rendered = Text.from_ansi(output.getvalue()).plain
-    assert 'continued' in rendered
-    assert 'future delta' in rendered
-    assert rendered.index('> ') < rendered.index('continued') < rendered.index('future delta')
-    assert 'wrong index' not in rendered
-    assert 'ended part' not in rendered
-    assert rendered.count('Thinking ') == (2 if thinking else 0)
-    assert asyncio.all_tasks() == tasks
+        # A delta for another index must not enter the restarted pipeline.
+        await renderer.on_stream_event(PartDeltaEvent(index=6, delta=TextPartDelta('wrong index')))
+        delta = ThinkingPartDelta(content_delta='continued') if thinking else TextPartDelta('continued')
+        await renderer.on_stream_event(PartDeltaEvent(index=7, delta=delta))
+        await renderer.on_stream_event(PartEndEvent(index=7, part=part))
+        await renderer.on_stream_event(PartDeltaEvent(index=7, delta=TextPartDelta('ended part')))
+        await renderer.on_stream_event(PartStartEvent(index=8, part=TextPart('future')))
+        await renderer.on_stream_event(PartDeltaEvent(index=8, delta=TextPartDelta(' delta')))
+        await renderer.finish()
+        rendered = Text.from_ansi(output.getvalue()).plain
+        assert 'continued' in rendered
+        assert 'future delta' in rendered
+        assert rendered.index('> ') < rendered.index('continued') < rendered.index('future delta')
+        assert 'wrong index' not in rendered
+        assert 'ended part' not in rendered
+        assert rendered.count('Thinking ') == (2 if thinking else 0)
 
 
 @pytest.mark.parametrize('show_thinking', [False, True])
