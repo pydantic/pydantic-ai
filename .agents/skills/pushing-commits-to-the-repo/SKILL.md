@@ -32,7 +32,8 @@ Set the light model's effort from the PR's complexity.
 
 ## Merge bar
 
-A maintainer with merge rights (Douwe, Aditya or Mike) merges at this bar. Never merge the PR yourself.
+A maintainer with merge rights (Douwe, Aditya or Mike) merges at this bar.
+Never merge the PR yourself, except a [flake fix](#flake-fixes).
 
 | Size label | Needs |
 |---|---|
@@ -56,6 +57,23 @@ A human approval does not substitute for douwebot.
 
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
+
+### Flake fixes
+
+A flake fix makes a nondeterministic test failure deterministic.
+Once its head meets the merge bar, add a flake fix to the merge queue yourself.
+The trivial-S exception does not apply: require a clean douwebot approval.
+All of these must hold:
+
+- The PR body links a CI run where the test failed.
+- Every changed file is under `tests/`.
+- The diff removes no test.
+- The diff adds no `skip`, `skipif`, `xfail`, `flaky` or rerun marker.
+- The diff deletes no assertion.
+- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher.
+
+If any condition fails, hand the PR to a maintainer.
+If the merge queue removes the PR for a failure outside its diff, add it back once.
 
 ## When you open the PR
 
@@ -363,6 +381,9 @@ if the head changes, capture the new SHA and restart the loop.
    Its success certifies every job it contains, coverage included. Do not inspect individual jobs
    or their logs to reconfirm a success. Don't idle. If it fails, diagnose: fix if the failure is
    yours; if it's a known flake or pre-existing on main, say so with evidence.
+   When a flake fails your CI, ask the person driving you whether to start a separate worktree and task to fix it.
+   Recommend yes.
+   Do not fix the flake in this PR.
 3. **Meet the merge bar on the captured SHA.**
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`
