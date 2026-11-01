@@ -1538,7 +1538,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ) or super().resolve_cache_retention(model_settings)
 
     def _no_batch_api_message(self) -> str:
-        # The provider's Batch API fact, rather than its name, so a renamed or compatible provider gets the hint it declares.
+        # The profile's Batch API flag, not the provider name, so renamed and compatible providers get the hint too.
         if self.profile.get('openai_supports_batch_api', False):
             return (
                 f'`{type(self).__name__}` {self.model_name!r} has no batch API: batch it through the Responses API, with '
